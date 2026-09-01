@@ -3,9 +3,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-cd "$REPO_ROOT/backend"
+cd "$REPO_ROOT"
 
-PY=".venv/bin/python"
+PY="backend/.venv/bin/python"
 if [ ! -x "$PY" ]; then
   echo "pre-commit: backend/.venv missing; run 'uv venv --python 3.13 && uv pip install -e \".[dev]\"' in backend/" >&2
   exit 1
@@ -16,4 +16,4 @@ echo "pre-commit: ruff check"
 echo "pre-commit: ruff format --check"
 "$PY" -m ruff format --check .
 echo "pre-commit: pytest"
-"$PY" -m pytest -q
+(cd backend && ".venv/bin/python" -m pytest -q)

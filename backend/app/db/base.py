@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Annotated
+from typing import Any
 
 from sqlalchemy import DateTime, MetaData, func
-from sqlalchemy.orm import DeclarativeBase, mapped_column
+from sqlalchemy.orm import DeclarativeBase, MappedColumn, mapped_column
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
@@ -16,12 +16,20 @@ NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
 }
 
-# Every timestamp in this schema is timezone-aware and stored in UTC.
-utc_now = Annotated[
-    dt.datetime,
-    mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False),
-]
-utc_optional = Annotated[dt.datetime | None, mapped_column(DateTime(timezone=True), nullable=True)]
+
+def utc_now_column(**kwargs: Any) -> MappedColumn[dt.datetime]:
+    """A non-null ``timestamptz`` defaulting to the database's current time.
+
+    Every timestamp in this schema is timezone-aware and stored in UTC.
+    """
+    return mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, **kwargs
+    )
+
+
+def utc_optional_column(**kwargs: Any) -> MappedColumn[dt.datetime | None]:
+    """A nullable ``timestamptz``."""
+    return mapped_column(DateTime(timezone=True), nullable=True, **kwargs)
 
 
 class Base(DeclarativeBase):

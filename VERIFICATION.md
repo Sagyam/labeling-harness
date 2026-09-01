@@ -19,3 +19,17 @@ Legend: ✅ pass · ❌ fail · ⏳ not yet run · ⛔ deferred (out of this ses
 
 Note: `docker compose` (CLI plugin) is not installed on the development machine; the standalone
 `docker-compose` v5.5.0 binary was used, which speaks the same Compose v2 file format.
+
+## Phase 1 — Schema and migrations — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Migrations run from empty and roll back cleanly | ✅ | `alembic upgrade head` → `downgrade base` → `upgrade head`, all exit 0; the suite rebuilds its schema this way on every run |
+| Seed creates 1 episode, 20 segments, 3 ASR systems, hypotheses for each segment | ✅ | `scripts/seed_dev_data.py` → `episodes=1 segments=20 systems=3 hypotheses=60`; asserted in `test_seed.py` |
+| A second active task for the same segment is rejected by the database, not application code | ✅ | `test_second_active_task_for_a_segment_is_rejected_by_the_database` raises `IntegrityError` from the partial unique index `uq_annotation_tasks_active_segment`; `test_a_finished_task_does_not_block_a_new_one` proves the predicate is partial |
+| Foreign keys reject orphan rows | ✅ | `test_orphan_segment_is_rejected`, `test_orphan_hypothesis_is_rejected` |
+| Tests cover insert and query of every core entity | ✅ | `test_models.py` round-trips all 14 tables; CHECK constraints on split, pipeline_status, queue and disposition are each asserted |
+| Indexes for queue ordering, segment lookup and export filtering | ✅ | `test_required_index_exists` asserts five named indexes exist in `pg_indexes` |
+| Schema documented in ARCHITECTURE.md | ✅ | "Data model" section |
+
+86 tests passing, `ruff check` and `ruff format --check` clean.

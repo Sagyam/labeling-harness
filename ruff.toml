@@ -1,0 +1,7 @@
+# Root config so `ruff check .` covers scripts/ as well as backend/.
+# All settings live in backend/pyproject.toml; this file only extends them.
+extend = "backend/pyproject.toml"
+
+[lint.per-file-ignores]
+# Scripts insert backend/ on sys.path before importing app modules.
+"scripts/*" = ["E402"]
