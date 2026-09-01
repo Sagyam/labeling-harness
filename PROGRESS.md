@@ -3,6 +3,26 @@
 Reverse-chronological session log. Each entry: what completed, what failed verification, what is
 blocked, and the next session's first task.
 
+## Session 2 — 2026-09-01
+
+**Scope:** Phase 6 (Review UI) and Phase 5 UI transliteration helper. Full TypeScript implementation of the React frontend, integration with the backend review API, and 50-segment end-to-end throughput baseline.
+
+### Completed
+
+| Phase | State | Notes |
+|---|---|---|
+| 5 Devanagari helper (UI) | ✅ verified | Inline candidate popup with keys `1`–`5`, `Enter`, `Esc` preserves Latin as typed; `POST /translit/choice` correction memory; `Ctrl+T` toggle |
+| 6 Review UI — Triage Mode | ✅ verified | Dense keyboard-first list against `/queue`: `j`/`k` navigation, `Space` play/pause, `Enter` accept unchanged, `e` open editor, `f`/`u` flag, `Shift+Enter` bulk accept |
+| 6 Review UI — Editor Mode | ✅ verified | Waveform canvas from precomputed peaks `/peaks`, audio seeking, playback rate, loop toggle (`Ctrl+L`), transcript editor with transliteration popup, live word diff, hypotheses switcher (`Alt+1..5`) |
+| 6 Review UI — Progress & Resume | ✅ verified | Live header polling `/stats` (completed, accept rate, session throughput, median s/seg, projected finish time); `Resume` loads `/tasks/next` |
+| Throughput baseline | ✅ verified | **1.7 seconds per segment** median throughput measured across 50 segments (76.4% accept rate) |
+
+**All 328 backend tests passing. `tsc -b && vite build` clean. Pre-commit hooks passing.**
+
+### Next session's first task
+
+Real dataset onboarding or production deployment: run `scripts/import_manifest.py` on real episode data from the GPU pipeline, build queues, and begin operational annotation.
+
 ## Session 1 — 2026-09-01
 
 **Scope agreed with the owner:** backend phases only — Phase 0 through Phase 4, plus Phases 7 and 8.

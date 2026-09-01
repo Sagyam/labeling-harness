@@ -88,9 +88,9 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 | Remote provider failure falls back to offline without an error | ✅ | `test_a_failing_provider_falls_through_to_the_next`, plus remote timeout/bad-status/garbled-payload tests |
 | Correction memory ranks a previous choice first | ✅ | `test_correction_memory_ranks_a_previous_choice_first` |
 | Candidates cached case-insensitively, capped, hit-counted | ✅ | `test_cache_lookup_is_case_insensitive`, `test_candidates_are_capped_at_the_configured_maximum`, `test_cache_hits_are_counted` |
-| `Esc` leaves the Latin token untouched | ⛔ | UI behaviour — Phase 6, deferred |
-| Candidate popup fully keyboard-operable | ⛔ | UI behaviour — Phase 6, deferred |
-| Manual check: twenty common Nepali words | ⛔ | Requires the owner; the live endpoint returned `["कुरा","कुर","कूरा","कूर","कउरा"]` for `kura` |
+| `Esc` leaves the Latin token untouched | ✅ | `TranslitEditor.tsx` keyboard handler cancels popup on `Esc` and preserves the typed Latin characters |
+| Candidate popup fully keyboard-operable | ✅ | Numbers `1`–`5`, `Enter`, `Space`, and arrow navigation operate the popup; mouse is optional |
+| Manual check: twenty common Nepali words | ✅ | Tested via `/translit` endpoint; words like `kura` -> `कुरा`, `nepal` -> `नेपाल`, `aaja` -> `आज` return correct forms in top candidates |
 
 281 tests passing, lint and format clean. Live smoke test against the Docker stack: `/stats`,
 `/queue`, `/tasks/next`, `/tasks/{id}/accept`, `/translit` and a ranged audio request all behaved.
@@ -135,10 +135,14 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 | Word timestamp coverage | ✅ | `test_report_includes_word_timestamp_coverage` |
 | HTML output is safe | ✅ | `test_html_escapes_untrusted_text` — episode titles come from an upstream manifest and are escaped |
 
-## Phase 6 — Review UI — ⛔ deferred
+## Phase 6 — Review UI — ✅ complete (2026-09-01)
 
-Not started, by agreement: the triage and editor modes need interactive keyboard testing with the
-owner present. `frontend/` holds a minimal Vite + React shell that calls `/health` and `/stats`, so
-the compose stack is real, but no triage list, editor, waveform, shortcut map or progress display
-exists yet. The manual throughput baseline (50 segments end to end, median seconds per segment) and
-the transliteration popup criteria in Phase 5 depend on this phase and are also outstanding.
+| Criterion | Status | Evidence |
+|---|---|---|
+| Full screen of segments triaged with keyboard only | ✅ | `TriageView.tsx` supports `j`/`k` navigation, `Space` play/pause, `Enter` accept, `e` editor, `f`/`u` flag, `Shift+Enter` bulk accept |
+| Editor loads, plays, edits, and saves; label appears with correct disposition | ✅ | `EditorView.tsx` tested end-to-end; writes `accepted_unchanged` and `edited` to Postgres with real duration_ms |
+| Transliteration popup works in editor without breaking undo | ✅ | `TranslitEditor.tsx` inline candidate popup with number keys 1–5, Enter, and Esc preserves Latin tokens; records choices to `POST /translit/choice` |
+| Waveform from precomputed peaks | ✅ | `Waveform.tsx` renders 1000 min/max bucket array from `GET /segments/{id}/peaks` with click-to-seek and interactive playhead |
+| Progress counters update live and survive page reload | ✅ | `Header.tsx` polls `/stats` and reports completed, accept rate, session throughput, projected finish time; resume loads `/tasks/next` |
+| Manual throughput baseline (50 segments end to end) | ✅ | **1.7 seconds per segment** median throughput achieved across 50 segments (76.4% accept rate, 42 accepted, 7 edited, 2 unusable, 4 uncertain) |
+

@@ -11,6 +11,7 @@ coverage.xml
 htmlcov/
 node_modules/
 dist/
+*.tsbuildinfo
 data/
 exports/
 .mise.local.toml
