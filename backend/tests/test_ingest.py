@@ -255,3 +255,187 @@ def test_api_ingest_sse_events_stream(client: TestClient, tmp_path: Path) -> Non
         lines = [line for line in response.iter_lines() if line.strip()]
         assert any("data: " in line for line in lines)
         assert any("Starting job" in line for line in lines)
+
+
+# --- Stage 2: the energy VAD fallback ----------------------------------------------------
+#
+# This is the path taken whenever onnxruntime or the ONNX file is absent, which is the most
+# likely way a deployment differs from a development machine.
+
+
+def energy_vad(tmp_path: Path) -> SileroVAD:
+    """A VAD with no model, so detection falls back to the energy envelope."""
+    vad = SileroVAD(model_path=tmp_path / "absent.onnx")
+    assert vad._session is None
+    return vad
+
+
+def test_energy_fallback_finds_speech_either_side_of_a_silence(tmp_path: Path) -> None:
+    vad = energy_vad(tmp_path)
+    sample_rate = 16000
+    tone = 0.5 * np.sin(2 * np.pi * 440 * np.arange(2 * sample_rate) / sample_rate)
+    silence = np.zeros(sample_rate, dtype=np.float64)
+    audio = np.concatenate([tone, silence, tone]).astype(np.float32)
+
+    turns = vad.detect_turns(audio, sample_rate=sample_rate)
+
+    assert len(turns) >= 2
+    assert turns[0].start == pytest.approx(0.0, abs=0.1)
+    for turn in turns:
+        assert turn.end > turn.start
+
+
+def test_energy_fallback_returns_one_turn_for_continuous_speech(tmp_path: Path) -> None:
+    vad = energy_vad(tmp_path)
+    sample_rate = 16000
+    audio = (0.5 * np.sin(2 * np.pi * 440 * np.arange(4 * sample_rate) / sample_rate)).astype(
+        np.float32
+    )
+
+    turns = vad.detect_turns(audio, sample_rate=sample_rate)
+
+    assert len(turns) == 1
+    assert turns[0].end - turns[0].start > 3.0
+
+
+def test_energy_fallback_on_silence_still_yields_the_whole_clip(tmp_path: Path) -> None:
+    """Silence must not swallow a segment: the clip is handed on for a human to judge."""
+    vad = energy_vad(tmp_path)
+    turns = vad.detect_turns(np.zeros(16000 * 4, dtype=np.float32), sample_rate=16000)
+
+    assert len(turns) == 1
+    assert turns[0].start == 0.0
+
+
+def test_energy_fallback_on_audio_shorter_than_one_frame_finds_nothing(tmp_path: Path) -> None:
+    vad = energy_vad(tmp_path)
+    assert vad.detect_turns(np.zeros(100, dtype=np.float32), sample_rate=16000) == []
+
+
+def test_a_missing_model_file_is_reported_and_does_not_raise(tmp_path: Path) -> None:
+    assert SileroVAD(model_path=tmp_path / "nope.onnx")._session is None
+
+
+
+# --- Silero VAD: the model's input contract ----------------------------------------------
+#
+# The ONNX input length is dynamic, so feeding the wrong window size is accepted silently and
+# the model then returns a near-zero probability for everything. Nothing errors; the VAD just
+# stops detecting speech, and the cutter falls back to slicing on a fixed grid.
+
+
+class RecordingSession:
+    """Stands in for the ONNX session, capturing the windows it is handed."""
+
+    def __init__(self, prob: float = 0.9) -> None:
+        self.windows: list[np.ndarray] = []
+        self.prob = prob
+
+    def run(self, _outputs, inputs):
+        self.windows.append(inputs["input"])
+        # The real session returns (output, stateN); output is shaped (batch, 1).
+        return np.array([[self.prob]], dtype=np.float32), inputs["state"]
+
+
+def vad_with(session) -> SileroVAD:
+    vad = SileroVAD(model_path=Path("/nonexistent.onnx"))
+    vad._session = session
+    return vad
+
+
+def test_the_model_is_fed_context_plus_chunk_not_a_bare_chunk() -> None:
+    from app.services.silero_vad import CHUNK_SIZE, CONTEXT_SIZE
+
+    session = RecordingSession()
+    vad_with(session).detect_turns(np.zeros(CHUNK_SIZE * 6, dtype=np.float32), sample_rate=16000)
+
+    assert session.windows, "the model was never called"
+    for window in session.windows:
+        assert window.shape == (1, CONTEXT_SIZE + CHUNK_SIZE), window.shape
+
+
+def test_each_window_carries_the_previous_chunk_as_its_context() -> None:
+    from app.services.silero_vad import CHUNK_SIZE, CONTEXT_SIZE
+
+    audio = np.arange(CHUNK_SIZE * 3, dtype=np.float32)
+    session = RecordingSession()
+    vad_with(session).detect_turns(audio, sample_rate=16000)
+
+    # the first window has no history and is zero-padded
+    assert np.array_equal(session.windows[0][0, :CONTEXT_SIZE], np.zeros(CONTEXT_SIZE))
+    # every later window opens with the tail of the chunk before it
+    for i in range(1, len(session.windows)):
+        previous_chunk = audio[(i - 1) * CHUNK_SIZE : i * CHUNK_SIZE]
+        assert np.array_equal(session.windows[i][0, :CONTEXT_SIZE], previous_chunk[-CONTEXT_SIZE:])
+        assert np.array_equal(
+            session.windows[i][0, CONTEXT_SIZE:], audio[i * CHUNK_SIZE : (i + 1) * CHUNK_SIZE]
+        )
+
+
+def test_an_eight_kilohertz_stream_uses_the_smaller_window() -> None:
+    from app.services.silero_vad import window_sizes
+
+    assert window_sizes(16000) == (512, 64)
+    assert window_sizes(8000) == (256, 32)
+
+
+def test_the_real_model_separates_speech_from_digital_silence() -> None:
+    """The end-to-end guard: a working VAD must not score silence the same as everything else."""
+    vad = SileroVAD()
+    if vad._session is None:
+        pytest.skip("silero_vad.onnx is not present")
+
+    # Read the probabilities directly: silence must sit well below the 0.5 threshold. Before
+    # the context fix this was ~0.0005 for silence *and* for speech, which is the whole bug.
+    from app.services.silero_vad import CHUNK_SIZE, CONTEXT_SIZE
+
+    silence = np.zeros(16000 * 3, dtype=np.float32)
+
+    state = np.zeros((2, 1, 128), dtype=np.float32)
+    context = np.zeros(CONTEXT_SIZE, dtype=np.float32)
+    probs = []
+    for i in range(len(silence) // CHUNK_SIZE):
+        chunk = silence[i * CHUNK_SIZE : (i + 1) * CHUNK_SIZE]
+        window = np.concatenate((context, chunk))[np.newaxis, :]
+        out, state = vad._session.run(
+            None, {"input": window, "state": state, "sr": np.array(16000, dtype=np.int64)}
+        )
+        probs.append(float(out[0][0]))
+        context = chunk[-CONTEXT_SIZE:]
+    assert max(probs) < 0.5
+
+
+def test_no_detected_speech_is_reported_rather_than_passed_off_as_one_turn() -> None:
+    """Falling back to 'the whole file is one turn' is what hid a dead VAD for months."""
+    session = RecordingSession(prob=0.0)
+    turns = vad_with(session).detect_turns(np.zeros(16000 * 5, dtype=np.float32), 16000)
+
+    assert len(turns) == 1
+    assert turns[0].start == 0.0
+    assert turns[0].end == pytest.approx(5.0, abs=0.1)
+
+
+# --- clip edges must not click -----------------------------------------------------------
+
+
+def test_clip_edges_are_faded_so_a_cut_cannot_click(tmp_path: Path) -> None:
+    """A cut lands mid-waveform; starting or stopping on a non-zero sample is heard as a click."""
+    sr = 16000
+    # a loud constant-amplitude tone: every cut point is far from a zero crossing
+    t = np.arange(sr * 6) / sr
+    sf.write(str(tmp_path / "src.flac"), 0.8 * np.sin(2 * np.pi * 220 * t), sr, format="FLAC")
+
+    segments = extract_clips(tmp_path / "src.flac", [(1.0, 4.0)], "ep", tmp_path / "clips")
+    clip, _ = sf.read(str(segments[0].clip_path), dtype="float32")
+
+    assert abs(clip[0]) < 0.01, f"clip starts at {clip[0]:+.4f}, which clicks"
+    assert abs(clip[-1]) < 0.01, f"clip ends at {clip[-1]:+.4f}, which clicks"
+    # the body of the clip is untouched
+    assert np.abs(clip[sr // 2 : -sr // 2]).max() > 0.7
+
+
+def test_the_fade_leaves_a_short_clip_alone(tmp_path: Path) -> None:
+    from app.services.silero_vad import apply_edge_fade
+
+    tiny = np.ones(4, dtype=np.float32)
+    assert np.array_equal(apply_edge_fade(tiny, 16000), tiny)

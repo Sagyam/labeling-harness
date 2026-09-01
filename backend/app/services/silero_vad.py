@@ -21,10 +21,33 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "models" / "silero_vad.onnx"
+#: Utterance bounds the cutter enforces. These are deliberately inside the flag thresholds in
+#: ``queue.min_duration_seconds`` / ``queue.max_duration_seconds``: the cutter decides what a
+#: segment *is*, the flags decide what looks wrong about one that arrived from anywhere.
 MIN_SEG_SECONDS = 2.0
 MAX_SEG_SECONDS = 20.0
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 512  # 32 ms at 16 kHz
+#: Silero v5 conditions each window on the tail of the previous one: the tensor it expects is
+#: ``CONTEXT_SIZE + CHUNK_SIZE`` samples, not a bare chunk. The ONNX input is declared with a
+#: dynamic length, so feeding a bare chunk is accepted silently and the model then returns a
+#: near-zero probability for everything -- speech, noise and digital silence alike.
+CONTEXT_SIZE = 64
+
+
+#: Ramp applied to each clip's first and last samples. Long enough to remove the step at a cut,
+#: short enough to be inaudible on speech.
+FADE_MS = 5.0
+
+
+def window_sizes(sample_rate: int) -> tuple[int, int]:
+    """Chunk and context lengths in samples for a supported Silero sample rate.
+
+    Silero v5 accepts 16 kHz and 8 kHz only, with a fixed window per rate.
+    """
+    if sample_rate == 8000:
+        return CHUNK_SIZE // 2, CONTEXT_SIZE // 2
+    return CHUNK_SIZE, CONTEXT_SIZE
 
 
 @dataclass(frozen=True)
@@ -93,18 +116,23 @@ class SileroVAD:
 
         sr_tensor = np.array(sample_rate, dtype=np.int64)
         state = np.zeros((2, 1, 128), dtype=np.float32)
+        chunk_size, context_size = window_sizes(sample_rate)
 
         speech_probs: list[float] = []
-        num_chunks = len(audio) // CHUNK_SIZE
+        # The window handed to the model is the previous chunk's tail followed by this chunk.
+        # The first window has no history, so it is padded with zeros.
+        context = np.zeros(context_size, dtype=np.float32)
+        num_chunks = len(audio) // chunk_size
         for i in range(num_chunks):
-            chunk = audio[i * CHUNK_SIZE : (i + 1) * CHUNK_SIZE]
-            chunk_input = chunk[np.newaxis, :]  # shape: (1, CHUNK_SIZE)
-            ort_inputs = {"input": chunk_input, "state": state, "sr": sr_tensor}
+            chunk = audio[i * chunk_size : (i + 1) * chunk_size]
+            window = np.concatenate((context, chunk))[np.newaxis, :]
+            ort_inputs = {"input": window, "state": state, "sr": sr_tensor}
             out, state = self._session.run(None, ort_inputs)
             speech_probs.append(float(out[0][0]))
+            context = chunk[-context_size:]
 
         # State machine to find speech turn start and end times
-        chunk_sec = CHUNK_SIZE / sample_rate
+        chunk_sec = chunk_size / sample_rate
         min_speech_chunks = math.ceil((min_speech_duration_ms / 1000.0) / chunk_sec)
         min_silence_chunks = math.ceil((min_silence_duration_ms / 1000.0) / chunk_sec)
 
@@ -145,8 +173,17 @@ class SileroVAD:
                 )
 
         if not turns:
-            # Fallback if no speech above threshold
+            # Nothing crossed the threshold. Treating the file as one turn keeps the pipeline
+            # running, but it means the cutter is about to slice on a fixed grid rather than on
+            # silence -- so say so loudly. A whole episode with no detected speech is far more
+            # likely to be a broken VAD than a silent recording.
             total_duration = len(audio) / sample_rate
+            logger.warning(
+                "silero_vad_no_speech_detected",
+                duration_seconds=round(total_duration, 2),
+                chunks=len(speech_probs),
+                max_speech_prob=round(max(speech_probs), 4) if speech_probs else None,
+            )
             if total_duration >= MIN_SEG_SECONDS:
                 turns.append(SpeechTurn(start=0.0, end=round(total_duration, 3)))
 
@@ -278,6 +315,25 @@ def segment_audio_to_slices(
     return cleaned
 
 
+def apply_edge_fade(
+    clip: np.ndarray, sample_rate: int, milliseconds: float = FADE_MS
+) -> np.ndarray:
+    """Ramp a clip in and out so its edges cannot click.
+
+    A cut lands wherever the boundary falls, which is rarely at a zero crossing. Starting or
+    ending playback on a non-zero sample is a step change, and a step is heard as a click. A few
+    milliseconds of ramp removes it and is inaudible on speech.
+    """
+    fade = int(sample_rate * milliseconds / 1000.0)
+    if fade <= 0 or clip.size < 2 * fade:
+        return clip
+    faded = clip.copy()
+    ramp = np.linspace(0.0, 1.0, fade, endpoint=False, dtype=clip.dtype)
+    faded[:fade] *= ramp
+    faded[-fade:] *= ramp[::-1]
+    return faded
+
+
 def extract_clips(
     audio_path: Path | str,
     slices: list[tuple[float, float]],
@@ -300,7 +356,7 @@ def extract_clips(
 
         start_frame = max(0, round(start_sec * sr))
         end_frame = min(len(audio_data), round(end_sec * sr))
-        clip_data = audio_data[start_frame:end_frame]
+        clip_data = apply_edge_fade(audio_data[start_frame:end_frame], sr)
 
         sf.write(str(clip_file), clip_data, sr, format="FLAC", subtype="PCM_16")
         checksum = sha256_file(clip_file)
