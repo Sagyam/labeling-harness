@@ -1,7 +1,9 @@
-"""Token analysis, code-mixing index (CMI), and scoring for ingested segments.
+"""Token analysis and code-mixing index (CMI) for ingested segments.
 
-Computes orthography-aware language tags, code-switch density, rule flags, and
-queue priority scores without requiring an external GPU pipeline.
+Computes orthography-aware language tags, code-switch density and rule flags without
+requiring an external GPU pipeline. Priority scoring is deliberately not done here: the
+queue builder scores from the stored segment scores, so doing it at ingest too would mean
+two implementations of one formula.
 """
 
 from __future__ import annotations
@@ -12,35 +14,10 @@ from dataclasses import dataclass
 
 from app.config import Settings, get_settings
 from app.services.flags import FlagHypothesis, compute_flags
-from app.services.scoring import ScoreInputs, ScoreResult, priority_score
 
 DEV_RE = re.compile(r"[\u0900-\u097F]")
 # Note: plain \w+ is wrong because Python's \w excludes combining marks (Mn).
 TOK_RE = re.compile(r"[A-Za-z']+|[\u0900-\u097F]+|\d+")
-HINDI_MARKERS = frozenset(
-    {
-        "नहीं",
-        "था",
-        "थी",
-        "थे",
-        "रहा",
-        "रही",
-        "रहे",
-        "होगा",
-        "होगी",
-        "होंगे",
-        "करना",
-        "करता",
-        "करते",
-        "करती",
-        "यह",
-        "वह",
-        "क्या",
-        "हुए",
-        "हुआ",
-        "हुई",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -51,22 +28,25 @@ class TokenAnalysisResult:
     devanagari_count: int
     latin_count: int
     cmi: float
-    spf: float
     code_switch_density: float
     flags: list[str]
-    score: ScoreResult
 
 
 def analyze_transcript(
     text: str,
     duration_seconds: float,
     *,
-    word_disagreement_rate: float = 0.0,
-    avg_logprob: float | None = None,
     no_speech_prob: float | None = None,
     settings: Settings | None = None,
 ) -> TokenAnalysisResult:
-    """Tag tokens, calculate CMI and switch-point fraction, compute rule flags and score."""
+    """Tag tokens by script, compute the code-mixing index, and raise the rule flags.
+
+    Args:
+        text: The transcript to analyse.
+        duration_seconds: Segment length, for the duration and speaking-rate flags.
+        no_speech_prob: The hypothesis\'s no-speech probability, if the model reported one.
+        settings: Threshold overrides.
+    """
     settings = settings or get_settings()
 
     tokens = TOK_RE.findall(text or "")
@@ -87,43 +67,23 @@ def analyze_transcript(
 
     n = len(tags)
     cmi = 0.0
-    spf = 0.0
-
-    from itertools import pairwise
-
     if n >= 2:
         majority = max(devanagari_count, latin_count)
         cmi = round(100.0 * (n - majority) / n, 2)
-        switches = sum(1 for a, b in pairwise(tags) if a != b)
-        spf = round(switches / (n - 1), 4)
 
     csd = min(1.0, max(0.0, cmi / 100.0))
 
-    flag_hyps = [FlagHypothesis(text=text, no_speech_prob=no_speech_prob)]
     flags = compute_flags(
         duration_seconds=duration_seconds,
-        hypotheses=flag_hyps,
+        hypotheses=[FlagHypothesis(text=text, no_speech_prob=no_speech_prob)],
         settings=settings,
     )
-
-    if any(t in HINDI_MARKERS for t in tokens) and "hindi_intrusion" not in flags:
-        flags.append("hindi_intrusion")
-
-    inputs = ScoreInputs(
-        word_disagreement_rate=word_disagreement_rate,
-        avg_logprob=avg_logprob,
-        code_switch_density=csd,
-        flags=flags,
-    )
-    score_res = priority_score(inputs, settings=settings)
 
     return TokenAnalysisResult(
         token_count=n,
         devanagari_count=devanagari_count,
         latin_count=latin_count,
         cmi=cmi,
-        spf=spf,
         code_switch_density=csd,
         flags=flags,
-        score=score_res,
     )

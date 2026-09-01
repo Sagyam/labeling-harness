@@ -127,8 +127,6 @@ def test_analyze_transcript_calculates_cmi_and_flags() -> None:
     assert res.latin_count == 2
     assert res.cmi == 40.0  # 100 * (5 - 3) / 5
     assert res.code_switch_density == 0.4
-    assert res.score.score > 0
-    assert "code_switch_density" in res.score.components
 
 
 # --- Stage 5: End-to-End Pipeline Execution ---------------------------------------------

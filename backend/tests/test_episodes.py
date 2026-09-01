@@ -9,31 +9,9 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import AnnotationTask, Episode, Segment
-from app.services.analysis import analyze_transcript
-from app.services.flags import FlagHypothesis, compute_flags
+from app.models import AnnotationTask, AuditLog, Episode, Segment
 
 pytestmark = pytest.mark.db
-
-
-def test_hindi_intrusion_flag_detected() -> None:
-    # Sentence with Hindi intrusion word "नहीं" and "था"
-    hindi_text = "हामीले यो project मा काम गरेको था तर नहीं भयो"
-    res = analyze_transcript(hindi_text, duration_seconds=4.0)
-    assert "hindi_intrusion" in res.flags
-
-    # Pure authentic Nepali sentence
-    pure_nepali = "हामीले यो project मा काम गरेको थियो तर भएन"
-    res_clean = analyze_transcript(pure_nepali, duration_seconds=4.0)
-    assert "hindi_intrusion" not in res_clean.flags
-
-
-def test_compute_flags_hindi_marker() -> None:
-    flags = compute_flags(
-        duration_seconds=5.0,
-        hypotheses=[FlagHypothesis(text="यो कुरा सही नहीं हो")],
-    )
-    assert "hindi_intrusion" in flags
 
 
 def test_list_episodes_and_delete_cascade(
@@ -118,3 +96,5 @@ def test_list_episodes_and_delete_cascade(
     assert db_session.scalar(sa.select(Episode).where(Episode.id == ep_id)) is None
     assert db_session.scalar(sa.select(Segment).where(Segment.id == seg1_id)) is None
     assert db_session.scalar(sa.select(AnnotationTask).where(AnnotationTask.id == task1_id)) is None
+
+

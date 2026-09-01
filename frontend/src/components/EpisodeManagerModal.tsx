@@ -320,7 +320,6 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
                             {segments.map((seg) => {
                               const isPlaying = playingAudioUrl === resolveUrl(seg.audio_url)
                               const isSegDeleting = deletingId === `seg-${seg.id}`
-                              const hasHindiIntrusion = seg.flags.includes('hindi_intrusion')
 
                               return (
                                 <div
@@ -330,12 +329,8 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
                                     padding: '8px 12px',
-                                    background: hasHindiIntrusion
-                                      ? 'rgba(234, 179, 8, 0.06)'
-                                      : 'rgba(30, 41, 59, 0.5)',
-                                    border: hasHindiIntrusion
-                                      ? '1px solid rgba(234, 179, 8, 0.3)'
-                                      : '1px solid rgba(255, 255, 255, 0.04)',
+                                    background: 'rgba(30, 41, 59, 0.5)',
+                                    border: '1px solid rgba(255, 255, 255, 0.04)',
                                     borderRadius: '8px',
                                     fontSize: '13px',
                                     gap: '12px',
@@ -388,21 +383,6 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
 
                                   {/* Flags & CMI */}
                                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
-                                    {hasHindiIntrusion && (
-                                      <span
-                                        style={{
-                                          background: 'rgba(234, 179, 8, 0.2)',
-                                          color: '#facc15',
-                                          border: '1px solid rgba(234, 179, 8, 0.4)',
-                                          padding: '2px 6px',
-                                          borderRadius: '4px',
-                                          fontSize: '11px',
-                                          fontWeight: 600,
-                                        }}
-                                      >
-                                        ⚠️ Hindi Intrusion
-                                      </span>
-                                    )}
                                     {seg.cmi !== null && (
                                       <span style={{ fontSize: '11px', color: '#94a3b8' }}>
                                         CMI: {seg.cmi}%

@@ -1860,10 +1860,3 @@ kbd {
   border-color: rgba(99, 102, 241, 0.3) !important;
 }
 
-.flag-hindi-intrusion {
-  background: rgba(234, 179, 8, 0.15) !important;
-  color: #facc15 !important;
-  border-color: rgba(234, 179, 8, 0.4) !important;
-  font-weight: 600;
-}
-
