@@ -1,0 +1,78 @@
+# Non-secret configuration for the annotation harness.
+# Secrets (passwords, API keys, bearer tokens) come from environment variables only.
+# Every value here can be overridden by an env var: HARNESS_<SECTION>__<KEY> (double underscore
+# separates nesting levels), e.g. HARNESS_DATABASE__PORT=5433.
+
+app:
+  name: labeling-harness
+  environment: local
+  log_level: INFO
+
+database:
+  host: localhost
+  port: 5432
+  name: harness
+  user: harness
+  password: ""          # HARNESS_DATABASE__PASSWORD
+  pool_size: 5
+
+storage:
+  backend: local        # 'local' | 'minio' -- the harness must be usable without MinIO running
+  local_root: ./data/objects
+  minio:
+    endpoint: localhost:9000
+    bucket: harness
+    secure: false
+    access_key: ""      # HARNESS_STORAGE__MINIO__ACCESS_KEY
+    secret_key: ""      # HARNESS_STORAGE__MINIO__SECRET_KEY
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+    - http://localhost:5173
+  auth_token: ""        # HARNESS_API__AUTH_TOKEN -- when empty, no authentication (local dev)
+
+importer:
+  split_seed: 20260101
+  split_ratios:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+  peaks_buckets: 1000
+  expected_sample_rate: 16000
+  expected_channels: 1
+  expected_format: FLAC
+
+queue:
+  weights:
+    word_disagreement_rate: 0.40
+    low_confidence: 0.25
+    code_switch_density: 0.20
+    rule_flag_score: 0.15
+  audit_sample_rate: 0.05
+  audit_seed: 1234
+  min_duration_seconds: 1.0
+  max_duration_seconds: 30.0
+  logprob_floor: -2.0            # avg_logprob <= floor normalizes to low_confidence = 1.0
+  no_speech_prob_threshold: 0.6
+  max_speaking_rate_wps: 6.0     # words per second above this is implausible
+  min_speaking_rate_wps: 0.3
+  repeated_ngram_size: 4
+  repeated_ngram_threshold: 3
+
+translit:
+  provider_order:
+    - remote
+    - offline
+  remote_endpoint: https://inputtools.google.com/request
+  remote_timeout_seconds: 1.5
+  max_candidates: 5
+
+labels:
+  policy_version: policy_v1
+  default_label_version: v1
+  default_annotator: owner
+
+export:
+  output_root: ./exports

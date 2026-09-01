@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Lint and test before every commit. Bypass with `git commit --no-verify` only in emergencies.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT/backend"
+
+PY=".venv/bin/python"
+if [ ! -x "$PY" ]; then
+  echo "pre-commit: backend/.venv missing; run 'uv venv --python 3.13 && uv pip install -e \".[dev]\"' in backend/" >&2
+  exit 1
+fi
+
+echo "pre-commit: ruff check"
+"$PY" -m ruff check .
+echo "pre-commit: ruff format --check"
+"$PY" -m ruff format --check .
+echo "pre-commit: pytest"
+"$PY" -m pytest -q
