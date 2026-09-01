@@ -20,24 +20,21 @@ from app.models import (
     SegmentLabel,
 )
 from app.models.enums import DISPOSITIONS, PIPELINE_STATUSES, TASK_STATUSES
+from app.utils.stats_math import median
 
 
-def _counts(session: Session, column, allowed: tuple[str, ...], source) -> dict[str, int]:
+def _counts(
+    session: Session,
+    column: sa.ColumnElement[str],
+    allowed: tuple[str, ...],
+    source: type[Any],
+) -> dict[str, int]:
+    """Group ``source`` by ``column``, filling in a zero for every allowed value that is absent."""
     rows = session.execute(sa.select(column, sa.func.count()).select_from(source).group_by(column))
     counts = dict.fromkeys(allowed, 0)
     for value, count in rows:
         counts[value] = count
     return counts
-
-
-def _median(values: list[float]) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    middle = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2
 
 
 def latest_labels_subquery():
@@ -51,6 +48,7 @@ def latest_labels_subquery():
         SegmentLabel.label_version_id.label("label_version_id"),
         SegmentLabel.disposition.label("disposition"),
         SegmentLabel.final_text.label("final_text"),
+        SegmentLabel.created_at.label("created_at"),
         sa.func.row_number()
         .over(
             partition_by=(SegmentLabel.segment_id, SegmentLabel.label_version_id),
@@ -108,7 +106,7 @@ def collect_stats(session: Session, *, session_since: dt.datetime | None = None)
     )
     session_durations = [row / 1000 for (row,) in session_events if row is not None]
 
-    median_seconds = _median(durations)
+    median_seconds = median(durations)
     backlog = tasks_by_status["pending"] + tasks_by_status["in_progress"]
     projected_seconds = median_seconds * backlog if median_seconds else None
 
@@ -130,6 +128,8 @@ def collect_stats(session: Session, *, session_since: dt.datetime | None = None)
         "throughput": {
             "median_seconds_per_segment": round(median_seconds, 2) if median_seconds else None,
             "labeled_total": labeled_total,
+            "annotator_hours": round(sum(durations) / 3600, 3),
+            "events": len(durations),
             "backlog": backlog,
             "projected_seconds_to_finish": round(projected_seconds, 1)
             if projected_seconds
@@ -138,7 +138,7 @@ def collect_stats(session: Session, *, session_since: dt.datetime | None = None)
         "session": {
             "since": since.isoformat(),
             "completed": len(session_events),
-            "median_seconds_per_segment": round(_median(session_durations), 2)
+            "median_seconds_per_segment": round(median(session_durations), 2)
             if session_durations
             else None,
             "elapsed_seconds": round(sum(session_durations), 1) if session_durations else 0.0,

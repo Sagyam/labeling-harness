@@ -14,55 +14,44 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models import (
-    AnnotationEvent,
-    AnnotationTask,
     AsrHypothesis,
     Episode,
     HypothesisWord,
     Segment,
-    SegmentLabel,
     SegmentScore,
 )
-from app.models.enums import DISPOSITIONS, PIPELINE_STATUSES, SPLITS
-from app.services.stats import latest_labels_subquery
-
-
-def _median(values: list[float]) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    middle = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[middle]
-    return (ordered[middle - 1] + ordered[middle]) / 2
+from app.models.enums import PIPELINE_STATUSES, SPLITS
+from app.services.stats import collect_stats, latest_labels_subquery
 
 
 def collect_report(session: Session) -> dict[str, Any]:
-    """Gather every figure the report shows, as plain JSON-serializable data."""
-    episodes = session.scalar(sa.select(sa.func.count()).select_from(Episode)) or 0
-    segments = session.scalar(sa.select(sa.func.count()).select_from(Segment)) or 0
-    total_seconds = float(
-        session.scalar(sa.select(sa.func.coalesce(sa.func.sum(Segment.duration_seconds), 0.0)))
-        or 0.0
-    )
+    """Gather every figure the report shows, as plain JSON-serializable data.
 
-    segments_by_status = dict.fromkeys(PIPELINE_STATUSES, 0)
-    for status, count in session.execute(
-        sa.select(Segment.pipeline_status, sa.func.count()).group_by(Segment.pipeline_status)
-    ):
-        segments_by_status[status] = count
+    The corpus, label, throughput and queue counters come from :func:`collect_stats`, which is the
+    single definition of each of them -- the report adds only the figures the live progress display
+    has no use for: the accept rate over time, split balance, score means and word coverage.
+    """
+    stats = collect_stats(session)
 
+    episodes = stats["episodes"] or 0
+    segments = stats["segments"]["total"]
+    segments_by_status = {name: stats["segments"][name] for name in PIPELINE_STATUSES}
+    labels = {name: count for name, count in stats["labels"].items() if name != "total"}
+    labeled_total = stats["labels"]["total"]
+    accept_rate = stats["accept_rate"]
+
+    median_seconds = stats["throughput"]["median_seconds_per_segment"]
+    annotator_hours = stats["throughput"]["annotator_hours"]
+    events = stats["throughput"]["events"]
+    segments_per_hour = 3600 / median_seconds if median_seconds else None
+    backlog = stats["throughput"]["backlog"]
+    queues = stats["queues"]
+
+    # Accept rate over time: the health check on the upstream pipeline. This reads the *current*
+    # label per segment, exactly as the headline accept rate above does -- counting superseded
+    # labels here would let the trend line disagree with the summary it is meant to explain.
     current = latest_labels_subquery()
-    labels = dict.fromkeys(DISPOSITIONS, 0)
-    for disposition, count in session.execute(
-        sa.select(current.c.disposition, sa.func.count()).group_by(current.c.disposition)
-    ):
-        labels[disposition] = count
-    labeled_total = sum(labels.values())
-    accept_rate = labels["accepted_unchanged"] / labeled_total if labeled_total else None
-
-    # Accept rate over time: the health check on the upstream pipeline.
-    day = sa.func.date_trunc("day", SegmentLabel.created_at).label("day")
+    day = sa.func.date_trunc("day", current.c.created_at).label("day")
     accept_rate_by_day = [
         {
             "day": row.day.date().isoformat(),
@@ -75,39 +64,13 @@ def collect_report(session: Session) -> dict[str, Any]:
                 day,
                 sa.func.count().label("labeled"),
                 sa.func.count()
-                .filter(SegmentLabel.disposition == "accepted_unchanged")
+                .filter(current.c.disposition == "accepted_unchanged")
                 .label("accepted"),
             )
             .group_by(day)
             .order_by(day)
         )
     ]
-
-    durations = [
-        row / 1000
-        for (row,) in session.execute(
-            sa.select(AnnotationEvent.duration_ms).where(AnnotationEvent.duration_ms.is_not(None))
-        )
-    ]
-    median_seconds = _median(durations)
-    annotator_hours = sum(durations) / 3600 if durations else 0.0
-    segments_per_hour = 3600 / median_seconds if median_seconds else None
-
-    backlog = (
-        session.scalar(
-            sa.select(sa.func.count())
-            .select_from(AnnotationTask)
-            .where(AnnotationTask.status.in_(("pending", "in_progress")))
-        )
-        or 0
-    )
-    queues = dict.fromkeys(("review", "audit", "error"), 0)
-    for queue, count in session.execute(
-        sa.select(AnnotationTask.queue, sa.func.count())
-        .where(AnnotationTask.status.in_(("pending", "in_progress")))
-        .group_by(AnnotationTask.queue)
-    ):
-        queues[queue] = count
 
     score_means = session.execute(
         sa.select(
@@ -151,7 +114,7 @@ def collect_report(session: Session) -> dict[str, Any]:
         "corpus": {
             "episodes": episodes,
             "segments": segments,
-            "audio_hours": round(total_seconds / 3600, 3),
+            "audio_hours": stats["audio_hours"],
             "segments_by_status": segments_by_status,
             "episode_titles": [
                 {"external_id": external_id, "title": title, "split": split}
@@ -166,10 +129,10 @@ def collect_report(session: Session) -> dict[str, Any]:
         "accept_rate": round(accept_rate, 4) if accept_rate is not None else None,
         "accept_rate_by_day": accept_rate_by_day,
         "throughput": {
-            "median_seconds_per_segment": round(median_seconds, 2) if median_seconds else None,
+            "median_seconds_per_segment": median_seconds,
             "segments_per_hour": round(segments_per_hour, 1) if segments_per_hour else None,
-            "annotator_hours": round(annotator_hours, 3),
-            "events": len(durations),
+            "annotator_hours": annotator_hours,
+            "events": events,
         },
         "queue": {
             "backlog": backlog,
