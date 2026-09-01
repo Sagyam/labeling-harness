@@ -33,6 +33,7 @@ from app.models import (
     SegmentScore,
 )
 from app.services.audio import ClipFormatError, compute_peaks, validate_clip
+from app.services.flags import FlagHypothesis, compute_flags
 from app.services.manifest import Manifest, ManifestError, read_manifest
 from app.services.splits import assign_split
 from app.storage.base import ObjectStorage
@@ -457,6 +458,18 @@ def import_manifest(
             _import_hypotheses(session, plan, segment, systems, report, only_missing=False)
 
             scores = record.get("scores") or {}
+            # Imported flags are kept as received; rule flags are computed here, at import, so
+            # the queue builder never has to re-read the audio or the hypotheses.
+            computed = compute_flags(
+                duration_seconds=segment.duration_seconds,
+                hypotheses=[
+                    FlagHypothesis(
+                        text=str(h.get("text") or ""), no_speech_prob=h.get("no_speech_prob")
+                    )
+                    for h in record["hypotheses"]
+                ],
+                settings=settings,
+            )
             session.add(
                 SegmentScore(
                     segment_id=segment.id,
@@ -464,7 +477,7 @@ def import_manifest(
                     word_disagreement_rate=scores.get("word_disagreement_rate"),
                     script_conflict_rate=scores.get("script_conflict_rate"),
                     code_switch_density=scores.get("code_switch_density"),
-                    flags_jsonb=list(record.get("flags") or []),
+                    flags_jsonb=sorted(set(record.get("flags") or []) | set(computed)),
                 )
             )
         else:

@@ -124,6 +124,45 @@ def test_scores_and_flags_are_stored_as_received(
     assert all(s.word_disagreement_rate is not None for s in scores)
 
 
+def test_rule_flags_are_computed_at_import(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """A one-word 20-second segment is implausibly slow; the flag must exist without re-reading
+    anything at queue-build time."""
+    root = build_export_fixture(tmp_path / "export_f", episode_id="flag_ep", segments=4, systems=2)
+    lines = (root / "segments.jsonl").read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["start_time"], record["end_time"] = 0.0, 20.0
+    for hypothesis in record["hypotheses"]:
+        hypothesis["text"] = "एउटा"
+        hypothesis.pop("words", None)
+    lines[0] = json.dumps(record, ensure_ascii=False)
+    (root / "segments.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    run_import(db_session, root, storage, settings)
+    segment = db_session.scalars(
+        sa.select(Segment).where(Segment.external_id == record["segment_id"])
+    ).one()
+    assert "implausible_speaking_rate" in segment.scores.flags_jsonb
+
+
+def test_imported_flags_are_preserved_alongside_computed_ones(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    root = build_export_fixture(tmp_path / "export_g", episode_id="keep_ep", segments=2, systems=2)
+    lines = (root / "segments.jsonl").read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[0])
+    record["flags"] = ["upstream_only_flag"]
+    lines[0] = json.dumps(record, ensure_ascii=False)
+    (root / "segments.jsonl").write_text("\n".join(lines), encoding="utf-8")
+
+    run_import(db_session, root, storage, settings)
+    segment = db_session.scalars(
+        sa.select(Segment).where(Segment.external_id == record["segment_id"])
+    ).one()
+    assert "upstream_only_flag" in segment.scores.flags_jsonb
+
+
 def test_missing_scores_are_stored_as_null(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:

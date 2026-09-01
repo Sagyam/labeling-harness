@@ -49,3 +49,19 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 | An `import_runs` row records the run | ✅ | `test_import_records_an_import_run`, `test_segments_link_to_their_import_run` |
 
 161 tests passing, lint and format clean.
+
+## Phase 3 — Queue building — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Queue builder creates tasks and is idempotent | ✅ | `test_build_creates_a_task_for_every_segment`, `test_rebuilding_does_not_duplicate_active_tasks` (second build creates 0), `test_a_new_import_adds_only_the_new_tasks`, `test_rebuilding_leaves_completed_tasks_alone` |
+| Top-priority segments are visibly the disagreeing ones on the seed data | ✅ | `test_top_priority_segments_are_the_disagreeing_ones` — mean `word_disagreement_rate` of the top four exceeds the bottom four |
+| Audit sampling is reproducible under a fixed seed | ✅ | `test_audit_sampling_is_reproducible_under_a_fixed_seed`; the sample is drawn from the low-priority half (`test_audit_queue_samples_easy_segments`) |
+| Test-episode seeds are distributed across systems, not concentrated on one | ✅ | `test_test_episode_seeds_rotate_across_systems` — 40 segments, 3 systems, every system seeds at least 5; `test_test_episode_seed_rotation_is_deterministic` |
+| Train/val episodes seed with the strongest hypothesis | ✅ | `test_train_episodes_seed_with_the_strongest_hypothesis` |
+| `reason_jsonb` explains every priority score | ✅ | `test_every_task_carries_a_priority_and_a_reason` asserts all four components, weights, contributions and the score itself; `test_reason_explains_why_a_segment_surfaced` |
+| Segments with zero hypotheses go to the error queue, never review | ✅ | `test_segments_without_hypotheses_go_to_the_error_queue`, `test_error_queue_segments_never_reach_review` |
+| Rule flags computed at import | ✅ | `app/services/flags.py` (7 rules); wired into the importer and asserted by `test_rule_flags_are_computed_at_import`; upstream flags are preserved (`test_imported_flags_are_preserved_alongside_computed_ones`) |
+| Priority formula documented in ARCHITECTURE.md | ✅ | "Priority formula" section, including the normalization of each input |
+
+213 tests passing, lint and format clean.
