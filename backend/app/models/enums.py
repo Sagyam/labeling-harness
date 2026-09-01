@@ -34,8 +34,11 @@ APPROVED_DISPOSITIONS: Final[tuple[str, ...]] = ("accepted_unchanged", "edited")
 EventAction = Literal["accept", "edit", "skip", "flag", "reopen"]
 EVENT_ACTIONS: Final[tuple[str, ...]] = ("accept", "edit", "skip", "flag", "reopen")
 
-ImportStatus = Literal["running", "succeeded", "failed", "dry_run"]
-IMPORT_STATUSES: Final[tuple[str, ...]] = ("running", "succeeded", "failed", "dry_run")
+#: An import is atomic: it either commits as ``succeeded`` or is rolled back whole, leaving no row
+#: at all. There is deliberately no ``failed`` status -- a rejected import must leave the database
+#: exactly as it was -- and a dry run writes nothing by definition.
+ImportStatus = Literal["running", "succeeded"]
+IMPORT_STATUSES: Final[tuple[str, ...]] = ("running", "succeeded")
 
 
 def check_in(column: str, values: tuple[str, ...]) -> str:
