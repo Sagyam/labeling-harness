@@ -16,6 +16,10 @@ import {
   StatsResponse,
   Task,
   TranslitOut,
+  IngestEvent,
+  IngestJobStatus,
+  EpisodeSummary,
+  EpisodeSegmentSummary,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -162,6 +166,81 @@ export const api = {
     return request<TranslitOut>('/translit/choice', {
       method: 'POST',
       body: JSON.stringify({ token, devanagari }),
+    })
+  },
+
+  startIngest: async (
+    formData: FormData
+  ): Promise<{ job_id: string; status: string; episode_id: string; title: string }> => {
+    const url = resolveUrl('/ingest')
+    const res = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const errJson = await res.json()
+        detail = errJson.detail || JSON.stringify(errJson)
+      } catch {
+        // ignore
+      }
+      throw new Error(`Ingest failed: ${detail}`)
+    }
+    return res.json()
+  },
+
+  getIngestStatus: (jobId: string): Promise<IngestJobStatus> => {
+    return request<IngestJobStatus>(`/ingest/${jobId}`)
+  },
+
+  subscribeIngestEvents: (
+    jobId: string,
+    onEvent: (event: IngestEvent) => void,
+    onError?: (err: any) => void
+  ): (() => void) => {
+    const url = resolveUrl(`/ingest/${jobId}/events`)
+    const eventSource = new EventSource(url)
+
+    eventSource.onmessage = (e) => {
+      try {
+        const parsed = JSON.parse(e.data) as IngestEvent
+        onEvent(parsed)
+      } catch (err) {
+        console.error('Failed to parse SSE event:', err)
+      }
+    }
+
+    eventSource.onerror = (err) => {
+      if (onError) onError(err)
+    }
+
+    return () => {
+      eventSource.close()
+    }
+  },
+
+  listEpisodes: (): Promise<EpisodeSummary[]> => {
+    return request<EpisodeSummary[]>('/episodes')
+  },
+
+  listEpisodeSegments: (episodeId: string | number): Promise<EpisodeSegmentSummary[]> => {
+    return request<EpisodeSegmentSummary[]>(`/episodes/${episodeId}/segments`)
+  },
+
+  deleteEpisode: (
+    episodeId: string | number
+  ): Promise<{ deleted: boolean; episode_id: number; external_id: string; deleted_segments: number }> => {
+    return request(`/episodes/${episodeId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  deleteSegment: (
+    segmentId: string | number
+  ): Promise<{ deleted: boolean; segment_id: number; external_id: string }> => {
+    return request(`/segments/${segmentId}`, {
+      method: 'DELETE',
     })
   },
 }

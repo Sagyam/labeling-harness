@@ -197,3 +197,72 @@ export interface TranslitOut {
   token: string
   candidates: string[]
 }
+
+export interface IngestLogEntry {
+  timestamp: string
+  level: 'info' | 'warn' | 'error' | 'success' | string
+  message: string
+}
+
+export interface IngestJobStatus {
+  job_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  stage:
+    | 'upload'
+    | 'normalizing'
+    | 'segmenting'
+    | 'transcribing'
+    | 'analyzing'
+    | 'importing'
+    | 'complete'
+    | 'failed'
+  progress: number
+  active_segments: number
+  total_segments: number
+  error: string | null
+  episode_id: string
+  show_id: string
+  title: string
+  logs: IngestLogEntry[]
+}
+
+export type IngestEvent =
+  | { type: 'log'; timestamp: string; level: string; message: string }
+  | {
+      type: 'progress'
+      stage: string
+      progress: number
+      active_segments: number
+      total_segments: number
+    }
+  | { type: 'complete'; summary: Record<string, any>; episode_id: string }
+  | { type: 'error'; error: string }
+
+export interface EpisodeSummary {
+  id: number
+  external_id: string
+  title: string | null
+  show_id: string | null
+  duration_seconds: number | null
+  split: string
+  segment_count: number
+  labeled_count: number
+  pending_count: number
+}
+
+export interface EpisodeSegmentSummary {
+  id: number
+  external_id: string
+  start_time: number
+  end_time: number
+  duration_seconds: number
+  pipeline_status: string
+  task_status: string | null
+  seed_text: string | null
+  flags: string[]
+  cmi: number | null
+  word_disagreement_rate: number | null
+  audio_url: string
+  peaks_url: string | null
+}
+

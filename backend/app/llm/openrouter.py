@@ -21,6 +21,7 @@ import os
 import time
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -65,6 +66,22 @@ class LlmResult:
     completion_tokens: int | None = None
     estimated_cost_usd: Decimal | None = None
     latency_ms: int | None = None
+    dry_run: bool = False
+    raw: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class AsrResult:
+    """One ASR transcription, plus usage and cost metrics."""
+
+    route: str
+    model: str
+    text: str
+    words: list[dict[str, Any]] | None = None
+    avg_logprob: float | None = None
+    no_speech_prob: float | None = None
+    latency_ms: int | None = None
+    estimated_cost_usd: Decimal | None = None
     dry_run: bool = False
     raw: dict[str, Any] | None = None
 
@@ -272,3 +289,145 @@ class OpenRouterClient:
         )
         logger.info("llm_request_failed", route=route, error=last_error)
         raise LlmRequestFailed(f"route {route!r} failed: {last_error}")
+
+    def transcribe(
+        self,
+        audio_path: Path | str,
+        *,
+        route: str = "asr",
+        prompt: str | None = None,
+        language: str | None = None,
+        dry_run: bool | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> AsrResult:
+        """Transcribe an audio file using Cloud ASR via OpenRouter.
+
+        Always logs the attempt to ``llm_requests``. In dry run mode or when unconfigured,
+        logs status='dry_run' and generates deterministic mock transcripts.
+        """
+        route_config = self.config.routes.get(route)
+        target_model = model or (route_config.model if route_config else "openai/whisper-large-v3")
+        effective_dry_run = self.config.dry_run if dry_run is None else dry_run
+
+        audio_file = Path(audio_path)
+        file_size = audio_file.stat().st_size if audio_file.exists() else 0
+        hash_seed = f"{target_model}:{audio_file.name}:{file_size}".encode()
+        payload_hash = hashlib.sha256(hash_seed).hexdigest()
+        summary = f"asr_transcribe: {audio_file.name} model={target_model}"
+
+        if effective_dry_run or not self.config.enabled or not self.api_key:
+            self._log(
+                route=route,
+                model=target_model,
+                request_hash=payload_hash,
+                input_summary=summary,
+                status="dry_run",
+            )
+            logger.info("asr_dry_run", route=route, model=target_model, file=str(audio_file))
+            # Generate realistic Nepali-English code-switched mock hypothesis
+            sample_texts = [
+                "हामीले यो project मा meeting गरेर data analyse गर्नु पर्छ",
+                "आजको session मा machine learning र technology को कुरा भयो",
+                "सबै team members ले आफ्नो schedule अनुसार task complete गर्नु होला",
+                "यो software system मा नयाँ feature update add गरिएको छ",
+            ]
+            # Deterministic choice based on file hash
+            chosen = sample_texts[int(payload_hash[:4], 16) % len(sample_texts)]
+            words = [
+                {"word": w, "start": round(i * 0.4, 2), "end": round((i + 1) * 0.4, 2)}
+                for i, w in enumerate(chosen.split())
+            ]
+            return AsrResult(
+                route=route,
+                model=target_model,
+                text=chosen,
+                words=words,
+                avg_logprob=-0.25,
+                no_speech_prob=0.01,
+                dry_run=True,
+            )
+
+        timeout = (
+            timeout_seconds
+            or (route_config.timeout_seconds if route_config else None)
+            or self.config.default_timeout_seconds
+        )
+        url = f"{self.config.base_url.rstrip('/')}/audio/transcriptions"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        started = time.monotonic()
+        last_error = "no attempt was made"
+
+        for attempt in range(max(1, self.config.max_retries)):
+            try:
+                with open(audio_file, "rb") as f:
+                    files = {"file": (audio_file.name, f, "audio/flac")}
+                    data = {"model": target_model}
+                    if prompt:
+                        data["prompt"] = prompt
+                    if language:
+                        data["language"] = language
+                    response = self._get_client().post(
+                        url, data=data, files=files, headers=headers, timeout=timeout
+                    )
+            except httpx.HTTPError as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            else:
+                if response.status_code == 200:
+                    latency_ms = int((time.monotonic() - started) * 1000)
+                    body = response.json()
+                    text = body.get("text", "")
+                    raw_words = body.get("words") or []
+                    words = [
+                        {
+                            "word": w.get("word", ""),
+                            "start": w.get("start"),
+                            "end": w.get("end"),
+                        }
+                        for w in raw_words
+                    ]
+                    usage = body.get("usage") or {}
+                    cost = usage.get("total_cost")
+                    result = AsrResult(
+                        route=route,
+                        model=body.get("model", target_model),
+                        text=text,
+                        words=words,
+                        avg_logprob=body.get("avg_logprob", -0.2),
+                        no_speech_prob=body.get("no_speech_prob", 0.0),
+                        latency_ms=latency_ms,
+                        estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
+                        raw=body,
+                    )
+                    self._log(
+                        route=route,
+                        model=result.model,
+                        request_hash=payload_hash,
+                        input_summary=summary,
+                        status="succeeded",
+                        output=body,
+                        cost=result.estimated_cost_usd,
+                        latency_ms=latency_ms,
+                    )
+                    return result
+
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                if response.status_code not in RETRYABLE_STATUS:
+                    break
+
+            if attempt + 1 < max(1, self.config.max_retries):
+                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
+
+        latency_ms = int((time.monotonic() - started) * 1000)
+        self._log(
+            route=route,
+            model=target_model,
+            request_hash=payload_hash,
+            input_summary=summary,
+            status="failed",
+            latency_ms=latency_ms,
+            error=last_error,
+        )
+        logger.info("asr_request_failed", route=route, error=last_error)
+        raise LlmRequestFailed(f"ASR transcription failed: {last_error}")

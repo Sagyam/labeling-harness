@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
@@ -151,3 +152,31 @@ def get_segment_peaks(
         media_type="application/json",
         headers={"Cache-Control": "private, max-age=86400"},
     )
+
+
+@router.delete("/segments/{segment_id}")
+def delete_segment(
+    segment_id: int,
+    session: Session = Depends(get_session),
+    storage: ObjectStorage = Depends(get_object_storage),
+) -> dict[str, Any]:
+    """Delete a single segment and its associated tasks, labels, and storage files."""
+    segment = session.scalar(sa.select(Segment).where(Segment.id == segment_id))
+    if segment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
+
+    external_id = segment.external_id
+    clip_key = segment.clip_object_key
+    peaks_key = segment.peaks_object_key
+
+    # Delete storage objects
+    try:
+        storage.delete(clip_key)
+        if peaks_key:
+            storage.delete(peaks_key)
+    except Exception:
+        pass
+
+    session.delete(segment)
+    session.commit()
+    return {"deleted": True, "segment_id": segment_id, "external_id": external_id}

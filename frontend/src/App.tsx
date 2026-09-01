@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Header } from './components/Header'
+import { IngestModal } from './components/IngestModal'
+import { EpisodeManagerModal } from './components/EpisodeManagerModal'
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
 import { TriageView } from './components/TriageView'
 import { EditorView } from './components/EditorView'
@@ -12,6 +14,10 @@ export default function App() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [activeQueue, setActiveQueue] = useState<string>('review')
   const [activeMode, setActiveMode] = useState<'triage' | 'editor'>('triage')
+
+  // Ingestion & Episode modal state
+  const [isIngestOpen, setIsIngestOpen] = useState<boolean>(false)
+  const [isEpisodesOpen, setIsEpisodesOpen] = useState<boolean>(false)
 
   // Triage state
   const [queueRows, setQueueRows] = useState<QueueRow[]>([])
@@ -350,6 +356,8 @@ export default function App() {
         }}
         onResume={handleResume}
         onOpenHelp={() => setIsHelpOpen(true)}
+        onOpenIngest={() => setIsIngestOpen(true)}
+        onOpenEpisodes={() => setIsEpisodesOpen(true)}
         health={health}
       />
 
@@ -380,6 +388,29 @@ export default function App() {
           onToast={showToast}
         />
       )}
+
+      {/* Episode Management Modal */}
+      <EpisodeManagerModal
+        isOpen={isEpisodesOpen}
+        onClose={() => setIsEpisodesOpen(false)}
+        onDataChanged={() => {
+          refreshStats()
+          loadQueue(activeQueue)
+        }}
+      />
+
+      {/* Ingest Episode Modal */}
+      <IngestModal
+        isOpen={isIngestOpen}
+        onClose={() => setIsIngestOpen(false)}
+        onComplete={(episodeId) => {
+          refreshStats()
+          loadQueue(activeQueue)
+          setActiveMode('triage')
+          showToast(`Episode '${episodeId}' ingested! Priority queue updated.`, 'success')
+        }}
+        onToast={showToast}
+      />
 
       {/* Shortcuts Help Modal */}
       <KeyboardShortcutsModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />

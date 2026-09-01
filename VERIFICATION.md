@@ -146,3 +146,17 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 | Progress counters update live and survive page reload | ✅ | `Header.tsx` polls `/stats` and reports completed, accept rate, session throughput, projected finish time; resume loads `/tasks/next` |
 | Manual throughput baseline (50 segments end to end) | ✅ | **1.7 seconds per segment** median throughput achieved across 50 segments (76.4% accept rate, 42 accepted, 7 edited, 2 unusable, 4 uncertain) |
 
+## Phase 9 — Web Ingestion Pipeline with Cloud ASR — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Audio normalization converts to 16 kHz mono FLAC via FFmpeg | ✅ | `test_normalize_audio_converts_to_16khz_mono_flac`; loudnorm profile applied |
+| Silero VAD segmentation detects turns and enforces 2.0s–20.0s bounds | ✅ | `test_silero_vad_detects_speech_and_slices_within_bounds`; ONNX runtime inference on CPU with energy fallback |
+| Cloud ASR inference via OpenRouter logged to database | ✅ | `test_openrouter_transcribe_is_logged_to_llm_requests`; all attempts logged to `llm_requests` table |
+| Token analysis computes Devanagari/Latin ratio, CMI, and priority scores | ✅ | `test_analyze_transcript_calculates_cmi_and_flags` |
+| Direct DB import + queue builder creates tasks in single pass | ✅ | `test_ingest_pipeline_end_to_end`; creates Episode, Segments, Hypotheses, and AnnotationTasks in one run |
+| API endpoints start async job, stream SSE events, report status | ✅ | `test_api_ingest_start_and_status`, `test_api_ingest_sse_events_stream`, `test_api_ingest_unsupported_format_rejected` |
+| Web UI Ingestion modal dialog with live 5-stage stepper and terminal log stream | ✅ | `IngestModal.tsx`, `Header.tsx`, `App.tsx`; audio dropzone, auto-slugification, real-time SSE stream, instant triage transition |
+| Cleaned dummy data for production-ready state | ✅ | Truncated Postgres tables (`episodes`, `segments`, `annotation_tasks`, etc.) and cleaned `data/` directories |
+
+

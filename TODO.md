@@ -793,14 +793,3 @@ MVP is Phases 0 through 6 with:
 8. Test suite green, lint clean, documentation current.
 
 Export and reporting (Phases 7–8) follow once the editor is proven not to fight the annotator.
-
----
-
-# 11. First task
-
-**Phase 0 only.** Repository layout, Docker Compose with Postgres and MinIO, backend skeleton,
-config loading, Alembic wired, pytest and ruff configured, pre-commit hook, documentation files.
-
-Write the tests for config loading and the database connection first.
-
-Use mise if you need to install anything locally

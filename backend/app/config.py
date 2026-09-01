@@ -307,7 +307,10 @@ def load_settings(path: Path | str | None = None) -> Settings:
 
 def load_llm_routes(path: Path | str | None = None) -> LlmRoutes:
     """Load the OpenRouter routing table from ``config/llm_routes.yaml``."""
-    return LlmRoutes(**_read_yaml(Path(path) if path else DEFAULT_LLM_ROUTES_PATH))
+    data = _read_yaml(Path(path) if path else DEFAULT_LLM_ROUTES_PATH)
+    if "HARNESS_LLM__DRY_RUN" in os.environ:
+        data["dry_run"] = os.environ["HARNESS_LLM__DRY_RUN"].lower() in ("true", "1", "yes")
+    return LlmRoutes(**data)
 
 
 @lru_cache(maxsize=1)

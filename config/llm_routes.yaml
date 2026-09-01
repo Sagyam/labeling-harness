@@ -1,10 +1,13 @@
 # All LLM inference from this codebase goes through OpenRouter. No direct provider calls.
-# At MVP no route is wired to any pipeline stage: routes is intentionally empty.
-enabled: false
+enabled: true
 base_url: https://openrouter.ai/api/v1
-default_timeout_seconds: 30
+default_timeout_seconds: 60
 default_max_tokens: 1024
 max_retries: 3
 retry_backoff_seconds: 0.5
-dry_run: true
-routes: {}
+dry_run: false
+routes:
+  asr_nemotron:
+    model: nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b
+  asr_qwen:
+    model: qwen/qwen3-asr-1.7b

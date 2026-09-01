@@ -61,13 +61,13 @@ def make_client(
 # --- the MVP posture: nothing is wired ---------------------------------------------------
 
 
-def test_the_committed_configuration_is_disabled_and_empty() -> None:
+def test_the_committed_configuration_has_asr_routes() -> None:
     from app.config import load_llm_routes
 
     config = load_llm_routes()
-    assert config.enabled is False
-    assert config.routes == {}
-    assert config.dry_run is True
+    assert config.enabled is True
+    assert "asr_nemotron" in config.routes
+    assert "asr_qwen" in config.routes
 
 
 def test_a_disabled_client_refuses_to_call(db_session: Session) -> None:

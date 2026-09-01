@@ -22,9 +22,34 @@ ALL_FLAGS: tuple[str, ...] = (
     "too_long",
     "implausible_speaking_rate",
     "script_conflict",
+    "hindi_intrusion",
 )
 
 _DEVANAGARI_START, _DEVANAGARI_END = "ऀ", "ॿ"
+HINDI_MARKERS: frozenset[str] = frozenset(
+    {
+        "नहीं",
+        "था",
+        "थी",
+        "थे",
+        "रहा",
+        "रही",
+        "रहे",
+        "होगा",
+        "होगी",
+        "होंगे",
+        "करना",
+        "करता",
+        "करते",
+        "करती",
+        "यह",
+        "वह",
+        "क्या",
+        "हुए",
+        "हुआ",
+        "हुई",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +115,8 @@ def compute_flags(
             and hypothesis.no_speech_prob >= cfg.no_speech_prob_threshold
         ):
             raised.add("high_no_speech_prob")
+        if any(w in HINDI_MARKERS for w in hypothesis.text.split()):
+            raised.add("hindi_intrusion")
 
     if duration_seconds < cfg.min_duration_seconds:
         raised.add("too_short")

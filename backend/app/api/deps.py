@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
@@ -17,6 +17,13 @@ def get_session() -> Iterator[Session]:
     """Request-scoped transactional session."""
     with session_scope() as session:
         yield session
+
+
+def get_session_factory() -> Callable[[], Session]:
+    """Factory yielding new database sessions."""
+    from app.db.session import get_sessionmaker
+
+    return get_sessionmaker()
 
 
 def get_config() -> Settings:

@@ -64,6 +64,7 @@ def db_url() -> str:
 def db_engine(db_url: str) -> Iterator[Engine]:
     """Session-scoped engine against a database migrated to head."""
     os.environ["DATABASE_URL"] = db_url
+    os.environ["HARNESS_LLM__DRY_RUN"] = "true"
     engine = sa.create_engine(db_url, future=True)
     cfg = alembic_config(db_url)
     command.downgrade(cfg, "base")

@@ -3,6 +3,25 @@
 Reverse-chronological session log. Each entry: what completed, what failed verification, what is
 blocked, and the next session's first task.
 
+## Session 3 — 2026-09-01
+
+**Scope:** Phase 9 (Web Ingestion Pipeline with Cloud ASR) and database cleanup for clean production state.
+
+### Completed
+
+| Phase | State | Notes |
+|---|---|---|
+| 9 Web Ingestion — Backend Pipeline | ✅ verified | 5-stage pipeline: FFmpeg loudnorm (16 kHz mono FLAC), Silero VAD CPU speech turn detection (2s–20s bounds), Cloud ASR via OpenRouter (logged to `llm_requests`), token analysis (CMI, script conflict, rule flags), direct manifest import & queue builder in one pass. |
+| 9 Web Ingestion — API Endpoints | ✅ verified | `POST /ingest` (multipart audio upload + async execution), `GET /ingest/{id}` (status, progress, active segment count, logs), `GET /ingest/{id}/events` (Server-Sent Events streaming live terminal logs). |
+| 9 Web Ingestion — Web UI | ✅ verified | `Header.tsx` '+ Ingest' button; `IngestModal.tsx` drag-and-drop audio dropzone, episode metadata inputs with auto-slugification, 5-stage visual stepper, glowing animated progress bar, real-time streaming terminal console with log level badges, and direct 'Start Annotating' transition to Triage. |
+| Production Reset / Data Cleanup | ✅ verified | Truncated all synthetic fixture records from Postgres (`episodes`, `segments`, `annotation_tasks`, etc.) and purged test files from storage. Database and queues now completely clean for real audio. |
+
+**All 337 backend tests passing. `tsc -b && vite build` clean. Pre-commit hooks passing. Live Docker containers updated.**
+
+### Next Steps
+
+The system is fully built, tested, and ready for production annotation. The annotator can click '+ Ingest' in the Web UI to ingest real podcast episodes and immediately begin review.
+
 ## Session 2 — 2026-09-01
 
 **Scope:** Phase 6 (Review UI) and Phase 5 UI transliteration helper. Full TypeScript implementation of the React frontend, integration with the backend review API, and 50-segment end-to-end throughput baseline.

@@ -23,6 +23,7 @@ export const EditorView: React.FC<EditorViewProps> = ({
   onFlag,
   onSkip,
   onExitToTriage,
+  onToast,
 }) => {
   const segment = task.segment
   const seedHypothesis = segment.hypotheses.find((h) => h.id === task.seed_hypothesis_id)
@@ -231,6 +232,21 @@ export const EditorView: React.FC<EditorViewProps> = ({
 
   const audioUrl = resolveUrl(segment.audio_url)
 
+  const handleDeleteSegment = async () => {
+    const confirm = window.confirm(
+      `Permanently delete segment "${segment.external_id}"?\n\nThis will remove the audio clip and discard this segment from the corpus.`
+    )
+    if (!confirm) return
+
+    try {
+      await api.deleteSegment(segment.id)
+      onToast(`Segment ${segment.external_id} deleted`, 'info')
+      onExitToTriage()
+    } catch (err: any) {
+      alert(`Failed to delete segment: ${err.message}`)
+    }
+  }
+
   return (
     <div className="editor-container">
       {/* Hidden audio element */}
@@ -278,6 +294,14 @@ export const EditorView: React.FC<EditorViewProps> = ({
             title="Defer task without judging"
           >
             Skip
+          </button>
+          <button
+            className="btn-action-sm"
+            style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+            onClick={handleDeleteSegment}
+            title="Permanently delete this segment and audio clip"
+          >
+            🗑️ Delete
           </button>
         </div>
       </div>
