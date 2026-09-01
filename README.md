@@ -42,6 +42,12 @@ backend/.venv/bin/python scripts/report_status.py    [--format html]
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 ```
 
+## Status
+
+Backend phases 0-4, 7 and 8 are complete and verified; see [VERIFICATION.md](VERIFICATION.md) for
+the criteria and their evidence. The review UI (Phase 6) is not built yet - `frontend/` is a
+minimal shell - so annotation is currently done through the API.
+
 ## Configuration
 
 `config/settings.yaml` holds non-secret configuration. Any value can be overridden with an

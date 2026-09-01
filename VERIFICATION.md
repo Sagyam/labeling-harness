@@ -94,3 +94,51 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 
 281 tests passing, lint and format clean. Live smoke test against the Docker stack: `/stats`,
 `/queue`, `/tasks/next`, `/tasks/{id}/accept`, `/translit` and a ranged audio request all behaved.
+
+## Section 3 — OpenRouter client — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Thin client: key from env, route-based model, per-route timeout and max tokens | ✅ | `app/llm/openrouter.py`; `test_the_request_targets_openrouter_with_the_route_model` |
+| Retries with backoff | ✅ | `test_a_rate_limit_is_retried_then_succeeds`, `test_retries_are_bounded`, `test_a_timeout_is_retried`, `test_a_client_error_is_not_retried` |
+| Dry-run mode | ✅ | `test_dry_run_makes_no_http_call` (the transport raises if touched), `test_per_call_dry_run_overrides_the_configuration` |
+| Request logging to `llm_requests` | ✅ | `test_every_call_is_logged`, `test_a_failure_is_logged_with_the_error`, `test_dry_run_is_still_logged` |
+| `config/llm_routes.yaml` has `routes: {}` and `enabled: false` | ✅ | `test_the_committed_configuration_is_disabled_and_empty`; a disabled client refuses to call |
+| Covered by tests against a mocked HTTP layer | ✅ | 17 tests, all through `httpx.MockTransport`; the suite never makes a paid call |
+
+## Phase 7 — Export — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Two consecutive exports produce identical checksums | ✅ | `test_two_consecutive_exports_are_byte_identical`; records are ordered by `segment_id` and JSON keys are sorted |
+| A test-split segment appearing in a training export fails a test | ✅ | `test_a_test_segment_never_appears_in_the_training_export` — asserted against the actual test-split segment ids, not assumed |
+| Row counts in the manifest match the files | ✅ | `test_manifest_row_counts_match_the_files`, `test_manifest_checksum_matches_the_data_file` |
+| Export succeeds when word timestamps are entirely absent | ✅ | `test_analytics_export_succeeds_without_word_timestamps` |
+| Exported text matches the current label for every segment | ✅ | `test_exported_text_matches_the_current_label`, `test_only_the_latest_label_is_exported` (labels are append-only, so "current" means newest) |
+| `unusable_audio` never appears in training or gold | ✅ | `test_unusable_audio_never_appears_in_training_or_gold` |
+| `disposition` and `seed_system_id` retained | ✅ | `test_disposition_and_seed_system_are_retained` |
+| Manifest records version, policy, filters, counts, checksums, timestamp, commit, import runs | ✅ | `test_manifest_records_provenance` |
+| All four export kinds | ✅ | training, gold, analytics, error_mining — one test class each |
+| JSONL always; Parquet if cheap | ✅ / ⛔ | JSONL implemented. Parquet **not** added: it would pull in pyarrow (~100 MB) for a corpus this size, which is not "cheap"; revisit when the archive is loaded at scale |
+
+## Phase 8 — Status report — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| One command, no SQL knowledge required | ✅ | `python scripts/report_status.py` (`--format text|html|json`) |
+| Report includes throughput and projected completion | ✅ | `test_report_includes_throughput`, `test_report_projects_completion`; live run shows median seconds/segment, segments/hour, annotator hours, backlog and projected hours |
+| Report runs against an empty database without crashing | ✅ | `test_report_runs_against_an_empty_database` (text and HTML both render) |
+| Episodes, audio hours, segments by status | ✅ | `test_report_counts_the_corpus` |
+| Labels by disposition, accept rate over time | ✅ | `test_report_breaks_down_dispositions_and_accept_rate`, `test_report_includes_accept_rate_over_time` |
+| Score distributions | ✅ | `test_report_includes_score_distributions` |
+| Split balance in hours | ✅ | `test_report_includes_split_balance_in_hours` |
+| Word timestamp coverage | ✅ | `test_report_includes_word_timestamp_coverage` |
+| HTML output is safe | ✅ | `test_html_escapes_untrusted_text` — episode titles come from an upstream manifest and are escaped |
+
+## Phase 6 — Review UI — ⛔ deferred
+
+Not started, by agreement: the triage and editor modes need interactive keyboard testing with the
+owner present. `frontend/` holds a minimal Vite + React shell that calls `/health` and `/stats`, so
+the compose stack is real, but no triage list, editor, waveform, shortcut map or progress display
+exists yet. The manual throughput baseline (50 segments end to end, median seconds per segment) and
+the transliteration popup criteria in Phase 5 depend on this phase and are also outstanding.
