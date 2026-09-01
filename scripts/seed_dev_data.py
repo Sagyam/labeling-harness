@@ -7,15 +7,12 @@ python scripts/seed_dev_data.py --episodes 1 --segments 20 --systems 3
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-
-from app.config import load_dotenv
+# Importing _bootstrap puts backend/ on sys.path, so `app` is importable below.
+from _bootstrap import bootstrap
 from app.db.session import session_scope
 from app.services.seed import seed_dev_data
-from app.utils.logging import configure_logging, get_logger
+from app.utils.logging import get_logger
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,8 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1234)
     args = parser.parse_args(argv)
 
-    load_dotenv()
-    configure_logging("INFO", json_output=False)
+    bootstrap()
     logger = get_logger("seed")
 
     with session_scope() as session:

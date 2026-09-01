@@ -14,13 +14,11 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-
-from app.config import get_settings, load_dotenv
+# Importing _bootstrap puts backend/ on sys.path, so `app` is importable below.
+from _bootstrap import bootstrap
 from app.db.session import session_scope
 from app.services.importer import ImportError_, import_manifest
 from app.storage import build_storage
-from app.utils.logging import configure_logging
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,9 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="emit the report as JSON")
     args = parser.parse_args(argv)
 
-    load_dotenv()
-    settings = get_settings()
-    configure_logging(settings.app.log_level, json_output=args.json)
+    settings = bootstrap(json_output=args.json)
 
     storage = build_storage(settings)
     try:

@@ -8,15 +8,11 @@ python scripts/build_queue.py --episode show-a_ep012 --dry-run
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-
-from app.config import get_settings, load_dotenv
+# Importing _bootstrap puts backend/ on sys.path, so `app` is importable below.
+from _bootstrap import bootstrap
 from app.db.session import session_scope
 from app.services.queue_builder import build_queue
-from app.utils.logging import configure_logging
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,9 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="report and write nothing")
     args = parser.parse_args(argv)
 
-    load_dotenv()
-    settings = get_settings()
-    configure_logging(settings.app.log_level, json_output=False)
+    settings = bootstrap()
 
     with session_scope() as session:
         report = build_queue(
