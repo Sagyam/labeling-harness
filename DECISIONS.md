@@ -70,3 +70,29 @@ The suite needs real partial unique indexes and real foreign keys — applicatio
 not prove the constraints exist. Each test runs inside a transaction rolled back afterwards, with
 `join_transaction_mode="create_savepoint"` so service code can still call `commit()`. **Reversal:**
 would weaken Phase 1 verification.
+
+## D14 — A skip writes an event, but no label
+The specification says every write creates a `segment_labels` row. A skip is the exception: the
+annotator deferred the segment without judging the transcript, so inventing a label row for it would
+corrupt every disposition statistic and every export filter that reads `disposition`. A skip
+therefore writes an `annotation_events` row (`action='skip'`) and an `audit_logs` entry, sets
+`annotation_tasks.status='skipped'`, and leaves `segments.pipeline_status` untouched so the next
+queue build brings the segment back. **Reversal:** trivial, but it would make accept rate and
+disposition counts meaningless.
+
+## D15 — Audio is streamed with range support, never a presigned redirect
+The specification allows either. Streaming is one code path that works identically for the local
+filesystem and MinIO backends, keeps clip URLs stable and same-origin, and avoids leaking a
+long-lived object URL. `ObjectStorage.read_range` exists precisely so a 206 costs one ranged read
+rather than a full download. **Reversal:** adding a redirect later is additive; the endpoint stays.
+
+## D16 — `/tasks/next` marks the task `in_progress`
+That is what makes resume work: reopening the app returns the same task rather than a fresh one, so
+the annotator lands exactly where they left off. The partial unique index guarantees there is only
+ever one active task per segment, so this cannot fan out. **Reversal:** trivial.
+
+## D17 — Elapsed time is reported by the client
+`annotation_events.duration_ms` is computed from the `opened_at` the client sends, not from server
+processing time, because the quantity of interest is how long the human took. An explicit
+`duration_ms` in the request wins over `opened_at`, so a client that measures precisely can say so.
+**Reversal:** would make the throughput baseline meaningless.

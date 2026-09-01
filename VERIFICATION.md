@@ -65,3 +65,32 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 | Priority formula documented in ARCHITECTURE.md | ✅ | "Priority formula" section, including the normalization of each input |
 
 213 tests passing, lint and format clean.
+
+## Phase 4 — Review API — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Automated API tests cover every endpoint including error paths | ✅ | `test_api.py`, 47 tests: 404 on unknown task/segment, 409 on deciding a finished task, 422 on bad disposition/missing text/empty bulk list, 416 on bad ranges, 401 on a bad token |
+| Accepting writes a label with `disposition='accepted_unchanged'` and non-null `duration_ms` | ✅ | `test_accept_writes_a_label_an_event_and_an_audit_entry` |
+| Bulk accept writes one label and one event per task, transactionally | ✅ | `test_bulk_accept_writes_one_label_and_event_per_task`, `test_bulk_accept_is_all_or_nothing` (a bad id in the list rolls the whole batch back) |
+| Range requests return 206 with correct byte ranges | ✅ | `test_audio_range_request_returns_206_with_the_right_bytes`, plus open-ended and suffix ranges; live check returned `content-range: bytes 0-99/167280` |
+| Timing reflects real elapsed time, not server processing time | ✅ | `test_accept_records_real_elapsed_time_not_server_time` (12 s of client elapsed time recorded), `test_explicit_duration_wins_over_opened_at` |
+| Every write creates a `segment_labels` row and an `annotation_events` row | ✅ | Asserted per endpoint; **exception**: skip writes an event and audit entry but no label, by design — see DECISIONS D14 |
+| Every write creates an `audit_logs` entry | ✅ | `test_accept_writes_a_label_an_event_and_an_audit_entry`, `test_skip_writes_an_event_but_no_label` |
+| Optional static bearer token | ✅ | `test_no_authentication_is_required_by_default`, `test_a_configured_token_is_enforced` |
+
+## Phase 5 — Devanagari input helper (backend only) — ✅ service complete, ⛔ UI deferred
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Provider interface has a mock implementation used in tests | ✅ | `app/translit/mock.py`; `test_mock_provider_satisfies_the_interface` |
+| Cache hit returns without a network call | ✅ | `test_cache_hit_never_touches_a_provider` asserts the provider is consulted exactly once across repeated lookups |
+| Remote provider failure falls back to offline without an error | ✅ | `test_a_failing_provider_falls_through_to_the_next`, plus remote timeout/bad-status/garbled-payload tests |
+| Correction memory ranks a previous choice first | ✅ | `test_correction_memory_ranks_a_previous_choice_first` |
+| Candidates cached case-insensitively, capped, hit-counted | ✅ | `test_cache_lookup_is_case_insensitive`, `test_candidates_are_capped_at_the_configured_maximum`, `test_cache_hits_are_counted` |
+| `Esc` leaves the Latin token untouched | ⛔ | UI behaviour — Phase 6, deferred |
+| Candidate popup fully keyboard-operable | ⛔ | UI behaviour — Phase 6, deferred |
+| Manual check: twenty common Nepali words | ⛔ | Requires the owner; the live endpoint returned `["कुरा","कुर","कूरा","कूर","कउरा"]` for `kura` |
+
+281 tests passing, lint and format clean. Live smoke test against the Docker stack: `/stats`,
+`/queue`, `/tasks/next`, `/tasks/{id}/accept`, `/translit` and a ranged audio request all behaved.

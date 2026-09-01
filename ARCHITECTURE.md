@@ -161,3 +161,36 @@ Four export kinds, each writing `manifest.json` next to the data:
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:
 the same inputs and filters produce byte-identical output.
+
+## Review API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Process health plus Postgres and object storage reachability |
+| `GET /stats` | Progress counters, disposition mix, accept rate, throughput, projected finish |
+| `GET /queue` | Triage list; `limit`, `offset`, `episode`, `min_priority`, `queue` |
+| `GET /tasks/next` | Highest-priority pending task; marks it `in_progress` so reopening resumes |
+| `GET /tasks/{id}` | One task with its full segment payload; does not change status |
+| `GET /segments/{id}` | Segment with all hypotheses, scores, flags and current label |
+| `GET /segments/{id}/audio` | Clip stream with HTTP range support (206) |
+| `GET /segments/{id}/peaks` | Precomputed waveform peaks JSON |
+| `POST /tasks/{id}/accept` | `disposition=accepted_unchanged` |
+| `POST /tasks/{id}/label` | `disposition=edited`, body carries `final_text` |
+| `POST /tasks/{id}/flag` | `unusable_audio` or `uncertain` |
+| `POST /tasks/{id}/skip` | Defer; event only, no label |
+| `POST /tasks/bulk-accept` | Accept many tasks in one transaction |
+| `POST /translit` | Latin token → ranked Devanagari candidates |
+| `POST /translit/choice` | Record the chosen form for the correction memory |
+
+Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
+`annotation_events` row carrying the client-reported elapsed time, and an `audit_logs` entry.
+Authentication is off when `api.auth_token` is empty; setting it requires `Authorization: Bearer`.
+
+## Transliteration
+
+`TranslitProvider.suggest(latin_token) -> list[str]` has three implementations: the remote Google
+Input Tools endpoint (called from the backend, short timeout, degrades to nothing on failure), an
+offline rule-based provider built on `indic-transliteration`, and a static provider for tests.
+`TransliterationService` consults `translit_cache` first, so a recurring token never leaves
+Postgres, and `record_choice` promotes a previously chosen form to the front of the candidate list —
+the correction memory. The accumulated cache is a romanization lexicon for this speaker community.

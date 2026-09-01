@@ -29,9 +29,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from app.api import health
+    from app.api import health, queue, segments, tasks, translit
 
-    app.include_router(health.router)
+    for module in (health, queue, tasks, segments, translit):
+        app.include_router(module.router)
 
     logger.info("app_created", environment=settings.app.environment)
     return app

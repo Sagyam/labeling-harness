@@ -88,3 +88,56 @@ def db_session(db_engine: Engine) -> Iterator[Session]:
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def object_storage(tmp_path: Path):
+    """Local-filesystem storage rooted in the test's temporary directory."""
+    from app.storage.local import LocalFilesystemStorage
+
+    return LocalFilesystemStorage(root=tmp_path / "objects")
+
+
+@pytest.fixture
+def settings():
+    """Settings loaded from the repository configuration."""
+    from app.config import load_settings
+
+    return load_settings()
+
+
+@pytest.fixture
+def client(db_session: Session, object_storage, settings):
+    """TestClient wired to the test session and a temporary object store.
+
+    Overriding the session dependency keeps API writes inside the test transaction, so the suite
+    stays isolated while still exercising the real commit path.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.api.deps import get_config, get_object_storage, get_session
+    from app.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_object_storage] = lambda: object_storage
+    app.dependency_overrides[get_config] = lambda: settings
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def imported_episode(db_session: Session, object_storage, settings, tmp_path: Path):
+    """A fully imported and queued episode: 6 segments, 3 systems, tasks built."""
+    from app.services.fixtures import build_export_fixture
+    from app.services.importer import import_manifest
+    from app.services.queue_builder import build_queue
+
+    root = build_export_fixture(
+        tmp_path / "export_api", episode_id="api_ep001", segments=6, systems=3
+    )
+    import_manifest(db_session, root, storage=object_storage, settings=settings)
+    build_queue(db_session, settings=settings, audit_sample_rate=0.0)
+    db_session.flush()
+    return "api_ep001"
