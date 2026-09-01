@@ -1,5 +1,16 @@
-import React from 'react'
-import { Hypothesis } from '../types'
+import { Chip } from '@/components/Chip'
+import { Button } from '@/components/ui/button'
+import { Kbd } from '@/components/ui/kbd'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from '@/components/ui/item'
+import { cn } from '@/lib/utils'
+import type { Hypothesis } from '@/types'
 
 interface HypothesesListProps {
   hypotheses: Hypothesis[]
@@ -7,92 +18,57 @@ interface HypothesesListProps {
   onSelectHypothesis: (text: string) => void
 }
 
-export const HypothesesList: React.FC<HypothesesListProps> = ({
+export function HypothesesList({
   hypotheses,
   seedHypothesisId,
   onSelectHypothesis,
-}) => {
+}: HypothesesListProps) {
   return (
-    <div className="hypotheses-panel">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-          All Upstream ASR Hypotheses ({hypotheses.length})
+    <div className="flex min-h-0 flex-col bg-card ring-1 ring-foreground/5">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <span className="font-heading text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+          Upstream ASR hypotheses ({hypotheses.length})
         </span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--text-faint)' }}>
-          Press <kbd>Alt+1..5</kbd> to load directly
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Kbd>Alt + 1…5</Kbd> to load
         </span>
       </div>
 
-      <div className="hypotheses-list">
+      <ItemGroup className="scrollbar-thin min-h-0 flex-1 overflow-y-auto divide-y">
         {hypotheses.map((hyp, index) => {
           const isSeed = hyp.id === seedHypothesisId
           return (
-            <div
+            <Item
               key={hyp.id}
-              className={`hypothesis-card ${isSeed ? 'is-seed' : ''}`}
+              className={cn('items-start gap-4 px-3 py-2.5', isSeed && 'bg-accent/50')}
             >
-              <div style={{ flex: 1 }}>
-                <div className="hyp-header">
-                  <span className="system-chip">{hyp.system_id}</span>
-                  {hyp.model_id && (
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-faint)' }}>
-                      ({hyp.model_id})
-                    </span>
-                  )}
-                  {isSeed && (
-                    <span
-                      style={{
-                        fontSize: '0.65rem',
-                        fontWeight: 700,
-                        color: 'var(--primary-light)',
-                        background: 'rgba(99, 102, 241, 0.2)',
-                        padding: '0.1rem 0.4rem',
-                        borderRadius: '3px',
-                      }}
-                    >
-                      SEED
-                    </span>
-                  )}
+              <ItemContent className="gap-1.5">
+                <ItemTitle className="flex w-full flex-wrap items-center gap-1.5 line-clamp-none">
+                  <Chip className="bg-foreground/10 text-foreground">{hyp.system_id}</Chip>
+                  {hyp.model_id && <Chip>{hyp.model_id}</Chip>}
+                  {isSeed && <Chip className="bg-info/15 text-info">seed</Chip>}
                   {hyp.avg_logprob !== null && (
-                    <span
-                      style={{
-                        fontSize: '0.68rem',
-                        fontFamily: 'var(--font-mono)',
-                        color: 'var(--text-faint)',
-                      }}
-                      title="Average log probability"
-                    >
-                      logprob: {hyp.avg_logprob.toFixed(2)}
-                    </span>
+                    <Chip title="Average log probability">
+                      logprob {hyp.avg_logprob.toFixed(2)}
+                    </Chip>
                   )}
-                  <span
-                    style={{
-                      fontSize: '0.68rem',
-                      fontFamily: 'var(--font-mono)',
-                      color: 'var(--text-faint)',
-                    }}
-                  >
-                    words: {hyp.word_count}
-                  </span>
-                </div>
+                  <Chip>{hyp.word_count} words</Chip>
+                </ItemTitle>
+                <ItemDescription className="font-devanagari text-sm leading-relaxed text-foreground line-clamp-none">
+                  {hyp.text}
+                </ItemDescription>
+              </ItemContent>
 
-                <div className="hyp-text">{hyp.text}</div>
-              </div>
-
-              <div>
-                <button
-                  className="hyp-load-btn"
-                  onClick={() => onSelectHypothesis(hyp.text)}
-                  title={`Load into editor (Alt+${index + 1})`}
-                >
-                  <kbd style={{ fontSize: '0.65rem' }}>Alt+{index + 1}</kbd>
-                  <span>Load</span>
-                </button>
-              </div>
-            </div>
+              <ItemActions>
+                <Button variant="outline" size="xs" onClick={() => onSelectHypothesis(hyp.text)}>
+                  Load
+                  <Kbd className="ml-1">Alt+{index + 1}</Kbd>
+                </Button>
+              </ItemActions>
+            </Item>
           )
         })}
-      </div>
+      </ItemGroup>
     </div>
   )
 }

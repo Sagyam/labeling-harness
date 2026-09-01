@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Header } from './components/Header'
-import { IngestModal } from './components/IngestModal'
-import { EpisodeManagerModal } from './components/EpisodeManagerModal'
-import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal'
-import { TriageView } from './components/TriageView'
-import { EditorView } from './components/EditorView'
-import { ToastContainer, ToastMessage } from './components/Toast'
-import { api } from './services/api'
-import { HealthResponse, QueueRow, StatsResponse, Task } from './types'
+import { toast } from 'sonner'
+
+import { EditorView } from '@/components/EditorView'
+import { EpisodeManagerModal } from '@/components/EpisodeManagerModal'
+import { Header } from '@/components/Header'
+import { IngestModal } from '@/components/IngestModal'
+import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
+import { TriageView } from '@/components/TriageView'
+import { api } from '@/services/api'
+import type { HealthResponse, QueueRow, StatsResponse, Task } from '@/types'
 
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -15,7 +16,7 @@ export default function App() {
   const [activeQueue, setActiveQueue] = useState<string>('review')
   const [activeMode, setActiveMode] = useState<'triage' | 'editor'>('triage')
 
-  // Ingestion & Episode modal state
+  // Ingestion & episode modal state
   const [isIngestOpen, setIsIngestOpen] = useState<boolean>(false)
   const [isEpisodesOpen, setIsEpisodesOpen] = useState<boolean>(false)
 
@@ -27,36 +28,21 @@ export default function App() {
   // Editor state
   const [currentTask, setCurrentTask] = useState<Task | null>(null)
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false)
-  const [toasts, setToasts] = useState<ToastMessage[]>([])
-
-  // Toast feedback helper
-  const showToast = useCallback(
-    (text: string, type: 'success' | 'info' | 'warning' | 'error' = 'info') => {
-      const id = String(Date.now() + Math.random())
-      setToasts((prev) => [...prev, { id, text, type }])
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id))
-      }, 3500)
-    },
-    []
-  )
-
-  const dismissToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }
 
   // Load stats & health
   const refreshStats = useCallback(async () => {
     try {
-      const s = await api.getStats()
-      setStats(s)
+      setStats(await api.getStats())
     } catch {
-      // ignore
+      // stats are advisory; a failed refresh should not interrupt annotation
     }
   }, [])
 
   useEffect(() => {
-    api.getHealth().then(setHealth).catch(() => setHealth({ status: 'unreachable' }))
+    api
+      .getHealth()
+      .then(setHealth)
+      .catch(() => setHealth({ status: 'unreachable' }))
     refreshStats()
 
     const interval = setInterval(refreshStats, 15000)
@@ -64,20 +50,17 @@ export default function App() {
   }, [refreshStats])
 
   // Load queue rows
-  const loadQueue = useCallback(
-    async (qName: string) => {
-      try {
-        const rows = await api.getQueue({ queue: qName, limit: 100 })
-        setQueueRows(rows)
-        setSelectedIds(new Set())
-        setFocusedIndex((prev) => (prev >= rows.length ? Math.max(0, rows.length - 1) : prev))
-      } catch (err) {
-        console.error('Failed to load queue:', err)
-        showToast('Failed to load queue', 'error')
-      }
-    },
-    [showToast]
-  )
+  const loadQueue = useCallback(async (qName: string) => {
+    try {
+      const rows = await api.getQueue({ queue: qName, limit: 100 })
+      setQueueRows(rows)
+      setSelectedIds(new Set())
+      setFocusedIndex((prev) => (prev >= rows.length ? Math.max(0, rows.length - 1) : prev))
+    } catch (err) {
+      console.error('Failed to load queue:', err)
+      toast.error('Failed to load queue')
+    }
+  }, [])
 
   useEffect(() => {
     loadQueue(activeQueue)
@@ -89,12 +72,12 @@ export default function App() {
       const task = await api.getNextTask({ queue: activeQueue })
       setCurrentTask(task)
       setActiveMode('editor')
-      showToast(`Resumed ${task.segment.external_id}`, 'info')
+      toast.info(`Resumed ${task.segment.external_id}`)
     } catch (err: any) {
       if (err.status === 404) {
-        showToast('No pending tasks in queue', 'warning')
+        toast.warning('No pending tasks in queue')
       } else {
-        showToast('Failed to resume task', 'error')
+        toast.error('Failed to resume task')
       }
     }
   }
@@ -102,12 +85,20 @@ export default function App() {
   // Open task in editor
   const handleOpenEditor = async (taskId: number) => {
     try {
-      const task = await api.getTask(taskId)
-      setCurrentTask(task)
+      setCurrentTask(await api.getTask(taskId))
       setActiveMode('editor')
-    } catch (err) {
-      showToast(`Failed to load task #${taskId}`, 'error')
+    } catch {
+      toast.error(`Failed to load task #${taskId}`)
     }
+  }
+
+  const dropRow = (taskId: number) => {
+    setQueueRows((prev) => prev.filter((r) => r.task_id !== taskId))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.delete(taskId)
+      return next
+    })
   }
 
   // Triage: Accept row
@@ -118,19 +109,14 @@ export default function App() {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
       })
-      showToast(
-        `Accepted ${targetRow?.segment_external_id || `#${taskId}`} (${(durationMs / 1000).toFixed(1)}s)`,
-        'success'
+      toast.success(
+        `Accepted ${targetRow?.segment_external_id || `#${taskId}`}`,
+        { description: `${(durationMs / 1000).toFixed(1)}s` },
       )
-      setQueueRows((prev) => prev.filter((r) => r.task_id !== taskId))
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        next.delete(taskId)
-        return next
-      })
+      dropRow(taskId)
       refreshStats()
     } catch (err: any) {
-      showToast(err.detail || 'Failed to accept task', 'error')
+      toast.error(err.detail || 'Failed to accept task')
     }
   }
 
@@ -138,7 +124,7 @@ export default function App() {
   const handleFlagRow = async (
     taskId: number,
     disposition: 'unusable_audio' | 'uncertain',
-    durationMs: number
+    durationMs: number,
   ) => {
     const targetRow = queueRows.find((r) => r.task_id === taskId)
     try {
@@ -147,19 +133,13 @@ export default function App() {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
       })
-      showToast(
+      toast.warning(
         `Flagged ${targetRow?.segment_external_id || `#${taskId}`} as ${disposition}`,
-        'warning'
       )
-      setQueueRows((prev) => prev.filter((r) => r.task_id !== taskId))
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        next.delete(taskId)
-        return next
-      })
+      dropRow(taskId)
       refreshStats()
     } catch (err: any) {
-      showToast(err.detail || 'Failed to flag task', 'error')
+      toast.error(err.detail || 'Failed to flag task')
     }
   }
 
@@ -168,13 +148,13 @@ export default function App() {
     if (taskIds.length === 0) return
     try {
       await api.bulkAccept({ task_ids: taskIds })
-      showToast(`Bulk accepted ${taskIds.length} segments`, 'success')
+      toast.success(`Bulk accepted ${taskIds.length} segments`)
       const idSet = new Set(taskIds)
       setQueueRows((prev) => prev.filter((r) => !idSet.has(r.task_id)))
       setSelectedIds(new Set())
       refreshStats()
     } catch (err: any) {
-      showToast(err.detail || 'Bulk accept failed', 'error')
+      toast.error(err.detail || 'Bulk accept failed')
     }
   }
 
@@ -189,84 +169,65 @@ export default function App() {
   }
 
   const handleSelectAll = (selectAll: boolean) => {
-    if (selectAll) {
-      setSelectedIds(new Set(queueRows.map((r) => r.task_id)))
+    setSelectedIds(selectAll ? new Set(queueRows.map((r) => r.task_id)) : new Set())
+  }
+
+  /** Accept-unchanged or label depending on whether the seed text was edited. */
+  const persistDecision = async (taskId: number, finalText: string, durationMs: number) => {
+    if (!currentTask) return { edited: false }
+    const seedHyp = currentTask.segment.hypotheses.find(
+      (h) => h.id === currentTask.seed_hypothesis_id,
+    )
+    const isUnchanged = finalText.trim() === (seedHyp?.text || '').trim()
+    const opened_at = new Date(Date.now() - durationMs).toISOString()
+
+    if (isUnchanged) {
+      await api.acceptTask(taskId, { duration_ms: durationMs, opened_at })
     } else {
-      setSelectedIds(new Set())
+      await api.labelTask(taskId, { final_text: finalText, duration_ms: durationMs, opened_at })
+    }
+    return { edited: !isUnchanged }
+  }
+
+  /** Fetch the next task, falling back to triage when the queue is exhausted. */
+  const advanceToNextTask = async () => {
+    try {
+      setCurrentTask(await api.getNextTask({ queue: activeQueue }))
+    } catch (err: any) {
+      if (err.status === 404) {
+        toast.info('Queue complete — returning to triage')
+      } else {
+        toast.error('Error loading next task')
+      }
+      setActiveMode('triage')
+      loadQueue(activeQueue)
     }
   }
 
-  // Editor: Save and Next
+  // Editor: Save and next
   const handleSaveAndNext = async (taskId: number, finalText: string, durationMs: number) => {
     if (!currentTask) return
-    const seedHyp = currentTask.segment.hypotheses.find(
-      (h) => h.id === currentTask.seed_hypothesis_id
-    )
-    const isUnchanged = finalText.trim() === (seedHyp?.text || '').trim()
-
+    const externalId = currentTask.segment.external_id
     try {
-      if (isUnchanged) {
-        await api.acceptTask(taskId, {
-          duration_ms: durationMs,
-          opened_at: new Date(Date.now() - durationMs).toISOString(),
-        })
-        showToast(`Accepted ${currentTask.segment.external_id} unchanged`, 'success')
-      } else {
-        await api.labelTask(taskId, {
-          final_text: finalText,
-          duration_ms: durationMs,
-          opened_at: new Date(Date.now() - durationMs).toISOString(),
-        })
-        showToast(`Saved edits for ${currentTask.segment.external_id}`, 'success')
-      }
-
+      const { edited } = await persistDecision(taskId, finalText, durationMs)
+      toast.success(edited ? `Saved edits for ${externalId}` : `Accepted ${externalId} unchanged`)
       refreshStats()
-
-      // Advance to next task in queue
-      try {
-        const next = await api.getNextTask({ queue: activeQueue })
-        setCurrentTask(next)
-      } catch (err: any) {
-        if (err.status === 404) {
-          showToast('Queue complete! Returning to triage', 'info')
-          setActiveMode('triage')
-          loadQueue(activeQueue)
-        } else {
-          showToast('Error loading next task', 'error')
-        }
-      }
+      await advanceToNextTask()
     } catch (err: any) {
-      showToast(err.detail || 'Save failed', 'error')
+      toast.error(err.detail || 'Save failed')
       throw err
     }
   }
 
-  // Editor: Save and Stay
+  // Editor: Save and stay
   const handleSaveAndStay = async (taskId: number, finalText: string, durationMs: number) => {
     if (!currentTask) return
-    const seedHyp = currentTask.segment.hypotheses.find(
-      (h) => h.id === currentTask.seed_hypothesis_id
-    )
-    const isUnchanged = finalText.trim() === (seedHyp?.text || '').trim()
-
     try {
-      if (isUnchanged) {
-        await api.acceptTask(taskId, {
-          duration_ms: durationMs,
-          opened_at: new Date(Date.now() - durationMs).toISOString(),
-        })
-        showToast(`Saved unchanged`, 'success')
-      } else {
-        await api.labelTask(taskId, {
-          final_text: finalText,
-          duration_ms: durationMs,
-          opened_at: new Date(Date.now() - durationMs).toISOString(),
-        })
-        showToast(`Saved edits`, 'success')
-      }
+      const { edited } = await persistDecision(taskId, finalText, durationMs)
+      toast.success(edited ? 'Saved edits' : 'Saved unchanged')
       refreshStats()
     } catch (err: any) {
-      showToast(err.detail || 'Save failed', 'error')
+      toast.error(err.detail || 'Save failed')
       throw err
     }
   }
@@ -275,7 +236,7 @@ export default function App() {
   const handleEditorFlag = async (
     taskId: number,
     disposition: 'unusable_audio' | 'uncertain',
-    durationMs: number
+    durationMs: number,
   ) => {
     try {
       await api.flagTask(taskId, {
@@ -283,19 +244,11 @@ export default function App() {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
       })
-      showToast(`Flagged as ${disposition}`, 'warning')
+      toast.warning(`Flagged as ${disposition}`)
       refreshStats()
-
-      // Advance
-      try {
-        const next = await api.getNextTask({ queue: activeQueue })
-        setCurrentTask(next)
-      } catch {
-        setActiveMode('triage')
-        loadQueue(activeQueue)
-      }
+      await advanceToNextTask()
     } catch (err: any) {
-      showToast(err.detail || 'Flag failed', 'error')
+      toast.error(err.detail || 'Flag failed')
     }
   }
 
@@ -306,23 +259,15 @@ export default function App() {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
       })
-      showToast(`Deferred task`, 'info')
+      toast.info('Deferred task')
       refreshStats()
-
-      // Advance
-      try {
-        const next = await api.getNextTask({ queue: activeQueue })
-        setCurrentTask(next)
-      } catch {
-        setActiveMode('triage')
-        loadQueue(activeQueue)
-      }
+      await advanceToNextTask()
     } catch (err: any) {
-      showToast(err.detail || 'Skip failed', 'error')
+      toast.error(err.detail || 'Skip failed')
     }
   }
 
-  // Global Keybindings (? for help)
+  // Global keybinding: ? toggles the shortcut reference
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
@@ -338,7 +283,7 @@ export default function App() {
   }, [])
 
   return (
-    <div className="app-container">
+    <div className="flex h-full flex-col bg-background">
       <Header
         stats={stats}
         activeQueue={activeQueue}
@@ -385,11 +330,9 @@ export default function App() {
             setActiveMode('triage')
             loadQueue(activeQueue)
           }}
-          onToast={showToast}
         />
       )}
 
-      {/* Episode Management Modal */}
       <EpisodeManagerModal
         isOpen={isEpisodesOpen}
         onClose={() => setIsEpisodesOpen(false)}
@@ -399,7 +342,6 @@ export default function App() {
         }}
       />
 
-      {/* Ingest Episode Modal */}
       <IngestModal
         isOpen={isIngestOpen}
         onClose={() => setIsIngestOpen(false)}
@@ -407,16 +349,13 @@ export default function App() {
           refreshStats()
           loadQueue(activeQueue)
           setActiveMode('triage')
-          showToast(`Episode '${episodeId}' ingested! Priority queue updated.`, 'success')
+          toast.success(`Episode '${episodeId}' ingested`, {
+            description: 'The priority queue has been updated.',
+          })
         }}
-        onToast={showToast}
       />
 
-      {/* Shortcuts Help Modal */}
       <KeyboardShortcutsModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
-
-      {/* Floating Notifications */}
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   )
 }

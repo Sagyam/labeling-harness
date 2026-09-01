@@ -1,6 +1,23 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { resolveUrl } from '../services/api'
-import { QueueRow } from '../types'
+import { useEffect, useRef, useState } from 'react'
+import { RiInboxLine, RiPauseFill, RiPlayFill } from '@remixicon/react'
+
+import { Chip } from '@/components/Chip'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { resolveUrl } from '@/services/api'
+import { cn } from '@/lib/utils'
+import type { QueueRow } from '@/types'
 
 interface TriageViewProps {
   rows: QueueRow[]
@@ -11,11 +28,32 @@ interface TriageViewProps {
   onSelectAll: (all: boolean) => void
   onAcceptRow: (taskId: number, durationMs: number) => Promise<void>
   onOpenEditor: (taskId: number) => void
-  onFlagRow: (taskId: number, disposition: 'unusable_audio' | 'uncertain', durationMs: number) => Promise<void>
+  onFlagRow: (
+    taskId: number,
+    disposition: 'unusable_audio' | 'uncertain',
+    durationMs: number,
+  ) => Promise<void>
   onBulkAccept: (taskIds: number[]) => Promise<void>
 }
 
-export const TriageView: React.FC<TriageViewProps> = ({
+const SHORTCUTS: Array<[string, string]> = [
+  ['j / k', 'Navigate'],
+  ['Space', 'Play'],
+  ['Enter', 'Accept'],
+  ['e', 'Editor'],
+  ['f', 'Unusable'],
+  ['u', 'Uncertain'],
+  ['x', 'Select'],
+  ['⇧ Enter', 'Bulk accept'],
+]
+
+function priorityClass(score: number) {
+  if (score >= 0.45) return 'bg-destructive/15 text-destructive'
+  if (score >= 0.25) return 'bg-warning/15 text-warning'
+  return 'bg-muted text-muted-foreground'
+}
+
+export function TriageView({
   rows,
   focusedIndex,
   onSetFocusedIndex,
@@ -26,7 +64,7 @@ export const TriageView: React.FC<TriageViewProps> = ({
   onOpenEditor,
   onFlagRow,
   onBulkAccept,
-}) => {
+}: TriageViewProps) {
   const [playingTaskId, setPlayingTaskId] = useState<number | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([])
@@ -35,10 +73,7 @@ export const TriageView: React.FC<TriageViewProps> = ({
   // Scroll focused row into view smoothly
   useEffect(() => {
     focusedRowOpenedAtRef.current = Date.now()
-    const el = rowRefs.current[focusedIndex]
-    if (el) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    }
+    rowRefs.current[focusedIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [focusedIndex])
 
   const getFocusedDurationMs = () => Math.max(0, Date.now() - focusedRowOpenedAtRef.current)
@@ -46,21 +81,17 @@ export const TriageView: React.FC<TriageViewProps> = ({
   // Audio Playback
   const togglePlay = (row: QueueRow) => {
     if (playingTaskId === row.task_id) {
-      if (audioRef.current) {
-        audioRef.current.pause()
-        setPlayingTaskId(null)
-      }
-    } else {
-      if (audioRef.current) {
-        audioRef.current.pause()
-      }
-      const audio = new Audio(resolveUrl(row.audio_url))
-      audioRef.current = audio
-      setPlayingTaskId(row.task_id)
-      audio.play().catch((err) => console.error('Audio play error:', err))
-      audio.onended = () => setPlayingTaskId(null)
-      audio.onerror = () => setPlayingTaskId(null)
+      audioRef.current?.pause()
+      setPlayingTaskId(null)
+      return
     }
+    audioRef.current?.pause()
+    const audio = new Audio(resolveUrl(row.audio_url))
+    audioRef.current = audio
+    setPlayingTaskId(row.task_id)
+    audio.play().catch((err) => console.error('Audio play error:', err))
+    audio.onended = () => setPlayingTaskId(null)
+    audio.onerror = () => setPlayingTaskId(null)
   }
 
   // Keyboard navigation for Triage mode
@@ -107,46 +138,35 @@ export const TriageView: React.FC<TriageViewProps> = ({
       // Enter: Accept focused row unchanged
       if (!e.shiftKey && !e.ctrlKey && e.key === 'Enter') {
         e.preventDefault()
-        if (focusedRow) {
-          onAcceptRow(focusedRow.task_id, getFocusedDurationMs())
-        }
+        if (focusedRow) onAcceptRow(focusedRow.task_id, getFocusedDurationMs())
         return
       }
 
       // e: Open editor
       if (e.key === 'e' || e.key === 'E') {
         e.preventDefault()
-        if (focusedRow) {
-          onOpenEditor(focusedRow.task_id)
-        }
+        if (focusedRow) onOpenEditor(focusedRow.task_id)
         return
       }
 
       // f: Flag unusable audio
       if (e.key === 'f' || e.key === 'F') {
         e.preventDefault()
-        if (focusedRow) {
-          onFlagRow(focusedRow.task_id, 'unusable_audio', getFocusedDurationMs())
-        }
+        if (focusedRow) onFlagRow(focusedRow.task_id, 'unusable_audio', getFocusedDurationMs())
         return
       }
 
       // u: Mark uncertain
       if (e.key === 'u' || e.key === 'U') {
         e.preventDefault()
-        if (focusedRow) {
-          onFlagRow(focusedRow.task_id, 'uncertain', getFocusedDurationMs())
-        }
+        if (focusedRow) onFlagRow(focusedRow.task_id, 'uncertain', getFocusedDurationMs())
         return
       }
 
       // x: Toggle checkbox
       if (e.key === 'x' || e.key === 'X') {
         e.preventDefault()
-        if (focusedRow) {
-          onToggleSelect(focusedRow.task_id)
-        }
-        return
+        if (focusedRow) onToggleSelect(focusedRow.task_id)
       }
     }
 
@@ -157,194 +177,202 @@ export const TriageView: React.FC<TriageViewProps> = ({
   // Stop audio when unmounting
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause()
-      }
+      audioRef.current?.pause()
     }
   }, [])
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.task_id))
 
   return (
-    <div className="triage-container">
-      {/* Triage Toolbar */}
-      <div className="triage-toolbar">
-        <div className="triage-actions-left">
-          <button
-            className="btn-bulk-accept"
-            disabled={selectedIds.size === 0}
-            onClick={() => onBulkAccept(Array.from(selectedIds))}
-            title="Accept all checked rows (Shift+Enter)"
-          >
-            <span>Accept Selected ({selectedIds.size})</span>
-            <kbd style={{ fontSize: '0.65rem' }}>Shift+↵</kbd>
-          </button>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Toolbar */}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4">
+        <Button
+          size="sm"
+          disabled={selectedIds.size === 0}
+          onClick={() => onBulkAccept(Array.from(selectedIds))}
+        >
+          Accept selected ({selectedIds.size})
+          <Kbd className="ml-1 bg-primary-foreground/15 text-primary-foreground">⇧ ↵</Kbd>
+        </Button>
 
-        <div className="triage-actions-right">
-          <span>{rows.length} queued segments</span>
-        </div>
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">
+          {rows.length} queued segments
+        </span>
       </div>
 
-      {/* Table Wrapper */}
-      <div className="triage-table-wrapper">
-        <table className="triage-table">
-          <thead>
-            <tr>
-              <th className="cell-select">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={(e) => onSelectAll(e.target.checked)}
-                  title="Select all"
-                />
-              </th>
-              <th className="cell-priority">Priority</th>
-              <th className="cell-audio">Audio</th>
-              <th className="cell-segment-id">Segment</th>
-              <th>Seed Hypothesis</th>
-              <th className="cell-flags">Flags & Reason</th>
-              <th className="cell-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => {
-              const isFocused = index === focusedIndex
-              const isPlaying = playingTaskId === row.task_id
-              const isChecked = selectedIds.has(row.task_id)
+      {/* Queue table */}
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+        {rows.length === 0 ? (
+          <Empty className="py-24">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <RiInboxLine />
+              </EmptyMedia>
+              <EmptyTitle>Queue is empty</EmptyTitle>
+              <EmptyDescription>
+                Nothing is pending here. Ingest an episode or switch to another queue.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background shadow-[0_1px_0_var(--border)]">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-10 pl-4">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={(checked) => onSelectAll(checked === true)}
+                    aria-label="Select all rows"
+                  />
+                </TableHead>
+                <TableHead className="w-20">Priority</TableHead>
+                <TableHead className="w-24">Audio</TableHead>
+                <TableHead className="w-52">Segment</TableHead>
+                <TableHead>Seed hypothesis</TableHead>
+                <TableHead className="w-64">Flags &amp; reason</TableHead>
+                <TableHead className="w-56 pr-4 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
 
-              // Priority style
-              const score = row.priority_score
-              const priClass =
-                score >= 0.45 ? 'priority-high' : score >= 0.25 ? 'priority-med' : 'priority-low'
+            <TableBody>
+              {rows.map((row, index) => {
+                const isFocused = index === focusedIndex
+                const isPlaying = playingTaskId === row.task_id
+                const isChecked = selectedIds.has(row.task_id)
 
-              return (
-                <tr
-                  key={row.task_id}
-                  ref={(el) => {
-                    rowRefs.current[index] = el
-                  }}
-                  className={`triage-row ${isFocused ? 'focused' : ''} ${isPlaying ? 'playing' : ''}`}
-                  onClick={() => onSetFocusedIndex(index)}
-                  onDoubleClick={() => onOpenEditor(row.task_id)}
-                >
-                  <td className="cell-select" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => onToggleSelect(row.task_id)}
-                    />
-                  </td>
-
-                  <td className="cell-priority">
-                    <span
-                      className={`priority-chip ${priClass}`}
-                      title={`Score: ${score.toFixed(3)}\nDisagreement: ${
-                        row.reason?.components?.word_disagreement_rate?.toFixed(2) ?? '0'
-                      }\nCode-switch: ${
-                        row.reason?.components?.code_switch_density?.toFixed(2) ?? '0'
-                      }`}
-                    >
-                      {score.toFixed(2)}
-                    </span>
-                  </td>
-
-                  <td className="cell-audio" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      className={`btn-play-mini ${isPlaying ? 'is-playing' : ''}`}
-                      onClick={() => togglePlay(row)}
-                      title="Play/Pause (Space)"
-                    >
-                      <span>{isPlaying ? '⏸' : '▶'}</span>
-                      <span>{row.duration_seconds.toFixed(1)}s</span>
-                    </button>
-                  </td>
-
-                  <td className="cell-segment-id">
-                    <span title={row.segment_external_id}>{row.segment_external_id}</span>
-                  </td>
-
-                  <td className="cell-text">
-                    <span title={row.seed_text || ''}>{row.seed_text || '—'}</span>
-                  </td>
-
-                  <td className="cell-flags">
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
-                      {row.seed_system_id && (
-                        <span className="system-chip">{row.seed_system_id}</span>
+                return (
+                  <TableRow
+                    key={row.task_id}
+                    ref={(el) => {
+                      rowRefs.current[index] = el
+                    }}
+                    data-state={isChecked ? 'selected' : undefined}
+                    className={cn(
+                      'cursor-default',
+                      isFocused && 'bg-accent hover:bg-accent',
+                      isPlaying && 'ring-1 ring-info/40 ring-inset',
+                    )}
+                    onClick={() => onSetFocusedIndex(index)}
+                    onDoubleClick={() => onOpenEditor(row.task_id)}
+                  >
+                    <TableCell className="relative pl-4" onClick={(e) => e.stopPropagation()}>
+                      {isFocused && (
+                        <span className="absolute inset-y-0 left-0 w-0.5 bg-foreground" />
                       )}
-                      {row.flags.map((flag) => (
-                        <span key={flag} className="flag-chip" title={flag}>
-                          {flag}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={() => onToggleSelect(row.task_id)}
+                        aria-label={`Select ${row.segment_external_id}`}
+                      />
+                    </TableCell>
 
-                  <td className="cell-actions" onClick={(e) => e.stopPropagation()}>
-                    <div className="action-btn-group">
-                      <button
-                        className="btn-action-sm btn-accept-sm"
-                        onClick={() => onAcceptRow(row.task_id, getFocusedDurationMs())}
-                        title="Accept unchanged (Enter)"
+                    <TableCell>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className={cn(
+                              'inline-block px-1.5 py-0.5 font-mono text-xs tabular-nums',
+                              priorityClass(row.priority_score),
+                            )}
+                          >
+                            {row.priority_score.toFixed(2)}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="font-mono text-xs">
+                          <div>score: {row.priority_score.toFixed(3)}</div>
+                          <div>
+                            disagreement:{' '}
+                            {row.reason?.components?.word_disagreement_rate?.toFixed(2) ?? '0'}
+                          </div>
+                          <div>
+                            code-switch:{' '}
+                            {row.reason?.components?.code_switch_density?.toFixed(2) ?? '0'}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant={isPlaying ? 'secondary' : 'ghost'}
+                        size="xs"
+                        onClick={() => togglePlay(row)}
+                        aria-label={isPlaying ? 'Pause' : 'Play'}
                       >
-                        Accept
-                      </button>
-                      <button
-                        className="btn-action-sm btn-edit-sm"
-                        onClick={() => onOpenEditor(row.task_id)}
-                        title="Open editor (e)"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="btn-action-sm btn-flag-sm"
-                        onClick={() => onFlagRow(row.task_id, 'unusable_audio', getFocusedDurationMs())}
-                        title="Flag unusable audio (f)"
-                      >
-                        Flag
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                        {isPlaying ? <RiPauseFill /> : <RiPlayFill />}
+                        <span className="font-mono tabular-nums">
+                          {row.duration_seconds.toFixed(1)}s
+                        </span>
+                      </Button>
+                    </TableCell>
+
+                    <TableCell className="max-w-52 truncate font-mono text-xs text-muted-foreground">
+                      <span title={row.segment_external_id}>{row.segment_external_id}</span>
+                    </TableCell>
+
+                    <TableCell className="max-w-0 truncate font-devanagari">
+                      <span title={row.seed_text || ''}>{row.seed_text || '—'}</span>
+                    </TableCell>
+
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {row.seed_system_id && <Chip>{row.seed_system_id}</Chip>}
+                        {row.flags.map((flag) => (
+                          <Chip key={flag} className="bg-warning/15 text-warning" title={flag}>
+                            {flag}
+                          </Chip>
+                        ))}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="pr-4" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-success hover:bg-success/10 hover:text-success"
+                          onClick={() => onAcceptRow(row.task_id, getFocusedDurationMs())}
+                        >
+                          Accept
+                        </Button>
+                        <Button variant="ghost" size="xs" onClick={() => onOpenEditor(row.task_id)}>
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="text-warning hover:bg-warning/10 hover:text-warning"
+                          onClick={() =>
+                            onFlagRow(row.task_id, 'unusable_audio', getFocusedDurationMs())
+                          }
+                        >
+                          Flag
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        )}
       </div>
 
-      {/* Footer Quick Shortcut Bar */}
-      <footer className="footer-shortcut-bar">
-        <div className="footer-keys">
-          <div className="footer-key-item">
-            <kbd>j</kbd>/<kbd>k</kbd> <span>Navigate</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>Space</kbd> <span>Play</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>Enter</kbd> <span>Accept</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>e</kbd> <span>Editor</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>f</kbd> <span>Unusable</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>u</kbd> <span>Uncertain</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>x</kbd> <span>Select</span>
-          </div>
-          <div className="footer-key-item">
-            <kbd>Shift+Enter</kbd> <span>Bulk Accept</span>
-          </div>
+      {/* Shortcut bar */}
+      <footer className="flex h-10 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t bg-card/40 px-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {SHORTCUTS.map(([keys, label]) => (
+            <KbdGroup key={label}>
+              <Kbd>{keys}</Kbd>
+              <span className="text-xs text-muted-foreground">{label}</span>
+            </KbdGroup>
+          ))}
         </div>
-
-        <div>
-          <span>Press <kbd>?</kbd> for all shortcuts</span>
-        </div>
+        <KbdGroup>
+          <span className="text-xs text-muted-foreground">All shortcuts</span>
+          <Kbd>?</Kbd>
+        </KbdGroup>
       </footer>
     </div>
   )

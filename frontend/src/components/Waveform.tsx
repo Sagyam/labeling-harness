@@ -1,29 +1,31 @@
 import React, { useEffect, useRef } from 'react'
-import { PeaksPayload } from '../types'
+import { useTheme } from 'next-themes'
+
+import type { PeaksPayload } from '@/types'
 
 interface WaveformProps {
   peaks: PeaksPayload | null
   currentTime: number
   duration: number
   onSeek: (time: number) => void
-  isPlaying: boolean
 }
 
-export const Waveform: React.FC<WaveformProps> = ({
-  peaks,
-  currentTime,
-  duration,
-  onSeek,
-}) => {
+export function Waveform({ peaks, currentTime, duration, onSeek }: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const { resolvedTheme } = useTheme()
 
-  // Redraw waveform when peaks or currentTime changes
+  // Redraw waveform when peaks, playhead or theme changes
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !peaks) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
+    const styles = getComputedStyle(canvas)
+    const playedColor = styles.getPropertyValue('--foreground').trim() || '#000'
+    const pendingColor = styles.getPropertyValue('--muted-foreground').trim() || '#888'
+    const baselineColor = styles.getPropertyValue('--border').trim() || '#ccc'
 
     const dpr = window.devicePixelRatio || 1
     const rect = canvas.getBoundingClientRect()
@@ -35,52 +37,41 @@ export const Waveform: React.FC<WaveformProps> = ({
     const height = rect.height
     const midY = height / 2
 
-    // Clear background
     ctx.clearRect(0, 0, width, height)
 
     const buckets = peaks.buckets || peaks.min.length
     const progressFraction = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0
     const progressX = progressFraction * width
 
-    // Waveform rendering
     const barWidth = width / buckets
     for (let i = 0; i < buckets; i++) {
       const x = i * barWidth
-      const isPlayed = x <= progressX
-
       const minVal = peaks.min[i] ?? 0
       const maxVal = peaks.max[i] ?? 0
 
-      // Normalize amplitude (-1 to 1) to height (half above, half below center)
+      // Normalize amplitude (-1..1) to height, mirrored around the centre line
       const topY = midY - maxVal * (height * 0.45)
       const bottomY = midY - minVal * (height * 0.45)
       const barH = Math.max(1.5, bottomY - topY)
 
-      if (isPlayed) {
-        ctx.fillStyle = '#06b6d4' // Cyan for played audio
-      } else {
-        ctx.fillStyle = '#3b82f6' // Blue/indigo for unplayed
-      }
-
+      ctx.fillStyle = x <= progressX ? playedColor : pendingColor
       ctx.fillRect(x, topY, Math.max(1, barWidth - 0.5), barH)
     }
 
-    // Center baseline
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'
+    ctx.strokeStyle = baselineColor
     ctx.lineWidth = 1
     ctx.beginPath()
     ctx.moveTo(0, midY)
     ctx.lineTo(width, midY)
     ctx.stroke()
-  }, [peaks, currentTime, duration])
+  }, [peaks, currentTime, duration, resolvedTheme])
 
-  // Handle click / drag to seek
+  // Click / drag to seek
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!containerRef.current || duration <= 0) return
     const rect = containerRef.current.getBoundingClientRect()
     const clickX = Math.max(0, Math.min(rect.width, e.clientX - rect.left))
-    const fraction = clickX / rect.width
-    onSeek(fraction * duration)
+    onSeek((clickX / rect.width) * duration)
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const currentX = Math.max(0, Math.min(rect.width, moveEvent.clientX - rect.left))
@@ -101,17 +92,14 @@ export const Waveform: React.FC<WaveformProps> = ({
   return (
     <div
       ref={containerRef}
-      className="waveform-canvas-container"
+      className="relative h-28 w-full cursor-ew-resize touch-none bg-muted/40"
       onPointerDown={handlePointerDown}
-      title="Click or drag to seek audio"
+      title="Click or drag to seek"
     >
-      <canvas ref={canvasRef} className="waveform-canvas" />
-      {/* Interactive Playhead */}
+      <canvas ref={canvasRef} className="block h-full w-full" />
       <div
-        className="playhead-line"
-        style={{
-          left: `${progressPercent}%`,
-        }}
+        className="pointer-events-none absolute inset-y-0 w-px bg-info"
+        style={{ left: `${progressPercent}%` }}
       />
     </div>
   )

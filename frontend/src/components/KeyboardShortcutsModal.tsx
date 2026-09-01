@@ -1,149 +1,92 @@
-import React, { useEffect } from 'react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean
   onClose: () => void
 }
 
-export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({
-  isOpen,
-  onClose,
-}) => {
-  useEffect(() => {
-    if (!isOpen) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose])
+type Shortcut = [description: string, keys: string[]]
 
-  if (!isOpen) return null
+const TRIAGE: Shortcut[] = [
+  ['Move between rows', ['j', 'k']],
+  ['Play / pause row audio', ['Space']],
+  ['Accept unchanged & advance', ['Enter']],
+  ['Open in editor', ['e']],
+  ['Flag unusable audio', ['f']],
+  ['Mark uncertain', ['u']],
+  ['Toggle row selection', ['x']],
+  ['Accept selected rows', ['Shift+Enter']],
+]
 
+const EDITOR: Shortcut[] = [
+  ['Play / pause audio (always)', ['Ctrl+Space']],
+  ['Play / pause (textarea unfocused)', ['Space']],
+  ['Save & advance to next', ['Ctrl+Enter']],
+  ['Save & stay on segment', ['Ctrl+Shift+Enter']],
+  ['Load hypothesis 1…5', ['Alt+1…5']],
+  ['Seek audio -2s / +2s', ['Alt+Left', 'Alt+Right']],
+  ['Toggle loop playback', ['Ctrl+L']],
+  ['Toggle transliteration', ['Ctrl+T']],
+  ['Exit editor to triage', ['Esc']],
+]
+
+const TRANSLIT: Shortcut[] = [
+  ['Trigger popup after a Latin token', ['Space']],
+  ['Select candidate 1 through 5', ['1', '…', '5']],
+  ['Select primary candidate', ['Enter', 'Space']],
+  ['Dismiss popup, keep Latin as typed', ['Esc']],
+]
+
+function ShortcutGroup({ title, shortcuts }: { title: string; shortcuts: Shortcut[] }) {
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
-            Keyboard Shortcuts Reference
-          </h3>
-          <button className="btn-icon" onClick={onClose} title="Close (Esc)">
-            ✕
-          </button>
-        </div>
-
-        <div className="modal-body">
-          {/* Triage Mode */}
-          <div className="shortcut-group">
-            <h4>Triage Mode (List)</h4>
-            <div className="shortcut-row">
-              <span>Move between rows</span>
-              <div>
-                <kbd>j</kbd> / <kbd>k</kbd>
-              </div>
-            </div>
-            <div className="shortcut-row">
-              <span>Play / Pause row audio</span>
-              <kbd>Space</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Accept unchanged & advance</span>
-              <kbd>Enter</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Open in Editor</span>
-              <kbd>e</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Flag unusable audio</span>
-              <kbd>f</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Mark uncertain</span>
-              <kbd>u</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Toggle row selection</span>
-              <kbd>x</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Accept selected rows</span>
-              <kbd>Shift+Enter</kbd>
-            </div>
+    <section className="flex flex-col gap-1">
+      <h4 className="font-heading text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+        {title}
+      </h4>
+      <dl className="divide-y">
+        {shortcuts.map(([description, keys]) => (
+          <div key={description} className="flex items-center justify-between gap-4 py-1.5">
+            <dt className="text-sm">{description}</dt>
+            <dd>
+              <KbdGroup>
+                {keys.map((key) => (
+                  <Kbd key={key}>{key}</Kbd>
+                ))}
+              </KbdGroup>
+            </dd>
           </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
 
-          {/* Editor Mode */}
-          <div className="shortcut-group">
-            <h4>Editor Mode</h4>
-            <div className="shortcut-row">
-              <span>Play / Pause audio (always)</span>
-              <kbd>Ctrl+Space</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Play / Pause (textarea unfocused)</span>
-              <kbd>Space</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Save & advance to next</span>
-              <kbd>Ctrl+Enter</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Save & stay on segment</span>
-              <kbd>Ctrl+Shift+Enter</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Load hypothesis 1..5</span>
-              <kbd>Alt+1..5</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Seek audio -2s / +2s</span>
-              <div>
-                <kbd>Alt+←</kbd> / <kbd>Alt+→</kbd>
-              </div>
-            </div>
-            <div className="shortcut-row">
-              <span>Toggle loop playback</span>
-              <kbd>Ctrl+L</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Toggle Transliteration</span>
-              <kbd>Ctrl+T</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Exit editor to triage</span>
-              <kbd>Esc</kbd>
-            </div>
-          </div>
+export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsModalProps) {
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[85vh] gap-4 overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogDescription>
+            The harness is keyboard-first — every decision has a binding.
+          </DialogDescription>
+        </DialogHeader>
 
-          {/* Transliteration Helper */}
-          <div className="shortcut-group" style={{ gridColumn: 'span 2' }}>
-            <h4>Devanagari Transliteration Helper (Phase 5)</h4>
-            <div className="shortcut-row">
-              <span>Trigger transliteration popup</span>
-              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                Type Latin token and press <kbd>Space</kbd>
-              </span>
-            </div>
-            <div className="shortcut-row">
-              <span>Select candidate 1 through 5</span>
-              <kbd>1</kbd> .. <kbd>5</kbd>
-            </div>
-            <div className="shortcut-row">
-              <span>Select primary candidate</span>
-              <div>
-                <kbd>Enter</kbd> or <kbd>Space</kbd>
-              </div>
-            </div>
-            <div className="shortcut-row">
-              <span>Dismiss popup & keep Latin as typed (English)</span>
-              <kbd>Esc</kbd>
-            </div>
+        <div className="grid gap-6 sm:grid-cols-2">
+          <ShortcutGroup title="Triage mode" shortcuts={TRIAGE} />
+          <ShortcutGroup title="Editor mode" shortcuts={EDITOR} />
+          <div className="sm:col-span-2">
+            <ShortcutGroup title="Devanagari transliteration" shortcuts={TRANSLIT} />
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
