@@ -9,11 +9,12 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_object_storage, get_session, require_auth
+from app.api.deps import get_config, get_object_storage, get_session, require_auth
 from app.api.schemas import SegmentOut
 from app.api.serializers import serialize_segment
-from app.models import Segment
-from app.storage import ObjectNotFound, ObjectStorage
+from app.config import Settings
+from app.models import AuditLog, Segment
+from app.storage import ObjectNotFound, ObjectStorage, delete_objects
 
 router = APIRouter(tags=["segments"], dependencies=[Depends(require_auth)])
 
@@ -159,6 +160,7 @@ def delete_segment(
     segment_id: int,
     session: Session = Depends(get_session),
     storage: ObjectStorage = Depends(get_object_storage),
+    settings: Settings = Depends(get_config),
 ) -> dict[str, Any]:
     """Delete a single segment and its associated tasks, labels, and storage files."""
     segment = session.scalar(sa.select(Segment).where(Segment.id == segment_id))
@@ -166,17 +168,23 @@ def delete_segment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
 
     external_id = segment.external_id
-    clip_key = segment.clip_object_key
-    peaks_key = segment.peaks_object_key
+    delete_objects(storage, segment.clip_object_key, segment.peaks_object_key)
 
-    # Delete storage objects
-    try:
-        storage.delete(clip_key)
-        if peaks_key:
-            storage.delete(peaks_key)
-    except Exception:
-        pass
+    session.add(
+        AuditLog(
+            entity_type="segments",
+            entity_id=str(segment_id),
+            action="delete",
+            actor=settings.labels.default_annotator,
+            old_values_jsonb={
+                "external_id": external_id,
+                "episode_id": segment.episode_id,
+                "pipeline_status": segment.pipeline_status,
+            },
+            new_values_jsonb=None,
+        )
+    )
 
     session.delete(segment)
-    session.commit()
+    session.flush()
     return {"deleted": True, "segment_id": segment_id, "external_id": external_id}

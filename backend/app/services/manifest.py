@@ -19,7 +19,6 @@ from jsonschema import Draft202012Validator
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 EPISODE_FILENAME = "episode.json"
 SEGMENTS_FILENAME = "segments.jsonl"
-CLIPS_DIRNAME = "clips"
 PEAKS_DIRNAME = "peaks"
 
 

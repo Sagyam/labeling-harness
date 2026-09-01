@@ -21,7 +21,7 @@ from app.api.schemas import (
 )
 from app.api.serializers import serialize_segment
 from app.config import Settings
-from app.models import AnnotationTask, Segment
+from app.models import AnnotationTask, Episode, Segment
 from app.models.enums import ACTIVE_TASK_STATUSES
 from app.services.labeling import Decision, LabelingError, record_decision, record_skip
 
@@ -87,8 +87,6 @@ def next_task(
         .limit(1)
     )
     if episode:
-        from app.models import Episode
-
         query = query.join(Episode, Episode.id == Segment.episode_id).where(
             Episode.external_id == episode
         )

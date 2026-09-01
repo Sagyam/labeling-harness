@@ -51,9 +51,3 @@ def session_scope(bind: Engine | None = None) -> Iterator[Session]:
         raise
     finally:
         session.close()
-
-
-def get_db_session() -> Iterator[Session]:
-    """FastAPI dependency yielding a request-scoped session."""
-    with session_scope() as session:
-        yield session

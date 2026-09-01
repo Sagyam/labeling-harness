@@ -11,9 +11,10 @@ Coordinates the 5-stage ingestion pipeline:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import datetime as dt
+import difflib
 import json
+import shutil
 import subprocess
 import time
 import uuid
@@ -35,12 +36,23 @@ from app.services.silero_vad import (
     extract_clips,
     segment_audio_to_slices,
 )
-from app.storage import get_storage
+from app.storage import build_storage
 from app.storage.base import ObjectStorage
 from app.utils.hashing import sha256_file
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: Sent with every ASR request. The corpus is code-switched, and the transcript policy is that a
+#: word is written in the script of the language it belongs to -- so the model has to be told both
+#: that the mixing is expected and which script each half takes.
+ASR_PROMPT = (
+    "This is a Nepali-English code-switched conversation: the speakers mix both languages "
+    "freely, often within a single sentence. Transcribe exactly what is said, and write every "
+    "word in the script its own language uses -- Nepali words in Devanagari, English words in "
+    "Latin. Do not translate between the two languages, and do not transliterate a word out of "
+    "its own script. For example: आजको meeting मा हामीले नयाँ data हेर्यौं।"
+)
 
 
 @dataclass
@@ -66,7 +78,11 @@ class IngestJob:
     error: str | None = None
     created_at: float = field(default_factory=time.time)
     logs: list[IngestLog] = field(default_factory=list)
-    listeners: list[asyncio.Queue] = field(default_factory=list)
+    #: Each SSE subscriber registers its queue together with the loop that queue belongs to; the
+    #: pipeline runs on a worker thread and must hand work back across that boundary.
+    listeners: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = field(
+        default_factory=list
+    )
 
     def log(self, message: str, level: str = "info") -> None:
         ts = dt.datetime.now(dt.UTC).strftime("%H:%M:%S")
@@ -109,14 +125,30 @@ class IngestJob:
         self._emit({"type": "error", "error": error_message})
 
     def _emit(self, event: dict[str, Any]) -> None:
+        """Fan an event out to every SSE subscriber.
+
+        This runs on the pipeline's worker thread while the queues belong to the server's event
+        loop, and :class:`asyncio.Queue` is not thread-safe -- writing to one directly can leave a
+        waiting reader unwoken. Every put is therefore scheduled onto the owning loop.
+        """
         payload = json.dumps(event)
-        for q in list(self.listeners):
-            with contextlib.suppress(Exception):
-                q.put_nowait(payload)
+        for loop, q in list(self.listeners):
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, payload)
+            except RuntimeError as exc:  # loop already closed: the subscriber has gone away
+                logger.debug("ingest_listener_dropped", job_id=self.job_id, error=str(exc))
 
 
 class IngestionManager:
-    """In-memory manager tracking active and historical ingestion jobs."""
+    """In-memory manager tracking active and historical ingestion jobs.
+
+    History is capped: a job keeps its whole log in memory, so an unbounded registry grows for as
+    long as the process lives. Only finished jobs are evicted, oldest first, so a running pipeline
+    can never lose the record it is still writing to.
+    """
+
+    #: How many finished jobs to keep for the status endpoint to look back at.
+    MAX_FINISHED_JOBS = 50
 
     def __init__(self) -> None:
         self._jobs: dict[str, IngestJob] = {}
@@ -140,10 +172,17 @@ class IngestionManager:
             work_dir=work_dir,
         )
         self._jobs[job_id] = job
+        self._evict_finished()
         return job
 
     def get_job(self, job_id: str) -> IngestJob | None:
         return self._jobs.get(job_id)
+
+    def _evict_finished(self) -> None:
+        finished = [j for j in self._jobs.values() if j.status in ("completed", "failed")]
+        finished.sort(key=lambda j: j.created_at)
+        for job in finished[: max(0, len(finished) - self.MAX_FINISHED_JOBS)]:
+            del self._jobs[job.job_id]
 
 
 manager = IngestionManager()
@@ -184,11 +223,37 @@ def run_pipeline(
     session_factory: Callable[[], Session],
     storage: ObjectStorage | None = None,
     settings: Settings | None = None,
+    *,
+    keep_work_dir: bool = False,
 ) -> None:
-    """Run all 5 stages synchronously inside background worker thread."""
-    settings = settings or get_settings()
-    storage = storage or get_storage(settings)
+    """Run all 5 stages synchronously inside background worker thread.
 
+    Args:
+        job: The job to run, carrying its own progress and log state.
+        session_factory: Produces database sessions; the worker owns its own.
+        storage: Object storage for clips and peaks. Defaults to the configured backend.
+        settings: Configuration override.
+        keep_work_dir: Retain the scratch directory after the run, for debugging. It holds the
+            uploaded source, the normalized FLAC and every extracted clip, all of which are
+            already persisted elsewhere by the time the run finishes.
+    """
+    settings = settings or get_settings()
+    storage = storage or build_storage(settings)
+
+    try:
+        _run_stages(job, session_factory, storage, settings)
+    finally:
+        if not keep_work_dir:
+            shutil.rmtree(job.work_dir, ignore_errors=True)
+
+
+def _run_stages(
+    job: IngestJob,
+    session_factory: Callable[[], Session],
+    storage: ObjectStorage,
+    settings: Settings,
+) -> None:
+    """The five pipeline stages. Every failure is reported through ``job.fail`` and returns."""
     job.status = "processing"
     job.log(f"Starting ingestion for '{job.title}' ({job.episode_id})")
 
@@ -254,12 +319,12 @@ def run_pipeline(
                         seg.clip_path,
                         route=route_name,
                         language="ne",
-                        prompt=(
-                            "यो नेपाली र अंग्रेजी भाषाको कुराकानी हो। "
-                            "Transcribe strictly in authentic spoken Nepali (Devanagari) and "
-                            "English (Latin). Do not transcribe Nepali words into Hindi."
-                        ),
+                        prompt=ASR_PROMPT,
                     )
+                    if asr_res.dry_run:
+                        # A dry run returns canned text. Name the system so it can never be
+                        # mistaken for real model output in the queue or at export.
+                        sys_name = f"mock-{sys_name}"
                     hypotheses.append(
                         {
                             "system_id": sys_name,
@@ -275,8 +340,6 @@ def run_pipeline(
                 word_disagreement_rate = 0.0
                 cer_between_hyps = 0.0
                 if len(hypotheses) >= 2:
-                    import difflib
-
                     w1 = hypotheses[0]["text"].split()
                     w2 = hypotheses[1]["text"].split()
                     matcher = difflib.SequenceMatcher(None, w1, w2)
@@ -291,8 +354,6 @@ def run_pipeline(
                 analysis = analyze_transcript(
                     primary_hyp["text"],
                     duration_seconds=seg.duration,
-                    word_disagreement_rate=word_disagreement_rate,
-                    avg_logprob=primary_hyp["avg_logprob"],
                     no_speech_prob=primary_hyp["no_speech_prob"],
                     settings=settings,
                 )
@@ -326,7 +387,10 @@ def run_pipeline(
                         },
                     }
                 )
-            session.commit()
+                # Commit per segment. The loop makes one network call per route per segment, so
+                # a single transaction around the whole stage would hold a pooled connection for
+                # the length of the episode and lose every request-log row on a late failure.
+                session.commit()
         job.set_progress("analyzing", 80.0)
         job.log("Stage 4/5: Orthography analysis, CMI and rule flags completed")
     except Exception as exc:

@@ -314,6 +314,185 @@ def test_a_missing_model_file_is_reported_and_does_not_raise(tmp_path: Path) -> 
     assert SileroVAD(model_path=tmp_path / "nope.onnx")._session is None
 
 
+# --- run_pipeline housekeeping -----------------------------------------------------------
+
+
+def test_the_work_directory_is_removed_when_the_job_finishes(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    """The scratch dir holds the upload, the normalized FLAC and every clip -- all stored
+    elsewhere by the time the run ends, so leaving it behind just grows the disk."""
+    raw_audio = make_test_audio(tmp_path / "cleanup_raw.wav", duration_seconds=6.0)
+    work_dir = tmp_path / "work_cleanup"
+    work_dir.mkdir()
+
+    job = IngestJob(
+        job_id="test-cleanup",
+        episode_id="web_cleanup",
+        show_id="podcast",
+        title="Cleanup",
+        audio_path=raw_audio,
+        work_dir=work_dir,
+    )
+    run_pipeline(job, lambda: db_session, object_storage, settings)
+
+    assert job.status == "completed"
+    assert not work_dir.exists()
+
+
+def test_the_work_directory_is_removed_even_when_a_stage_fails(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "work_failed"
+    work_dir.mkdir()
+    (work_dir / "leftover.txt").write_text("x")
+
+    job = IngestJob(
+        job_id="test-cleanup-fail",
+        episode_id="web_fail",
+        show_id="podcast",
+        title="Fails at stage 1",
+        audio_path=tmp_path / "does_not_exist.wav",
+        work_dir=work_dir,
+    )
+    run_pipeline(job, lambda: db_session, object_storage, settings)
+
+    assert job.status == "failed"
+    assert not work_dir.exists()
+
+
+def test_the_work_directory_can_be_kept_for_debugging(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "work_kept"
+    work_dir.mkdir()
+
+    job = IngestJob(
+        job_id="test-keep",
+        episode_id="web_keep",
+        show_id="podcast",
+        title="Kept",
+        audio_path=tmp_path / "does_not_exist.wav",
+        work_dir=work_dir,
+    )
+    run_pipeline(job, lambda: db_session, object_storage, settings, keep_work_dir=True)
+
+    assert work_dir.exists()
+
+
+def test_run_pipeline_builds_its_own_storage_when_none_is_given(
+    db_session: Session, settings, tmp_path: Path
+) -> None:
+    """The default used to call the cached zero-argument get_storage with a settings object."""
+    job = IngestJob(
+        job_id="test-default-storage",
+        episode_id="web_default",
+        show_id="podcast",
+        title="Default storage",
+        audio_path=tmp_path / "does_not_exist.wav",
+        work_dir=tmp_path / "work_default",
+    )
+    run_pipeline(job, lambda: db_session, None, settings)
+
+    # Stage 1 fails on the missing audio, but only after storage resolved without a TypeError.
+    assert job.status == "failed"
+    assert "Stage 1" in job.error
+
+
+def test_finished_jobs_are_evicted_from_the_registry(tmp_path: Path) -> None:
+    from app.services.ingest import IngestionManager
+
+    registry = IngestionManager()
+    registry.MAX_FINISHED_JOBS = 2
+    made = []
+    for index in range(5):
+        job = registry.create_job(
+            episode_id=f"ep{index}",
+            show_id="podcast",
+            title=f"Episode {index}",
+            audio_path=tmp_path / "a.wav",
+            work_dir=tmp_path / f"w{index}",
+        )
+        job.status = "completed"
+        made.append(job)
+
+    # The newest job is still 'pending' when eviction runs, so three finished ones remain at most.
+    assert registry.get_job(made[0].job_id) is None
+    assert registry.get_job(made[-1].job_id) is not None
+
+
+def test_events_reach_a_subscriber_from_the_pipeline_thread() -> None:
+    """The pipeline runs on a worker thread while the queue belongs to the server's event loop."""
+    import asyncio
+    import threading
+
+    async def scenario() -> str:
+        job = IngestJob(
+            job_id="test-emit",
+            episode_id="ep",
+            show_id="podcast",
+            title="Emit",
+            audio_path=Path("a.wav"),
+            work_dir=Path("w"),
+        )
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        job.listeners.append((asyncio.get_running_loop(), queue))
+
+        threading.Thread(target=job.log, args=("from the worker",), daemon=True).start()
+        return await asyncio.wait_for(queue.get(), timeout=5.0)
+
+    payload = asyncio.run(scenario())
+    assert "from the worker" in payload
+
+
+def test_mock_transcripts_are_stored_under_a_system_id_that_names_them(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    """The suite runs with HARNESS_LLM__DRY_RUN=true, so every hypothesis here is canned text.
+
+    It must be impossible to mistake that for model output later, in the queue or at export.
+    """
+    from app.models import AsrSystem
+
+    raw_audio = make_test_audio(tmp_path / "mock_raw.wav", duration_seconds=6.0)
+    job = IngestJob(
+        job_id="test-mock-naming",
+        episode_id="web_mock",
+        show_id="podcast",
+        title="Mock naming",
+        audio_path=raw_audio,
+        work_dir=tmp_path / "work_mock",
+    )
+    run_pipeline(job, lambda: db_session, object_storage, settings)
+
+    assert job.status == "completed"
+    systems = db_session.scalars(sa.select(AsrSystem.system_id)).all()
+    assert systems, "the run produced no ASR system at all"
+    assert all(name.startswith("mock-") for name in systems), systems
+
+
+def test_a_traversing_episode_id_cannot_escape_the_work_root(
+    client: TestClient, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The id names a directory the pipeline later deletes, so it must be sanitised."""
+    captured: dict[str, Path] = {}
+    monkeypatch.setattr(
+        "app.api.ingest.run_pipeline",
+        lambda job, *args: captured.update(work_dir=job.work_dir),
+    )
+    wav_path = make_test_audio(tmp_path / "traverse.wav", duration_seconds=3.0)
+
+    response = client.post(
+        "/ingest",
+        files={"file": ("traverse.wav", wav_path.read_bytes(), "audio/wav")},
+        data={"episode_title": "Traversal", "episode_id": "../../../etc/passwd"},
+    )
+    assert response.status_code == 202
+    assert ".." not in response.json()["episode_id"]
+
+    work_root = settings.ingest.work_root.resolve()
+    assert work_root in captured["work_dir"].resolve().parents
+
 
 # --- Silero VAD: the model's input contract ----------------------------------------------
 #

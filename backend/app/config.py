@@ -197,6 +197,23 @@ class ExportSettings(BaseModel):
         return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
+class IngestSettings(BaseModel):
+    """Web ingestion scratch space.
+
+    Resolved against the repository root like every other configured path, so an upload does not
+    land wherever the server process happened to be started from.
+    """
+
+    model_config = _STRICT
+
+    work_root: Path = Path("./data/ingest_work")
+
+    @field_validator("work_root")
+    @classmethod
+    def _absolute(cls, value: Path) -> Path:
+        return value if value.is_absolute() else (REPO_ROOT / value).resolve()
+
+
 class Settings(BaseSettings):
     """Root settings object, assembled from YAML then overlaid with environment variables."""
 
@@ -228,6 +245,7 @@ class Settings(BaseSettings):
     translit: TranslitSettings = Field(default_factory=TranslitSettings)
     labels: LabelSettings = Field(default_factory=LabelSettings)
     export: ExportSettings = Field(default_factory=ExportSettings)
+    ingest: IngestSettings = Field(default_factory=IngestSettings)
 
 
 class LlmRoute(BaseModel):

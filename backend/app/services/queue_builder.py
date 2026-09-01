@@ -75,7 +75,6 @@ def select_seed_hypothesis(
 
 
 def _score_for(
-    segment: Segment,
     scores: SegmentScore | None,
     seed: AsrHypothesis | None,
     settings: Settings,
@@ -169,7 +168,7 @@ def build_queue(
         seed_hypothesis = select_seed_hypothesis(
             segment, list(segment.hypotheses), split=splits.get(segment.episode_id, "unassigned")
         )
-        score, reason = _score_for(segment, segment.scores, seed_hypothesis, settings)
+        score, reason = _score_for(segment.scores, seed_hypothesis, settings)
         planned.append((segment, seed_hypothesis, score, reason))
 
     # Segments with no hypothesis at all go to the error queue and are never candidates for audit.

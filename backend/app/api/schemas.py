@@ -59,7 +59,8 @@ class SegmentOut(BaseModel):
     lid: str | None = None
     pipeline_status: str
     audio_url: str
-    peaks_url: str
+    #: None when the segment has no precomputed peaks; the UI falls back to a plain player.
+    peaks_url: str | None = None
     hypotheses: list[HypothesisOut] = Field(default_factory=list)
     scores: ScoresOut | None = None
     latest_label: LabelOut | None = None
@@ -82,7 +83,7 @@ class QueueRowOut(BaseModel):
     seed_system_id: str | None = None
     seed_text: str | None = None
     audio_url: str
-    peaks_url: str
+    peaks_url: str | None = None
 
 
 class TaskOut(BaseModel):
@@ -185,3 +186,36 @@ class TranslitChoiceIn(BaseModel):
 
     token: str
     devanagari: str
+
+
+class EpisodeSummary(BaseModel):
+    """One episode in the management list, with its annotation progress."""
+
+    id: int
+    external_id: str
+    title: str | None = None
+    show_id: str | None = None
+    duration_seconds: float | None = None
+    split: str = "unassigned"
+    segment_count: int = 0
+    labeled_count: int = 0
+    pending_count: int = 0
+
+
+class EpisodeSegmentSummary(BaseModel):
+    """One segment row in the episode detail view."""
+
+    id: int
+    external_id: str
+    start_time: float
+    end_time: float
+    duration_seconds: float
+    pipeline_status: str
+    #: Status of the segment's active task, or None when it has no outstanding work.
+    task_status: str | None = None
+    seed_text: str | None = None
+    flags: list[str] = Field(default_factory=list)
+    cmi: float | None = None
+    word_disagreement_rate: float | None = None
+    audio_url: str
+    peaks_url: str | None = None

@@ -7,43 +7,18 @@ from typing import Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_object_storage, get_session, require_auth
-from app.models import AnnotationTask, Episode, Segment
-from app.storage import ObjectStorage
+from app.api.deps import get_config, get_object_storage, get_session, require_auth
+from app.api.schemas import EpisodeSegmentSummary, EpisodeSummary
+from app.api.serializers import audio_url, peaks_url
+from app.config import Settings
+from app.models import AnnotationTask, AuditLog, Episode, Segment
+from app.models.enums import ACTIVE_TASK_STATUSES
+from app.storage import ObjectStorage, delete_objects
 from app.storage.local import LocalFilesystemStorage
 
 router = APIRouter(tags=["episodes"], dependencies=[Depends(require_auth)])
-
-
-class EpisodeSummary(BaseModel):
-    id: int
-    external_id: str
-    title: str | None = None
-    show_id: str | None = None
-    duration_seconds: float | None = None
-    split: str = "unassigned"
-    segment_count: int = 0
-    labeled_count: int = 0
-    pending_count: int = 0
-
-
-class EpisodeSegmentSummary(BaseModel):
-    id: int
-    external_id: str
-    start_time: float
-    end_time: float
-    duration_seconds: float
-    pipeline_status: str
-    task_status: str | None = None
-    seed_text: str | None = None
-    flags: list[str] = []
-    cmi: float | None = None
-    word_disagreement_rate: float | None = None
-    audio_url: str
-    peaks_url: str | None = None
 
 
 def _find_episode(session: Session, episode_id: str) -> Episode:
@@ -70,24 +45,28 @@ def list_episodes(session: Session = Depends(get_session)) -> list[EpisodeSummar
     if not episodes:
         return []
 
-    # Aggregate counts per episode
+    # Aggregate counts per episode. Every count is over DISTINCT segment ids: a segment may carry
+    # more than one task row (a skipped task plus its replacement is a legal state), and the join
+    # to annotation_tasks would otherwise fan out and count task rows as if they were segments.
     counts_query = (
         sa.select(
             Segment.episode_id,
-            sa.func.count(Segment.id).label("total_segments"),
+            sa.func.count(sa.distinct(Segment.id)).label("total_segments"),
             sa.func.count(
-                sa.case((Segment.pipeline_status == "labeled", Segment.id), else_=None)
+                sa.distinct(sa.case((Segment.pipeline_status == "labeled", Segment.id), else_=None))
             ).label("labeled_segments"),
             sa.func.count(
-                sa.case(
-                    (
-                        sa.and_(
-                            AnnotationTask.status.in_(["pending", "in_progress"]),
-                            Segment.pipeline_status != "labeled",
+                sa.distinct(
+                    sa.case(
+                        (
+                            sa.and_(
+                                AnnotationTask.status.in_(ACTIVE_TASK_STATUSES),
+                                Segment.pipeline_status != "labeled",
+                            ),
+                            Segment.id,
                         ),
-                        Segment.id,
-                    ),
-                    else_=None,
+                        else_=None,
+                    )
                 )
             ).label("pending_segments"),
         )
@@ -133,16 +112,21 @@ def list_episode_segments(
         .order_by(Segment.start_time.asc())
     ).all()
 
-    # Load active tasks for these segments
+    # Load the active task per segment. A segment can hold several task rows -- a skipped one and
+    # its replacement -- so this filters to the active statuses and takes the newest, rather than
+    # collapsing an unordered result and keeping whichever row arrived last.
     seg_ids = [s.id for s in segments]
     task_map: dict[int, str] = {}
     if seg_ids:
         tasks = session.execute(
-            sa.select(AnnotationTask.segment_id, AnnotationTask.status).where(
-                AnnotationTask.segment_id.in_(seg_ids)
+            sa.select(AnnotationTask.segment_id, AnnotationTask.status)
+            .where(
+                AnnotationTask.segment_id.in_(seg_ids),
+                AnnotationTask.status.in_(ACTIVE_TASK_STATUSES),
             )
+            .order_by(AnnotationTask.id)
         ).all()
-        task_map = {row[0]: row[1] for row in tasks}
+        task_map = dict(tasks)
 
     results: list[EpisodeSegmentSummary] = []
     for seg in segments:
@@ -163,8 +147,8 @@ def list_episode_segments(
                 if (scores and scores.code_switch_density is not None)
                 else None,
                 word_disagreement_rate=scores.word_disagreement_rate if scores else None,
-                audio_url=f"/segments/{seg.id}/audio",
-                peaks_url=f"/segments/{seg.id}/peaks" if seg.peaks_object_key else None,
+                audio_url=audio_url(seg.id),
+                peaks_url=peaks_url(seg),
             )
         )
     return results
@@ -175,6 +159,7 @@ def delete_episode(
     episode_id: str,
     session: Session = Depends(get_session),
     storage: ObjectStorage = Depends(get_object_storage),
+    settings: Settings = Depends(get_config),
 ) -> dict[str, Any]:
     """Delete an episode, all its child records, and its audio/peak clips from storage."""
     episode = _find_episode(session, episode_id)
@@ -186,21 +171,32 @@ def delete_episode(
     deleted_segments = len(segments)
 
     for seg in segments:
-        try:
-            storage.delete(seg.clip_object_key)
-            if seg.peaks_object_key:
-                storage.delete(seg.peaks_object_key)
-        except Exception:
-            pass
+        delete_objects(storage, seg.clip_object_key, seg.peaks_object_key)
 
     # If local storage, remove the episode directories directly
     if isinstance(storage, LocalFilesystemStorage):
         shutil.rmtree(storage.root / "clips" / external_id, ignore_errors=True)
         shutil.rmtree(storage.root / "peaks" / external_id, ignore_errors=True)
 
+    session.add(
+        AuditLog(
+            entity_type="episodes",
+            entity_id=str(ep_id),
+            action="delete",
+            actor=settings.labels.default_annotator,
+            old_values_jsonb={
+                "external_id": external_id,
+                "title": episode.title,
+                "split": episode.split,
+                "segments": deleted_segments,
+            },
+            new_values_jsonb=None,
+        )
+    )
+
     # Delete episode (Postgres foreign keys CASCADE to segments, tasks, hypotheses, etc.)
     session.delete(episode)
-    session.commit()
+    session.flush()
 
     return {
         "deleted": True,

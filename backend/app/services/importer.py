@@ -124,6 +124,24 @@ def _plan(
     session: Session, manifest: Manifest, settings: Settings, *, allow_clip_change: bool
 ) -> list[_SegmentPlan]:
     """Validate every clip and work out what each segment needs. Writes nothing."""
+    # Two batched lookups instead of two queries per manifest record: which segments already
+    # exist, and which systems already have a hypothesis for each of them.
+    segment_ids = [str(record["segment_id"]) for record in manifest.segments]
+    existing_by_id: dict[str, Segment] = {
+        segment.external_id: segment
+        for segment in session.scalars(
+            sa.select(Segment).where(Segment.external_id.in_(segment_ids))
+        )
+    }
+    systems_present: dict[int, set[str]] = {}
+    if existing_by_id:
+        for segment_pk, system_id in session.execute(
+            sa.select(AsrHypothesis.segment_id, AsrSystem.system_id)
+            .join(AsrSystem, AsrSystem.id == AsrHypothesis.asr_system_id)
+            .where(AsrHypothesis.segment_id.in_([s.id for s in existing_by_id.values()]))
+        ):
+            systems_present.setdefault(segment_pk, set()).add(system_id)
+
     plans: list[_SegmentPlan] = []
     for record in manifest.segments:
         segment_id = str(record["segment_id"])
@@ -141,7 +159,7 @@ def _plan(
                 f"the file on disk is {actual}. The export is corrupt or was modified."
             )
 
-        existing = session.scalar(sa.select(Segment).where(Segment.external_id == segment_id))
+        existing = existing_by_id.get(segment_id)
         clip_changed = existing is not None and not checksums_match(existing.clip_checksum, actual)
         if clip_changed and not allow_clip_change:
             raise ClipChangedError(
@@ -152,14 +170,7 @@ def _plan(
 
         missing_system_ids: list[str] = []
         if existing is not None:
-            present = {
-                system_id
-                for (system_id,) in session.execute(
-                    sa.select(AsrSystem.system_id)
-                    .join(AsrHypothesis, AsrHypothesis.asr_system_id == AsrSystem.id)
-                    .where(AsrHypothesis.segment_id == existing.id)
-                )
-            }
+            present = systems_present.get(existing.id, set())
             missing_system_ids = [
                 str(h["system_id"]) for h in record["hypotheses"] if h["system_id"] not in present
             ]
@@ -384,14 +395,6 @@ def import_manifest(
     except ManifestError as exc:
         raise ImportError_(str(exc)) from exc
 
-    episode_exists = (
-        session.scalar(
-            sa.select(sa.func.count())
-            .select_from(Episode)
-            .where(Episode.external_id == manifest.episode_id)
-        )
-        > 0
-    )
     existing_episode = session.scalar(
         sa.select(Episode).where(Episode.external_id == manifest.episode_id)
     )
@@ -408,7 +411,7 @@ def import_manifest(
     plans = _plan(session, manifest, settings, allow_clip_change=allow_clip_change)
 
     if dry_run:
-        report = _dry_run_report(manifest, plans, split, episode_exists)
+        report = _dry_run_report(manifest, plans, split, existing_episode is not None)
         logger.info("import_dry_run", episode_id=manifest.episode_id, source=str(manifest.root))
         return report
 

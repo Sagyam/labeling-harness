@@ -20,9 +20,12 @@ def audio_url(segment_id: int) -> str:
     return f"/segments/{segment_id}/audio"
 
 
-def peaks_url(segment_id: int) -> str:
-    """URL of the segment's precomputed waveform peaks."""
-    return f"/segments/{segment_id}/peaks"
+def peaks_url(segment: Segment) -> str | None:
+    """URL of the segment's precomputed waveform peaks, or None when it has none.
+
+    Advertising a URL for a segment with no stored peaks would hand the UI a link that 404s.
+    """
+    return f"/segments/{segment.id}/peaks" if segment.peaks_object_key else None
 
 
 def serialize_hypothesis(hypothesis: AsrHypothesis) -> HypothesisOut:
@@ -55,7 +58,7 @@ def serialize_segment(session: Session, segment: Segment) -> SegmentOut:
         lid=segment.lid,
         pipeline_status=segment.pipeline_status,
         audio_url=audio_url(segment.id),
-        peaks_url=peaks_url(segment.id),
+        peaks_url=peaks_url(segment),
         hypotheses=[
             serialize_hypothesis(h) for h in sorted(segment.hypotheses, key=lambda h: h.id)
         ],
@@ -106,5 +109,5 @@ def serialize_queue_row(task: AnnotationTask) -> QueueRowOut:
         seed_system_id=seed.system.system_id if seed else None,
         seed_text=seed.text_raw if seed else None,
         audio_url=audio_url(segment.id),
-        peaks_url=peaks_url(segment.id),
+        peaks_url=peaks_url(segment),
     )

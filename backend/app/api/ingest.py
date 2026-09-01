@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import shutil
 import threading
@@ -59,10 +60,13 @@ async def start_ingestion(
             detail=f"unsupported audio format '{ext}'. Allowed: {allowed}",
         )
 
-    final_episode_id = episode_id.strip() if episode_id.strip() else _slugify(episode_title)
+    # Slugify whichever id we end up with, never just the generated one: this value becomes a
+    # directory name under the work root and a prefix of every object key, so a caller-supplied
+    # "../.." would otherwise write -- and later delete -- outside the tree entirely.
+    final_episode_id = _slugify(episode_id) if episode_id.strip() else _slugify(episode_title)
 
-    # Prepare temporary directory
-    work_dir = Path("./data/ingest_work") / f"{final_episode_id}_{int(time.time())}"
+    # Prepare temporary directory. run_pipeline removes it when the job finishes.
+    work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     dest_audio_path = work_dir / f"source_audio{ext}"
@@ -128,12 +132,12 @@ async def stream_job_events(job_id: str) -> StreamingResponse:
 
     async def event_generator() -> AsyncIterator[str]:
         q: asyncio.Queue[str] = asyncio.Queue()
-        job.listeners.append(q)
+        # The pipeline emits from a worker thread, so it needs this queue's loop to hand work back.
+        listener = (asyncio.get_running_loop(), q)
+        job.listeners.append(listener)
 
         try:
             # Replay historical logs
-            import json
-
             for log in job.logs:
                 payload = {
                     "type": "log",
@@ -162,8 +166,8 @@ async def stream_job_events(job_id: str) -> StreamingResponse:
                     # Keep-alive comment
                     yield ": keepalive\n\n"
         finally:
-            if q in job.listeners:
-                job.listeners.remove(q)
+            if listener in job.listeners:
+                job.listeners.remove(listener)
 
     return StreamingResponse(
         event_generator(),

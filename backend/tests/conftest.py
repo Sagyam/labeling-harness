@@ -100,11 +100,19 @@ def object_storage(tmp_path: Path):
 
 
 @pytest.fixture
-def settings():
-    """Settings loaded from the repository configuration."""
+def settings(tmp_path: Path):
+    """Settings loaded from the repository configuration.
+
+    The ingest work root is redirected into the test's temporary directory: the API writes an
+    uploaded file there before the pipeline starts, and tests that stub out the pipeline never
+    reach the cleanup, so the real ``data/ingest_work`` would slowly fill with test uploads.
+    """
     from app.config import load_settings
 
-    return load_settings()
+    loaded = load_settings()
+    return loaded.model_copy(
+        update={"ingest": loaded.ingest.model_copy(update={"work_root": tmp_path / "ingest_work"})}
+    )
 
 
 @pytest.fixture

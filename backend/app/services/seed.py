@@ -96,15 +96,21 @@ def seed_dev_data(
             session.flush()
             episodes_inserted += 1
 
+        # One lookup for the whole episode rather than one per segment.
+        existing_segment_ids = set(
+            session.scalars(
+                sa.select(Segment.external_id).where(
+                    Segment.external_id.like(f"{external_id}\\_%", escape="\\")
+                )
+            )
+        )
+
         cursor = 0.0
         for segment_index in range(segments_per_episode):
             duration = round(rng.uniform(2.0, 18.0), 2)
             start, cursor = cursor, cursor + duration + round(rng.uniform(0.1, 1.5), 2)
             segment_external_id = f"{external_id}_{segment_index:04d}"
-            segment = session.scalar(
-                sa.select(Segment).where(Segment.external_id == segment_external_id)
-            )
-            if segment is not None:
+            if segment_external_id in existing_segment_ids:
                 continue
 
             segment = Segment(

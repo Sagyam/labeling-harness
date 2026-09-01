@@ -483,3 +483,25 @@ def test_a_configured_token_is_enforced(db_session: Session, object_storage, set
             secured_client.get("/stats", headers={"Authorization": "Bearer s3cret"}).status_code
             == 200
         )
+
+
+def test_a_segment_with_peaks_advertises_a_working_peaks_url(
+    client: TestClient, imported_episode: str
+) -> None:
+    row = queue_rows(client)[0]
+    body = client.get(f"/segments/{row['segment_id']}").json()
+    assert body["peaks_url"] is not None
+    assert client.get(body["peaks_url"]).status_code == 200
+
+
+def test_a_segment_without_peaks_advertises_no_peaks_url(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    """A URL that is always present but sometimes 404s is worse than an absent one."""
+    segment_id = queue_rows(client)[0]["segment_id"]
+    segment = db_session.get(Segment, segment_id)
+    segment.peaks_object_key = None
+    db_session.flush()
+
+    assert client.get(f"/segments/{segment_id}").json()["peaks_url"] is None
+    assert client.get("/queue").json()[0]["peaks_url"] is None

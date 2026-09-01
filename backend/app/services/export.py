@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import Settings, get_settings
 from app.models import (
     AsrHypothesis,
+    AsrSystem,
     Episode,
     ImportRun,
     LabelVersion,
@@ -148,7 +149,7 @@ def _hypothesis_payload(hypothesis: AsrHypothesis, *, include_words: bool) -> di
 
 def _record(
     segment: Segment,
-    label: Any,
+    label: SegmentLabel,
     version: LabelVersion,
     kind: ExportKind,
     seed_system_id: str | None,
@@ -256,19 +257,29 @@ def export_dataset(
         if episode:
             query = query.where(Episode.external_id == episode)
 
-        for segment, label in session.execute(query):
-            seed = (
-                session.get(AsrHypothesis, label.seed_hypothesis_id)
-                if label.seed_hypothesis_id
-                else None
+        rows = list(session.execute(query))
+
+        # Resolve every seed system in one query. Fetching them per row cost two round trips each
+        # -- the hypothesis, then its lazy-loaded system -- on the one path built for bulk output.
+        seed_ids = {label.seed_hypothesis_id for _, label in rows if label.seed_hypothesis_id}
+        seed_systems: dict[int, str] = {}
+        if seed_ids:
+            seed_systems = dict(
+                session.execute(
+                    sa.select(AsrHypothesis.id, AsrSystem.system_id)
+                    .join(AsrSystem, AsrSystem.id == AsrHypothesis.asr_system_id)
+                    .where(AsrHypothesis.id.in_(seed_ids))
+                ).all()
             )
+
+        for segment, label in rows:
             records.append(
                 _record(
                     segment,
                     label,
                     version,
                     definition,
-                    seed.system.system_id if seed else None,
+                    seed_systems.get(label.seed_hypothesis_id),
                 )
             )
             if segment.import_run_id:

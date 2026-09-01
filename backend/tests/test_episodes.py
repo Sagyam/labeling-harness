@@ -98,3 +98,98 @@ def test_list_episodes_and_delete_cascade(
     assert db_session.scalar(sa.select(AnnotationTask).where(AnnotationTask.id == task1_id)) is None
 
 
+# --- counting when a segment carries more than one task ----------------------------------
+#
+# The partial unique index only forbids two *active* tasks per segment, so a skipped task
+# alongside its replacement is a legal, ordinary state -- and it is what the counting and
+# status queries used to get wrong.
+
+
+@pytest.fixture
+def segment_with_two_tasks(db_session: Session, imported_episode: str) -> int:
+    """Mark one task skipped and queue a replacement, returning that segment's id."""
+    task = db_session.scalars(sa.select(AnnotationTask)).first()
+    task.status = "skipped"
+    db_session.flush()
+    db_session.add(
+        AnnotationTask(
+            segment_id=task.segment_id, queue="review", priority_score=0.9, status="pending"
+        )
+    )
+    db_session.flush()
+    return task.segment_id
+
+
+def test_segment_count_is_not_inflated_by_a_second_task(
+    client: TestClient, db_session: Session, imported_episode: str, segment_with_two_tasks: int
+) -> None:
+    real_segments = db_session.scalar(sa.select(sa.func.count()).select_from(Segment))
+    episode = next(
+        row for row in client.get("/episodes").json() if row["external_id"] == imported_episode
+    )
+    assert episode["segment_count"] == real_segments
+
+
+def test_pending_count_counts_segments_not_tasks(
+    client: TestClient, db_session: Session, imported_episode: str, segment_with_two_tasks: int
+) -> None:
+    episode = next(
+        row for row in client.get("/episodes").json() if row["external_id"] == imported_episode
+    )
+    assert episode["pending_count"] <= episode["segment_count"]
+
+
+def test_segment_task_status_reports_the_active_task(
+    client: TestClient, imported_episode: str, segment_with_two_tasks: int
+) -> None:
+    rows = client.get(f"/episodes/{imported_episode}/segments").json()
+    row = next(r for r in rows if r["id"] == segment_with_two_tasks)
+    assert row["task_status"] == "pending"
+
+
+def test_segment_task_status_is_none_once_no_task_is_active(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    task = db_session.scalars(sa.select(AnnotationTask)).first()
+    task.status = "done"
+    db_session.flush()
+
+    rows = client.get(f"/episodes/{imported_episode}/segments").json()
+    row = next(r for r in rows if r["id"] == task.segment_id)
+    assert row["task_status"] is None
+
+
+def test_a_segment_without_peaks_advertises_no_peaks_url(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    segment = db_session.scalars(sa.select(Segment)).first()
+    segment.peaks_object_key = None
+    db_session.flush()
+
+    rows = client.get(f"/episodes/{imported_episode}/segments").json()
+    row = next(r for r in rows if r["id"] == segment.id)
+    assert row["peaks_url"] is None
+
+
+def test_deleting_a_segment_writes_an_audit_entry(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    segment = db_session.scalars(sa.select(Segment)).first()
+    external_id = segment.external_id
+
+    assert client.delete(f"/segments/{segment.id}").json()["deleted"] is True
+
+    entry = db_session.scalars(sa.select(AuditLog).where(AuditLog.entity_type == "segments")).one()
+    assert entry.action == "delete"
+    assert entry.old_values_jsonb["external_id"] == external_id
+
+
+def test_deleting_an_episode_writes_an_audit_entry(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    assert client.delete(f"/episodes/{imported_episode}").json()["deleted"] is True
+
+    entry = db_session.scalars(sa.select(AuditLog).where(AuditLog.entity_type == "episodes")).one()
+    assert entry.action == "delete"
+    assert entry.old_values_jsonb["external_id"] == imported_episode
+    assert entry.old_values_jsonb["segments"] > 0

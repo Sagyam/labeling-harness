@@ -76,3 +76,6 @@ labels:
 
 export:
   output_root: ./exports
+
+ingest:
+  work_root: ./data/ingest_work   # scratch space for web uploads; removed when a job finishes
