@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labeling-harness.local/schemas/episode.schema.json",
+  "title": "Episode manifest",
+  "description": "episode.json emitted by the upstream GPU pipeline. Unknown properties are kept and stored in episodes.metadata_jsonb.",
+  "type": "object",
+  "required": ["episode_id"],
+  "properties": {
+    "episode_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "show_id": {"type": ["string", "null"], "maxLength": 255},
+    "title": {"type": ["string", "null"]},
+    "source_uri": {"type": ["string", "null"]},
+    "published_at": {"type": ["string", "null"], "format": "date"},
+    "source_audio_checksum": {"type": ["string", "null"]},
+    "duration_seconds": {"type": ["number", "null"], "minimum": 0},
+    "pipeline_version": {"type": ["string", "null"], "maxLength": 64},
+    "pipeline_commit": {"type": ["string", "null"], "maxLength": 64}
+  },
+  "additionalProperties": true
+}

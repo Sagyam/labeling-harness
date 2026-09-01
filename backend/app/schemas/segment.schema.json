@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labeling-harness.local/schemas/segment.schema.json",
+  "title": "Segment manifest line",
+  "description": "One line of segments.jsonl. hypotheses must contain at least one entry; words is optional and may be absent or empty; scores may be partially absent and missing values are stored as null.",
+  "type": "object",
+  "required": ["segment_id", "episode_id", "start_time", "end_time", "clip_path", "hypotheses"],
+  "properties": {
+    "segment_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "episode_id": {"type": "string", "minLength": 1, "maxLength": 255},
+    "speaker_id": {"type": ["string", "null"], "maxLength": 64},
+    "start_time": {"type": "number", "minimum": 0},
+    "end_time": {"type": "number", "minimum": 0},
+    "clip_path": {"type": "string", "minLength": 1},
+    "clip_checksum": {"type": ["string", "null"]},
+    "peaks_path": {"type": ["string", "null"]},
+    "p_en": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "lid": {"type": ["string", "null"], "maxLength": 16},
+    "hypotheses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["system_id", "text"],
+        "properties": {
+          "system_id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "model_id": {"type": ["string", "null"], "maxLength": 255},
+          "text": {"type": "string"},
+          "avg_logprob": {"type": ["number", "null"]},
+          "no_speech_prob": {"type": ["number", "null"]},
+          "words": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "object",
+              "required": ["word"],
+              "properties": {
+                "word": {"type": "string"},
+                "start": {"type": ["number", "null"]},
+                "end": {"type": ["number", "null"]},
+                "confidence": {"type": ["number", "null"]},
+                "predicted_language": {"type": ["string", "null"], "maxLength": 16},
+                "predicted_script": {"type": ["string", "null"], "maxLength": 16}
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "scores": {
+      "type": ["object", "null"],
+      "properties": {
+        "cer_between_hypotheses": {"type": ["number", "null"]},
+        "word_disagreement_rate": {"type": ["number", "null"]},
+        "script_conflict_rate": {"type": ["number", "null"]},
+        "code_switch_density": {"type": ["number", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "flags": {
+      "type": ["array", "null"],
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": true
+}

@@ -33,3 +33,19 @@ Note: `docker compose` (CLI plugin) is not installed on the development machine;
 | Schema documented in ARCHITECTURE.md | ✅ | "Data model" section |
 
 86 tests passing, `ruff check` and `ruff format --check` clean.
+
+## Phase 2 — Manifest importer — ✅ complete (2026-09-01)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| Importing the same export twice inserts nothing the second time and reports it | ✅ | CLI run: second import reports `0 inserted, 6 unchanged` / `0 inserted, 18 unchanged`; `test_reimport_of_an_unchanged_export_inserts_nothing`, `test_reimport_does_not_duplicate_words` |
+| A changed clip checksum errors unless explicitly overridden | ✅ | `test_changed_clip_checksum_is_an_error` (message names `--allow-clip-change`), `test_changed_clip_is_accepted_with_the_override` |
+| A malformed manifest fails before any write; the database is unchanged | ✅ | `test_a_malformed_manifest_writes_nothing`, `test_a_rejected_import_writes_nothing` — validation and clip probing run as a planning pass before the first insert |
+| Non-FLAC or non-16 kHz clips are rejected with a clear message | ✅ | `test_non_flac_clip_is_rejected`, `test_wrong_sample_rate_is_rejected`, `test_stereo_clip_is_rejected`; messages name the file and the reason |
+| Peaks JSON exists for every imported segment | ✅ | `test_peaks_exist_for_every_segment` asserts the object exists in storage with the configured bucket count; supplied peaks are reused (`test_supplied_peaks_are_used_instead_of_recomputed`) |
+| Split assignment is deterministic for a given seed and stable across re-imports | ✅ | `test_split_is_assigned_at_import`, `test_split_is_stable_across_reimport`, `test_split_is_deterministic_for_a_given_seed`, plus the pinned hash vector in `test_splits.py` |
+| Dry-run prints planned changes and writes nothing | ✅ | CLI dry run printed the plan; `test_dry_run_writes_nothing_to_the_database`, `test_dry_run_writes_nothing_to_storage`, `test_dry_run_after_a_real_import_reports_a_no_op` |
+| JSON Schema for both files, validated at import | ✅ | `app/schemas/episode.schema.json`, `app/schemas/segment.schema.json`; `test_manifest.py` covers missing ids, empty hypotheses, duplicate segment/system ids, cross-episode records and malformed lines |
+| An `import_runs` row records the run | ✅ | `test_import_records_an_import_run`, `test_segments_link_to_their_import_run` |
+
+161 tests passing, lint and format clean.

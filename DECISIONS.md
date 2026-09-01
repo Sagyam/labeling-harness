@@ -57,7 +57,7 @@ Multi-system disagreement and rule flags already provide the prioritization sign
 no LLM calls at all. **Reversal:** n/a.
 
 ## D11 — Validation by JSON Schema at the manifest boundary
-`schemas/episode.schema.json` and `schemas/segment.schema.json` are the executable form of the input
+`backend/app/schemas/episode.schema.json` and `segment.schema.json` are the executable form of the input
 contract, checked before any write, so a malformed manifest fails loudly with an empty database
 rather than half-importing. **Reversal:** none.
 

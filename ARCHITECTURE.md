@@ -44,8 +44,8 @@ behind a job queue later is a wiring change, not a rewrite.
 
 ```text
 export_<episode_id>/
-  episode.json          object described by schemas/episode.schema.json
-  segments.jsonl        one object per line, schemas/segment.schema.json
+  episode.json          object described by app/schemas/episode.schema.json
+  segments.jsonl        one object per line, app/schemas/segment.schema.json
   clips/<segment_id>.flac    16 kHz mono FLAC, rejected otherwise
   peaks/<segment_id>.json    optional; generated at import when absent
 ```
