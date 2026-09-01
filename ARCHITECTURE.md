@@ -3,21 +3,24 @@
 ## System boundary
 
 ```text
-   GPU pipeline (Colab/Kaggle, out of scope)
-   normalize -> diarize -> segment -> LID -> multi-system ASR -> scores
-                              |
-                              v
-                    export_<episode_id>/          <-- the contract
-                              |
-   ┌──────────────────────────┴───────────────────────────────────────┐
-   │ Harness                                                          │
-   │   import  ->  queue build  ->  annotate (web UI)  ->  export      │
-   │   Postgres = source of truth; MinIO/local FS = clips and peaks    │
-   └──────────────────────────────────────────────────────────────────┘
+    Raw podcast audio (MP3/WAV/AAC) uploaded or selected in Web UI
+                               │
+                               ▼
+    ┌──────────────────────────┴───────────────────────────────────────┐
+    │ Harness Web & Ingestion Pipeline                                 │
+    │   Web UI Upload -> Local Loudnorm & VAD -> Cloud ASR (OpenRouter)│
+    │   -> Multi-System Scores & Rule Flags -> Auto Queue Build        │
+    │                                                                  │
+    │ Review & Labeling:                                               │
+    │   Triage Mode & Editor Mode (Web UI) -> Decisions & Labels       │
+    │   Postgres = source of truth; MinIO/local FS = clips and peaks   │
+    │   Export -> 4 dataset kinds (train, gold, analytics, error_mine) │
+    └──────────────────────────────────────────────────────────────────┘
 ```
 
-The harness never loads an ASR model, never trains, and knows nothing that did not arrive through
-the manifest.
+The harness provides an end-to-end web workflow: the annotator selects a podcast file directly in
+the browser, watches real-time progress and logs as it normalizes, segments, and queries Cloud ASR,
+and immediately begins annotation in the Review UI without touching the CLI or fragile Colab notebooks.
 
 ## Module map
 
@@ -139,15 +142,15 @@ Segments with zero hypotheses go to the `error` queue, never to `review`. An aud
 seeded random sample (default 5%) of low-priority, high-agreement segments so quality on the easy
 majority stays measurable.
 
-## LLM routing
+## Ingestion & Cloud ASR
 
-All LLM inference goes through OpenRouter (`backend/app/llm/openrouter.py`), which is prepaid, so
-there is no possibility of a surprise invoice. At MVP no route is wired: `config/llm_routes.yaml`
-has `enabled: false` and `routes: {}`. The client and the `llm_requests` table exist so that adding
-a route later inherits the billing, logging, retry and dry-run guarantees already in place.
-
-Upstream ASR — including any commercial transcription API — runs in the GPU pipeline, outside this
-codebase, and is out of scope for this rule.
+The harness integrates ingestion directly into the Web UI:
+- **Audio file upload / selection**: Select `.mp3`, `.m4a`, or `.wav` directly in the browser.
+- **Local normalization & VAD**: FFmpeg normalizes audio (`loudnorm`), then Silero VAD splits speech into natural chunks (2.0s–20.0s).
+- **Cloud ASR (via OpenRouter & Cloud APIs)**: Clips are transcribed by Cloud ASR providers and OpenRouter models, logged to `llm_requests`.
+- **Scoring & Flagging**: Computes Code-Mixing Index (CMI), multi-system word disagreement rate, script conflict rate, and rule flags.
+- **Live Progress & Debug Logs**: Progress percentage, current segment, and debug logs are streamed live to the Web UI via SSE (`GET /ingest/{id}/events`).
+- **Auto Queue Generation**: When processing completes, tasks are automatically built and the annotator can click "Start Annotating" immediately.
 
 ## Export
 

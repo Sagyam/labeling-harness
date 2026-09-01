@@ -96,3 +96,14 @@ ever one active task per segment, so this cannot fan out. **Reversal:** trivial.
 processing time, because the quantity of interest is how long the human took. An explicit
 `duration_ms` in the request wins over `opened_at`, so a client that measures precisely can say so.
 **Reversal:** would make the throughput baseline meaningless.
+
+## D18 — Podcast ingestion and Cloud ASR integrated into Web UI
+The external, fragile Colab GPU notebook is replaced with an in-app ingestion flow managed
+entirely from the Web UI. The annotator uploads or selects a podcast audio file (.mp3, .m4a, .wav)
+directly in the browser. The backend normalizes loudness and segments speech at natural pauses via
+lightweight local VAD, routes speech recognition to Cloud ASR endpoints (including OpenRouter),
+computes multi-system agreement and rule flags, and auto-populates the review queue. Progress,
+system metrics, and debug logs stream live to the Web UI.
+**Why:** Eliminates fragile Colab environments, GPU memory limits, and CLI friction. The annotator
+never leaves the browser to ingest new episodes.
+

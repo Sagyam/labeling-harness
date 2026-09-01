@@ -21,7 +21,9 @@ blocked, and the next session's first task.
 
 ### Next session's first task
 
-Real dataset onboarding or production deployment: run `scripts/import_manifest.py` on real episode data from the GPU pipeline, build queues, and begin operational annotation.
+Phase 9: Web Ingestion Pipeline with Cloud ASR.
+1. Build the Web UI ingestion modal: podcast audio file upload/picker, show/episode title inputs, live progress bar, and real-time streaming debug console.
+2. Build the backend ingestion service: `POST /ingest` asynchronous pipeline (FFmpeg loudnorm, Silero VAD segmentation, Cloud ASR via OpenRouter, token tagging/scoring, and auto queue generation) with SSE log streaming (`GET /ingest/{id}/events`).
 
 ## Session 1 — 2026-09-01
 

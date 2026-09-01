@@ -712,6 +712,39 @@ A single command producing a plain-text or HTML report:
 
 ---
 
+## Phase 9: Web Ingestion Pipeline with Cloud ASR
+
+Replace the fragile external Colab GPU notebook with an integrated Web UI ingestion workflow. The
+annotator never needs to leave the browser or touch the CLI to ingest a podcast episode.
+
+**Design**
+
+1. **Web UI Ingestion Dialog**:
+   - File selector / drag-and-drop for podcast audio (`.mp3`, `.m4a`, `.wav`).
+   - Episode metadata inputs: Show ID, Episode Title, Episode ID (with sensible auto-generation).
+   - Live Progress & Log Stream: Drawer/modal displaying the current stage, progress percentage,
+     active segment count, and a real-time terminal log viewer.
+   - Immediate "Start Annotating" button once ingestion completes, routing straight into Triage.
+
+2. **Backend Ingestion Service**:
+   - `POST /ingest`: Starts asynchronous ingestion job, returning a `job_id`.
+   - `GET /ingest/{job_id}`: Real-time status, stage, progress (0–100%), and error reporting.
+   - `GET /ingest/{job_id}/events`: Server-Sent Events (SSE) log stream for live browser debugging.
+   - Stage 1: Audio normalization via `ffmpeg` with `loudnorm` (16 kHz mono FLAC).
+   - Stage 2: Segmentation via Silero VAD (fast CPU speech turn detection, 2.0s–20.0s boundaries).
+   - Stage 3: Cloud ASR inference via OpenRouter (prepaid, transparent pricing, logged to `llm_requests`).
+   - Stage 4: Token analysis (CMI, script conflict, cross-system disagreement, rule flags).
+   - Stage 5: Manifest generation and direct database import + queue building in one clean pass.
+
+**Verification**
+
+- An audio file uploaded via the Web UI processes completely in the background.
+- Live logs and progress bar stream without browser lag or disconnects.
+- Resulting segments, hypotheses, rule flags, and queue tasks appear immediately in Triage Mode.
+- All Cloud ASR requests are logged to `llm_requests`.
+
+---
+
 # 8. Deferred — do not build now, keep the door open
 
 The corpus is currently small, but the archive behind it is roughly 2,400 hours. Do not build any
