@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -150,6 +151,36 @@ class OpenRouterClient:
         )
         self.session.flush()
 
+    def _send_with_retries(
+        self, send: Callable[[], httpx.Response]
+    ) -> tuple[httpx.Response | None, str, int]:
+        """Call ``send`` until it returns 200, fails unretryably, or runs out of attempts.
+
+        Args:
+            send: Builds and performs one request. Called once per attempt.
+
+        Returns:
+            ``(response, last_error, latency_ms)``. ``response`` is ``None`` when every attempt
+            failed, in which case ``last_error`` describes the final one.
+        """
+        attempts = max(1, self.config.max_retries)
+        started = time.monotonic()
+        last_error = "no attempt was made"
+        for attempt in range(attempts):
+            try:
+                response = send()
+            except httpx.HTTPError as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            else:
+                if response.status_code == 200:
+                    return response, last_error, int((time.monotonic() - started) * 1000)
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                if response.status_code not in RETRYABLE_STATUS:
+                    break
+            if attempt + 1 < attempts:
+                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
+        return None, last_error, int((time.monotonic() - started) * 1000)
+
     def complete(
         self,
         route: str,
@@ -231,64 +262,48 @@ class OpenRouterClient:
             "Content-Type": "application/json",
         }
 
-        started = time.monotonic()
-        last_error = "no attempt was made"
-        for attempt in range(max(1, self.config.max_retries)):
-            try:
-                response = self._get_client().post(
-                    url, json=payload, headers=headers, timeout=timeout
-                )
-            except httpx.HTTPError as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-            else:
-                if response.status_code == 200:
-                    latency_ms = int((time.monotonic() - started) * 1000)
-                    body = response.json()
-                    usage = body.get("usage") or {}
-                    cost = usage.get("total_cost")
-                    result = LlmResult(
-                        route=route,
-                        model=body.get("model", route_config.model),
-                        text=(body.get("choices") or [{}])[0].get("message", {}).get("content", ""),
-                        prompt_tokens=usage.get("prompt_tokens"),
-                        completion_tokens=usage.get("completion_tokens"),
-                        estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
-                        latency_ms=latency_ms,
-                        raw=body,
-                    )
-                    self._log(
-                        route=route,
-                        model=result.model,
-                        request_hash=request_hash,
-                        input_summary=summary,
-                        status="succeeded",
-                        output=body,
-                        prompt_tokens=result.prompt_tokens,
-                        completion_tokens=result.completion_tokens,
-                        cost=result.estimated_cost_usd,
-                        latency_ms=latency_ms,
-                    )
-                    return result
+        response, last_error, latency_ms = self._send_with_retries(
+            lambda: self._get_client().post(url, json=payload, headers=headers, timeout=timeout)
+        )
+        if response is None:
+            self._log(
+                route=route,
+                model=route_config.model,
+                request_hash=request_hash,
+                input_summary=summary,
+                status="failed",
+                latency_ms=latency_ms,
+                error=last_error,
+            )
+            logger.info("llm_request_failed", route=route, error=last_error)
+            raise LlmRequestFailed(f"route {route!r} failed: {last_error}")
 
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                if response.status_code not in RETRYABLE_STATUS:
-                    break
-
-            if attempt + 1 < max(1, self.config.max_retries):
-                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
-
-        latency_ms = int((time.monotonic() - started) * 1000)
+        body = response.json()
+        usage = body.get("usage") or {}
+        cost = usage.get("total_cost")
+        result = LlmResult(
+            route=route,
+            model=body.get("model", route_config.model),
+            text=(body.get("choices") or [{}])[0].get("message", {}).get("content", ""),
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
+            latency_ms=latency_ms,
+            raw=body,
+        )
         self._log(
             route=route,
-            model=route_config.model,
+            model=result.model,
             request_hash=request_hash,
             input_summary=summary,
-            status="failed",
+            status="succeeded",
+            output=body,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            cost=result.estimated_cost_usd,
             latency_ms=latency_ms,
-            error=last_error,
         )
-        logger.info("llm_request_failed", route=route, error=last_error)
-        raise LlmRequestFailed(f"route {route!r} failed: {last_error}")
+        return result
 
     def transcribe(
         self,
@@ -303,8 +318,14 @@ class OpenRouterClient:
     ) -> AsrResult:
         """Transcribe an audio file using Cloud ASR via OpenRouter.
 
-        Always logs the attempt to ``llm_requests``. In dry run mode or when unconfigured,
-        logs status='dry_run' and generates deterministic mock transcripts.
+        Always logs the attempt to ``llm_requests``. An explicit dry run returns a deterministic
+        mock transcript marked ``dry_run``; a missing key or a disabled configuration raises,
+        because a fabricated transcript written into the corpus as a real hypothesis is far worse
+        than a failed ingest.
+
+        Raises:
+            LlmDisabledError: LLM inference is disabled in configuration.
+            LlmRequestFailed: No API key, or the request failed after retries.
         """
         route_config = self.config.routes.get(route)
         target_model = model or (route_config.model if route_config else "openai/whisper-large-v3")
@@ -316,7 +337,7 @@ class OpenRouterClient:
         payload_hash = hashlib.sha256(hash_seed).hexdigest()
         summary = f"asr_transcribe: {audio_file.name} model={target_model}"
 
-        if effective_dry_run or not self.config.enabled or not self.api_key:
+        if effective_dry_run:
             self._log(
                 route=route,
                 model=target_model,
@@ -325,14 +346,14 @@ class OpenRouterClient:
                 status="dry_run",
             )
             logger.info("asr_dry_run", route=route, model=target_model, file=str(audio_file))
-            # Generate realistic Nepali-English code-switched mock hypothesis
+            # Deterministic mock, chosen by file hash. Callers must key off `dry_run` and never
+            # store this as a real hypothesis.
             sample_texts = [
                 "हामीले यो project मा meeting गरेर data analyse गर्नु पर्छ",
                 "आजको session मा machine learning र technology को कुरा भयो",
                 "सबै team members ले आफ्नो schedule अनुसार task complete गर्नु होला",
                 "यो software system मा नयाँ feature update add गरिएको छ",
             ]
-            # Deterministic choice based on file hash
             chosen = sample_texts[int(payload_hash[:4], 16) % len(sample_texts)]
             words = [
                 {"word": w, "start": round(i * 0.4, 2), "end": round((i + 1) * 0.4, 2)}
@@ -343,10 +364,24 @@ class OpenRouterClient:
                 model=target_model,
                 text=chosen,
                 words=words,
-                avg_logprob=-0.25,
-                no_speech_prob=0.01,
                 dry_run=True,
             )
+
+        if not self.config.enabled:
+            raise LlmDisabledError(
+                "LLM inference is disabled (config/llm_routes.yaml: enabled: false), "
+                "so no transcription can be produced."
+            )
+        if not self.api_key:
+            self._log(
+                route=route,
+                model=target_model,
+                request_hash=payload_hash,
+                input_summary=summary,
+                status="failed",
+                error="OPENROUTER_API_KEY is not set",
+            )
+            raise LlmRequestFailed("OPENROUTER_API_KEY is not set")
 
         timeout = (
             timeout_seconds
@@ -356,78 +391,60 @@ class OpenRouterClient:
         url = f"{self.config.base_url.rstrip('/')}/audio/transcriptions"
         headers = {"Authorization": f"Bearer {self.api_key}"}
 
-        started = time.monotonic()
-        last_error = "no attempt was made"
+        def send() -> httpx.Response:
+            with open(audio_file, "rb") as handle:
+                files = {"file": (audio_file.name, handle, "audio/flac")}
+                data = {"model": target_model}
+                if prompt:
+                    data["prompt"] = prompt
+                if language:
+                    data["language"] = language
+                return self._get_client().post(
+                    url, data=data, files=files, headers=headers, timeout=timeout
+                )
 
-        for attempt in range(max(1, self.config.max_retries)):
-            try:
-                with open(audio_file, "rb") as f:
-                    files = {"file": (audio_file.name, f, "audio/flac")}
-                    data = {"model": target_model}
-                    if prompt:
-                        data["prompt"] = prompt
-                    if language:
-                        data["language"] = language
-                    response = self._get_client().post(
-                        url, data=data, files=files, headers=headers, timeout=timeout
-                    )
-            except httpx.HTTPError as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-            else:
-                if response.status_code == 200:
-                    latency_ms = int((time.monotonic() - started) * 1000)
-                    body = response.json()
-                    text = body.get("text", "")
-                    raw_words = body.get("words") or []
-                    words = [
-                        {
-                            "word": w.get("word", ""),
-                            "start": w.get("start"),
-                            "end": w.get("end"),
-                        }
-                        for w in raw_words
-                    ]
-                    usage = body.get("usage") or {}
-                    cost = usage.get("total_cost")
-                    result = AsrResult(
-                        route=route,
-                        model=body.get("model", target_model),
-                        text=text,
-                        words=words,
-                        avg_logprob=body.get("avg_logprob", -0.2),
-                        no_speech_prob=body.get("no_speech_prob", 0.0),
-                        latency_ms=latency_ms,
-                        estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
-                        raw=body,
-                    )
-                    self._log(
-                        route=route,
-                        model=result.model,
-                        request_hash=payload_hash,
-                        input_summary=summary,
-                        status="succeeded",
-                        output=body,
-                        cost=result.estimated_cost_usd,
-                        latency_ms=latency_ms,
-                    )
-                    return result
+        response, last_error, latency_ms = self._send_with_retries(send)
+        if response is None:
+            self._log(
+                route=route,
+                model=target_model,
+                request_hash=payload_hash,
+                input_summary=summary,
+                status="failed",
+                latency_ms=latency_ms,
+                error=last_error,
+            )
+            logger.info("asr_request_failed", route=route, error=last_error)
+            raise LlmRequestFailed(f"ASR transcription failed: {last_error}")
 
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                if response.status_code not in RETRYABLE_STATUS:
-                    break
-
-            if attempt + 1 < max(1, self.config.max_retries):
-                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
-
-        latency_ms = int((time.monotonic() - started) * 1000)
+        body = response.json()
+        raw_words = body.get("words") or []
+        usage = body.get("usage") or {}
+        cost = usage.get("total_cost")
+        result = AsrResult(
+            route=route,
+            model=body.get("model", target_model),
+            text=body.get("text", ""),
+            words=[
+                {"word": w.get("word", ""), "start": w.get("start"), "end": w.get("end")}
+                for w in raw_words
+            ],
+            # Absent means unknown, not confident. The scorer reads None as "no signal"; a
+            # plausible-looking default would silently drive 25% of the queue ordering.
+            avg_logprob=body.get("avg_logprob"),
+            no_speech_prob=body.get("no_speech_prob"),
+            latency_ms=latency_ms,
+            estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
+            raw=body,
+        )
         self._log(
             route=route,
-            model=target_model,
+            model=result.model,
             request_hash=payload_hash,
             input_summary=summary,
-            status="failed",
+            status="succeeded",
+            output=body,
+            cost=result.estimated_cost_usd,
             latency_ms=latency_ms,
-            error=last_error,
         )
-        logger.info("asr_request_failed", route=route, error=last_error)
-        raise LlmRequestFailed(f"ASR transcription failed: {last_error}")
+        return result

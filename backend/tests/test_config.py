@@ -136,8 +136,7 @@ def test_local_root_resolves_relative_to_repo_root() -> None:
 def test_llm_routes_configured_for_cloud_asr() -> None:
     routes = load_llm_routes()
     assert routes.enabled is True
-    assert "asr_nemotron" in routes.routes
-    assert "asr_qwen" in routes.routes
+    assert "asr_chirp" in routes.routes
     assert routes.base_url.startswith("https://openrouter.ai")
 
 

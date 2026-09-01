@@ -7,7 +7,5 @@ max_retries: 3
 retry_backoff_seconds: 0.5
 dry_run: false
 routes:
-  asr_nemotron:
-    model: nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b
-  asr_qwen:
-    model: qwen/qwen3-asr-1.7b
+  asr_chirp:
+    model: google/chirp-3
