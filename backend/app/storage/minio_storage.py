@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import io
 from pathlib import Path
 
@@ -101,12 +100,6 @@ class MinioStorage(ObjectStorage):
         except S3Error as exc:  # pragma: no cover - remove is idempotent server-side
             if exc.code not in {"NoSuchKey", "NoSuchBucket"}:
                 raise StorageError(str(exc)) from exc
-
-    def presigned_url(self, key: str, *, expires_seconds: int = 3600) -> str | None:
-        validate_key(key)
-        return self.client.presigned_get_object(
-            self.bucket, key, expires=dt.timedelta(seconds=expires_seconds)
-        )
 
     def healthcheck(self) -> None:
         self._ensure_bucket()

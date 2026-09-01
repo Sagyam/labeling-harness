@@ -64,10 +64,6 @@ class LocalFilesystemStorage(ObjectStorage):
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
 
-    def presigned_url(self, key: str, *, expires_seconds: int = 3600) -> str | None:
-        """Local files have no external URL; the API streams them instead."""
-        return None
-
     def healthcheck(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         if not self.root.is_dir():  # pragma: no cover - mkdir would have raised

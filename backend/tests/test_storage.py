@@ -66,11 +66,6 @@ def test_keys_cannot_escape_the_root(local_storage: LocalFilesystemStorage) -> N
         local_storage.get_bytes("/absolute")
 
 
-def test_local_storage_has_no_presigned_url(local_storage: LocalFilesystemStorage) -> None:
-    local_storage.put_bytes("k", b"x")
-    assert local_storage.presigned_url("k") is None
-
-
 def test_healthcheck_creates_root(tmp_path: Path) -> None:
     storage = LocalFilesystemStorage(root=tmp_path / "nested" / "root")
     storage.healthcheck()
@@ -111,6 +106,27 @@ def test_minio_round_trip_and_range() -> None:
     assert storage.get_bytes("tests/range.bin") == b"0123456789"
     assert storage.read_range("tests/range.bin", 2, 5) == b"2345"
     assert storage.size("tests/range.bin") == 10
-    assert storage.presigned_url("tests/range.bin") is not None
     storage.delete("tests/range.bin")
     assert storage.exists("tests/range.bin") is False
+
+
+def test_delete_objects_skips_missing_keys(local_storage: LocalFilesystemStorage) -> None:
+    from app.storage import delete_objects
+
+    local_storage.put_bytes("clip", b"x")
+    delete_objects(local_storage, "clip", None)
+    assert local_storage.exists("clip") is False
+
+
+def test_delete_objects_logs_a_failure_instead_of_aborting(
+    local_storage: LocalFilesystemStorage,
+) -> None:
+    """A storage failure must not stop the database delete the user actually asked for."""
+
+    class Failing(LocalFilesystemStorage):
+        def delete(self, key: str) -> None:
+            raise OSError("bucket unreachable")
+
+    from app.storage import delete_objects
+
+    delete_objects(Failing(root=local_storage.root), "clip", "peaks")

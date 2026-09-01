@@ -67,10 +67,6 @@ class ObjectStorage(ABC):
         """Remove ``key`` if present. Idempotent."""
 
     @abstractmethod
-    def presigned_url(self, key: str, *, expires_seconds: int = 3600) -> str | None:
-        """A time-limited URL for direct client access, or ``None`` if unsupported."""
-
-    @abstractmethod
     def healthcheck(self) -> None:
         """Raise if the backend is not usable."""
 
