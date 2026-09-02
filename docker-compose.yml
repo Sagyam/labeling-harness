@@ -12,7 +12,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${HARNESS_DATABASE__USER:-harness}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${HARNESS_DATABASE__USER:-harness}" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -29,7 +29,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: [ "CMD", "mc", "ready", "local" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -47,6 +47,8 @@ services:
       HARNESS_STORAGE__MINIO__ACCESS_KEY: ${HARNESS_STORAGE__MINIO__ACCESS_KEY:-minioadmin}
       HARNESS_STORAGE__MINIO__SECRET_KEY: ${HARNESS_STORAGE__MINIO__SECRET_KEY:-minioadmin}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ELEVEN_LABS_API_KEY: ${ELEVEN_LABS_API_KEY:-}
+      HARNESS_API__AUTH_TOKEN: ${HARNESS_API__AUTH_TOKEN:-}
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:
