@@ -47,7 +47,11 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True) -> None:
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        # Deliberately no ``file=``: PrintLogger only resolves ``sys.stdout`` at write
+        # time when it was constructed without one. Passing ``file=sys.stdout`` here
+        # would pin whatever stream is installed at configure time, and writes would
+        # fail once that stream is replaced or closed.
+        logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False,
     )
     _configured = True
