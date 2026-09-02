@@ -249,29 +249,64 @@ class Settings(BaseSettings):
 
 
 class LlmRoute(BaseModel):
-    """One named LLM route. No route is wired to a pipeline stage at MVP."""
+    """One named route: which vendor, which API shape on it, and which model.
+
+    A route named ``asr*`` becomes one ASR system during ingestion. ``api`` selects the request
+    shape, because a transcription endpoint and a chat endpoint that happens to accept audio are
+    not interchangeable:
+
+    * ``transcription`` -- a dedicated speech-to-text endpoint taking a multipart upload.
+    * ``audio_chat`` -- chat completions with the clip attached as an ``input_audio`` part. The
+      model is a general LLM being asked to transcribe, so it obeys a prompt but may also
+      editorialise or hallucinate over silence.
+    * ``chat`` -- ordinary text chat completions.
+    """
 
     model_config = _STRICT
 
+    provider: Literal["openrouter", "elevenlabs"] = "openrouter"
+    api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
+    #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
+    #: route name with its ``asr_`` prefix stripped. Set it explicitly and leave it alone: it is
+    #: how a hypothesis is attributed for the life of the corpus.
+    system_id: str | None = None
+    #: ISO language hint passed to the provider, where the provider takes one.
+    language: str | None = None
     timeout_seconds: float | None = None
     max_tokens: int | None = None
     temperature: float | None = None
 
+    @model_validator(mode="after")
+    def _check_provider_api(self) -> LlmRoute:
+        if self.provider == "elevenlabs" and self.api != "transcription":
+            raise ValueError("the elevenlabs provider only offers api: transcription")
+        return self
+
 
 class LlmRoutes(BaseModel):
-    """OpenRouter routing table. All LLM inference in this codebase goes through OpenRouter."""
+    """Routing table for every inference provider.
+
+    OpenRouter is the default and carries all text inference. A second provider is permitted only
+    when it is prepaid, so that the blast radius of a runaway job stays bounded by a balance
+    (decisions D10, D21).
+    """
 
     model_config = _STRICT
 
     enabled: bool = False
     base_url: str = "https://openrouter.ai/api/v1"
+    elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
     default_timeout_seconds: float = 30.0
     default_max_tokens: int = 1024
     max_retries: int = 3
     retry_backoff_seconds: float = 0.5
     dry_run: bool = True
     routes: dict[str, LlmRoute] = Field(default_factory=dict)
+
+    def asr_route_names(self) -> list[str]:
+        """Every route that becomes an ASR system during ingestion, in configured order."""
+        return [name for name in self.routes if name.startswith("asr")]
 
 
 def load_dotenv(path: Path | None = None) -> None:
