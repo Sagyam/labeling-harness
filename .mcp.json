@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.80",
+        "--headless",
+        "--executable-path", "/usr/bin/chromium",
+        "--viewport-size", "1440,900",
+        "--console-level", "warning",
+        "--isolated"
+      ]
+    }
+  }
+}
