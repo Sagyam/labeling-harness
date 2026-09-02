@@ -290,6 +290,7 @@ export interface EpisodeSegmentSummary {
   duration_seconds: number
   pipeline_status: string
   task_status: string | null
+  task_id?: number | null
   seed_text: string | null
   flags: string[]
   cmi: number | null
@@ -297,4 +298,81 @@ export interface EpisodeSegmentSummary {
   audio_url: string
   peaks_url: string | null
 }
+
+export interface AnalyticsReport {
+  generated_at: string
+  corpus: {
+    episodes: number
+    segments: number
+    audio_hours: number
+    segments_by_status: Record<string, number>
+    episode_titles: Array<{ external_id: string; title: string | null; split: string }>
+  }
+  labels: {
+    total: number
+    accepted_unchanged: number
+    edited: number
+    unusable_audio: number
+    uncertain: number
+    [key: string]: number
+  }
+  accept_rate: number | null
+  accept_rate_by_day: Array<{
+    day: string
+    labeled: number
+    accepted: number
+    accept_rate: number | null
+  }>
+  throughput: {
+    median_seconds_per_segment: number | null
+    segments_per_hour: number | null
+    annotator_hours: number
+    events: number
+  }
+  queue: {
+    backlog: number
+    by_queue: Record<string, number>
+    projected_hours_to_finish: number | null
+  }
+  scores: {
+    mean_word_disagreement_rate: number | null
+    mean_script_conflict_rate: number | null
+    mean_code_switch_density: number | null
+    mean_cer_between_hypotheses: number | null
+  }
+  split_balance: Record<string, { episodes: number; segments: number; hours: number }>
+  word_timestamp_coverage: {
+    hypotheses_total: number
+    hypotheses_with_words: number
+    fraction: number
+  }
+}
+
+export interface ExportOutItem {
+  kind: string
+  row_count: number
+  row_counts_by_split: Record<string, number>
+  data_filename: string
+  manifest_filename: string
+  download_url: string
+  manifest_url: string
+  manifest: Record<string, any>
+}
+
+export interface ExportResponse {
+  results: ExportOutItem[]
+}
+
+export interface ExportHistoryItem {
+  kind: string
+  data_filename: string
+  manifest_filename: string
+  download_url: string
+  manifest_url: string
+  row_count: number
+  row_counts_by_split: Record<string, number>
+  exported_at: string | null
+  file_bytes: number
+}
+
 

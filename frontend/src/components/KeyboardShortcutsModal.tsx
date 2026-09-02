@@ -44,6 +44,15 @@ const TRANSLIT: Shortcut[] = [
   ['Dismiss popup, keep Latin as typed', ['Esc']],
 ]
 
+const NAVIGATION: Shortcut[] = [
+  ['Switch to Triage view', ['1']],
+  ['Switch to Editor view', ['2']],
+  ['Switch to Episodes & Segments', ['3']],
+  ['Switch to Analytics dashboard', ['4']],
+  ['Switch to Dataset Export', ['5']],
+  ['Toggle shortcuts reference', ['?']],
+]
+
 function ShortcutGroup({ title, shortcuts }: { title: string; shortcuts: Shortcut[] }) {
   return (
     <section className="flex flex-col gap-1">
@@ -75,16 +84,15 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            The harness is keyboard-first — every decision has a binding.
+            The harness is keyboard-first — every decision and view switch has a binding.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-6 sm:grid-cols-2">
+          <ShortcutGroup title="Global navigation" shortcuts={NAVIGATION} />
           <ShortcutGroup title="Triage mode" shortcuts={TRIAGE} />
           <ShortcutGroup title="Editor mode" shortcuts={EDITOR} />
-          <div className="sm:col-span-2">
-            <ShortcutGroup title="Devanagari transliteration" shortcuts={TRANSLIT} />
-          </div>
+          <ShortcutGroup title="Devanagari transliteration" shortcuts={TRANSLIT} />
         </div>
       </DialogContent>
     </Dialog>

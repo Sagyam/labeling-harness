@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { AnalyticsView } from '@/components/AnalyticsView'
 import { EditorView } from '@/components/EditorView'
-import { EpisodeManagerModal } from '@/components/EpisodeManagerModal'
-import { Header } from '@/components/Header'
+import { EpisodesView } from '@/components/EpisodesView'
+import { ExportView } from '@/components/ExportView'
+import { Header, type HeaderMode } from '@/components/Header'
 import { IngestModal } from '@/components/IngestModal'
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
 import { TriageView } from '@/components/TriageView'
@@ -14,11 +16,11 @@ export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [activeQueue, setActiveQueue] = useState<string>('review')
-  const [activeMode, setActiveMode] = useState<'triage' | 'editor'>('triage')
+  const [activeMode, setActiveMode] = useState<HeaderMode>('triage')
+  const [episodeFilter, setEpisodeFilter] = useState<string | null>(null)
 
-  // Ingestion & episode modal state
+  // Ingestion modal state
   const [isIngestOpen, setIsIngestOpen] = useState<boolean>(false)
-  const [isEpisodesOpen, setIsEpisodesOpen] = useState<boolean>(false)
 
   // Triage state
   const [queueRows, setQueueRows] = useState<QueueRow[]>([])
@@ -49,18 +51,26 @@ export default function App() {
     return () => clearInterval(interval)
   }, [refreshStats])
 
-  // Load queue rows
-  const loadQueue = useCallback(async (qName: string) => {
-    try {
-      const rows = await api.getQueue({ queue: qName, limit: 100 })
-      setQueueRows(rows)
-      setSelectedIds(new Set())
-      setFocusedIndex((prev) => (prev >= rows.length ? Math.max(0, rows.length - 1) : prev))
-    } catch (err) {
-      console.error('Failed to load queue:', err)
-      toast.error('Failed to load queue')
-    }
-  }, [])
+  // Load queue rows with optional episode filter
+  const loadQueue = useCallback(
+    async (qName: string, epFilter?: string | null) => {
+      try {
+        const ep = epFilter !== undefined ? epFilter : episodeFilter
+        const rows = await api.getQueue({
+          queue: qName,
+          episode: ep || undefined,
+          limit: 100,
+        })
+        setQueueRows(rows)
+        setSelectedIds(new Set())
+        setFocusedIndex((prev) => (prev >= rows.length ? Math.max(0, rows.length - 1) : prev))
+      } catch (err) {
+        console.error('Failed to load queue:', err)
+        toast.error('Failed to load queue')
+      }
+    },
+    [episodeFilter],
+  )
 
   useEffect(() => {
     loadQueue(activeQueue)
@@ -69,7 +79,10 @@ export default function App() {
   // Resume active task
   const handleResume = async () => {
     try {
-      const task = await api.getNextTask({ queue: activeQueue })
+      const task = await api.getNextTask({
+        queue: activeQueue,
+        episode: episodeFilter || undefined,
+      })
       setCurrentTask(task)
       setActiveMode('editor')
       toast.info(`Resumed ${task.segment.external_id}`)
@@ -92,6 +105,14 @@ export default function App() {
     }
   }
 
+  // Filter triage to episode
+  const handleTriageEpisode = (episodeExternalId: string) => {
+    setEpisodeFilter(episodeExternalId)
+    setActiveMode('triage')
+    loadQueue(activeQueue, episodeExternalId)
+    toast.info(`Filtered triage to ${episodeExternalId}`)
+  }
+
   const dropRow = (taskId: number) => {
     setQueueRows((prev) => prev.filter((r) => r.task_id !== taskId))
     setSelectedIds((prev) => {
@@ -109,10 +130,9 @@ export default function App() {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
       })
-      toast.success(
-        `Accepted ${targetRow?.segment_external_id || `#${taskId}`}`,
-        { description: `${(durationMs / 1000).toFixed(1)}s` },
-      )
+      toast.success(`Accepted ${targetRow?.segment_external_id || `#${taskId}`}`, {
+        description: `${(durationMs / 1000).toFixed(1)}s`,
+      })
       dropRow(taskId)
       refreshStats()
     } catch (err: any) {
@@ -133,9 +153,7 @@ export default function App() {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
       })
-      toast.warning(
-        `Flagged ${targetRow?.segment_external_id || `#${taskId}`} as ${disposition}`,
-      )
+      toast.warning(`Flagged ${targetRow?.segment_external_id || `#${taskId}`} as ${disposition}`)
       dropRow(taskId)
       refreshStats()
     } catch (err: any) {
@@ -192,7 +210,12 @@ export default function App() {
   /** Fetch the next task, falling back to triage when the queue is exhausted. */
   const advanceToNextTask = async () => {
     try {
-      setCurrentTask(await api.getNextTask({ queue: activeQueue }))
+      setCurrentTask(
+        await api.getNextTask({
+          queue: activeQueue,
+          episode: episodeFilter || undefined,
+        }),
+      )
     } catch (err: any) {
       if (err.status === 404) {
         toast.info('Queue complete — returning to triage')
@@ -267,30 +290,45 @@ export default function App() {
     }
   }
 
-  // Global keybinding: ? toggles the shortcut reference
+  // Global keybindings: 1-5 switch views; ? toggles shortcuts modal
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-      if (targetTag === 'input' || targetTag === 'textarea') return
+      if (targetTag === 'input' || targetTag === 'textarea' || targetTag === 'select') return
 
       if (e.key === '?') {
         e.preventDefault()
         setIsHelpOpen((prev) => !prev)
+      } else if (e.key === '1') {
+        e.preventDefault()
+        setActiveMode('triage')
+      } else if (e.key === '2') {
+        e.preventDefault()
+        if (!currentTask) {
+          handleResume()
+        } else {
+          setActiveMode('editor')
+        }
+      } else if (e.key === '3') {
+        e.preventDefault()
+        setActiveMode('episodes')
+      } else if (e.key === '4') {
+        e.preventDefault()
+        setActiveMode('analytics')
+      } else if (e.key === '5') {
+        e.preventDefault()
+        setActiveMode('export')
       }
     }
     window.addEventListener('keydown', handleGlobalKeyDown)
     return () => window.removeEventListener('keydown', handleGlobalKeyDown)
-  }, [])
+  }, [currentTask, activeQueue, episodeFilter])
 
   return (
     <div className="flex h-full flex-col bg-background">
       <Header
         stats={stats}
         activeQueue={activeQueue}
-        onChangeQueue={(q) => {
-          setActiveQueue(q)
-          setActiveMode('triage')
-        }}
         activeMode={activeMode}
         onChangeMode={(m) => {
           if (m === 'editor' && !currentTask) {
@@ -302,24 +340,25 @@ export default function App() {
         onResume={handleResume}
         onOpenHelp={() => setIsHelpOpen(true)}
         onOpenIngest={() => setIsIngestOpen(true)}
-        onOpenEpisodes={() => setIsEpisodesOpen(true)}
         health={health}
       />
 
-      {activeMode === 'triage' || !currentTask ? (
-        <TriageView
-          rows={queueRows}
-          focusedIndex={focusedIndex}
-          onSetFocusedIndex={setFocusedIndex}
-          selectedIds={selectedIds}
-          onToggleSelect={handleToggleSelect}
-          onSelectAll={handleSelectAll}
-          onAcceptRow={handleAcceptRow}
+      {/* Main View Router */}
+      {activeMode === 'episodes' ? (
+        <EpisodesView
           onOpenEditor={handleOpenEditor}
-          onFlagRow={handleFlagRow}
-          onBulkAccept={handleBulkAccept}
+          onTriageEpisode={handleTriageEpisode}
+          onOpenIngest={() => setIsIngestOpen(true)}
+          onDataChanged={() => {
+            refreshStats()
+            loadQueue(activeQueue)
+          }}
         />
-      ) : (
+      ) : activeMode === 'analytics' ? (
+        <AnalyticsView />
+      ) : activeMode === 'export' ? (
+        <ExportView />
+      ) : activeMode === 'editor' && currentTask ? (
         <EditorView
           task={currentTask}
           onSaveAndNext={handleSaveAndNext}
@@ -331,16 +370,32 @@ export default function App() {
             loadQueue(activeQueue)
           }}
         />
+      ) : (
+        <TriageView
+          rows={queueRows}
+          activeQueue={activeQueue}
+          onChangeQueue={(q) => {
+            setActiveQueue(q)
+            loadQueue(q, episodeFilter)
+          }}
+          queueStats={(stats?.queues as Record<string, number>) || {}}
+          episodeFilter={episodeFilter}
+          onClearEpisodeFilter={() => {
+            setEpisodeFilter(null)
+            loadQueue(activeQueue, null)
+            toast.info('Cleared episode filter')
+          }}
+          focusedIndex={focusedIndex}
+          onSetFocusedIndex={setFocusedIndex}
+          selectedIds={selectedIds}
+          onToggleSelect={handleToggleSelect}
+          onSelectAll={handleSelectAll}
+          onAcceptRow={handleAcceptRow}
+          onOpenEditor={handleOpenEditor}
+          onFlagRow={handleFlagRow}
+          onBulkAccept={handleBulkAccept}
+        />
       )}
-
-      <EpisodeManagerModal
-        isOpen={isEpisodesOpen}
-        onClose={() => setIsEpisodesOpen(false)}
-        onDataChanged={() => {
-          refreshStats()
-          loadQueue(activeQueue)
-        }}
-      />
 
       <IngestModal
         isOpen={isIngestOpen}

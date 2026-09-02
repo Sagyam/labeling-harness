@@ -22,6 +22,9 @@ import {
   EpisodeSegmentSummary,
   YouTubeProbe,
   YouTubeIngestIn,
+  AnalyticsReport,
+  ExportResponse,
+  ExportHistoryItem,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -270,5 +273,26 @@ export const api = {
     return request(`/segments/${segmentId}`, {
       method: 'DELETE',
     })
+  },
+
+  getReport: (): Promise<AnalyticsReport> => request<AnalyticsReport>('/stats/report'),
+
+  runExport: (body: {
+    kind: string
+    episode?: string
+    label_version?: string
+  }): Promise<ExportResponse> => {
+    return request<ExportResponse>('/export', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  },
+
+  getExportHistory: (): Promise<ExportHistoryItem[]> => {
+    return request<ExportHistoryItem[]>('/export/history')
+  },
+
+  getExportDownloadUrl: (kind: string, filename: string): string => {
+    return resolveUrl(`/export/download/${kind}/${filename}`)
   },
 }

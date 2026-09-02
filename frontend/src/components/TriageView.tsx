@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { RiInboxLine, RiPauseFill, RiPlayFill } from '@remixicon/react'
+import { RiCloseLine, RiInboxLine, RiPauseFill, RiPlayFill } from '@remixicon/react'
 
 import { Chip } from '@/components/Chip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { Separator } from '@/components/ui/separator'
 import {
   Table,
   TableBody,
@@ -14,13 +15,21 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { resolveUrl } from '@/services/api'
 import { cn } from '@/lib/utils'
 import type { QueueRow } from '@/types'
 
+const QUEUES = ['review', 'audit', 'error'] as const
+
 interface TriageViewProps {
   rows: QueueRow[]
+  activeQueue?: string
+  onChangeQueue?: (queue: string) => void
+  queueStats?: Record<string, number>
+  episodeFilter?: string | null
+  onClearEpisodeFilter?: () => void
   focusedIndex: number
   onSetFocusedIndex: (index: number) => void
   selectedIds: Set<number>
@@ -55,6 +64,11 @@ function priorityClass(score: number) {
 
 export function TriageView({
   rows,
+  activeQueue,
+  onChangeQueue,
+  queueStats,
+  episodeFilter,
+  onClearEpisodeFilter,
   focusedIndex,
   onSetFocusedIndex,
   selectedIds,
@@ -186,19 +200,61 @@ export function TriageView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Toolbar */}
-      <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4">
-        <Button
-          size="sm"
-          disabled={selectedIds.size === 0}
-          onClick={() => onBulkAccept(Array.from(selectedIds))}
-        >
-          Accept selected ({selectedIds.size})
-          <Kbd className="ml-1 bg-primary-foreground/15 text-primary-foreground">⇧ ↵</Kbd>
-        </Button>
+      <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b bg-card/20 px-4 sm:px-6">
+        {/* Left: Queue tabs & episode filter chip */}
+        <div className="flex items-center gap-3">
+          {onChangeQueue && activeQueue && (
+            <Tabs value={activeQueue} onValueChange={onChangeQueue}>
+              <TabsList variant="line" className="h-8">
+                {QUEUES.map((queue) => (
+                  <TabsTrigger key={queue} value={queue} className="gap-1.5 px-3 text-xs capitalize">
+                    {queue}
+                    <span className="font-mono text-[10px] tabular-nums opacity-70">
+                      {queueStats?.[queue] ?? 0}
+                    </span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          )}
 
-        <span className="font-mono text-xs text-muted-foreground tabular-nums">
-          {rows.length} queued segments
-        </span>
+          {episodeFilter && (
+            <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary">
+              <span className="text-muted-foreground">Episode:</span>
+              <span className="font-mono font-semibold">{episodeFilter}</span>
+              {onClearEpisodeFilter && (
+                <button
+                  type="button"
+                  onClick={onClearEpisodeFilter}
+                  className="ml-1 rounded-full p-0.5 hover:bg-primary/20 transition-colors"
+                  title="Clear episode filter"
+                  aria-label="Clear episode filter"
+                >
+                  <RiCloseLine className="size-3" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right: Selection & count */}
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            disabled={selectedIds.size === 0}
+            onClick={() => onBulkAccept(Array.from(selectedIds))}
+            className="h-8 gap-1.5 text-xs"
+          >
+            Accept selected ({selectedIds.size})
+            <Kbd className="ml-1 bg-primary-foreground/15 text-primary-foreground">⇧ ↵</Kbd>
+          </Button>
+
+          <Separator orientation="vertical" className="h-4" />
+
+          <span className="font-mono text-xs text-muted-foreground tabular-nums">
+            {rows.length} queued segments
+          </span>
+        </div>
       </div>
 
       {/* Queue table */}
