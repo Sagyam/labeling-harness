@@ -136,8 +136,38 @@ def test_local_root_resolves_relative_to_repo_root() -> None:
 def test_llm_routes_configured_for_cloud_asr() -> None:
     routes = load_llm_routes()
     assert routes.enabled is True
-    assert "asr_chirp" in routes.routes
     assert routes.base_url.startswith("https://openrouter.ai")
+    assert routes.asr_route_names() == [
+        "asr_scribe_v2",
+        "asr_gemini_flash_lite",
+        "asr_whisper_large_v3",
+    ]
+
+
+def test_the_committed_transcribers_name_their_provider_and_api() -> None:
+    routes = load_llm_routes().routes
+    scribe = routes["asr_scribe_v2"]
+    assert (scribe.provider, scribe.api) == ("elevenlabs", "transcription")
+    assert scribe.model == "scribe_v2"
+    assert scribe.language == "ne", "Scribe takes no prompt; the language code is its steering"
+
+    gemini = routes["asr_gemini_flash_lite"]
+    assert (gemini.provider, gemini.api) == ("openrouter", "audio_chat")
+
+    whisper = routes["asr_whisper_large_v3"]
+    assert (whisper.provider, whisper.api) == ("openrouter", "transcription")
+
+
+def test_no_transcriber_is_configured_on_an_openrouter_batch_variant() -> None:
+    """OpenRouter's Batch API is text-only: a `:batch` slug can never carry a clip (D22).
+
+    The synchronous endpoint rejects the slug outright, and the Batch API accepts the submission
+    and then terminally fails validation, so the failure would surface an episode late rather
+    than at configuration time.
+    """
+    for name, route in load_llm_routes().routes.items():
+        if name.startswith("asr"):
+            assert not route.model.endswith(":batch"), name
 
 
 def test_settings_type_is_exported() -> None:

@@ -1,11 +1,52 @@
-# All LLM inference from this codebase goes through OpenRouter. No direct provider calls.
+# Inference routing. Every provider here is prepaid: a runaway job can exhaust a balance the
+# owner topped up, but cannot produce an invoice. That, not the vendor, is the rule (D10, D21).
+#
+# A route named `asr*` becomes one ASR system during ingestion, in the order written below. The
+# first route is the primary hypothesis: it supplies the text that analysis, CMI and the rule
+# flags are computed from, so keep the most accurate model at the top.
 enabled: true
 base_url: https://openrouter.ai/api/v1
+elevenlabs_base_url: https://api.elevenlabs.io/v1
 default_timeout_seconds: 60
 default_max_tokens: 1024
 max_retries: 3
 retry_backoff_seconds: 0.5
 dry_run: false
 routes:
-  asr_chirp:
-    model: google/chirp-3
+  # ElevenLabs Scribe v2, called directly (ELEVEN_LABS_API_KEY). The only transcriber configured
+  # here that returns word spans and per-word log probabilities, which is why it is primary: the
+  # `low_confidence` term of the priority score has no other source.
+  #
+  # Scribe takes no free-text prompt, so the transcript policy cannot be stated to it in prose.
+  # `language: ne` and the key terms in app/llm/transcription.py are the whole of its steering.
+  asr_scribe_v2:
+    provider: elevenlabs
+    api: transcription
+    system_id: elevenlabs-scribe-v2
+    model: scribe_v2
+    language: ne
+
+  # Gemini 3.5 Flash Lite with the clip attached to a chat completion. A general LLM rather than
+  # a recogniser: it follows the transcript policy well, but it will invent speech over silence,
+  # so it is a disagreement signal and never the primary hypothesis.
+  #
+  # Configured on the plain slug, not `google/gemini-3.5-flash-lite:batch`. The `:batch` variant
+  # is rejected on the synchronous endpoint, and OpenRouter's Batch API is text-only and fails
+  # any request carrying audio. See docs/decisions.md D22.
+  asr_gemini_flash_lite:
+    provider: openrouter
+    api: audio_chat
+    system_id: gemini-3.5-flash-lite
+    model: google/gemini-3.5-flash-lite
+    temperature: 0.0
+    max_tokens: 1024
+
+  # Whisper large-v3 through OpenRouter's transcription endpoint. Returns text only -- no word
+  # spans, no confidences -- but it is a genuine recogniser and disagrees with the other two in
+  # useful places.
+  asr_whisper_large_v3:
+    provider: openrouter
+    api: transcription
+    system_id: whisper-large-v3
+    model: openai/whisper-large-v3
+    language: ne
