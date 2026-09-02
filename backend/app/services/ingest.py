@@ -3,7 +3,7 @@
 Coordinates the 5-stage ingestion pipeline:
 1. Audio normalization via FFmpeg with loudnorm (16 kHz mono FLAC)
 2. Utterance segmentation via Silero VAD (2.0s - 20.0s boundaries)
-3. Cloud ASR inference via OpenRouter (logged to llm_requests)
+3. Cloud ASR inference across every configured `asr*` route (logged to llm_requests)
 4. Orthography-aware token tagging, CMI, and rule flags
 5. Manifest generation and direct database import + queue building
 """
@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import difflib
+import itertools
 import json
 import shutil
 import subprocess
@@ -26,8 +27,13 @@ from typing import Any
 import soundfile as sf
 from sqlalchemy.orm import Session
 
-from app.config import Settings, get_settings
-from app.llm.openrouter import OpenRouterClient
+from app.config import Settings, get_settings, load_llm_routes
+from app.llm.transcription import (
+    ASR_PROMPT,
+    asr_route_names,
+    system_id_for,
+    transcribe,
+)
 from app.services.analysis import analyze_transcript
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
@@ -42,17 +48,6 @@ from app.utils.hashing import sha256_file
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-#: Sent with every ASR request. The corpus is code-switched, and the transcript policy is that a
-#: word is written in the script of the language it belongs to -- so the model has to be told both
-#: that the mixing is expected and which script each half takes.
-ASR_PROMPT = (
-    "This is a Nepali-English code-switched conversation: the speakers mix both languages "
-    "freely, often within a single sentence. Transcribe exactly what is said, and write every "
-    "word in the script its own language uses -- Nepali words in Devanagari, English words in "
-    "Latin. Do not translate between the two languages, and do not transliterate a word out of "
-    "its own script. For example: आजको meeting मा हामीले नयाँ data हेर्यौं।"
-)
 
 
 @dataclass
@@ -218,6 +213,22 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
     return float(info.duration)
 
 
+def _mean_pairwise_disagreement(sequences: list[list[str]] | list[str]) -> float:
+    """Mean 1 - similarity over every unordered pair of hypotheses.
+
+    Operates on word lists or on raw strings, giving a word-level or character-level rate from
+    the same comparison. Fewer than two hypotheses means nothing disagreed, which is 0.0 -- the
+    same value the scorer reads for a missing rate.
+    """
+    if len(sequences) < 2:
+        return 0.0
+    ratios = [
+        difflib.SequenceMatcher(None, sequences[i], sequences[j]).ratio()
+        for i, j in itertools.combinations(range(len(sequences)), 2)
+    ]
+    return round(1.0 - (sum(ratios) / len(ratios)), 4)
+
+
 def run_pipeline(
     job: IngestJob,
     session_factory: Callable[[], Session],
@@ -299,26 +310,27 @@ def _run_stages(
     segment_records: list[dict[str, Any]] = []
     try:
         job.set_progress("transcribing", 42.0)
-        job.log(f"Stage 3/5: Cloud ASR inference via OpenRouter for {len(segments)} segments...")
+        routes = load_llm_routes()
+        asr_routes = asr_route_names(routes) or ["asr"]
+        systems = ", ".join(system_id_for(r, routes.routes.get(r)) for r in asr_routes)
+        job.log(
+            f"Stage 3/5: Cloud ASR inference for {len(segments)} segments "
+            f"across {len(asr_routes)} systems ({systems})..."
+        )
 
         with session_factory() as session:
-            client = OpenRouterClient(session)
-
-            asr_routes = [r for r in client.config.routes if r.startswith("asr")]
-            if not asr_routes:
-                asr_routes = ["asr"]
-
             for idx, seg in enumerate(segments):
                 step_progress = 40.0 + (35.0 * (idx + 1) / len(segments))
                 job.set_progress("transcribing", step_progress, active_segments=idx + 1)
 
                 hypotheses: list[dict[str, Any]] = []
                 for route_name in asr_routes:
-                    sys_name = route_name.removeprefix("asr_").replace("_", "-") or "openrouter-asr"
-                    asr_res = client.transcribe(
+                    sys_name = system_id_for(route_name, routes.routes.get(route_name))
+                    asr_res = transcribe(
+                        session,
                         seg.clip_path,
                         route=route_name,
-                        language="ne",
+                        config=routes,
                         prompt=ASR_PROMPT,
                     )
                     if asr_res.dry_run:
@@ -336,19 +348,13 @@ def _run_stages(
                         }
                     )
 
-                # Cross-system disagreement calculation
-                word_disagreement_rate = 0.0
-                cer_between_hyps = 0.0
-                if len(hypotheses) >= 2:
-                    w1 = hypotheses[0]["text"].split()
-                    w2 = hypotheses[1]["text"].split()
-                    matcher = difflib.SequenceMatcher(None, w1, w2)
-                    word_disagreement_rate = round(1.0 - matcher.ratio(), 4)
-
-                    c_matcher = difflib.SequenceMatcher(
-                        None, hypotheses[0]["text"], hypotheses[1]["text"]
-                    )
-                    cer_between_hyps = round(1.0 - c_matcher.ratio(), 4)
+                # Cross-system disagreement, averaged over every pair of systems. With two
+                # systems this is the single comparison between them; with three it is the mean
+                # of the three pairs, so a third hypothesis informs the queue rather than being
+                # paid for and ignored.
+                texts = [h["text"] for h in hypotheses]
+                word_disagreement_rate = _mean_pairwise_disagreement([t.split() for t in texts])
+                cer_between_hyps = _mean_pairwise_disagreement(texts)
 
                 primary_hyp = hypotheses[0]
                 analysis = analyze_transcript(
