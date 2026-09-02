@@ -43,8 +43,13 @@ Requires Docker Compose v2 (the standalone `docker-compose` binary works identic
 **Ingest.** `+ Ingest` in the header takes an `.mp3`, `.m4a` or `.wav`, plus a show and episode
 title. Five stages run in the background — normalize, segment, transcribe, analyse, build queue —
 and stream their logs into the panel as they go. When it finishes, `Start Annotating` drops you
-straight into the queue. Transcription calls cost money: routes are configured in
-`config/llm_routes.yaml` and billed through your OpenRouter balance.
+straight into the queue.
+
+Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2, Gemini
+3.5 Flash Lite and Whisper large-v3 — so one clip is three calls, billed against your ElevenLabs
+and OpenRouter balances. Both are prepaid, which is the whole reason those two providers are the
+ones wired up. Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to
+exercise the pipeline without spending anything.
 
 **Triage** is where the time goes. A dense list, highest-priority segment first, with the reason it
 surfaced shown next to it. Most segments are correct, so the dominant motion is listen, `Enter`,
@@ -104,7 +109,8 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_DATABASE__PASSWORD` or `DATABASE_URL` | Postgres credentials |
 | `HARNESS_STORAGE__MINIO__ACCESS_KEY` / `__SECRET_KEY` | MinIO credentials |
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
-| `OPENROUTER_API_KEY` | OpenRouter key; required to ingest audio |
+| `OPENROUTER_API_KEY` | OpenRouter key; carries the Gemini and Whisper transcribers |
+| `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
 
 Object storage defaults to the local filesystem, so the harness is fully usable with MinIO stopped.
 
@@ -112,7 +118,7 @@ Object storage defaults to the local filesystem, so the harness is fully usable 
 
 ```bash
 cd backend
-.venv/bin/python -m pytest              # 399 tests
+.venv/bin/python -m pytest              # 436 tests
 .venv/bin/python -m pytest -m "not db"  # skip the ones that need Postgres
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 cd ../frontend && npm run build         # tsc -b && vite build

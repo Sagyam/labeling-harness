@@ -58,7 +58,10 @@ ingestion pipeline started calling cloud ASR (D18) it inherited all three. Route
 No direct calls to OpenAI, Anthropic, Google, Groq or Mistral, ever.
 **Superseded part:** the original MVP made no LLM calls at all and shipped `routes: {}` with
 `enabled: false`. Prioritization still uses only multi-system disagreement and rule flags — nothing
-in scoring, policy checking or correction suggestion calls a model. **Reversal:** n/a.
+in scoring, policy checking or correction suggestion calls a model.
+**Superseded part:** "through OpenRouter" was always a proxy for "prepaid". D21 restates the rule
+in the terms that actually matter and admits one direct provider on them. OpenRouter remains the
+default and still carries all text inference. **Reversal:** n/a.
 
 ## D11 — Validation by JSON Schema at the manifest boundary
 `backend/app/schemas/episode.schema.json` and `segment.schema.json` are the executable form of the input
@@ -126,3 +129,43 @@ The transcribe stage makes one network call per route per segment. Wrapping the 
 transaction would hold a pooled connection open for the length of an episode, and a failure at
 segment 300 would discard 299 segments of paid ASR. Each segment commits as it lands.
 **Reversal:** trivial, but it would make a long job all-or-nothing.
+
+## D21 — The provider rule is "prepaid", not "OpenRouter"; ElevenLabs Scribe is called directly
+The point of routing everything through OpenRouter (D10) was never the vendor. It was that
+OpenRouter is topped up rather than invoiced, so the worst outcome of a runaway ingest is an
+exhausted balance the owner chose to fund. ElevenLabs bills the same way, which means sending
+Scribe through a proxy would buy nothing and cost accuracy: Scribe is the only transcriber the
+harness has that returns word spans and per-word log probabilities, and it is not reachable
+through OpenRouter at all.
+
+So the invariant is restated as its own justification — every provider must be prepaid — and
+`app/llm/base.py` now holds the retry policy, the dry-run switch and the `llm_requests` write, so
+a second provider inherits the guarantees rather than reimplementing them. Scribe's key is
+`ELEVEN_LABS_API_KEY` and should be scoped to speech-to-text only.
+
+Scribe has no free-text prompt parameter, so the transcript policy cannot be stated to it in
+prose the way it is to the other two. Its steering is `language_code: ne` plus a key-term list.
+**Reversal:** delete the route and the client; nothing else depends on it. Hypotheses already
+imported under `elevenlabs-scribe-v2` stay valid, and the word-level confidence signal disappears
+with it.
+
+## D22 — Transcribers run on synchronous endpoints; OpenRouter's Batch API cannot carry audio
+Batch pricing is half the synchronous rate, so a `:batch` slug is the obvious thing to reach for
+on a corpus this size. It does not work, and it fails in the most expensive possible way:
+
+- On `/v1/chat/completions`, a `:batch` slug is rejected with `404 "This model is only available
+  through the Batch API."`
+- Submitted to `/api/beta/batches` with an `input_audio` part, the batch is accepted as
+  `202 validating` and *then* terminally fails: `"Batch does not support this content; remove
+  audio, video, file, or other non-text content parts."`
+
+Both were verified against the live API. The second is the dangerous one — the failure is
+asynchronous, whole-batch rather than per-request, and permanent, so a retry loop that treats a
+non-terminal status as "keep waiting" would burn a 24-hour completion window per attempt and
+surface the problem an episode late.
+
+The harness therefore runs every transcriber synchronously and pays the full rate, and
+`config/llm_routes.yaml` names plain model slugs. A test asserts no `asr*` route ends in `:batch`,
+so the constraint fails at configuration time rather than mid-ingest. **Reversal:** if OpenRouter
+allows audio in batch, an `api: batch` shape would need submit/poll plus retry logic that never
+resubmits a terminal batch — which is why this is written down rather than half-built.

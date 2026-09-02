@@ -33,9 +33,12 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
    boolean that duplicates one.
 4. **Splits are frozen at import**, per episode, hashed from `(episode_id, split_seed)`. Never
    recompute them; a recomputed split silently invalidates every earlier benchmark.
-5. **All LLM and cloud-ASR inference goes through OpenRouter**, via `app/llm/openrouter.py` and a
-   route in `config/llm_routes.yaml`. No direct calls to any provider. Billing control is the
-   reason; there is no exception.
+5. **Every inference provider is prepaid, and every call is routed and logged.** Inference goes
+   through a named route in `config/llm_routes.yaml` and a client in `app/llm/`, and writes an
+   `llm_requests` row. OpenRouter carries all text inference and every ASR model it can reach;
+   ElevenLabs Scribe is called directly because it is prepaid on the same terms (D21). Adding a
+   third provider means proving it is prepaid first — a balance can be exhausted, an invoice
+   cannot be refused. Billing control is the reason, and it is the whole of the reason.
 6. **Clips are 16 kHz mono FLAC.** Anything else is rejected at import, before any row is written.
 7. **Every decision writes three rows in one transaction**: a label, an `annotation_events` row
    with the client-reported elapsed time, and an `audit_logs` entry. The one exception is skip,
@@ -60,7 +63,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (399 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (436 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -94,8 +97,16 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Gotchas
 
-- Ingestion spends real money: each `asr*` route transcribes every clip. Use a short audio file, or
-  `dry_run: true` in `config/llm_routes.yaml`, when exercising the pipeline.
+- Ingestion spends real money: each `asr*` route transcribes every clip, and three are configured,
+  so a clip costs three calls. Use a short audio file, or `dry_run: true` in
+  `config/llm_routes.yaml`, when exercising the pipeline.
+- OpenRouter's Batch API is text-only. A `:batch` model slug is rejected outright on the
+  synchronous endpoint, and a batch carrying audio is accepted and *then* terminally fails
+  validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR
+  route may name one; `test_config.py` enforces it (D22).
+- Only Scribe returns word spans and per-word log probabilities. It is therefore the primary
+  hypothesis and the sole source of the `low_confidence` term. Reordering the routes changes
+  which model's text drives CMI, the rule flags and the queue.
 - The transcribe stage commits per segment on purpose (D20). Do not "tidy" it into one transaction.
 - `/tasks/next` marks the task `in_progress` — that is what makes resume work. A partial unique
   index enforces one active task per segment, so a second one raises `IntegrityError` from the

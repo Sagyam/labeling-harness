@@ -35,7 +35,8 @@ backend/app/
                    queue builder, labeling, corpus, export, reporting
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
-  llm/             OpenRouter client; every ASR call in the ingestion pipeline goes through it
+  llm/             base (retry, dry-run, request log), openrouter, elevenlabs, and the
+                   transcription dispatcher every ASR call in the pipeline goes through
   utils/           logging, hashing, time
 scripts/           thin CLI wrappers over services
 config/            settings.yaml, llm_routes.yaml
@@ -84,7 +85,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `annotation_events` | Timing and action per interaction, for throughput measurement |
 | `audit_logs` | Every write, with old and new values |
 | `translit_cache` | Latin token -> ranked Devanagari candidates |
-| `llm_requests` | OpenRouter request log; every ASR attempt during ingestion is recorded here |
+| `llm_requests` | Provider request log; every ASR attempt during ingestion is recorded here, whichever vendor served it |
 
 ### Status discipline
 
@@ -117,7 +118,8 @@ priority_score =
 Every input is normalized to 0–1 and the weights sum to 1, so the score is itself in 0–1. Weights
 live in `config/settings.yaml` under `queue.weights` and are validated to sum to 1.0 at load.
 
-- `word_disagreement_rate` — imported; missing is treated as 0.
+- `word_disagreement_rate` — imported; the mean over every pair of ASR systems. Missing is
+  treated as 0, which is also what a single system scores.
 - `low_confidence` — `clamp((logprob_floor - avg_logprob) / logprob_floor, 0, 1)` over the seed
   hypothesis, where `logprob_floor` defaults to −2.0.
 - `code_switch_density` — imported; missing is treated as 0.
@@ -152,14 +154,39 @@ the five stages are:
 1. **Normalize** — FFmpeg `loudnorm` to 16 kHz mono FLAC, the only clip format the importer accepts.
 2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns, bounded to 2.0 s–20.0 s, with an
    energy-based fallback and an edge fade so slices do not click.
-3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip
-   through OpenRouter, producing one ASR system per route. Each attempt is logged to
-   `llm_requests`. An anti-hallucination sentinel in the prompt is stripped from the output, so a
-   model echoing its instructions cannot enter the queue as a hypothesis.
+3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip,
+   producing one ASR system per route, in the order the routes are written. Each attempt is
+   logged to `llm_requests`, whichever provider served it. `app/llm/transcription.py` dispatches
+   on the route's `provider` and `api`; see the table below.
 4. **Analyse** — Devanagari/Latin ratio, code-mixing index, cross-system word disagreement, script
-   conflict and the rule flags below.
+   conflict and the rule flags below. Disagreement is the mean over every *pair* of systems, so a
+   third hypothesis informs the queue instead of being paid for and ignored; with two systems it
+   is exactly the single comparison between them.
 5. **Import and build** — segments, hypotheses, scores and queue tasks are written in one pass, so
    "Start Annotating" works the moment the job finishes.
+
+### Configured transcribers
+
+| Route | Provider | API shape | Returns | Steered by |
+|---|---|---|---|---|
+| `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
+| `asr_gemini_flash_lite` | OpenRouter | chat completions with an `input_audio` part | text | the full policy prompt |
+| `asr_whisper_large_v3` | OpenRouter | `/v1/audio/transcriptions` | text | prompt, `language=ne` |
+
+The first route is the primary hypothesis: its text is what CMI, the rule flags and
+`low_confidence` are computed from. Scribe holds that position because it is the only one of the
+three reporting a confidence signal at all — a chat model returns prose, and OpenRouter's Whisper
+returns text without word spans or log probabilities. Reordering the routes changes queue
+ordering, not just display order.
+
+Every model is told the audio is code-switched and that a word is written in the script of its own
+language — Nepali in Devanagari, English in Latin. Scribe is the exception, not by choice: it has
+no free-text prompt parameter, so it gets a language code and a key-term list instead.
+
+Gemini is a general LLM rather than a recogniser. It follows the transcript policy well and it
+will also invent plausible speech over silence, which is why it is a disagreement signal and never
+the primary hypothesis. All three run on synchronous endpoints; OpenRouter's Batch API cannot
+carry audio at all (decision D22).
 
 `GET /ingest/{id}` reports stage, progress and error state; `GET /ingest/{id}/events` streams the
 same log lines the backend writes, over SSE, into a terminal panel in the browser. Clips are
