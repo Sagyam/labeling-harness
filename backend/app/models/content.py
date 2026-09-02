@@ -187,9 +187,10 @@ class HypothesisWord(Base):
 
 
 class SegmentScore(Base):
-    """Agreement scores and rule flags as received from the pipeline.
+    """Agreement scores as received from the pipeline, plus the segment's rule flags.
 
-    The harness recomputes nothing here; a missing score stays null.
+    The harness recomputes no score; a missing one stays null. Flags are the exception: the
+    importer computes them from the hypotheses and stores the union with those received.
     """
 
     __tablename__ = "segment_scores"

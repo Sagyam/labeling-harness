@@ -11,7 +11,7 @@ backend/tests/   pytest suite; `db`-marked tests run against a real Postgres
 backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
-config/          settings.yaml (non-secret), llm_routes.yaml (OpenRouter routes)
+config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
 docs/            architecture, decisions, manifest contract
 ```
 
@@ -63,7 +63,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (436 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (437 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -104,9 +104,11 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   synchronous endpoint, and a batch carrying audio is accepted and *then* terminally fails
   validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR
   route may name one; `test_config.py` enforces it (D22).
-- Only Scribe returns word spans and per-word log probabilities. It is therefore the primary
-  hypothesis and the sole source of the `low_confidence` term. Reordering the routes changes
-  which model's text drives CMI, the rule flags and the queue.
+- Only Scribe returns word spans and per-word log probabilities, so it is both the first route and
+  in practice the only source of the `low_confidence` term. Three different hypotheses are in play
+  and they are easy to conflate: the **primary** (first route) is what CMI is measured on, the
+  **seed** (chosen per split at queue build) is what `low_confidence` reads, and rule flags are
+  computed over **all** of them at import. Reordering the routes moves the first two.
 - The transcribe stage commits per segment on purpose (D20). Do not "tidy" it into one transaction.
 - `/tasks/next` marks the task `in_progress` — that is what makes resume work. A partial unique
   index enforces one active task per segment, so a second one raises `IntegrityError` from the
@@ -140,7 +142,7 @@ a retrofit.
 
 ## Documentation
 
-Four documents, and no others: this file, `README.md`, and the three under `docs/`. When behaviour
+Five documents, and no others: this file, `README.md`, and the three under `docs/`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
 its reversal cost; supersede an old entry in place rather than deleting it.

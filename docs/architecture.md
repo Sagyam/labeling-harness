@@ -8,7 +8,7 @@
                                ▼
     ┌──────────────────────────┴───────────────────────────────────────┐
     │ Harness Web & Ingestion Pipeline                                 │
-    │   Web UI Upload -> Local Loudnorm & VAD -> Cloud ASR (OpenRouter)│
+    │   Web UI Upload -> Local Loudnorm & VAD -> Cloud ASR (3 models)  │
     │   -> Multi-System Scores & Rule Flags -> Auto Queue Build        │
     │                                                                  │
     │ Review & Labeling:                                               │
@@ -31,6 +31,7 @@ backend/app/
   api/             HTTP routers (health, ingest, queue, tasks, segments, translit, episodes)
   db/              engine, session scope, declarative base
   models/          SQLAlchemy ORM models -- one module per concept group
+  schemas/         JSON Schema for the manifest (episode.schema.json, segment.schema.json)
   services/        ingest pipeline (audio, silero_vad, analysis), importer, peaks, scoring,
                    queue builder, labeling, corpus, export, reporting
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
@@ -120,8 +121,10 @@ live in `config/settings.yaml` under `queue.weights` and are validated to sum to
 
 - `word_disagreement_rate` — imported; the mean over every pair of ASR systems. Missing is
   treated as 0, which is also what a single system scores.
-- `low_confidence` — `clamp((logprob_floor - avg_logprob) / logprob_floor, 0, 1)` over the seed
-  hypothesis, where `logprob_floor` defaults to −2.0.
+- `low_confidence` — `clamp(avg_logprob / logprob_floor, 0, 1)` over the **seed** hypothesis, where
+  `logprob_floor` defaults to −2.0: an `avg_logprob` of 0 scores 0, the floor and anything below it
+  scores 1. A seed with no `avg_logprob` scores 0, not 1 — an absent confidence signal must not
+  push a segment up the queue on its own.
 - `code_switch_density` — imported; missing is treated as 0.
 - `rule_flag_score` — fraction of rule flags raised for the segment (see below).
 
@@ -132,6 +135,12 @@ why a segment surfaced.
 
 `empty_transcript`, `repeated_ngram` (hallucination pattern), `high_no_speech_prob`,
 `too_short` (< 1 s), `too_long` (> 30 s), `implausible_speaking_rate`, `script_conflict`.
+
+These seven are the whole vocabulary and the denominator of `rule_flag_score`, so a flag name from
+outside the list is stored on the segment but contributes nothing to the score. The importer
+computes them itself, over every hypothesis of the segment, and unions the result with whatever
+`flags` the manifest carried: `flags_jsonb = sorted(received | computed)`. That is the one place
+the harness does not simply store what it receives.
 
 ### Seed hypothesis selection
 
@@ -173,11 +182,16 @@ the five stages are:
 | `asr_gemini_flash_lite` | OpenRouter | chat completions with an `input_audio` part | text | the full policy prompt |
 | `asr_whisper_large_v3` | OpenRouter | `/v1/audio/transcriptions` | text | prompt, `language=ne` |
 
-The first route is the primary hypothesis: its text is what CMI, the rule flags and
-`low_confidence` are computed from. Scribe holds that position because it is the only one of the
-three reporting a confidence signal at all — a chat model returns prose, and OpenRouter's Whisper
-returns text without word spans or log probabilities. Reordering the routes changes queue
-ordering, not just display order.
+The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
+code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
+chosen per split at queue build (see above) and is what `low_confidence` reads. Rule flags are a
+third thing again: they are computed at import over *all* hypotheses, not just the primary one.
+
+Scribe is first because it is the only one of the three reporting a confidence signal at all — a
+chat model returns prose, and OpenRouter's Whisper returns text without word spans or log
+probabilities. So reordering the routes moves the CMI measurement to a different model, and it
+also moves `low_confidence`, because a hypothesis with no `avg_logprob` never wins the
+train/val "highest confidence" comparison.
 
 Every model is told the audio is code-switched and that a word is written in the script of its own
 language — Nepali in Devanagari, English in Latin. Scribe is the exception, not by choice: it has
@@ -195,6 +209,22 @@ halfway leaves the work it already did.
 
 The manifest importer (below) remains the other, equal-status way in: an upstream GPU pipeline can
 still produce `export_<episode_id>/` and `scripts/import_manifest.py` will ingest it.
+
+### Known gaps
+
+Recorded here rather than left to be rediscovered. Neither is load-bearing today, and both are
+behaviour changes, so neither is fixed in passing.
+
+- **Stage 4 writes three values the importer never reads.** `ingest.py` nests `cmi`, `avg_logprob`
+  and `flags` inside the segment record's `scores` object, but the importer reads `flags` from the
+  record's *top level* (as the manifest contract specifies) and `SegmentScore` has no column for
+  the other two. The flags survive anyway — the importer recomputes the same rules over the same
+  hypotheses — and `avg_logprob` reaches the queue through the seed hypothesis, so the practical
+  loss is CMI, which is only ever displayed in the ingest log.
+- **Skipping a task audit-logs the wrong old value.** `labeling.skip_task` hard-codes
+  `old_values_jsonb={"status": "pending"}`, but any task opened through `/tasks/next` is already
+  `in_progress` by then (decision D16). The new value and the action are correct; only the
+  recorded prior state is wrong.
 
 ## Export
 

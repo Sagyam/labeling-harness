@@ -64,15 +64,20 @@ export_<episode_id>/
     "script_conflict_rate": 0.05,
     "code_switch_density": 0.42
   },
-  "flags": ["low_confidence"]
+  "flags": ["repeated_ngram"]
 }
 ```
 
 Rules:
 
 - `hypotheses` must contain at least one entry; `words` is optional and may be absent or empty.
-- `scores` may be partially absent; the harness recomputes nothing, it stores what it receives and
-  treats missing scores as null.
+- `scores` may be partially absent; the harness recomputes none of them, it stores what it receives
+  and treats a missing score as null.
+- `flags` is top-level, not inside `scores`, and each entry should be one of the seven rule flags
+  listed in [architecture.md](architecture.md#rule-flags-computed-at-import) — a name from outside
+  that list is stored but scores nothing. Flags are the exception to the rule above: the importer
+  recomputes them over the hypotheses and stores the **union** of what it received and what it
+  computed, so an omitted `flags` key costs nothing.
 - Clips are **16 kHz mono FLAC**. Reject WAV or MP3 clips at import with a clear error — the source
   is already lossy and re-encoding the exact audio you will train on is not acceptable. The original
   episode file is archived separately and is not needed by the harness.
