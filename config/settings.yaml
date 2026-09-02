@@ -80,3 +80,9 @@ export:
 ingest:
   work_root: ./data/ingest_work   # scratch space for web uploads; removed when a job finishes
   max_segment_concurrency: 4     # number of segments transcribed concurrently
+  youtube:
+    format: bestaudio/best        # yt-dlp selector; stage 1 re-encodes, so audio-only is enough
+    max_duration_seconds: 14400   # 4 h; a longer video is refused before anything is downloaded
+    probe_timeout_seconds: 30
+    download_timeout_seconds: 1800
+    cookies_file: ""              # Netscape cookie jar, for videos YouTube will not serve anonymously

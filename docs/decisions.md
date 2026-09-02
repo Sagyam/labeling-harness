@@ -172,3 +172,31 @@ The harness therefore runs every transcriber synchronously and pays the full rat
 so the constraint fails at configuration time rather than mid-ingest. **Reversal:** if OpenRouter
 allows audio in batch, an `api: batch` shape would need submit/poll plus retry logic that never
 resubmits a terminal batch — which is why this is written down rather than half-built.
+
+## D23 — YouTube audio is fetched server-side, from a canonical URL rebuilt out of the video id
+Every episode used to arrive as an upload, which meant the annotator downloading audio by hand
+before the harness could see it. `POST /ingest/youtube` moves that step inside the app: the server
+runs `yt-dlp` and the file lands in the job's work directory, where an upload would have.
+
+Three choices are worth recording:
+
+- **The download is not a sixth stage.** It occupies the slot an upload occupies — how the source
+  file arrives — and reports under a `downloading` stage ahead of stage 1. The five stages, their
+  numbering and their log lines are untouched, so nothing downstream had to learn about URLs.
+- **Nothing the caller typed reaches the subprocess.** The URL is parsed down to its
+  eleven-character video id and a canonical `watch?v=<id>` is rebuilt from that id alone. Sanitizing
+  the string instead would leave the harness one bug away from being a general-purpose fetcher for
+  arbitrary hosts (an SSRF), and a URL beginning with `-` one quoting mistake away from being a
+  yt-dlp flag. Dropping playlist and timestamp parameters is a free side effect.
+- **The video is inspected before bytes move.** The endpoint probes first, so a private, live or
+  over-long video is a 422 rather than a job that fails a minute later — and `POST
+  /ingest/youtube/probe` exposes the same lookup so the browser can prefill the form. The 4-hour
+  ceiling is a spend guard, not a technical limit: every `asr*` route transcribes every clip, so
+  cost is linear in source duration and a mistyped link to a livestream recording is expensive.
+
+yt-dlp is a runtime dependency of the backend and a subprocess rather than a library import, for
+the same reason FFmpeg is: it is a tool with a command line, its failures are exit codes and
+stderr, and its progress is lines on stdout. **Reversal:** deleting the module and the two
+endpoints leaves the upload path exactly as it was; nothing downstream and no table depends on it,
+beyond `episodes.source_uri` carrying a URL instead of a `file://` name for episodes ingested this
+way.

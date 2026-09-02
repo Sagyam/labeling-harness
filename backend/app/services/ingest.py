@@ -45,6 +45,7 @@ from app.services.silero_vad import (
     extract_clips,
     segment_audio_to_slices,
 )
+from app.services.youtube import YouTubeError, download_audio
 from app.storage import build_storage
 from app.storage.base import ObjectStorage
 from app.utils.hashing import sha256_file
@@ -106,8 +107,12 @@ class IngestJob:
     episode_id: str
     show_id: str
     title: str
-    audio_path: Path
+    #: The source file. ``None`` until the download stage produces one, for a job started from a
+    #: URL rather than an upload.
+    audio_path: Path | None
     work_dir: Path
+    #: Canonical URL the audio was fetched from, when the job did not start as an upload.
+    source_url: str | None = None
     status: str = "pending"  # "pending", "processing", "completed", "failed"
     stage: str = "upload"
     progress: float = 0.0
@@ -197,8 +202,9 @@ class IngestionManager:
         episode_id: str,
         show_id: str,
         title: str,
-        audio_path: Path,
         work_dir: Path,
+        audio_path: Path | None = None,
+        source_url: str | None = None,
     ) -> IngestJob:
         job_id = str(uuid.uuid4())
         job = IngestJob(
@@ -208,6 +214,7 @@ class IngestionManager:
             title=title,
             audio_path=audio_path,
             work_dir=work_dir,
+            source_url=source_url,
         )
         self._jobs[job_id] = job
         self._evict_finished()
@@ -295,10 +302,59 @@ def run_pipeline(
     storage = storage or build_storage(settings)
 
     try:
+        if job.audio_path is None and not _fetch_source_audio(job, settings):
+            return
         _run_stages(job, session_factory, storage, settings)
     finally:
         if not keep_work_dir:
             shutil.rmtree(job.work_dir, ignore_errors=True)
+
+
+def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
+    """Download the job's source audio, for a job started from a URL instead of an upload.
+
+    This occupies the same slot an upload does -- it is how the source file arrives, not a sixth
+    pipeline stage -- so it reports under the ``downloading`` stage and leaves the five stages
+    downstream untouched. Progress is logged per decile rather than per line: yt-dlp emits
+    hundreds of them and each one is an SSE frame.
+
+    Returns:
+        True when the audio is in place and the pipeline may continue.
+    """
+    if not job.source_url:
+        job.fail("Job has neither an uploaded file nor a source URL")
+        return False
+
+    job.status = "processing"
+    job.set_progress("downloading", 0.0)
+    job.log(f"Fetching audio from {job.source_url} (yt-dlp)...")
+
+    last_decile = -1
+
+    def report(percent: float, line: str) -> None:
+        nonlocal last_decile
+        decile = int(percent // 10)
+        if decile != last_decile:
+            last_decile = decile
+            job.log(line)
+        # The download shares the progress bar with the pipeline it precedes, so it fills the
+        # slice ahead of stage 1 rather than the whole bar.
+        job.set_progress("downloading", percent * 0.05)
+
+    try:
+        job.audio_path = download_audio(
+            job.source_url, job.work_dir, settings=settings, on_progress=report
+        )
+    except YouTubeError as exc:
+        job.fail(f"Audio download failed: {exc}")
+        return False
+    except Exception as exc:  # pragma: no cover - defensive; the module raises YouTubeError
+        job.fail(f"Audio download failed: {exc}")
+        return False
+
+    size_mb = job.audio_path.stat().st_size / (1024 * 1024)
+    job.log(f"Downloaded {job.audio_path.name} ({size_mb:.1f} MB)", "success")
+    return True
 
 
 def _run_stages(
@@ -310,6 +366,10 @@ def _run_stages(
     """The five pipeline stages. Every failure is reported through ``job.fail`` and returns."""
     job.status = "processing"
     job.log(f"Starting ingestion for '{job.title}' ({job.episode_id})")
+
+    if job.audio_path is None:
+        job.fail("Stage 1 Audio Normalization failed: no source audio for this job")
+        return
 
     norm_flac = job.work_dir / f"{job.episode_id}_normalized.flac"
 
@@ -495,7 +555,7 @@ def _run_stages(
             "episode_id": job.episode_id,
             "show_id": job.show_id,
             "title": job.title,
-            "source_uri": f"file://{job.audio_path.name}",
+            "source_uri": job.source_url or f"file://{job.audio_path.name}",
             "published_at": dt.date.today().isoformat(),
             "duration_seconds": duration,
             "source_audio_checksum": source_checksum,

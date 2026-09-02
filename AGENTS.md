@@ -63,7 +63,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (437 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (496 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -99,7 +99,15 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 - Ingestion spends real money: each `asr*` route transcribes every clip, and three are configured,
   so a clip costs three calls. Use a short audio file, or `dry_run: true` in
-  `config/llm_routes.yaml`, when exercising the pipeline.
+  `config/llm_routes.yaml`, when exercising the pipeline. The same arithmetic is why
+  `ingest.youtube.max_duration_seconds` exists — cost is linear in source duration, so a YouTube
+  URL is a bigger footgun than a file the annotator had to download first.
+- A YouTube URL never reaches `yt-dlp` as typed. `app/services/youtube.py` parses out the
+  eleven-character video id and rebuilds a canonical `watch?v=<id>` from it, which is the only form
+  the subprocess sees (D23). Do not "improve" this into sanitizing the string: the rebuild is what
+  keeps the harness from being a fetcher for arbitrary hosts and a leading `-` from becoming a
+  flag. Its download occupies the upload's slot, not a sixth stage — the five stages and their
+  numbering are unchanged.
 - OpenRouter's Batch API is text-only. A `:batch` model slug is rejected outright on the
   synchronous endpoint, and a batch carrying audio is accepted and *then* terminally fails
   validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR

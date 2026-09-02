@@ -3,12 +3,12 @@
 ## System boundary
 
 ```text
-    Raw podcast audio (MP3/WAV/AAC) uploaded or selected in Web UI
+    Raw podcast audio: uploaded in the Web UI, or fetched from a YouTube URL
                                │
                                ▼
     ┌──────────────────────────┴───────────────────────────────────────┐
     │ Harness Web & Ingestion Pipeline                                 │
-    │   Web UI Upload -> Local Loudnorm & VAD -> Cloud ASR (3 models)  │
+    │   Upload or YouTube fetch -> Loudnorm & VAD -> Cloud ASR (3x)    │
     │   -> Multi-System Scores & Rule Flags -> Auto Queue Build        │
     │                                                                  │
     │ Review & Labeling:                                               │
@@ -19,8 +19,9 @@
 ```
 
 The harness provides an end-to-end web workflow: the annotator selects a podcast file directly in
-the browser, watches real-time progress and logs as it normalizes, segments, and queries Cloud ASR,
-and immediately begins annotation in the Review UI without touching the CLI or fragile Colab notebooks.
+the browser or pastes a YouTube URL, watches real-time progress and logs as it normalizes, segments,
+and queries Cloud ASR, and immediately begins annotation in the Review UI without touching the CLI
+or fragile Colab notebooks.
 
 ## Module map
 
@@ -32,8 +33,8 @@ backend/app/
   db/              engine, session scope, declarative base
   models/          SQLAlchemy ORM models -- one module per concept group
   schemas/         JSON Schema for the manifest (episode.schema.json, segment.schema.json)
-  services/        ingest pipeline (audio, silero_vad, analysis), importer, peaks, scoring,
-                   queue builder, labeling, corpus, export, reporting
+  services/        ingest pipeline (audio, silero_vad, analysis, youtube), importer, peaks,
+                   scoring, queue builder, labeling, corpus, export, reporting
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
   llm/             base (retry, dry-run, request log), openrouter, elevenlabs, and the
@@ -157,8 +158,8 @@ majority stays measurable.
 ## Ingestion and Cloud ASR
 
 Ingestion runs inside the app, not in an upstream notebook: the annotator uploads an episode in the
-browser and watches it become a queue. `POST /ingest` starts a background job and returns a job id;
-the five stages are:
+browser -- or pastes a YouTube URL and lets the server fetch it (below) -- and watches it become a
+queue. `POST /ingest` starts a background job and returns a job id; the five stages are:
 
 1. **Normalize** — FFmpeg `loudnorm` to 16 kHz mono FLAC, the only clip format the importer accepts.
 2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns, bounded to 2.0 s–20.0 s, with an
@@ -203,6 +204,29 @@ Gemini is a general LLM rather than a recogniser. It follows the transcript poli
 will also invent plausible speech over silence, which is why it is a disagreement signal and never
 the primary hypothesis. All three run on synchronous endpoints; OpenRouter's Batch API cannot
 carry audio at all (decision D22).
+
+### Fetching the audio instead of uploading it
+
+A job may name a YouTube URL rather than carry a file. The download occupies the **same slot an
+upload does** -- it is how the source file arrives, not a sixth stage -- so it reports under a
+`downloading` stage that precedes stage 1 and leaves the five stages below untouched.
+`app/services/youtube.py` shells out to `yt-dlp`, and two rules shape it:
+
+- **Nothing the annotator typed reaches the subprocess.** A URL is parsed down to its
+  eleven-character video id and a canonical `https://www.youtube.com/watch?v=<id>` is rebuilt from
+  that id alone. So the harness cannot be turned into a fetcher for arbitrary hosts, a URL
+  beginning with `-` cannot become a yt-dlp flag, and a link copied from inside a playlist ingests
+  the one video rather than the list.
+- **The video is inspected before any bytes move.** `POST /ingest/youtube` looks the video up
+  first, so a private, live or over-long video is a 422 on that request instead of a job that
+  fails a minute later. `ingest.youtube.max_duration_seconds` (4 h by default) is a spend guard,
+  not a technical limit: every `asr*` route transcribes every clip, so cost is linear in source
+  duration.
+
+`POST /ingest/youtube/probe` runs the same lookup on its own, downloading nothing and creating no
+job, so the browser can prefill the title and slug and show what it is about to ingest. The
+downloaded file keeps whichever container YouTube served -- stage 1 re-encodes it anyway, so
+nothing transcodes twice -- and the canonical URL is stored as the episode's `source_uri`.
 
 `GET /ingest/{id}` reports stage, progress and error state; `GET /ingest/{id}/events` streams the
 same log lines the backend writes, over SSE, into a terminal panel in the browser. Clips are
@@ -261,6 +285,8 @@ the same inputs and filters produce byte-identical output.
 | `POST /translit` | Latin token → ranked Devanagari candidates |
 | `POST /translit/choice` | Record the chosen form for the correction memory |
 | `POST /ingest` | Upload an episode's audio; starts the pipeline, returns a job id |
+| `POST /ingest/youtube` | Ingest from a YouTube URL; the server fetches the audio itself |
+| `POST /ingest/youtube/probe` | Read a video's metadata; downloads nothing and creates no job |
 | `GET /ingest/{id}` | Job stage, progress, active segment count, error state |
 | `GET /ingest/{id}/events` | SSE stream of the job's log lines |
 | `GET /episodes` | Episode list with per-episode segment counts and progress |

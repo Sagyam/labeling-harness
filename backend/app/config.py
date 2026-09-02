@@ -197,6 +197,26 @@ class ExportSettings(BaseModel):
         return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
+class YouTubeSettings(BaseModel):
+    """Fetching an episode's audio straight from a YouTube URL, via yt-dlp.
+
+    ``max_duration_seconds`` is a spend guard rather than a technical limit: every configured
+    ``asr*`` route transcribes every clip, so the cost of an ingest is linear in the source
+    duration and a mistyped link to an eight-hour livestream is an expensive mistake.
+    """
+
+    model_config = _STRICT
+
+    #: yt-dlp format selector. Audio-only, because stage 1 re-encodes to 16 kHz mono FLAC anyway.
+    format: str = "bestaudio/best"
+    max_duration_seconds: float = 14400.0
+    probe_timeout_seconds: float = 30.0
+    download_timeout_seconds: float = 1800.0
+    #: Netscape-format cookie jar, for videos YouTube will not serve anonymously. Path only --
+    #: the file itself is a secret and belongs outside the repository.
+    cookies_file: str = ""
+
+
 class IngestSettings(BaseModel):
     """Web ingestion scratch space.
 
@@ -208,6 +228,7 @@ class IngestSettings(BaseModel):
 
     work_root: Path = Path("./data/ingest_work")
     max_segment_concurrency: int = Field(default=4, ge=1, le=16)
+    youtube: YouTubeSettings = Field(default_factory=YouTubeSettings)
 
     @field_validator("work_root")
     @classmethod

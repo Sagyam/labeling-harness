@@ -21,6 +21,7 @@ dependencies = [
     "indic-transliteration>=2.3",
     "onnxruntime>=1.19",
     "python-multipart>=0.0.12",
+    "yt-dlp>=2025.1.15",
 ]
 
 [project.optional-dependencies]
