@@ -146,12 +146,16 @@ export function EditorView({
     }
   }
 
-  const seek = (time: number) => {
+  const seek = (time: number, andPlay: boolean = false) => {
     const audio = audioRef.current
     if (!audio) return
     const target = Math.max(0, Math.min(duration, time))
     audio.currentTime = target
     setCurrentTime(target)
+    if (andPlay && audio.paused) {
+      audio.play().catch((err) => console.error('Audio play error:', err))
+      setIsPlaying(true)
+    }
   }
 
   const seekDelta = (delta: number) => {
@@ -417,6 +421,7 @@ export function EditorView({
           hypotheses={segment.hypotheses}
           seedHypothesisId={task.seed_hypothesis_id}
           onSelectHypothesis={setText}
+          onSeek={(time) => seek(time, true)}
         />
       </div>
 

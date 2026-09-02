@@ -35,8 +35,14 @@
               "required": ["word"],
               "properties": {
                 "word": {"type": "string"},
-                "start": {"type": ["number", "null"]},
-                "end": {"type": ["number", "null"]},
+                "start": {
+                  "type": ["number", "null"],
+                  "description": "Seconds from the start of the clip (clip-relative, not episode-relative)."
+                },
+                "end": {
+                  "type": ["number", "null"],
+                  "description": "Seconds from the start of the clip (clip-relative, not episode-relative)."
+                },
                 "confidence": {"type": ["number", "null"]},
                 "predicted_language": {"type": ["string", "null"], "maxLength": 16},
                 "predicted_script": {"type": ["string", "null"], "maxLength": 16}

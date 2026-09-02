@@ -21,7 +21,7 @@ from app.api.schemas import (
 )
 from app.api.serializers import serialize_segment
 from app.config import Settings
-from app.models import AnnotationTask, Episode, Segment
+from app.models import AnnotationTask, AsrHypothesis, Episode, Segment
 from app.models.enums import ACTIVE_TASK_STATUSES
 from app.services.labeling import Decision, LabelingError, record_decision, record_skip
 
@@ -34,6 +34,12 @@ def _load_task(session: Session, task_id: int) -> AnnotationTask:
         .options(
             selectinload(AnnotationTask.segment).selectinload(Segment.episode),
             selectinload(AnnotationTask.segment).selectinload(Segment.scores),
+            selectinload(AnnotationTask.segment)
+            .selectinload(Segment.hypotheses)
+            .selectinload(AsrHypothesis.words),
+            selectinload(AnnotationTask.segment)
+            .selectinload(Segment.hypotheses)
+            .selectinload(AsrHypothesis.system),
             selectinload(AnnotationTask.seed_hypothesis),
         )
         .where(AnnotationTask.id == task_id)
@@ -76,6 +82,12 @@ def next_task(
         .options(
             selectinload(AnnotationTask.segment).selectinload(Segment.episode),
             selectinload(AnnotationTask.segment).selectinload(Segment.scores),
+            selectinload(AnnotationTask.segment)
+            .selectinload(Segment.hypotheses)
+            .selectinload(AsrHypothesis.words),
+            selectinload(AnnotationTask.segment)
+            .selectinload(Segment.hypotheses)
+            .selectinload(AsrHypothesis.system),
             selectinload(AnnotationTask.seed_hypothesis),
         )
         .where(AnnotationTask.status.in_(ACTIVE_TASK_STATUSES), AnnotationTask.queue == queue)

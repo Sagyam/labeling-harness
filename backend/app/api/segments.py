@@ -13,7 +13,7 @@ from app.api.deps import get_config, get_object_storage, get_session, require_au
 from app.api.schemas import SegmentOut
 from app.api.serializers import serialize_segment
 from app.config import Settings
-from app.models import AuditLog, Segment
+from app.models import AsrHypothesis, AuditLog, Segment
 from app.storage import ObjectNotFound, ObjectStorage, delete_objects
 
 router = APIRouter(tags=["segments"], dependencies=[Depends(require_auth)])
@@ -29,7 +29,8 @@ def _load_segment(session: Session, segment_id: int) -> Segment:
         .options(
             selectinload(Segment.episode),
             selectinload(Segment.scores),
-            selectinload(Segment.hypotheses),
+            selectinload(Segment.hypotheses).selectinload(AsrHypothesis.words),
+            selectinload(Segment.hypotheses).selectinload(AsrHypothesis.system),
         )
         .where(Segment.id == segment_id)
     ).first()

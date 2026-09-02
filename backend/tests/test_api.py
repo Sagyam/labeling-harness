@@ -95,6 +95,15 @@ def test_next_task_returns_the_top_priority_task(client: TestClient, imported_ep
     assert task["id"] == top["task_id"]
     assert task["segment"]["hypotheses"]
     assert task["seed_system_id"]
+    first_hyp = task["segment"]["hypotheses"][0]
+    assert "words" in first_hyp
+    assert len(first_hyp["words"]) == first_hyp["word_count"]
+    if first_hyp["words"]:
+        w = first_hyp["words"][0]
+        assert "word" in w
+        assert "start_time" in w
+        assert "end_time" in w
+        assert "confidence" in w
 
 
 def test_next_task_marks_the_task_in_progress(

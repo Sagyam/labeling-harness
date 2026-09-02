@@ -53,6 +53,16 @@ export interface StatsResponse {
   }
 }
 
+export interface HypothesisWord {
+  position: number
+  word: string
+  start_time: number | null
+  end_time: number | null
+  confidence: number | null
+  predicted_language?: string | null
+  predicted_script?: string | null
+}
+
 export interface Hypothesis {
   id: number
   system_id: string
@@ -61,6 +71,7 @@ export interface Hypothesis {
   avg_logprob: number | null
   no_speech_prob: number | null
   word_count: number
+  words?: HypothesisWord[]
 }
 
 export interface Scores {

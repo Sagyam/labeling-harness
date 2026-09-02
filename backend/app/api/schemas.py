@@ -8,6 +8,18 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class HypothesisWordOut(BaseModel):
+    """One word-level token within an ASR hypothesis."""
+
+    position: int
+    word: str
+    start_time: float | None = None
+    end_time: float | None = None
+    confidence: float | None = None
+    predicted_language: str | None = None
+    predicted_script: str | None = None
+
+
 class HypothesisOut(BaseModel):
     """One imported ASR hypothesis."""
 
@@ -18,6 +30,7 @@ class HypothesisOut(BaseModel):
     avg_logprob: float | None = None
     no_speech_prob: float | None = None
     word_count: int = 0
+    words: list[HypothesisWordOut] = Field(default_factory=list)
 
 
 class ScoresOut(BaseModel):

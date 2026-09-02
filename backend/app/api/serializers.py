@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     HypothesisOut,
+    HypothesisWordOut,
     LabelOut,
     QueueRowOut,
     ScoresOut,
@@ -30,6 +31,18 @@ def peaks_url(segment: Segment) -> str | None:
 
 def serialize_hypothesis(hypothesis: AsrHypothesis) -> HypothesisOut:
     """Serialize one hypothesis."""
+    words = [
+        HypothesisWordOut(
+            position=w.position,
+            word=w.word_raw,
+            start_time=w.start_time,
+            end_time=w.end_time,
+            confidence=w.confidence,
+            predicted_language=w.predicted_language,
+            predicted_script=w.predicted_script,
+        )
+        for w in hypothesis.words
+    ]
     return HypothesisOut(
         id=hypothesis.id,
         system_id=hypothesis.system.system_id,
@@ -37,7 +50,8 @@ def serialize_hypothesis(hypothesis: AsrHypothesis) -> HypothesisOut:
         text=hypothesis.text_raw,
         avg_logprob=hypothesis.avg_logprob,
         no_speech_prob=hypothesis.no_speech_prob,
-        word_count=len(hypothesis.words),
+        word_count=len(words),
+        words=words,
     )
 
 
