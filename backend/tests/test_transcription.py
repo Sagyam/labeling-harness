@@ -229,3 +229,26 @@ def test_a_dry_run_reaches_no_provider(db_session: Session, clip, recorder) -> N
         assert result.dry_run is True
         assert result.text
     assert recorder == []
+
+
+def test_transcribe_accepts_and_uses_custom_http_client(
+    db_session: Session, clip, monkeypatch
+) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"text": "सफलता", "words": []})
+
+    custom_client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
+
+    result = transcribe(
+        db_session,
+        clip,
+        route="asr_scribe_v2",
+        config=routes(),
+        client=custom_client,
+    )
+    assert result.text == "सफलता"
+    assert len(calls) == 1

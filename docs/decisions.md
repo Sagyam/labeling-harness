@@ -128,6 +128,9 @@ deleting the ones we do not use costs nothing.
 The transcribe stage makes one network call per route per segment. Wrapping the stage in a single
 transaction would hold a pooled connection open for the length of an episode, and a failure at
 segment 300 would discard 299 segments of paid ASR. Each segment commits as it lands.
+When concurrent model dispatch and segment processing were introduced to accelerate long episodes,
+the commit-per-segment invariant was preserved via `LockedSession`, ensuring that concurrent worker
+threads safely commit each completed segment independently without holding long-lived global transactions.
 **Reversal:** trivial, but it would make a long job all-or-nothing.
 
 ## D21 — The provider rule is "prepaid", not "OpenRouter"; ElevenLabs Scribe is called directly

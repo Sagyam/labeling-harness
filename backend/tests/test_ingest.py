@@ -121,6 +121,37 @@ def test_openrouter_transcribe_is_logged_to_llm_requests(
     assert req.status == "dry_run"
 
 
+def test_locked_session_thread_safety(db_session: Session) -> None:
+    import concurrent.futures
+
+    from app.services.ingest import LockedSession
+
+    locked = LockedSession(db_session)
+
+    def write_row(i: int) -> None:
+        locked.add(
+            LlmRequest(
+                route=f"thread_test_{i}",
+                model="test-model",
+                request_hash=f"hash_{i}",
+                input_summary="summary",
+                status="succeeded",
+            )
+        )
+        locked.flush()
+        locked.commit()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(write_row, i) for i in range(16)]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+
+    rows = db_session.scalars(
+        sa.select(LlmRequest).where(LlmRequest.route.like("thread_test_%"))
+    ).all()
+    assert len(rows) == 16
+
+
 # --- Stage 3: cross-system disagreement -------------------------------------------------
 
 
@@ -657,3 +688,89 @@ def test_the_fade_leaves_a_short_clip_alone(tmp_path: Path) -> None:
 
     tiny = np.ones(4, dtype=np.float32)
     assert np.array_equal(apply_edge_fade(tiny, 16000), tiny)
+
+
+def test_concurrent_transcription_preserves_chronological_and_hypothesis_order(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    """Multi-threaded segment and route processing must preserve chronological order."""
+    # 25 seconds of audio forces multiple bounded slices (max_seg=20.0s)
+    sr = 16000
+    t = np.linspace(0, 25.0, int(sr * 25.0), endpoint=False)
+    audio = 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
+
+    raw_audio = tmp_path / "multi_ep.wav"
+    sf.write(str(raw_audio), audio, sr, format="WAV")
+
+    work_dir = tmp_path / "work_multi"
+    job = IngestJob(
+        job_id="test-job-multi",
+        episode_id="web_ep_multi",
+        show_id="podcast",
+        title="Concurrent Ingest Test",
+        audio_path=raw_audio,
+        work_dir=work_dir,
+    )
+
+    # settings.ingest.max_segment_concurrency is 4 by default
+    run_pipeline(
+        job,
+        session_factory=lambda: db_session,
+        storage=object_storage,
+        settings=settings,
+        keep_work_dir=True,
+    )
+
+    assert job.status == "completed"
+    assert job.error is None
+
+    # Verify segments.jsonl order
+    segments_file = work_dir / "segments.jsonl"
+    assert segments_file.is_file()
+    import json
+
+    with open(segments_file, encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+
+    assert len(records) >= 2
+    # Verify strict chronological order of segments
+    start_times = [r["start_time"] for r in records]
+    assert start_times == sorted(start_times), "Segments must be in chronological start_time order"
+
+    # Verify each segment's primary hypothesis is the first configured route (Scribe)
+    for r in records:
+        assert len(r["hypotheses"]) >= 1
+        assert "scribe" in r["hypotheses"][0]["system_id"]
+
+
+def test_concurrent_transcription_fails_job_cleanly_on_asr_error(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch
+) -> None:
+    """When a concurrent ASR worker raises, the stage fails cleanly with job.fail."""
+    raw_audio = make_test_audio(tmp_path / "fail_audio.wav", duration_seconds=4.0)
+    work_dir = tmp_path / "work_fail"
+
+    job = IngestJob(
+        job_id="test-job-fail",
+        episode_id="web_ep_fail",
+        show_id="podcast",
+        title="Failing Ingest Test",
+        audio_path=raw_audio,
+        work_dir=work_dir,
+    )
+
+    def failing_transcribe(*args, **kwargs):
+        raise RuntimeError("ASR upstream service unavailable")
+
+    monkeypatch.setattr("app.services.ingest.transcribe", failing_transcribe)
+
+    run_pipeline(
+        job,
+        session_factory=lambda: db_session,
+        storage=object_storage,
+        settings=settings,
+    )
+
+    assert job.status == "failed"
+    assert job.stage == "failed"
+    assert "ASR upstream service unavailable" in str(job.error)

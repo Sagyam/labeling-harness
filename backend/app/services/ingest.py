@@ -11,12 +11,14 @@ Coordinates the 5-stage ingestion pipeline:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime as dt
 import difflib
 import itertools
 import json
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -24,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import soundfile as sf
 from sqlalchemy.orm import Session
 
@@ -48,6 +51,46 @@ from app.utils.hashing import sha256_file
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class LockedSession:
+    """Thread-safe proxy for a SQLAlchemy Session.
+
+    Protects session operations (notably .add, .flush, and .commit) with a reentrant mutex
+    so that multiple worker threads can perform concurrent ASR requests while safely logging
+    LlmRequest rows and committing per-segment transactions.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+        self._lock = threading.RLock()
+
+    def add(self, instance: Any) -> None:
+        with self._lock:
+            self._session.add(instance)
+
+    def flush(self, objects: Any = None) -> None:
+        with self._lock:
+            self._session.flush(objects=objects)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._session.commit()
+
+    def rollback(self) -> None:
+        with self._lock:
+            self._session.rollback()
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._session, name)
+        if callable(attr):
+
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                with self._lock:
+                    return attr(*args, **kwargs)
+
+            return wrapper
+        return attr
 
 
 @dataclass
@@ -318,63 +361,91 @@ def _run_stages(
             f"across {len(asr_routes)} systems ({systems})..."
         )
 
-        with session_factory() as session:
-            for idx, seg in enumerate(segments):
-                step_progress = 40.0 + (35.0 * (idx + 1) / len(segments))
-                job.set_progress("transcribing", step_progress, active_segments=idx + 1)
+        with session_factory() as raw_session:
+            locked_session = LockedSession(raw_session)
+            progress_lock = threading.Lock()
+            completed_count = 0
+            records_by_idx: list[dict[str, Any] | None] = [None] * len(segments)
 
-                hypotheses: list[dict[str, Any]] = []
-                for route_name in asr_routes:
-                    sys_name = system_id_for(route_name, routes.routes.get(route_name))
-                    asr_res = transcribe(
-                        session,
-                        seg.clip_path,
-                        route=route_name,
-                        config=routes,
-                        prompt=ASR_PROMPT,
+            # Persistent HTTP client for connection pooling across all concurrent requests
+            with httpx.Client(timeout=routes.default_timeout_seconds) as http_client:
+
+                def _process_segment(seg_idx: int, seg: Any) -> dict[str, Any]:
+                    # Rec 1: Concurrent model dispatch per segment across configured routes
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=max(1, len(asr_routes))
+                    ) as route_pool:
+                        route_futures = [
+                            route_pool.submit(
+                                transcribe,
+                                locked_session,
+                                seg.clip_path,
+                                route=r_name,
+                                config=routes,
+                                prompt=ASR_PROMPT,
+                                client=http_client,
+                            )
+                            for r_name in asr_routes
+                        ]
+                        results = [f.result() for f in route_futures]
+
+                    # Preserve configured hypothesis order (results[0] is primary)
+                    hypotheses: list[dict[str, Any]] = []
+                    for r_idx, asr_res in enumerate(results):
+                        route_name = asr_routes[r_idx]
+                        sys_name = system_id_for(route_name, routes.routes.get(route_name))
+                        if asr_res.dry_run:
+                            # A dry run returns canned text. Name the system so it can never be
+                            # mistaken for real model output in the queue or at export.
+                            sys_name = f"mock-{sys_name}"
+                        hypotheses.append(
+                            {
+                                "system_id": sys_name,
+                                "model_id": asr_res.model,
+                                "text": asr_res.text,
+                                "avg_logprob": asr_res.avg_logprob,
+                                "no_speech_prob": asr_res.no_speech_prob,
+                                "words": asr_res.words,
+                            }
+                        )
+
+                    # Cross-system disagreement, averaged over every pair of systems. With two
+                    # systems this is the single comparison between them; with three it is the mean
+                    # of the three pairs, so a third hypothesis informs the queue rather than being
+                    # paid for and ignored.
+                    texts = [h["text"] for h in hypotheses]
+                    word_disagreement_rate = _mean_pairwise_disagreement([t.split() for t in texts])
+                    cer_between_hyps = _mean_pairwise_disagreement(texts)
+
+                    primary_hyp = hypotheses[0]
+                    analysis = analyze_transcript(
+                        primary_hyp["text"],
+                        duration_seconds=seg.duration,
+                        no_speech_prob=primary_hyp["no_speech_prob"],
+                        settings=settings,
                     )
-                    if asr_res.dry_run:
-                        # A dry run returns canned text. Name the system so it can never be
-                        # mistaken for real model output in the queue or at export.
-                        sys_name = f"mock-{sys_name}"
-                    hypotheses.append(
-                        {
-                            "system_id": sys_name,
-                            "model_id": asr_res.model,
-                            "text": asr_res.text,
-                            "avg_logprob": asr_res.avg_logprob,
-                            "no_speech_prob": asr_res.no_speech_prob,
-                            "words": asr_res.words,
-                        }
-                    )
 
-                # Cross-system disagreement, averaged over every pair of systems. With two
-                # systems this is the single comparison between them; with three it is the mean
-                # of the three pairs, so a third hypothesis informs the queue rather than being
-                # paid for and ignored.
-                texts = [h["text"] for h in hypotheses]
-                word_disagreement_rate = _mean_pairwise_disagreement([t.split() for t in texts])
-                cer_between_hyps = _mean_pairwise_disagreement(texts)
+                    # Commit per segment (Decision D20). Thread-safe under LockedSession.
+                    locked_session.commit()
 
-                primary_hyp = hypotheses[0]
-                analysis = analyze_transcript(
-                    primary_hyp["text"],
-                    duration_seconds=seg.duration,
-                    no_speech_prob=primary_hyp["no_speech_prob"],
-                    settings=settings,
-                )
+                    # Progress & logging under lock
+                    with progress_lock:
+                        nonlocal completed_count
+                        completed_count += 1
+                        step_progress = 40.0 + (35.0 * completed_count / len(segments))
+                        job.set_progress(
+                            "transcribing", step_progress, active_segments=completed_count
+                        )
 
-                if (idx + 1) % 5 == 0 or idx == len(segments) - 1:
-                    snippet = primary_hyp["text"][:30]
-                    models_str = ", ".join(h["system_id"] for h in hypotheses)
-                    msg = (
-                        f"[{idx + 1}/{len(segments)}] {seg.segment_id} ({models_str}): "
-                        f"'{snippet}...' (CMI={analysis.cmi}%, Disagree={word_disagreement_rate})"
-                    )
-                    job.log(msg)
+                        if completed_count % 5 == 0 or completed_count == len(segments):
+                            snippet = primary_hyp["text"][:30]
+                            models_str = ", ".join(h["system_id"] for h in hypotheses)
+                            prefix = f"[{completed_count}/{len(segments)}] {seg.segment_id}"
+                            cmi_info = f"CMI={analysis.cmi}%, Disagree={word_disagreement_rate}"
+                            msg = f"{prefix} ({models_str}): '{snippet}...' ({cmi_info})"
+                            job.log(msg)
 
-                segment_records.append(
-                    {
+                    return {
                         "segment_id": seg.segment_id,
                         "episode_id": job.episode_id,
                         "speaker_id": "spk0",
@@ -392,11 +463,23 @@ def _run_stages(
                             "flags": analysis.flags,
                         },
                     }
+
+                # Rec 2: Concurrent segment processing with bounded concurrency
+                max_seg_workers = min(
+                    settings.ingest.max_segment_concurrency,
+                    max(1, len(segments)),
                 )
-                # Commit per segment. The loop makes one network call per route per segment, so
-                # a single transaction around the whole stage would hold a pooled connection for
-                # the length of the episode and lose every request-log row on a late failure.
-                session.commit()
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_seg_workers) as seg_pool:
+                    future_to_idx = {
+                        seg_pool.submit(_process_segment, idx, seg): idx
+                        for idx, seg in enumerate(segments)
+                    }
+                    for future in concurrent.futures.as_completed(future_to_idx):
+                        seg_idx = future_to_idx[future]
+                        rec = future.result()
+                        records_by_idx[seg_idx] = rec
+
+            segment_records = [r for r in records_by_idx if r is not None]
         job.set_progress("analyzing", 80.0)
         job.log("Stage 4/5: Orthography analysis, CMI and rule flags completed")
     except Exception as exc:

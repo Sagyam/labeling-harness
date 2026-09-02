@@ -164,7 +164,9 @@ the five stages are:
 2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns, bounded to 2.0 s–20.0 s, with an
    energy-based fallback and an edge fade so slices do not click.
 3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip,
-   producing one ASR system per route, in the order the routes are written. Each attempt is
+   producing one ASR system per route, in the order the routes are written. Transcribers for a
+   segment run concurrently via a worker pool with a shared `httpx.Client` for HTTP connection
+   pooling, while up to `max_segment_concurrency` segments are processed in parallel. Each attempt is
    logged to `llm_requests`, whichever provider served it. `app/llm/transcription.py` dispatches
    on the route's `provider` and `api`; see the table below.
 4. **Analyse** — Devanagari/Latin ratio, code-mixing index, cross-system word disagreement, script

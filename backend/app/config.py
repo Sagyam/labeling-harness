@@ -207,6 +207,7 @@ class IngestSettings(BaseModel):
     model_config = _STRICT
 
     work_root: Path = Path("./data/ingest_work")
+    max_segment_concurrency: int = Field(default=4, ge=1, le=16)
 
     @field_validator("work_root")
     @classmethod

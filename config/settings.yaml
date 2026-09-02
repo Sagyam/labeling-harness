@@ -79,3 +79,4 @@ export:
 
 ingest:
   work_root: ./data/ingest_work   # scratch space for web uploads; removed when a job finishes
+  max_segment_concurrency: 4     # number of segments transcribed concurrently

@@ -13,6 +13,10 @@ instruction at all, which is why it is given a language code and key terms inste
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
 
 from sqlalchemy.orm import Session
 
@@ -69,6 +73,7 @@ def transcribe(
     config: LlmRoutes | None = None,
     prompt: str | None = ASR_PROMPT,
     dry_run: bool | None = None,
+    client: httpx.Client | None = None,
 ) -> AsrResult:
     """Transcribe one clip through a named route, whichever vendor is behind it.
 
@@ -79,6 +84,7 @@ def transcribe(
         config: Routing table override.
         prompt: Transcript policy, for the providers that accept one.
         dry_run: Override the configured dry-run mode for this call.
+        client: Optional shared HTTPX client for connection pooling.
 
     Returns:
         The transcription, from whichever provider the route names.
@@ -88,19 +94,19 @@ def transcribe(
         LlmDisabledError: Inference is disabled in configuration.
         LlmRequestFailed: No API key, or the request failed after retries.
     """
-    routes = config or OpenRouterClient(session).config
+    routes = config or OpenRouterClient(session, client=client).config
     route_config = routes.routes.get(route)
     if route_config is None:
         raise LlmRouteNotConfigured(f"no route named {route!r} in llm_routes.yaml")
 
     if route_config.provider == "elevenlabs":
-        return ElevenLabsClient(session, config=routes).transcribe(
+        return ElevenLabsClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
             keyterms=list(DEFAULT_KEYTERMS),
             dry_run=dry_run,
         )
-    return OpenRouterClient(session, config=routes).transcribe(
+    return OpenRouterClient(session, config=routes, client=client).transcribe(
         audio_path,
         route=route,
         prompt=prompt,
