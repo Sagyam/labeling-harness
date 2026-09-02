@@ -1,6 +1,6 @@
 """Initial schema: provenance, content, annotation and operational tables.
 
-Implements every table in ARCHITECTURE.md "Data model". Status columns are guarded by CHECK
+Implements every table in docs/architecture.md "Data model". Status columns are guarded by CHECK
 constraints, and at most one active annotation task per segment is guaranteed by the partial
 unique index ``uq_annotation_tasks_active_segment``.
 

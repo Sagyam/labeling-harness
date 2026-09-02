@@ -50,11 +50,15 @@ The source is already lossy and re-encoding the exact audio that will be trained
 acceptable. Rejection happens during validation, before any row is written. **Reversal:** would
 require re-importing every episode.
 
-## D10 — All LLM inference goes through OpenRouter, and none is wired at MVP
-OpenRouter is prepaid, which removes the possibility of a surprise invoice. The client and the
-`llm_requests` table exist now so a future route inherits logging, retries and dry-run mode.
-Multi-system disagreement and rule flags already provide the prioritization signal, so the MVP makes
-no LLM calls at all. **Reversal:** n/a.
+## D10 — All LLM and cloud-ASR inference goes through OpenRouter
+OpenRouter is prepaid, which removes the possibility of a surprise invoice. The client, its retry
+and dry-run behaviour and the `llm_requests` log were built before any route existed, so when the
+ingestion pipeline started calling cloud ASR (D18) it inherited all three. Routes live in
+`config/llm_routes.yaml`; every route named `asr*` becomes one ASR system during ingestion.
+No direct calls to OpenAI, Anthropic, Google, Groq or Mistral, ever.
+**Superseded part:** the original MVP made no LLM calls at all and shipped `routes: {}` with
+`enabled: false`. Prioritization still uses only multi-system disagreement and rule flags — nothing
+in scoring, policy checking or correction suggestion calls a model. **Reversal:** n/a.
 
 ## D11 — Validation by JSON Schema at the manifest boundary
 `backend/app/schemas/episode.schema.json` and `segment.schema.json` are the executable form of the input
@@ -69,7 +73,7 @@ less lockfile for a single-developer project. **Reversal:** trivial.
 The suite needs real partial unique indexes and real foreign keys — application-level checks would
 not prove the constraints exist. Each test runs inside a transaction rolled back afterwards, with
 `join_transaction_mode="create_savepoint"` so service code can still call `commit()`. **Reversal:**
-would weaken Phase 1 verification.
+would weaken the schema guarantees the suite proves.
 
 ## D14 — A skip writes an event, but no label
 The specification says every write creates a `segment_labels` row. A skip is the exception: the
@@ -105,5 +109,20 @@ lightweight local VAD, routes speech recognition to Cloud ASR endpoints (includi
 computes multi-system agreement and rule flags, and auto-populates the review queue. Progress,
 system metrics, and debug logs stream live to the Web UI.
 **Why:** Eliminates fragile Colab environments, GPU memory limits, and CLI friction. The annotator
-never leaves the browser to ingest new episodes.
+never leaves the browser to ingest new episodes. The manifest importer stays, so an upstream GPU
+pipeline remains a supported way in. **Reversal:** the importer path is untouched; removing the web
+flow would cost only the UI.
 
+## D19 — shadcn/ui components vendored into the repo, not a component-library dependency
+The rule was "no heavy component library". shadcn/ui satisfies it in the letter that matters: the
+components in `frontend/src/components/ui/` are source files in this repository, built on Radix
+primitives, editable in place, with no upgrade treadmill and nothing to theme around. The
+alternative was hand-rolling twenty accessible primitives (dialog, popover, tooltip, scroll area)
+for a keyboard-first UI where focus management is the whole game. **Reversal:** the files are ours;
+deleting the ones we do not use costs nothing.
+
+## D20 — Ingestion writes per segment, not in one transaction
+The transcribe stage makes one network call per route per segment. Wrapping the stage in a single
+transaction would hold a pooled connection open for the length of an episode, and a failure at
+segment 300 would discard 299 segments of paid ASR. Each segment commits as it lands.
+**Reversal:** trivial, but it would make a long job all-or-nothing.

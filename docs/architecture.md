@@ -28,13 +28,14 @@ and immediately begins annotation in the Review UI without touching the CLI or f
 backend/app/
   config.py        YAML + env configuration, frozen pydantic models
   main.py          FastAPI application factory
-  api/             HTTP routers (health, queue, tasks, segments, translit, stats)
+  api/             HTTP routers (health, ingest, queue, tasks, segments, translit, episodes)
   db/              engine, session scope, declarative base
   models/          SQLAlchemy ORM models -- one module per concept group
-  services/        importer, peaks, scoring, queue builder, labeling, export, reporting
+  services/        ingest pipeline (audio, silero_vad, analysis), importer, peaks, scoring,
+                   queue builder, labeling, corpus, export, reporting
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
-  llm/             OpenRouter client (no route wired at MVP)
+  llm/             OpenRouter client; every ASR call in the ingestion pipeline goes through it
   utils/           logging, hashing, time
 scripts/           thin CLI wrappers over services
 config/            settings.yaml, llm_routes.yaml
@@ -83,7 +84,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `annotation_events` | Timing and action per interaction, for throughput measurement |
 | `audit_logs` | Every write, with old and new values |
 | `translit_cache` | Latin token -> ranked Devanagari candidates |
-| `llm_requests` | OpenRouter request log (table exists; no route wired at MVP) |
+| `llm_requests` | OpenRouter request log; every ASR attempt during ingestion is recorded here |
 
 ### Status discipline
 
@@ -142,15 +143,31 @@ Segments with zero hypotheses go to the `error` queue, never to `review`. An aud
 seeded random sample (default 5%) of low-priority, high-agreement segments so quality on the easy
 majority stays measurable.
 
-## Ingestion & Cloud ASR
+## Ingestion and Cloud ASR
 
-The harness integrates ingestion directly into the Web UI:
-- **Audio file upload / selection**: Select `.mp3`, `.m4a`, or `.wav` directly in the browser.
-- **Local normalization & VAD**: FFmpeg normalizes audio (`loudnorm`), then Silero VAD splits speech into natural chunks (2.0s–20.0s).
-- **Cloud ASR (via OpenRouter & Cloud APIs)**: Clips are transcribed by Cloud ASR providers and OpenRouter models, logged to `llm_requests`.
-- **Scoring & Flagging**: Computes Code-Mixing Index (CMI), multi-system word disagreement rate, script conflict rate, and rule flags.
-- **Live Progress & Debug Logs**: Progress percentage, current segment, and debug logs are streamed live to the Web UI via SSE (`GET /ingest/{id}/events`).
-- **Auto Queue Generation**: When processing completes, tasks are automatically built and the annotator can click "Start Annotating" immediately.
+Ingestion runs inside the app, not in an upstream notebook: the annotator uploads an episode in the
+browser and watches it become a queue. `POST /ingest` starts a background job and returns a job id;
+the five stages are:
+
+1. **Normalize** — FFmpeg `loudnorm` to 16 kHz mono FLAC, the only clip format the importer accepts.
+2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns, bounded to 2.0 s–20.0 s, with an
+   energy-based fallback and an edge fade so slices do not click.
+3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip
+   through OpenRouter, producing one ASR system per route. Each attempt is logged to
+   `llm_requests`. An anti-hallucination sentinel in the prompt is stripped from the output, so a
+   model echoing its instructions cannot enter the queue as a hypothesis.
+4. **Analyse** — Devanagari/Latin ratio, code-mixing index, cross-system word disagreement, script
+   conflict and the rule flags below.
+5. **Import and build** — segments, hypotheses, scores and queue tasks are written in one pass, so
+   "Start Annotating" works the moment the job finishes.
+
+`GET /ingest/{id}` reports stage, progress and error state; `GET /ingest/{id}/events` streams the
+same log lines the backend writes, over SSE, into a terminal panel in the browser. Clips are
+committed per segment rather than in one transaction around the whole stage, so a job that fails
+halfway leaves the work it already did.
+
+The manifest importer (below) remains the other, equal-status way in: an upstream GPU pipeline can
+still produce `export_<episode_id>/` and `scripts/import_manifest.py` will ingest it.
 
 ## Export
 
@@ -165,7 +182,7 @@ The manifest records label version, policy version, filters, split row counts, S
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:
 the same inputs and filters produce byte-identical output.
 
-## Review API
+## HTTP API
 
 | Endpoint | Purpose |
 |---|---|
@@ -184,10 +201,18 @@ the same inputs and filters produce byte-identical output.
 | `POST /tasks/bulk-accept` | Accept many tasks in one transaction |
 | `POST /translit` | Latin token → ranked Devanagari candidates |
 | `POST /translit/choice` | Record the chosen form for the correction memory |
+| `POST /ingest` | Upload an episode's audio; starts the pipeline, returns a job id |
+| `GET /ingest/{id}` | Job stage, progress, active segment count, error state |
+| `GET /ingest/{id}/events` | SSE stream of the job's log lines |
+| `GET /episodes` | Episode list with per-episode segment counts and progress |
+| `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |
+| `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
+| `DELETE /segments/{id}` | Delete one segment and its stored objects |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
 `annotation_events` row carrying the client-reported elapsed time, and an `audit_logs` entry.
 Authentication is off when `api.auth_token` is empty; setting it requires `Authorization: Bearer`.
+Deletions are audited like any other write; `/health` is the only unauthenticated route.
 
 ## Transliteration
 
@@ -197,3 +222,23 @@ offline rule-based provider built on `indic-transliteration`, and a static provi
 `TransliterationService` consults `translit_cache` first, so a recurring token never leaves
 Postgres, and `record_choice` promotes a previously chosen form to the front of the candidate list —
 the correction memory. The accumulated cache is a romanization lexicon for this speaker community.
+
+## Review UI
+
+`frontend/` is a Vite + React 19 single-page app in TypeScript, styled with Tailwind v4 and
+shadcn/ui components vendored into `src/components/ui/` (Radix primitives plus local styling —
+copied in, not a component-library dependency). `App.tsx` holds the whole session: which queue is
+active, triage or editor mode, the focused row, the multi-select set and the open task.
+
+| Piece | File | Role |
+|---|---|---|
+| Triage | `components/TriageView.tsx` | Dense keyboard-first list over `/queue`; one keystroke per decision |
+| Editor | `components/EditorView.tsx` | Waveform, playback, transcript editing, hypothesis switching, live diff |
+| Waveform | `components/Waveform.tsx` | Draws the precomputed peaks; click to seek, playhead follows audio |
+| Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
+| Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
+| Episodes | `components/EpisodeManagerModal.tsx` | Browse episodes and segments, delete either |
+| Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
+
+Audio is never decoded in the browser to draw a waveform (D8), and clips are streamed from
+`/segments/{id}/audio` with range requests rather than fetched whole.
