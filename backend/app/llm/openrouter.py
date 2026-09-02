@@ -1,94 +1,80 @@
 """OpenRouter client.
 
-**All LLM inference from this codebase goes through OpenRouter.** No direct calls to OpenAI,
-Anthropic, Google, Groq or Mistral. The reason is billing control: OpenRouter is prepaid, so there
-is no possibility of a surprise invoice.
+**All text inference from this codebase goes through OpenRouter**, and so does every ASR model
+OpenRouter can reach. No direct calls to OpenAI, Anthropic, Google, Groq or Mistral. The reason is
+billing control: OpenRouter is prepaid, so there is no possibility of a surprise invoice. The one
+provider called directly is ElevenLabs Scribe, which is prepaid on the same terms and is therefore
+subject to the same reasoning rather than an exception to it (decision D21).
 
-At MVP no route is wired to any pipeline stage -- ``config/llm_routes.yaml`` ships with
-``enabled: false`` and ``routes: {}``. This client exists now so that when a route is added later,
-the billing, logging, retry and dry-run guarantees are already in place rather than being
-retrofitted around a call that is already in production.
+Two request shapes reach an ASR model here, and they are not interchangeable:
 
-(Upstream ASR, including any commercial transcription API, runs in the GPU pipeline outside this
-codebase and is out of scope for this rule.)
+* ``api: transcription`` posts a multipart upload to ``/audio/transcriptions``. The model is a
+  speech recogniser; it returns a transcript and nothing else.
+* ``api: audio_chat`` posts chat completions with the clip as an ``input_audio`` part. The model
+  is a general LLM being asked to transcribe, so it takes instruction well but will also answer in
+  prose, or invent speech over silence, unless told not to.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
+import base64
 import os
-import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 from sqlalchemy.orm import Session
 
-from app.config import LlmRoutes, load_llm_routes
-from app.models import LlmRequest
+from app.config import LlmRoutes
+from app.llm.base import (
+    INPUT_SUMMARY_LIMIT,
+    RETRYABLE_STATUS,
+    AsrResult,
+    LlmDisabledError,
+    LlmError,
+    LlmRequestFailed,
+    LlmResult,
+    LlmRouteNotConfigured,
+    ProviderClient,
+    dry_run_transcript,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-#: How much of the prompt is kept in the request log.
-INPUT_SUMMARY_LIMIT = 1000
-#: Status codes worth retrying: rate limits and transient server failures.
-RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+__all__ = [
+    "INPUT_SUMMARY_LIMIT",
+    "RETRYABLE_STATUS",
+    "AsrResult",
+    "LlmDisabledError",
+    "LlmError",
+    "LlmRequestFailed",
+    "LlmResult",
+    "LlmRouteNotConfigured",
+    "OpenRouterClient",
+]
+
+#: Audio container sent with an ``audio_chat`` request. Clips are FLAC by invariant.
+AUDIO_CHAT_FORMAT = "flac"
 
 
-class LlmError(RuntimeError):
-    """Base class for OpenRouter failures."""
+def _usage_cost(usage: dict[str, Any]) -> Decimal | None:
+    """Read the charged amount from an OpenRouter ``usage`` block.
+
+    Chat completions report ``cost``; the transcription endpoint reports ``cost`` too, while some
+    responses still carry the older ``total_cost``. Reading only one of the two silently logs
+    every request as costing nothing.
+    """
+    for key in ("cost", "total_cost"):
+        value = usage.get(key)
+        if value is not None:
+            return Decimal(str(value))
+    return None
 
 
-class LlmDisabledError(LlmError):
-    """LLM inference is switched off in configuration."""
-
-
-class LlmRouteNotConfigured(LlmError):
-    """The named route does not exist in ``llm_routes.yaml``."""
-
-
-class LlmRequestFailed(LlmError):
-    """The request failed after exhausting retries, or could not be made at all."""
-
-
-@dataclass(frozen=True)
-class LlmResult:
-    """One completion, plus what it cost."""
-
-    route: str
-    model: str
-    text: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    estimated_cost_usd: Decimal | None = None
-    latency_ms: int | None = None
-    dry_run: bool = False
-    raw: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class AsrResult:
-    """One ASR transcription, plus usage and cost metrics."""
-
-    route: str
-    model: str
-    text: str
-    words: list[dict[str, Any]] | None = None
-    avg_logprob: float | None = None
-    no_speech_prob: float | None = None
-    latency_ms: int | None = None
-    estimated_cost_usd: Decimal | None = None
-    dry_run: bool = False
-    raw: dict[str, Any] | None = None
-
-
-class OpenRouterClient:
-    """A thin, logged, retrying client for OpenRouter's chat completions endpoint."""
+class OpenRouterClient(ProviderClient):
+    """A thin, logged, retrying client for OpenRouter's chat and transcription endpoints."""
 
     def __init__(
         self,
@@ -98,88 +84,16 @@ class OpenRouterClient:
         api_key: str | None = None,
         client: httpx.Client | None = None,
     ) -> None:
-        self.session = session
-        self.config = config or load_llm_routes()
+        super().__init__(session, config=config, client=client)
         self.api_key = os.environ.get("OPENROUTER_API_KEY", "") if api_key is None else api_key
-        self._client = client
-
-    def _get_client(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=self.config.default_timeout_seconds)
-        return self._client
-
-    @staticmethod
-    def _hash(payload: dict[str, Any]) -> str:
-        return hashlib.sha256(
-            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
-        ).hexdigest()
 
     @staticmethod
     def _summarize(messages: list[dict[str, Any]]) -> str:
         rendered = " | ".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
         return rendered[:INPUT_SUMMARY_LIMIT]
 
-    def _log(
-        self,
-        *,
-        route: str,
-        model: str,
-        request_hash: str,
-        input_summary: str,
-        status: str,
-        output: dict[str, Any] | None = None,
-        prompt_tokens: int | None = None,
-        completion_tokens: int | None = None,
-        cost: Decimal | None = None,
-        latency_ms: int | None = None,
-        error: str | None = None,
-    ) -> None:
-        self.session.add(
-            LlmRequest(
-                route=route,
-                model=model,
-                request_hash=request_hash,
-                input_summary=input_summary,
-                output_json=output,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                estimated_cost_usd=cost,
-                latency_ms=latency_ms,
-                status=status,
-                error_message=error,
-            )
-        )
-        self.session.flush()
-
-    def _send_with_retries(
-        self, send: Callable[[], httpx.Response]
-    ) -> tuple[httpx.Response | None, str, int]:
-        """Call ``send`` until it returns 200, fails unretryably, or runs out of attempts.
-
-        Args:
-            send: Builds and performs one request. Called once per attempt.
-
-        Returns:
-            ``(response, last_error, latency_ms)``. ``response`` is ``None`` when every attempt
-            failed, in which case ``last_error`` describes the final one.
-        """
-        attempts = max(1, self.config.max_retries)
-        started = time.monotonic()
-        last_error = "no attempt was made"
-        for attempt in range(attempts):
-            try:
-                response = send()
-            except httpx.HTTPError as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-            else:
-                if response.status_code == 200:
-                    return response, last_error, int((time.monotonic() - started) * 1000)
-                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
-                if response.status_code not in RETRYABLE_STATUS:
-                    break
-            if attempt + 1 < attempts:
-                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
-        return None, last_error, int((time.monotonic() - started) * 1000)
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     def complete(
         self,
@@ -205,14 +119,13 @@ class OpenRouterClient:
             The completion, or an empty :class:`LlmResult` marked ``dry_run``.
 
         Raises:
-            LlmDisabledError: LLM inference is disabled in configuration.
+            LlmDisabledError: Inference is disabled in configuration.
             LlmRouteNotConfigured: The route does not exist.
             LlmRequestFailed: No API key, or the request failed after retries.
         """
         if not self.config.enabled:
             raise LlmDisabledError(
-                "LLM inference is disabled (config/llm_routes.yaml: enabled: false). "
-                "No route is wired to any pipeline stage at MVP."
+                "LLM inference is disabled (config/llm_routes.yaml: enabled: false)."
             )
         route_config = self.config.routes.get(route)
         if route_config is None:
@@ -256,38 +169,22 @@ class OpenRouterClient:
         timeout = (
             timeout_seconds or route_config.timeout_seconds or self.config.default_timeout_seconds
         )
-        url = f"{self.config.base_url.rstrip('/')}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        response, last_error, latency_ms = self._send_with_retries(
-            lambda: self._get_client().post(url, json=payload, headers=headers, timeout=timeout)
+        body, latency_ms = self._post_json(
+            route=route,
+            model=route_config.model,
+            payload=payload,
+            request_hash=request_hash,
+            summary=summary,
+            timeout=timeout,
         )
-        if response is None:
-            self._log(
-                route=route,
-                model=route_config.model,
-                request_hash=request_hash,
-                input_summary=summary,
-                status="failed",
-                latency_ms=latency_ms,
-                error=last_error,
-            )
-            logger.info("llm_request_failed", route=route, error=last_error)
-            raise LlmRequestFailed(f"route {route!r} failed: {last_error}")
-
-        body = response.json()
         usage = body.get("usage") or {}
-        cost = usage.get("total_cost")
         result = LlmResult(
             route=route,
             model=body.get("model", route_config.model),
-            text=(body.get("choices") or [{}])[0].get("message", {}).get("content", ""),
+            text=_message_text(body),
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
-            estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
+            estimated_cost_usd=_usage_cost(usage),
             latency_ms=latency_ms,
             raw=body,
         )
@@ -305,6 +202,36 @@ class OpenRouterClient:
         )
         return result
 
+    def _post_json(
+        self,
+        *,
+        route: str,
+        model: str,
+        payload: dict[str, Any],
+        request_hash: str,
+        summary: str,
+        timeout: float,
+    ) -> tuple[dict[str, Any], int]:
+        """POST a JSON body to chat completions, logging and raising on exhausted retries."""
+        url = f"{self.config.base_url.rstrip('/')}/chat/completions"
+        headers = {**self._headers(), "Content-Type": "application/json"}
+        response, last_error, latency_ms = self._send_with_retries(
+            lambda: self._get_client().post(url, json=payload, headers=headers, timeout=timeout)
+        )
+        if response is None:
+            self._log(
+                route=route,
+                model=model,
+                request_hash=request_hash,
+                input_summary=summary,
+                status="failed",
+                latency_ms=latency_ms,
+                error=last_error,
+            )
+            logger.info("llm_request_failed", route=route, error=last_error)
+            raise LlmRequestFailed(f"route {route!r} failed: {last_error}")
+        return response.json(), latency_ms
+
     def transcribe(
         self,
         audio_path: Path | str,
@@ -316,7 +243,10 @@ class OpenRouterClient:
         model: str | None = None,
         timeout_seconds: float | None = None,
     ) -> AsrResult:
-        """Transcribe an audio file using Cloud ASR via OpenRouter.
+        """Transcribe an audio file through a named route.
+
+        Dispatches on the route's ``api``: ``audio_chat`` sends the clip to a chat model, anything
+        else sends it to the transcription endpoint.
 
         Always logs the attempt to ``llm_requests``. An explicit dry run returns a deterministic
         mock transcript marked ``dry_run``; a missing key or a disabled configuration raises,
@@ -324,7 +254,7 @@ class OpenRouterClient:
         than a failed ingest.
 
         Raises:
-            LlmDisabledError: LLM inference is disabled in configuration.
+            LlmDisabledError: Inference is disabled in configuration.
             LlmRequestFailed: No API key, or the request failed after retries.
         """
         route_config = self.config.routes.get(route)
@@ -332,40 +262,20 @@ class OpenRouterClient:
         effective_dry_run = self.config.dry_run if dry_run is None else dry_run
 
         audio_file = Path(audio_path)
-        file_size = audio_file.stat().st_size if audio_file.exists() else 0
-        hash_seed = f"{target_model}:{audio_file.name}:{file_size}".encode()
-        payload_hash = hashlib.sha256(hash_seed).hexdigest()
+        request_hash = self._audio_hash(audio_file, target_model)
         summary = f"asr_transcribe: {audio_file.name} model={target_model}"
 
         if effective_dry_run:
             self._log(
                 route=route,
                 model=target_model,
-                request_hash=payload_hash,
+                request_hash=request_hash,
                 input_summary=summary,
                 status="dry_run",
             )
             logger.info("asr_dry_run", route=route, model=target_model, file=str(audio_file))
-            # Deterministic mock, chosen by file hash. Callers must key off `dry_run` and never
-            # store this as a real hypothesis.
-            sample_texts = [
-                "हामीले यो project मा meeting गरेर data analyse गर्नु पर्छ",
-                "आजको session मा machine learning र technology को कुरा भयो",
-                "सबै team members ले आफ्नो schedule अनुसार task complete गर्नु होला",
-                "यो software system मा नयाँ feature update add गरिएको छ",
-            ]
-            chosen = sample_texts[int(payload_hash[:4], 16) % len(sample_texts)]
-            words = [
-                {"word": w, "start": round(i * 0.4, 2), "end": round((i + 1) * 0.4, 2)}
-                for i, w in enumerate(chosen.split())
-            ]
-            return AsrResult(
-                route=route,
-                model=target_model,
-                text=chosen,
-                words=words,
-                dry_run=True,
-            )
+            text, words = dry_run_transcript(request_hash)
+            return AsrResult(route=route, model=target_model, text=text, words=words, dry_run=True)
 
         if not self.config.enabled:
             raise LlmDisabledError(
@@ -376,7 +286,7 @@ class OpenRouterClient:
             self._log(
                 route=route,
                 model=target_model,
-                request_hash=payload_hash,
+                request_hash=request_hash,
                 input_summary=summary,
                 status="failed",
                 error="OPENROUTER_API_KEY is not set",
@@ -388,59 +298,92 @@ class OpenRouterClient:
             or (route_config.timeout_seconds if route_config else None)
             or self.config.default_timeout_seconds
         )
+        language = (
+            language if language is not None else (route_config.language if route_config else None)
+        )
+
+        if route_config is not None and route_config.api == "audio_chat":
+            return self._transcribe_via_chat(
+                audio_file,
+                route=route,
+                route_config=route_config,
+                model=target_model,
+                prompt=prompt,
+                request_hash=request_hash,
+                summary=summary,
+                timeout=timeout,
+            )
+        return self._transcribe_via_endpoint(
+            audio_file,
+            route=route,
+            model=target_model,
+            prompt=prompt,
+            language=language,
+            request_hash=request_hash,
+            summary=summary,
+            timeout=timeout,
+        )
+
+    def _transcribe_via_endpoint(
+        self,
+        audio_file: Path,
+        *,
+        route: str,
+        model: str,
+        prompt: str | None,
+        language: str | None,
+        request_hash: str,
+        summary: str,
+        timeout: float,
+    ) -> AsrResult:
+        """Transcribe through ``/audio/transcriptions``, a dedicated speech recogniser."""
         url = f"{self.config.base_url.rstrip('/')}/audio/transcriptions"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
 
         def send() -> httpx.Response:
             with open(audio_file, "rb") as handle:
                 files = {"file": (audio_file.name, handle, "audio/flac")}
-                data = {"model": target_model}
+                # verbose_json is the only shape that reports the detected language and the
+                # segment spans; plain json returns the text alone.
+                data = {"model": model, "response_format": "verbose_json"}
                 if prompt:
                     data["prompt"] = prompt
                 if language:
                     data["language"] = language
                 return self._get_client().post(
-                    url, data=data, files=files, headers=headers, timeout=timeout
+                    url, data=data, files=files, headers=self._headers(), timeout=timeout
                 )
 
         response, last_error, latency_ms = self._send_with_retries(send)
         if response is None:
-            self._log(
-                route=route,
-                model=target_model,
-                request_hash=payload_hash,
-                input_summary=summary,
-                status="failed",
-                latency_ms=latency_ms,
-                error=last_error,
-            )
-            logger.info("asr_request_failed", route=route, error=last_error)
-            raise LlmRequestFailed(f"ASR transcription failed: {last_error}")
+            self._fail(route, model, request_hash, summary, latency_ms, last_error)
 
         body = response.json()
         raw_words = body.get("words") or []
-        usage = body.get("usage") or {}
-        cost = usage.get("total_cost")
         result = AsrResult(
             route=route,
-            model=body.get("model", target_model),
-            text=body.get("text", ""),
+            model=body.get("model", model),
+            # Whisper prefixes its transcript with a space. Stored verbatim it would show up in
+            # the editor and shift every character-level diff against it.
+            text=body.get("text", "").strip(),
+            # Not every recogniser returns word spans; DeepInfra's Whisper does not. An empty
+            # list would claim the model found no words, which is a different statement.
             words=[
                 {"word": w.get("word", ""), "start": w.get("start"), "end": w.get("end")}
                 for w in raw_words
-            ],
+            ]
+            or None,
             # Absent means unknown, not confident. The scorer reads None as "no signal"; a
             # plausible-looking default would silently drive 25% of the queue ordering.
             avg_logprob=body.get("avg_logprob"),
             no_speech_prob=body.get("no_speech_prob"),
             latency_ms=latency_ms,
-            estimated_cost_usd=Decimal(str(cost)) if cost is not None else None,
+            estimated_cost_usd=_usage_cost(body.get("usage") or {}),
             raw=body,
         )
         self._log(
             route=route,
             model=result.model,
-            request_hash=payload_hash,
+            request_hash=request_hash,
             input_summary=summary,
             status="succeeded",
             output=body,
@@ -448,3 +391,102 @@ class OpenRouterClient:
             latency_ms=latency_ms,
         )
         return result
+
+    def _transcribe_via_chat(
+        self,
+        audio_file: Path,
+        *,
+        route: str,
+        route_config: Any,
+        model: str,
+        prompt: str | None,
+        request_hash: str,
+        summary: str,
+        timeout: float,
+    ) -> AsrResult:
+        """Transcribe by attaching the clip to a chat completion.
+
+        The model is a general LLM, so the prompt carries the whole transcript policy and the
+        instruction to answer with the transcript alone.
+        """
+        encoded = base64.b64encode(audio_file.read_bytes()).decode()
+        content: list[dict[str, Any]] = []
+        if prompt:
+            content.append({"type": "text", "text": prompt})
+        content.append(
+            {
+                "type": "input_audio",
+                "input_audio": {"data": encoded, "format": AUDIO_CHAT_FORMAT},
+            }
+        )
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": route_config.max_tokens or self.config.default_max_tokens,
+        }
+        # Transcription is not a creative task: pin the sampler when the route does not.
+        payload["temperature"] = (
+            route_config.temperature if route_config.temperature is not None else 0.0
+        )
+
+        body, latency_ms = self._post_json(
+            route=route,
+            model=model,
+            payload=payload,
+            request_hash=request_hash,
+            summary=summary,
+            timeout=timeout,
+        )
+        usage = body.get("usage") or {}
+        result = AsrResult(
+            route=route,
+            model=body.get("model", model),
+            text=_message_text(body).strip(),
+            # A chat model returns prose, not word spans or confidences.
+            words=None,
+            avg_logprob=None,
+            no_speech_prob=None,
+            latency_ms=latency_ms,
+            estimated_cost_usd=_usage_cost(usage),
+            raw=body,
+        )
+        self._log(
+            route=route,
+            model=result.model,
+            request_hash=request_hash,
+            input_summary=summary,
+            status="succeeded",
+            output=body,
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            cost=result.estimated_cost_usd,
+            latency_ms=latency_ms,
+        )
+        return result
+
+    def _fail(
+        self,
+        route: str,
+        model: str,
+        request_hash: str,
+        summary: str,
+        latency_ms: int,
+        last_error: str,
+    ) -> NoReturn:
+        self._log(
+            route=route,
+            model=model,
+            request_hash=request_hash,
+            input_summary=summary,
+            status="failed",
+            latency_ms=latency_ms,
+            error=last_error,
+        )
+        logger.info("asr_request_failed", route=route, error=last_error)
+        raise LlmRequestFailed(f"ASR transcription failed: {last_error}")
+
+
+def _message_text(body: dict[str, Any]) -> str:
+    """Pull the assistant message out of a chat completion, tolerating a null content."""
+    choices = body.get("choices") or [{}]
+    return (choices[0].get("message") or {}).get("content") or ""

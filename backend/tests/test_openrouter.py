@@ -61,13 +61,12 @@ def make_client(
 # --- the MVP posture: nothing is wired ---------------------------------------------------
 
 
-def test_the_committed_configuration_has_an_asr_route() -> None:
+def test_the_committed_configuration_has_asr_routes() -> None:
     from app.config import load_llm_routes
 
     config = load_llm_routes()
     assert config.enabled is True
-    assert "asr_chirp" in config.routes
-    assert config.routes["asr_chirp"].model == "google/chirp-3"
+    assert config.asr_route_names()
 
 
 def test_a_disabled_client_refuses_to_call(db_session: Session) -> None:
@@ -253,13 +252,13 @@ def asr_routes(**kwargs) -> LlmRoutes:
         "dry_run": False,
         "max_retries": 3,
         "retry_backoff_seconds": 0.0,
-        "routes": {"asr_chirp": LlmRoute(model="google/chirp-3")},
+        "routes": {"asr_whisper": LlmRoute(api="transcription", model="openai/whisper-large-v3")},
     }
     return LlmRoutes(**{**base, **kwargs})
 
 
 def transcription(text: str = "आजको meeting मा data हेर्यौं", **extra) -> dict:
-    return {"model": "google/chirp-3", "text": text, **extra}
+    return {"model": "openai/whisper-large-v3", "text": text, **extra}
 
 
 @pytest.fixture
@@ -273,7 +272,7 @@ def test_a_missing_api_key_never_yields_a_fabricated_transcript(db_session: Sess
     """The failure mode that matters: a deploy loses its key and the corpus fills with mock text."""
     client = make_client(db_session, lambda r: httpx.Response(200), config=asr_routes(), api_key="")
     with pytest.raises(LlmRequestFailed, match="OPENROUTER_API_KEY"):
-        client.transcribe(clip, route="asr_chirp")
+        client.transcribe(clip, route="asr_whisper")
 
     logged = db_session.scalars(sa.select(LlmRequest)).all()
     assert [row.status for row in logged] == ["failed"]
@@ -284,7 +283,7 @@ def test_a_disabled_configuration_refuses_to_transcribe(db_session: Session, cli
         db_session, lambda r: httpx.Response(200), config=asr_routes(enabled=False)
     )
     with pytest.raises(LlmDisabledError):
-        client.transcribe(clip, route="asr_chirp")
+        client.transcribe(clip, route="asr_whisper")
 
 
 def test_an_explicit_dry_run_is_marked_and_makes_no_http_call(db_session: Session, clip) -> None:
@@ -292,7 +291,7 @@ def test_an_explicit_dry_run_is_marked_and_makes_no_http_call(db_session: Sessio
         raise AssertionError("a dry run must not reach the network")
 
     result = make_client(db_session, handler, config=asr_routes(dry_run=True)).transcribe(
-        clip, route="asr_chirp"
+        clip, route="asr_whisper"
     )
     assert result.dry_run is True
     assert result.text
@@ -302,11 +301,21 @@ def test_an_explicit_dry_run_is_marked_and_makes_no_http_call(db_session: Sessio
     assert db_session.scalars(sa.select(LlmRequest.status)).all() == ["dry_run"]
 
 
+def test_leading_whitespace_is_stripped_from_a_transcript(db_session: Session, clip) -> None:
+    """Whisper prefixes its output with a space; verbatim it shifts every diff against it."""
+    result = make_client(
+        db_session,
+        lambda r: httpx.Response(200, json=transcription(" आजको meeting ")),
+        config=asr_routes(),
+    ).transcribe(clip, route="asr_whisper")
+    assert result.text == "आजको meeting"
+
+
 def test_a_successful_transcription_returns_the_text_and_words(db_session: Session, clip) -> None:
     body = transcription(words=[{"word": "आजको", "start": 0.0, "end": 0.4}])
     result = make_client(
         db_session, lambda r: httpx.Response(200, json=body), config=asr_routes()
-    ).transcribe(clip, route="asr_chirp")
+    ).transcribe(clip, route="asr_whisper")
 
     assert result.text == "आजको meeting मा data हेर्यौं"
     assert result.words == [{"word": "आजको", "start": 0.0, "end": 0.4}]
@@ -319,7 +328,7 @@ def test_absent_confidence_fields_stay_none_rather_than_being_invented(
     """A default like -0.2 would silently drive the low_confidence term of the priority score."""
     result = make_client(
         db_session, lambda r: httpx.Response(200, json=transcription()), config=asr_routes()
-    ).transcribe(clip, route="asr_chirp")
+    ).transcribe(clip, route="asr_whisper")
 
     assert result.avg_logprob is None
     assert result.no_speech_prob is None
@@ -329,7 +338,7 @@ def test_reported_confidence_fields_are_kept(db_session: Session, clip) -> None:
     body = transcription(avg_logprob=-0.8, no_speech_prob=0.42)
     result = make_client(
         db_session, lambda r: httpx.Response(200, json=body), config=asr_routes()
-    ).transcribe(clip, route="asr_chirp")
+    ).transcribe(clip, route="asr_whisper")
 
     assert result.avg_logprob == -0.8
     assert result.no_speech_prob == 0.42
@@ -346,11 +355,11 @@ def test_the_transcription_request_carries_the_model_prompt_and_language(
         return httpx.Response(200, json=transcription())
 
     make_client(db_session, handler, config=asr_routes()).transcribe(
-        clip, route="asr_chirp", prompt="code-switched", language="ne"
+        clip, route="asr_whisper", prompt="code-switched", language="ne"
     )
     assert seen["url"] == "https://openrouter.ai/api/v1/audio/transcriptions"
     body = bytes(seen["body"])
-    assert b"google/chirp-3" in body
+    assert b"openai/whisper-large-v3" in body
     assert b"code-switched" in body
     assert b"ne" in body
 
@@ -358,11 +367,11 @@ def test_the_transcription_request_carries_the_model_prompt_and_language(
 def test_every_transcription_is_logged(db_session: Session, clip) -> None:
     make_client(
         db_session, lambda r: httpx.Response(200, json=transcription()), config=asr_routes()
-    ).transcribe(clip, route="asr_chirp")
+    ).transcribe(clip, route="asr_whisper")
 
     logged = db_session.scalars(sa.select(LlmRequest)).one()
-    assert logged.route == "asr_chirp"
-    assert logged.model == "google/chirp-3"
+    assert logged.route == "asr_whisper"
+    assert logged.model == "openai/whisper-large-v3"
     assert logged.status == "succeeded"
     assert logged.latency_ms is not None
 
@@ -377,7 +386,7 @@ def test_a_rate_limited_transcription_is_retried_then_succeeds(db_session: Sessi
         return httpx.Response(200, json=transcription())
 
     result = make_client(db_session, handler, config=asr_routes()).transcribe(
-        clip, route="asr_chirp"
+        clip, route="asr_whisper"
     )
     assert calls["n"] == 2
     assert result.text
@@ -391,7 +400,7 @@ def test_a_client_error_is_not_retried_and_is_logged(db_session: Session, clip) 
         return httpx.Response(400, text="bad audio")
 
     with pytest.raises(LlmRequestFailed):
-        make_client(db_session, handler, config=asr_routes()).transcribe(clip, route="asr_chirp")
+        make_client(db_session, handler, config=asr_routes()).transcribe(clip, route="asr_whisper")
 
     assert calls["n"] == 1
     logged = db_session.scalars(sa.select(LlmRequest)).one()
@@ -408,6 +417,6 @@ def test_transcription_retries_are_bounded(db_session: Session, clip) -> None:
 
     with pytest.raises(LlmRequestFailed):
         make_client(db_session, handler, config=asr_routes(max_retries=2)).transcribe(
-            clip, route="asr_chirp"
+            clip, route="asr_whisper"
         )
     assert calls["n"] == 2
