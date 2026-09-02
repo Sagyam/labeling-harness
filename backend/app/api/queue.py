@@ -12,6 +12,7 @@ from app.api.deps import get_session, require_auth
 from app.api.schemas import QueueRowOut
 from app.api.serializers import serialize_queue_row
 from app.models import AnnotationTask, Episode, Segment
+from app.services.report import collect_report
 from app.services.stats import collect_stats
 
 router = APIRouter(tags=["queue"], dependencies=[Depends(require_auth)])
@@ -53,3 +54,9 @@ def get_queue(
 def get_stats(session: Session = Depends(get_session)) -> dict[str, Any]:
     """Progress counters, disposition mix, throughput and projected completion."""
     return collect_stats(session)
+
+
+@router.get("/stats/report")
+def get_report(session: Session = Depends(get_session)) -> dict[str, Any]:
+    """Comprehensive status report: corpus, throughput, scores, split balance, and trends."""
+    return collect_report(session)

@@ -226,9 +226,54 @@ class EpisodeSegmentSummary(BaseModel):
     pipeline_status: str
     #: Status of the segment's active task, or None when it has no outstanding work.
     task_status: str | None = None
+    task_id: int | None = None
     seed_text: str | None = None
     flags: list[str] = Field(default_factory=list)
     cmi: float | None = None
     word_disagreement_rate: float | None = None
     audio_url: str
     peaks_url: str | None = None
+
+
+class ExportIn(BaseModel):
+    """Parameters to trigger a dataset export."""
+
+    kind: str = Field(
+        default="training",
+        description="One of training, gold, analytics, error_mining, all",
+    )
+    label_version: str | None = None
+    episode: str | None = None
+
+
+class ExportOutItem(BaseModel):
+    """Result of exporting one kind."""
+
+    kind: str
+    row_count: int
+    row_counts_by_split: dict[str, int]
+    data_filename: str
+    manifest_filename: str
+    download_url: str
+    manifest_url: str
+    manifest: dict[str, Any]
+
+
+class ExportOut(BaseModel):
+    """Payload returned by POST /export."""
+
+    results: list[ExportOutItem]
+
+
+class ExportHistoryItem(BaseModel):
+    """One previously exported dataset found on disk."""
+
+    kind: str
+    data_filename: str
+    manifest_filename: str
+    download_url: str
+    manifest_url: str
+    row_count: int
+    row_counts_by_split: dict[str, int]
+    exported_at: str | None = None
+    file_bytes: int = 0

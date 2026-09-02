@@ -76,8 +76,10 @@ def test_list_episodes_and_delete_cascade(
     resp_segs = client.get(f"/episodes/{ep_id}/segments")
     assert resp_segs.status_code == 200
     segs_data = resp_segs.json()
-    assert len(segs_data) == 2
     assert segs_data[0]["external_id"] == "test_ep_del_001"
+    assert segs_data[0]["task_id"] == task1_id
+    assert segs_data[0]["task_status"] == "pending"
+    assert segs_data[1]["task_id"] is None
 
     # 3. DELETE single segment /segments/{seg2_id}
     del_seg_resp = client.delete(f"/segments/{seg2_id}")

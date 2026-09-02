@@ -86,6 +86,22 @@ def test_stats_runs_against_an_empty_database(client: TestClient) -> None:
     assert stats["throughput"]["median_seconds_per_segment"] is None
 
 
+def test_stats_report_returns_full_analytics(client: TestClient, imported_episode: str) -> None:
+    response = client.get("/stats/report")
+    assert response.status_code == 200
+    report = response.json()
+    assert "corpus" in report
+    assert report["corpus"]["episodes"] == 1
+    assert report["corpus"]["segments"] == 6
+    assert "labels" in report
+    assert "throughput" in report
+    assert "queue" in report
+    assert "scores" in report
+    assert "split_balance" in report
+    assert "word_timestamp_coverage" in report
+    assert "generated_at" in report
+
+
 # --- serving tasks -----------------------------------------------------------------------
 
 

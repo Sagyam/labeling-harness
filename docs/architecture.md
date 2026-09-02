@@ -293,6 +293,10 @@ the same inputs and filters produce byte-identical output.
 | `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |
 | `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
+| `GET /stats/report` | Comprehensive analytics, split balance, model agreement, and quality metrics |
+| `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
+| `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
+| `GET /export/history` | List previous exported dataset artifacts on disk |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
 `annotation_events` row carrying the client-reported elapsed time, and an `audit_logs` entry.

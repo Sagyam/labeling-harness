@@ -112,26 +112,28 @@ def list_episode_segments(
         .order_by(Segment.start_time.asc())
     ).all()
 
-    # Load the active task per segment. A segment can hold several task rows -- a skipped one and
-    # its replacement -- so this filters to the active statuses and takes the newest, rather than
-    # collapsing an unordered result and keeping whichever row arrived last.
+    # Load task per segment, prioritizing active tasks (pending/in_progress) over historical ones.
     seg_ids = [s.id for s in segments]
-    task_map: dict[int, str] = {}
+    task_map: dict[int, tuple[int, str]] = {}
     if seg_ids:
         tasks = session.execute(
-            sa.select(AnnotationTask.segment_id, AnnotationTask.status)
-            .where(
-                AnnotationTask.segment_id.in_(seg_ids),
-                AnnotationTask.status.in_(ACTIVE_TASK_STATUSES),
+            sa.select(AnnotationTask.segment_id, AnnotationTask.id, AnnotationTask.status)
+            .where(AnnotationTask.segment_id.in_(seg_ids))
+            .order_by(
+                sa.case((AnnotationTask.status.in_(ACTIVE_TASK_STATUSES), 0), else_=1),
+                AnnotationTask.id.desc(),
             )
-            .order_by(AnnotationTask.id)
         ).all()
-        task_map = dict(tasks)
+        for seg_id, t_id, t_status in tasks:
+            if seg_id not in task_map:
+                task_map[seg_id] = (t_id, t_status)
 
     results: list[EpisodeSegmentSummary] = []
     for seg in segments:
         hyp = seg.hypotheses[0] if seg.hypotheses else None
         scores = seg.scores
+        task_info = task_map.get(seg.id)
+        task_status = task_info[1] if (task_info and task_info[1] in ACTIVE_TASK_STATUSES) else None
         results.append(
             EpisodeSegmentSummary(
                 id=seg.id,
@@ -140,7 +142,8 @@ def list_episode_segments(
                 end_time=seg.end_time,
                 duration_seconds=seg.duration_seconds,
                 pipeline_status=seg.pipeline_status,
-                task_status=task_map.get(seg.id),
+                task_status=task_status,
+                task_id=task_info[0] if task_info else None,
                 seed_text=hyp.text_raw if hyp else None,
                 flags=scores.flags_jsonb if scores and scores.flags_jsonb else [],
                 cmi=round(scores.code_switch_density * 100, 1)
