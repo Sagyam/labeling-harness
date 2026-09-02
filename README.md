@@ -36,14 +36,22 @@ cd ../frontend && npm install && npm run dev
 ```
 
 Requires Docker Compose v2 (the standalone `docker-compose` binary works identically), and
-`ffmpeg` on the host if you ingest audio outside the container.
+`ffmpeg` on the host if you ingest audio outside the container. `yt-dlp` is a Python dependency of
+the backend, so YouTube ingestion needs no separate install.
 
 ## Using it
 
 **Ingest.** `+ Ingest` in the header takes an `.mp3`, `.m4a` or `.wav`, plus a show and episode
-title. Five stages run in the background — normalize, segment, transcribe, analyse, build queue —
-and stream their logs into the panel as they go. When it finishes, `Start Annotating` drops you
-straight into the queue.
+title — or a **YouTube URL**, in which case the server fetches the audio itself with `yt-dlp` and
+fills the title and slug in from the video. Five stages run in the background — normalize, segment,
+transcribe, analyse, build queue — and stream their logs into the panel as they go. When it
+finishes, `Start Annotating` drops you straight into the queue.
+
+A URL is looked up before anything is downloaded, so a private, live or over-long video is refused
+while you are still typing rather than after you commit to it. The four-hour ceiling is a spend
+guard — `ingest.youtube.max_duration_seconds` in `config/settings.yaml` — because cost is linear in
+source duration. Ingesting a video is on you as far as its licensing goes; the harness does not
+check.
 
 Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2, Gemini
 3.5 Flash Lite and Whisper large-v3 — so one clip is three calls, billed against your ElevenLabs
@@ -112,13 +120,17 @@ Secrets come from the environment only, never from YAML:
 | `OPENROUTER_API_KEY` | OpenRouter key; carries the Gemini and Whisper transcribers |
 | `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
 
+`ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines
+to serve anonymously. It is a path in YAML because it is not itself a secret; the file it names is,
+so keep it outside the repository.
+
 Object storage defaults to the local filesystem, so the harness is fully usable with MinIO stopped.
 
 ## Tests
 
 ```bash
 cd backend
-.venv/bin/python -m pytest              # 437 tests
+.venv/bin/python -m pytest              # 496 tests
 .venv/bin/python -m pytest -m "not db"  # skip the ones that need Postgres
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 cd ../frontend && npm run build         # tsc -b && vite build

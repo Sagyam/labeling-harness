@@ -209,6 +209,7 @@ export interface IngestJobStatus {
   status: 'pending' | 'processing' | 'completed' | 'failed'
   stage:
     | 'upload'
+    | 'downloading'
     | 'normalizing'
     | 'segmenting'
     | 'transcribing'
@@ -237,6 +238,26 @@ export type IngestEvent =
     }
   | { type: 'complete'; summary: Record<string, any>; episode_id: string }
   | { type: 'error'; error: string }
+
+/** Metadata read from a YouTube URL before anything is downloaded. */
+export interface YouTubeProbe {
+  video_id: string
+  url: string
+  title: string
+  duration_seconds: number | null
+  uploader: string | null
+  thumbnail: string | null
+  upload_date: string | null
+  is_live: boolean
+  suggested_episode_id: string
+}
+
+export interface YouTubeIngestIn {
+  url: string
+  episode_title?: string
+  show_id?: string
+  episode_id?: string
+}
 
 export interface EpisodeSummary {
   id: number

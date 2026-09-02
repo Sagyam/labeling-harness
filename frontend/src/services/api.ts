@@ -20,6 +20,8 @@ import {
   IngestJobStatus,
   EpisodeSummary,
   EpisodeSegmentSummary,
+  YouTubeProbe,
+  YouTubeIngestIn,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -188,6 +190,32 @@ export const api = {
       throw new Error(`Ingest failed: ${detail}`)
     }
     return res.json()
+  },
+
+  /**
+   * Reads a YouTube video's metadata without downloading it, so the form can prefill itself.
+   * Side-effect free: no job is created and no file is written.
+   */
+  probeYouTube: (url: string): Promise<YouTubeProbe> => {
+    return request<YouTubeProbe>('/ingest/youtube/probe', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    })
+  },
+
+  startYouTubeIngest: (
+    body: YouTubeIngestIn
+  ): Promise<{
+    job_id: string
+    status: string
+    episode_id: string
+    title: string
+    source_url: string
+  }> => {
+    return request('/ingest/youtube', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
   },
 
   getIngestStatus: (jobId: string): Promise<IngestJobStatus> => {

@@ -4,6 +4,7 @@ import {
   RiErrorWarningLine,
   RiFileMusicLine,
   RiUploadCloud2Line,
+  RiYoutubeLine,
 } from '@remixicon/react'
 import { toast } from 'sonner'
 
@@ -21,9 +22,10 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { api } from '@/services/api'
-import type { IngestEvent, IngestJobStatus, IngestLogEntry } from '@/types'
+import type { IngestEvent, IngestJobStatus, IngestLogEntry, YouTubeProbe } from '@/types'
 
 interface IngestModalProps {
   isOpen: boolean
@@ -39,12 +41,34 @@ const STAGES = [
   { key: 'importing', label: 'Direct import', desc: 'Database records & queue building' },
 ]
 
+/** A URL job fetches its own audio first; an upload arrives with the request. */
+const DOWNLOAD_STAGE = {
+  key: 'downloading',
+  label: 'Fetch audio',
+  desc: 'yt-dlp download from YouTube',
+}
+
 const ALLOWED_EXTENSIONS = ['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg']
+
+type SourceTab = 'file' | 'youtube'
+
+/** How long to sit on a keystroke before asking the backend what the URL points at. */
+const PROBE_DEBOUNCE_MS = 500
 
 const LOG_LEVEL_CLASS: Record<string, string> = {
   error: 'text-destructive',
   warn: 'text-warning',
   success: 'text-success',
+}
+
+function formatDuration(seconds: number | null) {
+  if (seconds === null || !Number.isFinite(seconds)) return 'unknown length'
+  const total = Math.round(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`
 }
 
 function slugify(text: string) {
@@ -58,6 +82,7 @@ function slugify(text: string) {
 
 export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
   // Form state
+  const [sourceTab, setSourceTab] = useState<SourceTab>('file')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [showId, setShowId] = useState<string>('nepanglish')
   const [episodeTitle, setEpisodeTitle] = useState<string>('')
@@ -65,8 +90,15 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
   const [isManualEpisodeId, setIsManualEpisodeId] = useState<boolean>(false)
   const [isDragging, setIsDragging] = useState<boolean>(false)
 
+  // YouTube source state
+  const [youtubeUrl, setYoutubeUrl] = useState<string>('')
+  const [probe, setProbe] = useState<YouTubeProbe | null>(null)
+  const [isProbing, setIsProbing] = useState<boolean>(false)
+  const [probeError, setProbeError] = useState<string | null>(null)
+
   // Execution state
   const [jobId, setJobId] = useState<string | null>(null)
+  const [jobSource, setJobSource] = useState<SourceTab>('file')
   const [jobStatus, setJobStatus] = useState<IngestJobStatus | null>(null)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [logs, setLogs] = useState<IngestLogEntry[]>([])
@@ -74,6 +106,9 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
 
   const logContainerRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  //: The title the last probe filled in. A title still equal to it was not typed by hand, so a
+  //: new URL may replace it; anything else is the annotator's and is left alone.
+  const probedTitleRef = useRef<string>('')
 
   const handleTitleChange = (val: string) => {
     setEpisodeTitle(val)
@@ -125,6 +160,7 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
 
     try {
       const res = await api.startIngest(formData)
+      setJobSource('file')
       setJobId(res.job_id)
       toast.info(`Ingestion started for '${res.title}'`)
     } catch (err: any) {
@@ -132,6 +168,79 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
       toast.error(err.message || 'Failed to start ingestion')
     }
   }
+
+  const handleStartYoutubeIngestion = async () => {
+    if (!youtubeUrl.trim()) {
+      toast.warning('Please paste a YouTube URL')
+      return
+    }
+
+    setIsSubmitting(true)
+    setLogs([])
+    setCompletedSummary(null)
+
+    try {
+      const res = await api.startYouTubeIngest({
+        url: youtubeUrl.trim(),
+        episode_title: episodeTitle.trim(),
+        show_id: showId.trim() || 'podcast',
+        episode_id: episodeId.trim(),
+      })
+      setJobSource('youtube')
+      setJobId(res.job_id)
+      toast.info(`Ingestion started for '${res.title}'`)
+    } catch (err: any) {
+      setIsSubmitting(false)
+      toast.error(err.message || 'Failed to start ingestion')
+    }
+  }
+
+  // Look the URL up as it is typed, so the form fills itself in. The lookup downloads nothing,
+  // and it front-loads every rejection the ingest call would make -- a private, live or
+  // over-long video is refused here rather than after the annotator commits to it.
+  useEffect(() => {
+    const url = youtubeUrl.trim()
+    if (sourceTab !== 'youtube' || !url) {
+      setProbe(null)
+      setProbeError(null)
+      setIsProbing(false)
+      return
+    }
+
+    let cancelled = false
+    setIsProbing(true)
+    setProbeError(null)
+
+    const timer = window.setTimeout(() => {
+      api
+        .probeYouTube(url)
+        .then((info) => {
+          if (cancelled) return
+          setProbe(info)
+          setProbeError(null)
+          // Only claim the title if it is still the one a previous probe wrote.
+          setEpisodeTitle((current) => {
+            if (current && current !== probedTitleRef.current) return current
+            probedTitleRef.current = info.title
+            if (!isManualEpisodeId) setEpisodeId(slugify(info.title))
+            return info.title
+          })
+        })
+        .catch((err: any) => {
+          if (cancelled) return
+          setProbe(null)
+          setProbeError(err?.detail || err?.message || 'Could not read that URL')
+        })
+        .finally(() => {
+          if (!cancelled) setIsProbing(false)
+        })
+    }, PROBE_DEBOUNCE_MS)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [youtubeUrl, sourceTab, isManualEpisodeId])
 
   // Subscribe to the SSE log & progress stream
   useEffect(() => {
@@ -196,6 +305,11 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
     setJobStatus(null)
     setIsSubmitting(false)
     setSelectedFile(null)
+    setYoutubeUrl('')
+    setProbe(null)
+    setProbeError(null)
+    setIsProbing(false)
+    probedTitleRef.current = ''
     setEpisodeTitle('')
     setEpisodeId('')
     setLogs([])
@@ -220,9 +334,12 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
   const isComplete = jobStatus?.status === 'completed' || currentStage === 'complete'
   const isFailed = jobStatus?.status === 'failed' || currentStage === 'failed'
 
+  // A URL job fetches its own audio before stage 1, so its stepper carries one extra step.
+  const stages = jobSource === 'youtube' ? [DOWNLOAD_STAGE, ...STAGES] : STAGES
+
   const getStageState = (stageKey: string) => {
     if (isComplete) return 'done'
-    const stageOrder = ['normalizing', 'segmenting', 'transcribing', 'analyzing', 'importing']
+    const stageOrder = stages.map((stage) => stage.key)
     const currentIndex = stageOrder.indexOf(currentStage)
     const thisIndex = stageOrder.indexOf(stageKey)
 
@@ -238,68 +355,138 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
         <DialogHeader>
           <DialogTitle>Ingest podcast episode</DialogTitle>
           <DialogDescription>
-            Automated loudnorm, Silero VAD segmentation and Cloud ASR.
+            Upload a file or paste a YouTube URL. Automated loudnorm, Silero VAD segmentation and
+            Cloud ASR.
           </DialogDescription>
         </DialogHeader>
 
         <div className="scrollbar-thin min-h-0 overflow-y-auto">
           {!jobId ? (
             <div className="flex flex-col gap-6">
-              {/* Dropzone */}
-              <button
-                type="button"
-                className={cn(
-                  'flex w-full flex-col items-center gap-3 border border-dashed p-8 text-center transition-colors',
-                  isDragging ? 'border-foreground bg-accent' : 'hover:bg-muted/50',
-                  selectedFile && 'border-solid bg-muted/30',
-                )}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setIsDragging(true)
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  className="hidden"
-                  accept=".mp3,.m4a,.wav,.flac,.aac,.ogg"
-                  onChange={(e) => {
-                    if (e.target.files?.[0]) handleFileSelected(e.target.files[0])
-                  }}
-                />
+              <Tabs value={sourceTab} onValueChange={(value) => setSourceTab(value as SourceTab)}>
+                <TabsList variant="line">
+                  <TabsTrigger value="file">
+                    <RiUploadCloud2Line className="size-4" />
+                    Upload file
+                  </TabsTrigger>
+                  <TabsTrigger value="youtube">
+                    <RiYoutubeLine className="size-4" />
+                    YouTube URL
+                  </TabsTrigger>
+                </TabsList>
 
-                {selectedFile ? (
-                  <div className="flex w-full items-center gap-4 text-left">
-                    <RiFileMusicLine className="size-8 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{selectedFile.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground">
-                        {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB ·{' '}
-                        {selectedFile.name.split('.').pop()?.toUpperCase()}
+                <TabsContent value="file">
+                  <button
+                    type="button"
+                    className={cn(
+                      'flex w-full flex-col items-center gap-3 border border-dashed p-8 text-center transition-colors',
+                      isDragging ? 'border-foreground bg-accent' : 'hover:bg-muted/50',
+                      selectedFile && 'border-solid bg-muted/30',
+                    )}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setIsDragging(true)
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      className="hidden"
+                      accept=".mp3,.m4a,.wav,.flac,.aac,.ogg"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleFileSelected(e.target.files[0])
+                      }}
+                    />
+
+                    {selectedFile ? (
+                      <div className="flex w-full items-center gap-4 text-left">
+                        <RiFileMusicLine className="size-8 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{selectedFile.name}</div>
+                          <div className="font-mono text-xs text-muted-foreground">
+                            {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB ·{' '}
+                            {selectedFile.name.split('.').pop()?.toUpperCase()}
+                          </div>
+                        </div>
+                        <span className="text-xs font-semibold tracking-widest uppercase">Change</span>
                       </div>
-                    </div>
-                    <span className="text-xs font-semibold tracking-widest uppercase">Change</span>
+                    ) : (
+                      <>
+                        <RiUploadCloud2Line className="size-9 text-muted-foreground" />
+                        <div className="text-sm">
+                          <span className="font-semibold">Click to upload</span> or drag and drop podcast
+                          audio
+                        </div>
+                        <div className="flex gap-1.5 font-mono text-[10px] text-muted-foreground">
+                          {ALLOWED_EXTENSIONS.map((ext) => (
+                            <span key={ext} className="bg-muted px-1.5 py-0.5 uppercase">
+                              {ext}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </button>
+                </TabsContent>
+
+                <TabsContent value="youtube">
+                  <div className="flex flex-col gap-3">
+                    <Field>
+                      <FieldLabel htmlFor="youtube-url">Video URL</FieldLabel>
+                      <Input
+                        id="youtube-url"
+                        className="font-mono text-xs"
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        value={youtubeUrl}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(e) => setYoutubeUrl(e.target.value)}
+                      />
+                    </Field>
+
+                    {isProbing && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Spinner className="size-3.5" />
+                        <span>Reading video details…</span>
+                      </div>
+                    )}
+
+                    {!isProbing && probeError && (
+                      <Alert variant="destructive">
+                        <RiErrorWarningLine />
+                        <AlertTitle>Cannot ingest this URL</AlertTitle>
+                        <AlertDescription>{probeError}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {!isProbing && probe && (
+                      <div className="flex items-start gap-4 border bg-muted/30 p-3">
+                        {probe.thumbnail && (
+                          <img
+                            src={probe.thumbnail}
+                            alt=""
+                            className="hidden w-32 shrink-0 object-cover sm:block"
+                          />
+                        )}
+                        <div className="flex min-w-0 flex-1 flex-col gap-1">
+                          <div className="truncate text-sm font-medium">{probe.title}</div>
+                          <div className="font-mono text-xs text-muted-foreground">
+                            {probe.uploader ? `${probe.uploader} · ` : ''}
+                            {formatDuration(probe.duration_seconds)} · {probe.video_id}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            Audio is downloaded on the server, then normalized and segmented like
+                            any upload.
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <>
-                    <RiUploadCloud2Line className="size-9 text-muted-foreground" />
-                    <div className="text-sm">
-                      <span className="font-semibold">Click to upload</span> or drag and drop podcast
-                      audio
-                    </div>
-                    <div className="flex gap-1.5 font-mono text-[10px] text-muted-foreground">
-                      {ALLOWED_EXTENSIONS.map((ext) => (
-                        <span key={ext} className="bg-muted px-1.5 py-0.5 uppercase">
-                          {ext}
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </button>
+                </TabsContent>
+              </Tabs>
 
               {/* Metadata */}
               <div className="flex flex-col gap-4">
@@ -353,7 +540,7 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
 
               {/* Pipeline overview */}
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-muted/40 p-3 font-mono text-[11px] text-muted-foreground">
-                {STAGES.map((stage, index) => (
+                {(sourceTab === 'youtube' ? [DOWNLOAD_STAGE, ...STAGES] : STAGES).map((stage, index) => (
                   <React.Fragment key={stage.key}>
                     {index > 0 && <span aria-hidden>→</span>}
                     <span>{stage.label}</span>
@@ -364,8 +551,13 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
           ) : (
             <div className="flex flex-col gap-4">
               {/* Stepper */}
-              <ol className="grid gap-2 sm:grid-cols-5">
-                {STAGES.map((stage) => {
+              <ol
+                className={cn(
+                  'grid gap-2',
+                  stages.length === 6 ? 'sm:grid-cols-6' : 'sm:grid-cols-5',
+                )}
+              >
+                {stages.map((stage) => {
                   const state = getStageState(stage.key)
                   return (
                     <li
@@ -478,8 +670,14 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
                 Cancel
               </Button>
               <Button
-                disabled={!selectedFile || !episodeTitle.trim() || isSubmitting}
-                onClick={handleStartIngestion}
+                disabled={
+                  isSubmitting ||
+                  !episodeTitle.trim() ||
+                  (sourceTab === 'file' ? !selectedFile : !probe || isProbing)
+                }
+                onClick={
+                  sourceTab === 'file' ? handleStartIngestion : handleStartYoutubeIngestion
+                }
               >
                 {isSubmitting && <Spinner data-icon="inline-start" />}
                 {isSubmitting ? 'Starting…' : 'Start ingestion'}
