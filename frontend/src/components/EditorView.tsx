@@ -82,6 +82,11 @@ export function EditorView({
     setCurrentTime(0)
     setIsPlaying(false)
 
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+    }
+
     if (segment.peaks_url) {
       api
         .getPeaks(segment.peaks_url)
@@ -101,6 +106,7 @@ export function EditorView({
     }
     const handleEnded = () => {
       if (isLooping) {
+        audio.pause()
         audio.currentTime = 0
         audio.play().catch(() => {})
       } else {

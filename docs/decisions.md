@@ -216,3 +216,26 @@ follower.
 `config/llm_routes.yaml`. Historical hypotheses under `whisper-large-v3` remain immutable in
 `asr_hypotheses`.
 
+## D25 — Two-pass linear loudnorm, raised-cosine edge fade, and speech padding in VAD
+Audio clips ingested through the pipeline occasionally exhibited audible clicking artifacts.
+Acoustic analysis identified four contributing causes:
+1. Neural VAD probability onset latency meant cuts occurred without speech padding, truncating initial
+   consonants or room tone directly at high amplitude.
+2. A 5 ms linear edge fade has discontinuous first derivatives at its boundaries and is shorter than a
+   single pitch period (6.25 ms at 160 Hz), causing high-frequency spectral splatter heard as a click.
+3. Subdivisions of speech turns longer than 20 s were sliced blindly on a fixed grid regardless of speech content.
+4. Single-pass `loudnorm` acted as an adaptive gain controller that pumped gain by up to +18 dB during speech
+   pauses and clamped down on subsequent word attacks.
+
+The fix introduces:
+- 150 ms pre- and post-speech padding (`speech_pad_ms`) in VAD turn detection so cuts land in silence.
+- A 15 ms raised-cosine (half-Hann) ramp with zero boundary derivatives in `apply_edge_fade`.
+- Energy-aware pause snapping in `segment_audio_to_slices` for turns exceeding 20 s.
+- Two-pass EBU R128 `loudnorm` with `linear=true` in `normalize_audio` to preserve natural dynamics without AGC pumping.
+- Audio element pause/reset guards in the frontend to avoid decoder pops during looping and task navigation.
+
+**Reversal:** The parameters (`speech_pad_ms`, `FADE_MS`, two-pass filter) are encapsulated in
+`app/services/silero_vad.py` and `app/services/ingest.py`. Reverting them restores the previous single-pass
+and linear-fade behavior without schema changes.
+
+

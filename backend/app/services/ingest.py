@@ -236,16 +236,61 @@ manager = IngestionManager()
 def normalize_audio(input_path: Path, output_path: Path) -> float:
     """Stage 1: Normalize audio using FFmpeg with loudnorm filter.
 
-    Converts to 16 kHz mono FLAC. Returns duration in seconds.
+    Converts to 16 kHz mono FLAC using two-pass EBU R128 normalization.
+    Pass 1 measures integrated loudness and true-peak statistics.
+    Pass 2 applies linear normalization to prevent dynamic AGC gain pumping between words.
+    Returns duration in seconds.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
+
+    # Pass 1: Measure loudness parameters
+    cmd1 = [
         "ffmpeg",
         "-y",
         "-i",
         str(input_path),
         "-af",
-        "loudnorm=I=-23:LRA=7:tp=-2,aresample=16000",
+        "loudnorm=I=-23:LRA=7:tp=-2:print_format=json",
+        "-f",
+        "null",
+        "-",
+    ]
+    proc1 = subprocess.run(cmd1, capture_output=True, check=False)
+
+    measured: dict[str, Any] | None = None
+    if proc1.returncode == 0:
+        try:
+            stderr_text = proc1.stderr.decode("utf-8", errors="replace")
+            start_brace = stderr_text.rfind("{")
+            end_brace = stderr_text.rfind("}")
+            if start_brace != -1 and end_brace > start_brace:
+                data = json.loads(stderr_text[start_brace : end_brace + 1])
+                if all(k in data for k in ("input_i", "input_lra", "input_tp", "input_thresh")):
+                    measured = data
+        except Exception:
+            measured = None
+
+    # Pass 2: Apply linear normalization with clean mono downmix before resampling
+    if measured:
+        filter_str = (
+            "loudnorm=I=-23:LRA=7:tp=-2"
+            f":measured_I={measured['input_i']}"
+            f":measured_LRA={measured['input_lra']}"
+            f":measured_tp={measured['input_tp']}"
+            f":measured_thresh={measured['input_thresh']}"
+            f":offset={measured.get('target_offset', '0.0')}"
+            ":linear=true,aformat=channel_layouts=mono,aresample=16000"
+        )
+    else:
+        filter_str = "loudnorm=I=-23:LRA=7:tp=-2,aformat=channel_layouts=mono,aresample=16000"
+
+    cmd2 = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+        "-af",
+        filter_str,
         "-ar",
         "16000",
         "-ac",
@@ -254,10 +299,10 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
         "flac",
         str(output_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, check=False)
-    if proc.returncode != 0:
-        err_msg = proc.stderr.decode("utf-8", errors="replace")[:300]
-        raise RuntimeError(f"FFmpeg normalization failed (exit code {proc.returncode}): {err_msg}")
+    proc2 = subprocess.run(cmd2, capture_output=True, check=False)
+    if proc2.returncode != 0:
+        err_msg = proc2.stderr.decode("utf-8", errors="replace")[:300]
+        raise RuntimeError(f"FFmpeg normalization failed (exit code {proc2.returncode}): {err_msg}")
 
     info = sf.info(str(output_path))
     return float(info.duration)
@@ -394,7 +439,7 @@ def _run_stages(
         turns = vad.detect_turns(audio_data, sample_rate=sr)
         job.log(f"Detected {len(turns)} raw speech turns")
 
-        slices = segment_audio_to_slices(turns, duration)
+        slices = segment_audio_to_slices(turns, duration, audio=audio_data, sample_rate=sr)
         job.log(f"Partitioned into {len(slices)} bounded utterances (2.0s - 20.0s)")
 
         clips_dir = job.work_dir / "clips"

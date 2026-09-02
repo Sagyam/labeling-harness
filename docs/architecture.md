@@ -161,9 +161,11 @@ Ingestion runs inside the app, not in an upstream notebook: the annotator upload
 browser -- or pastes a YouTube URL and lets the server fetch it (below) -- and watches it become a
 queue. `POST /ingest` starts a background job and returns a job id; the five stages are:
 
-1. **Normalize** — FFmpeg `loudnorm` to 16 kHz mono FLAC, the only clip format the importer accepts.
-2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns, bounded to 2.0 s–20.0 s, with an
-   energy-based fallback and an edge fade so slices do not click.
+1. **Normalize** — FFmpeg two-pass `loudnorm` to 16 kHz mono FLAC with linear normalization,
+   avoiding dynamic AGC gain pumping between words.
+2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns padded by 150 ms, bounded to 2.0 s–20.0 s,
+   snapping long-turn subdivisions to low-energy pauses with a 15 ms raised-cosine edge fade so
+   slices do not click.
 3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip,
    producing one ASR system per route, in the order the routes are written. Transcribers for a
    segment run concurrently via a worker pool with a shared `httpx.Client` for HTTP connection

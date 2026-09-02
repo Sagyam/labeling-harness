@@ -25,6 +25,7 @@ from app.services.ingest import (
 )
 from app.services.silero_vad import (
     SileroVAD,
+    SpeechTurn,
     extract_clips,
     segment_audio_to_slices,
 )
@@ -677,8 +678,19 @@ def test_clip_edges_are_faded_so_a_cut_cannot_click(tmp_path: Path) -> None:
     segments = extract_clips(tmp_path / "src.flac", [(1.0, 4.0)], "ep", tmp_path / "clips")
     clip, _ = sf.read(str(segments[0].clip_path), dtype="float32")
 
-    assert abs(clip[0]) < 0.01, f"clip starts at {clip[0]:+.4f}, which clicks"
-    assert abs(clip[-1]) < 0.01, f"clip ends at {clip[-1]:+.4f}, which clicks"
+    # Sample 0 and last sample must be 0.0
+    assert abs(clip[0]) < 1e-5, f"clip starts at {clip[0]:+.4f}, which clicks"
+    assert abs(clip[-1]) < 1e-5, f"clip ends at {clip[-1]:+.4f}, which clicks"
+
+    # Raised-cosine shape: the slope at the edge must start flat (zero derivative)
+    assert abs(clip[1] - clip[0]) < 0.001, "boundary must have smooth zero derivative"
+
+    # Fade duration is 15ms (240 samples at 16kHz)
+    fade_len = int(sr * 0.015)
+    # The middle of the fade (sample fade_len // 2) is ~half-height
+    # whereas by sample fade_len it reaches full waveform amplitude
+    assert abs(clip[fade_len] / (0.8 * np.sin(2 * np.pi * 220 * (1.0 + fade_len / sr)))) > 0.95
+
     # the body of the clip is untouched
     assert np.abs(clip[sr // 2 : -sr // 2]).max() > 0.7
 
@@ -688,6 +700,64 @@ def test_the_fade_leaves_a_short_clip_alone(tmp_path: Path) -> None:
 
     tiny = np.ones(4, dtype=np.float32)
     assert np.array_equal(apply_edge_fade(tiny, 16000), tiny)
+
+
+def test_silero_vad_pads_speech_turns_to_prevent_clipped_consonants() -> None:
+    """Speech turns must be padded before onset and after offset so cuts land in silence."""
+    from app.services.silero_vad import CHUNK_SIZE
+
+    sr = 16000
+
+    # 100 chunks: 25 silent, 35 speech (prob=0.9), 40 silent
+    probs = [0.0] * 25 + [0.9] * 35 + [0.0] * 40
+    audio = np.zeros(CHUNK_SIZE * len(probs), dtype=np.float32)
+
+    class SequenceSession:
+        def __init__(self, probs: list[float]) -> None:
+            self.probs = probs
+            self.idx = 0
+
+        def run(self, _outputs, inputs):
+            prob = self.probs[self.idx] if self.idx < len(self.probs) else 0.0
+            self.idx += 1
+            return np.array([[prob]], dtype=np.float32), inputs["state"]
+
+    vad_unpadded = vad_with(SequenceSession(probs))
+    turns_unpadded = vad_unpadded.detect_turns(audio, sample_rate=sr, speech_pad_ms=0.0)
+
+    vad_padded = vad_with(SequenceSession(probs))
+    turns_padded = vad_padded.detect_turns(audio, sample_rate=sr, speech_pad_ms=150.0)
+
+    assert len(turns_unpadded) == 1
+    assert len(turns_padded) == 1
+
+    # Padded turn must start earlier and end later by ~150ms
+    assert turns_padded[0].start <= turns_unpadded[0].start - 0.14
+    assert turns_padded[0].end >= turns_unpadded[0].end + 0.14
+    assert turns_padded[0].start >= 0.0
+    assert turns_padded[0].end <= len(audio) / sr
+
+
+def test_segment_audio_to_slices_finds_low_energy_boundary_for_long_turns() -> None:
+    """Subdividing long turns (>20s) must prefer a natural silence pause over arbitrary cuts."""
+    sr = 16000
+    total_dur = 25.0
+    audio = np.ones(int(sr * total_dur), dtype=np.float32) * 0.4
+
+    # Insert a 0.5s pause between 12.0s and 12.5s (near the midpoint of a 25s turn)
+    pause_start = int(12.0 * sr)
+    pause_end = int(12.5 * sr)
+    audio[pause_start:pause_end] = 0.0
+
+    turns = [SpeechTurn(0.0, total_dur)]
+    slices = segment_audio_to_slices(
+        turns, total_dur, min_seg=2.0, max_seg=20.0, audio=audio, sample_rate=sr
+    )
+
+    assert len(slices) == 2
+    cut_point = slices[0][1]
+    # The cut point should snap into the pause window [12.0, 12.5]
+    assert 11.9 <= cut_point <= 12.6, f"Cut point {cut_point} did not land in pause"
 
 
 def test_concurrent_transcription_preserves_chronological_and_hypothesis_order(

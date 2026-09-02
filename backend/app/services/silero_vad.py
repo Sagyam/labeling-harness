@@ -36,8 +36,8 @@ CONTEXT_SIZE = 64
 
 
 #: Ramp applied to each clip's first and last samples. Long enough to remove the step at a cut,
-#: short enough to be inaudible on speech.
-FADE_MS = 5.0
+#: smooth enough to have zero derivative at boundaries, and short enough to be inaudible on speech.
+FADE_MS = 15.0
 
 
 def window_sizes(sample_rate: int) -> tuple[int, int]:
@@ -105,10 +105,11 @@ class SileroVAD:
         threshold: float = 0.5,
         min_speech_duration_ms: float = 250.0,
         min_silence_duration_ms: float = 300.0,
+        speech_pad_ms: float = 150.0,
     ) -> list[SpeechTurn]:
         """Detect speech turns. Uses ONNX model if available, else energy VAD."""
         if self._session is None:
-            return self._energy_detect_turns(audio, sample_rate)
+            return self._energy_detect_turns(audio, sample_rate, speech_pad_ms=speech_pad_ms)
 
         # Silero VAD requires float32 in [-1, 1]
         if audio.dtype != np.float32:
@@ -132,7 +133,9 @@ class SileroVAD:
             context = chunk[-context_size:]
 
         # State machine to find speech turn start and end times
+        total_duration = len(audio) / sample_rate
         chunk_sec = chunk_size / sample_rate
+        pad_sec = speech_pad_ms / 1000.0
         min_speech_chunks = math.ceil((min_speech_duration_ms / 1000.0) / chunk_sec)
         min_silence_chunks = math.ceil((min_silence_duration_ms / 1000.0) / chunk_sec)
 
@@ -153,10 +156,12 @@ class SileroVAD:
                     if silence_count >= min_silence_chunks:
                         speech_end_idx = idx - silence_count
                         if speech_end_idx - speech_start_idx >= min_speech_chunks:
+                            raw_s = speech_start_idx * chunk_sec - pad_sec
+                            raw_e = speech_end_idx * chunk_sec + pad_sec
                             turns.append(
                                 SpeechTurn(
-                                    start=round(speech_start_idx * chunk_sec, 3),
-                                    end=round(speech_end_idx * chunk_sec, 3),
+                                    start=max(0.0, round(raw_s, 3)),
+                                    end=min(round(total_duration, 3), round(raw_e, 3)),
                                 )
                             )
                         is_speech = False
@@ -165,10 +170,12 @@ class SileroVAD:
         if is_speech:
             speech_end_idx = len(speech_probs)
             if speech_end_idx - speech_start_idx >= min_speech_chunks:
+                raw_s = speech_start_idx * chunk_sec - pad_sec
+                raw_e = speech_end_idx * chunk_sec + pad_sec
                 turns.append(
                     SpeechTurn(
-                        start=round(speech_start_idx * chunk_sec, 3),
-                        end=round(speech_end_idx * chunk_sec, 3),
+                        start=max(0.0, round(raw_s, 3)),
+                        end=min(round(total_duration, 3), round(raw_e, 3)),
                     )
                 )
 
@@ -190,13 +197,19 @@ class SileroVAD:
         return turns
 
     def _energy_detect_turns(
-        self, audio: np.ndarray, sample_rate: int = SAMPLE_RATE
+        self,
+        audio: np.ndarray,
+        sample_rate: int = SAMPLE_RATE,
+        speech_pad_ms: float = 150.0,
     ) -> list[SpeechTurn]:
         """Simple energy envelope fallback when ONNX runtime is absent."""
         frame_len = int(sample_rate * 0.03)  # 30ms
         num_frames = len(audio) // frame_len
         if num_frames == 0:
             return []
+
+        total_duration = len(audio) / sample_rate
+        pad_sec = speech_pad_ms / 1000.0
 
         energies = [
             float(np.sqrt(np.mean(audio[i * frame_len : (i + 1) * frame_len] ** 2)))
@@ -221,9 +234,12 @@ class SileroVAD:
                     if silence_f >= 10:  # 300ms
                         end_f = f - silence_f
                         if (end_f - start_f) * 0.03 >= 1.0:
+                            raw_s = start_f * 0.03 - pad_sec
+                            raw_e = end_f * 0.03 + pad_sec
                             turns.append(
                                 SpeechTurn(
-                                    start=round(start_f * 0.03, 3), end=round(end_f * 0.03, 3)
+                                    start=max(0.0, round(raw_s, 3)),
+                                    end=min(round(total_duration, 3), round(raw_e, 3)),
                                 )
                             )
                         is_speech = False
@@ -232,7 +248,14 @@ class SileroVAD:
         if is_speech:
             end_f = num_frames
             if (end_f - start_f) * 0.03 >= 1.0:
-                turns.append(SpeechTurn(start=round(start_f * 0.03, 3), end=round(end_f * 0.03, 3)))
+                raw_s = start_f * 0.03 - pad_sec
+                raw_e = end_f * 0.03 + pad_sec
+                turns.append(
+                    SpeechTurn(
+                        start=max(0.0, round(raw_s, 3)),
+                        end=min(round(total_duration, 3), round(raw_e, 3)),
+                    )
+                )
 
         if not turns and len(audio) / sample_rate >= MIN_SEG_SECONDS:
             turns.append(SpeechTurn(start=0.0, end=round(len(audio) / sample_rate, 3)))
@@ -240,17 +263,55 @@ class SileroVAD:
         return turns
 
 
+def _find_best_cut_point(
+    audio: np.ndarray,
+    sample_rate: int,
+    target_time: float,
+    window_sec: float = 0.75,
+) -> float:
+    """Find the point of minimum short-term RMS energy around target_time."""
+    start_sec = max(0.0, target_time - window_sec)
+    end_sec = min(len(audio) / sample_rate, target_time + window_sec)
+    start_frame = int(start_sec * sample_rate)
+    end_frame = int(end_sec * sample_rate)
+
+    frame_len = int(sample_rate * 0.02)  # 20ms
+    if end_frame - start_frame < frame_len:
+        return target_time
+
+    search_data = audio[start_frame:end_frame]
+    hop = sample_rate // 100  # 10ms hop
+    num_steps = (len(search_data) - frame_len) // hop
+    if num_steps <= 0:
+        return target_time
+
+    min_energy = float("inf")
+    best_offset = 0
+    for s in range(num_steps):
+        chunk = search_data[s * hop : s * hop + frame_len]
+        energy = float(np.mean(chunk**2))
+        if energy < min_energy:
+            min_energy = energy
+            best_offset = s * hop + frame_len // 2
+
+    best_frame = start_frame + best_offset
+    return round(best_frame / sample_rate, 3)
+
+
 def segment_audio_to_slices(
     turns: list[SpeechTurn],
     total_duration: float,
     min_seg: float = MIN_SEG_SECONDS,
     max_seg: float = MAX_SEG_SECONDS,
+    audio: np.ndarray | None = None,
+    sample_rate: int = SAMPLE_RATE,
 ) -> list[tuple[float, float]]:
     """Cut raw speech turns into bounded [min_seg, max_seg] intervals.
 
     Follows the reference partitioning algorithm:
     1. Merge consecutive turns separated by < 0.4s.
-    2. Long turns (> max_seg) are subdivided into n equal steps where min_seg <= step <= max_seg.
+    2. Long turns (> max_seg) are subdivided into n steps where min_seg <= step <= max_seg,
+       snapping cut points to natural low-energy pauses when audio is provided.
     3. Short turns (< min_seg) are merged with adjacent turns or padded to min_seg if isolated.
     """
     if not turns:
@@ -280,15 +341,36 @@ def segment_audio_to_slices(
         if dur > max_seg:
             n = max(1, math.ceil(dur / max_seg))
             step = dur / n
+            current_start = turn.start
             for i in range(n):
-                a = turn.start + i * step
-                b = turn.start + (i + 1) * step
+                if i == n - 1:
+                    target_end = turn.end
+                else:
+                    ideal_cut = turn.start + (i + 1) * step
+                    if audio is not None:
+                        earliest = max(current_start + min_seg, ideal_cut - 0.75)
+                        latest = min(current_start + max_seg, ideal_cut + 0.75)
+                        if earliest < latest:
+                            win = min(0.75, (latest - earliest) / 2)
+                            best = _find_best_cut_point(
+                                audio, sample_rate, ideal_cut, window_sec=win
+                            )
+                            target_end = max(earliest, min(latest, best))
+                        else:
+                            target_end = ideal_cut
+                    else:
+                        target_end = ideal_cut
+
+                a = current_start
+                b = target_end
                 if b - a >= min_seg or not slices:
                     slices.append((round(a, 3), round(b, 3)))
+                    current_start = b
                 elif slices:
                     # Append remainder to previous slice if below min_seg
                     prev_a, _ = slices[-1]
                     slices[-1] = (prev_a, round(b, 3))
+                    current_start = b
         elif dur < min_seg:
             if slices and (turn.end - slices[-1][0]) <= max_seg:
                 # Merge into previous slice
@@ -318,17 +400,19 @@ def segment_audio_to_slices(
 def apply_edge_fade(
     clip: np.ndarray, sample_rate: int, milliseconds: float = FADE_MS
 ) -> np.ndarray:
-    """Ramp a clip in and out so its edges cannot click.
+    """Ramp a clip in and out using a raised-cosine curve so its edges cannot click.
 
     A cut lands wherever the boundary falls, which is rarely at a zero crossing. Starting or
-    ending playback on a non-zero sample is a step change, and a step is heard as a click. A few
-    milliseconds of ramp removes it and is inaudible on speech.
+    ending playback on a non-zero sample is a step change, and a step is heard as a click. A
+    raised-cosine ramp removes it smoothly with zero first derivatives at both boundaries,
+    eliminating high-frequency spectral splatter while remaining inaudible on speech.
     """
     fade = int(sample_rate * milliseconds / 1000.0)
     if fade <= 0 or clip.size < 2 * fade:
         return clip
     faded = clip.copy()
-    ramp = np.linspace(0.0, 1.0, fade, endpoint=False, dtype=clip.dtype)
+    n = np.arange(fade, dtype=clip.dtype)
+    ramp = 0.5 * (1.0 - np.cos(np.pi * n / fade))
     faded[:fade] *= ramp
     faded[-fade:] *= ramp[::-1]
     return faded
