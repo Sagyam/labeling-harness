@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { api } from '../services/api'
+
+import { Kbd } from '@/components/ui/kbd'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import { api } from '@/services/api'
+import { cn } from '@/lib/utils'
 
 interface TranslitEditorProps {
   value: string
@@ -20,13 +26,16 @@ interface PopupState {
   top: number
 }
 
-export const TranslitEditor: React.FC<TranslitEditorProps> = ({
+// Simple token regex: consecutive Latin characters
+const LATIN_TOKEN_REGEX = /^[a-zA-Z]+$/
+
+export function TranslitEditor({
   value,
   onChange,
   textareaRef: externalRef,
   disabled = false,
   onPopupOpenChange,
-}) => {
+}: TranslitEditorProps) {
   const internalRef = useRef<HTMLTextAreaElement | null>(null)
   const textarea = externalRef || internalRef
 
@@ -36,9 +45,6 @@ export const TranslitEditor: React.FC<TranslitEditorProps> = ({
   useEffect(() => {
     onPopupOpenChange?.(!!popup?.isOpen)
   }, [popup?.isOpen, onPopupOpenChange])
-
-  // Simple token regex: consecutive Latin characters
-  const LATIN_TOKEN_REGEX = /^[a-zA-Z]+$/
 
   // Measure pixel coordinate of cursor in textarea
   const getCaretCoordinates = (el: HTMLTextAreaElement, position: number) => {
@@ -115,8 +121,7 @@ export const TranslitEditor: React.FC<TranslitEditorProps> = ({
     const before = value.substring(0, startPos)
     const after = value.substring(endPos)
     const replacement = candidate + ' '
-    const nextValue = before + replacement + after
-    onChange(nextValue)
+    onChange(before + replacement + after)
 
     // Train correction memory
     api.translitChoice(token, candidate).catch(() => {})
@@ -195,11 +200,8 @@ export const TranslitEditor: React.FC<TranslitEditorProps> = ({
         e.preventDefault()
         setPopup((prev) =>
           prev
-            ? {
-                ...prev,
-                selectedIndex: (prev.selectedIndex + 1) % prev.candidates.length,
-              }
-            : null
+            ? { ...prev, selectedIndex: (prev.selectedIndex + 1) % prev.candidates.length }
+            : null,
         )
         return
       }
@@ -213,7 +215,7 @@ export const TranslitEditor: React.FC<TranslitEditorProps> = ({
                 selectedIndex:
                   (prev.selectedIndex - 1 + prev.candidates.length) % prev.candidates.length,
               }
-            : null
+            : null,
         )
         return
       }
@@ -248,14 +250,12 @@ export const TranslitEditor: React.FC<TranslitEditorProps> = ({
         e.preventDefault()
         checkAndTriggerTranslit(value, caretPos).then((opened) => {
           if (!opened && textarea.current) {
-            // No candidates, just insert regular space
+            // No candidates, just insert a regular space
             const before = value.substring(0, caretPos)
             const after = value.substring(caretPos)
             onChange(before + ' ' + after)
             setTimeout(() => {
-              if (textarea.current) {
-                textarea.current.setSelectionRange(caretPos + 1, caretPos + 1)
-              }
+              textarea.current?.setSelectionRange(caretPos + 1, caretPos + 1)
             }, 5)
           }
         })
@@ -264,66 +264,63 @@ export const TranslitEditor: React.FC<TranslitEditorProps> = ({
   }
 
   return (
-    <div className="editor-transcript-box">
-      <div className="editor-textarea-header">
-        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-          Active Transcript
+    <div className="relative flex min-h-0 flex-col bg-card ring-1 ring-foreground/5">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <span className="font-heading text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+          Active transcript
         </span>
 
-        {/* Transliteration Mode Toggle */}
-        <div className="translit-toggle">
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={translitEnabled}
-              onChange={(e) => {
-                setTranslitEnabled(e.target.checked)
-                if (!e.target.checked) setPopup(null)
-              }}
-            />
-            <span>Devanagari Transliteration</span>
-          </label>
-          <kbd style={{ fontSize: '0.65rem' }}>Ctrl+T</kbd>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="translit-toggle"
+            checked={translitEnabled}
+            onCheckedChange={(checked) => {
+              setTranslitEnabled(checked)
+              if (!checked) setPopup(null)
+            }}
+          />
+          <Label htmlFor="translit-toggle" className="text-xs font-normal text-muted-foreground">
+            Devanagari
+          </Label>
+          <Kbd>Ctrl+T</Kbd>
         </div>
       </div>
 
-      <textarea
+      <Textarea
         ref={textarea}
-        className="transcript-textarea"
+        className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent p-3 font-devanagari text-base leading-8 shadow-none focus-visible:ring-0"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Transcript in Devanagari / English..."
-        rows={4}
+        placeholder="Transcript in Devanagari / English…"
         disabled={disabled}
       />
 
-      {/* Floating Devanagari Candidate Popup */}
+      {/* Floating Devanagari candidate popup */}
       {popup?.isOpen && (
         <div
-          className="translit-popup"
-          style={{
-            left: `${popup.left}px`,
-            top: `${popup.top}px`,
-          }}
+          className="absolute z-50 w-56 bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10"
+          style={{ left: `${popup.left}px`, top: `${popup.top + 40}px` }}
         >
-          <div className="translit-popup-header">
-            <span>{popup.token} → Devanagari</span>
+          <div className="flex items-center justify-between gap-2 border-b px-2 py-1.5 text-[10px] tracking-wider text-muted-foreground uppercase">
+            <span className="font-mono normal-case">{popup.token} →</span>
             <span>Esc keeps English</span>
           </div>
 
-          <div className="translit-candidates-list">
+          <div className="py-1">
             {popup.candidates.map((cand, idx) => (
-              <div
+              <button
                 key={cand}
-                className={`translit-candidate-item ${
-                  idx === popup.selectedIndex ? 'selected' : ''
-                }`}
+                type="button"
+                className={cn(
+                  'flex w-full items-center justify-between px-2 py-1.5 text-left font-devanagari text-sm',
+                  idx === popup.selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-muted',
+                )}
                 onClick={() => applyCandidate(cand)}
               >
                 <span>{cand}</span>
-                <span className="translit-num-key">{idx + 1}</span>
-              </div>
+                <Kbd>{idx + 1}</Kbd>
+              </button>
             ))}
           </div>
         </div>

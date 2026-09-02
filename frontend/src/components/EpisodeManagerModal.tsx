@@ -1,6 +1,40 @@
-import React, { useEffect, useState } from 'react'
-import { api, resolveUrl } from '../services/api'
-import { EpisodeSummary, EpisodeSegmentSummary } from '../types'
+import { useEffect, useState } from 'react'
+import {
+  RiDeleteBin6Line,
+  RiErrorWarningLine,
+  RiMicLine,
+  RiPauseFill,
+  RiPlayFill,
+} from '@remixicon/react'
+import { toast } from 'sonner'
+
+import { Chip } from '@/components/Chip'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Progress } from '@/components/ui/progress'
+import { Spinner } from '@/components/ui/spinner'
+import { api, resolveUrl } from '@/services/api'
+import type { EpisodeSegmentSummary, EpisodeSummary } from '@/types'
 
 interface EpisodeManagerModalProps {
   isOpen: boolean
@@ -8,11 +42,15 @@ interface EpisodeManagerModalProps {
   onDataChanged: () => void
 }
 
-export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
+type PendingDelete =
+  | { kind: 'episode'; episode: EpisodeSummary }
+  | { kind: 'segment'; segment: EpisodeSegmentSummary }
+
+export function EpisodeManagerModal({
   isOpen,
   onClose,
   onDataChanged,
-}) => {
+}: EpisodeManagerModalProps) {
   const [episodes, setEpisodes] = useState<EpisodeSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -20,6 +58,7 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
   const [segments, setSegments] = useState<EpisodeSegmentSummary[]>([])
   const [segmentsLoading, setSegmentsLoading] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null)
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null)
 
@@ -27,8 +66,7 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
     setLoading(true)
     setError(null)
     try {
-      const data = await api.listEpisodes()
-      setEpisodes(data)
+      setEpisodes(await api.listEpisodes())
     } catch (err: any) {
       setError(err.message || 'Failed to load episodes')
     } finally {
@@ -39,12 +77,10 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadEpisodes()
-    } else {
-      if (audioElement) {
-        audioElement.pause()
-        setAudioElement(null)
-        setPlayingAudioUrl(null)
-      }
+    } else if (audioElement) {
+      audioElement.pause()
+      setAudioElement(null)
+      setPlayingAudioUrl(null)
     }
   }, [isOpen])
 
@@ -58,8 +94,7 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
     setExpandedEpisodeId(epId)
     setSegmentsLoading(true)
     try {
-      const data = await api.listEpisodeSegments(epId)
-      setSegments(data)
+      setSegments(await api.listEpisodeSegments(epId))
     } catch (err: any) {
       setError(err.message || 'Failed to load episode segments')
     } finally {
@@ -67,12 +102,7 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
     }
   }
 
-  const handleDeleteEpisode = async (ep: EpisodeSummary) => {
-    const confirm = window.confirm(
-      `Are you sure you want to delete episode "${ep.title || ep.external_id}"?\n\nThis will permanently delete all ${ep.segment_count} segments, annotations, and audio files.`
-    )
-    if (!confirm) return
-
+  const deleteEpisode = async (ep: EpisodeSummary) => {
     setDeletingId(`ep-${ep.id}`)
     try {
       await api.deleteEpisode(ep.id)
@@ -81,20 +111,17 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
         setExpandedEpisodeId(null)
         setSegments([])
       }
+      toast.info(`Deleted episode ${ep.external_id}`)
       onDataChanged()
     } catch (err: any) {
-      alert(`Failed to delete episode: ${err.message}`)
+      toast.error(`Failed to delete episode: ${err.message}`)
     } finally {
       setDeletingId(null)
+      setPendingDelete(null)
     }
   }
 
-  const handleDeleteSegment = async (seg: EpisodeSegmentSummary) => {
-    const confirm = window.confirm(
-      `Delete segment "${seg.external_id}"?\nThis removes it permanently from the queue and storage.`
-    )
-    if (!confirm) return
-
+  const deleteSegment = async (seg: EpisodeSegmentSummary) => {
     setDeletingId(`seg-${seg.id}`)
     try {
       await api.deleteSegment(seg.id)
@@ -103,14 +130,16 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
         prev.map((ep) =>
           ep.id === expandedEpisodeId
             ? { ...ep, segment_count: Math.max(0, ep.segment_count - 1) }
-            : ep
-        )
+            : ep,
+        ),
       )
+      toast.info(`Deleted segment ${seg.external_id}`)
       onDataChanged()
     } catch (err: any) {
-      alert(`Failed to delete segment: ${err.message}`)
+      toast.error(`Failed to delete segment: ${err.message}`)
     } finally {
       setDeletingId(null)
+      setPendingDelete(null)
     }
   }
 
@@ -123,9 +152,7 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
       return
     }
 
-    if (audioElement) {
-      audioElement.pause()
-    }
+    audioElement?.pause()
 
     const audio = new Audio(fullUrl)
     audio.onended = () => {
@@ -137,298 +164,232 @@ export const EpisodeManagerModal: React.FC<EpisodeManagerModalProps> = ({
     setPlayingAudioUrl(fullUrl)
   }
 
-  if (!isOpen) return null
-
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal-content episode-manager-modal"
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '900px', width: '92%', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
-      >
-        <div className="modal-header">
-          <div>
-            <h2 className="modal-title">Episode & Segment Management</h2>
-            <p className="modal-subtitle">
-              Inspect uploaded podcast episodes, preview and delete unwanted segments or entire episodes.
-            </p>
-          </div>
-          <button className="modal-close-btn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
+    <>
+      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="max-h-[88vh] grid-rows-[auto_1fr_auto] overflow-hidden sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Episodes &amp; segments</DialogTitle>
+            <DialogDescription>
+              Inspect ingested episodes, preview clips and remove unwanted segments.
+            </DialogDescription>
+          </DialogHeader>
 
-        {error && (
-          <div className="ingest-error-box" style={{ margin: '16px 24px 0 24px' }}>
-            <span>⚠️</span>
-            <span>{error}</span>
-          </div>
-        )}
+          <div className="scrollbar-thin flex min-h-0 flex-col gap-3 overflow-y-auto">
+            {error && (
+              <Alert variant="destructive">
+                <RiErrorWarningLine />
+                <AlertTitle>Could not load episodes</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-        <div className="modal-body" style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
-              <div className="spinner" style={{ margin: '0 auto 16px auto' }} />
-              Loading episodes...
-            </div>
-          ) : episodes.length === 0 ? (
-            <div className="empty-episodes-state">
-              <span style={{ fontSize: '40px', marginBottom: '12px' }}>🎙️</span>
-              <h3 style={{ fontSize: '18px', color: '#f8fafc', margin: '0 0 8px 0' }}>No Episodes Ingested Yet</h3>
-              <p style={{ color: '#94a3b8', maxWidth: '400px', margin: '0 0 20px 0', fontSize: '14px' }}>
-                Upload podcast audio using the <strong>+ Ingest</strong> button to start generating segments and hypotheses.
-              </p>
-            </div>
-          ) : (
-            <div className="episodes-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {episodes.map((ep) => {
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                <Spinner /> Loading episodes…
+              </div>
+            ) : episodes.length === 0 ? (
+              <Empty className="py-16">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <RiMicLine />
+                  </EmptyMedia>
+                  <EmptyTitle>No episodes ingested yet</EmptyTitle>
+                  <EmptyDescription>
+                    Upload podcast audio with the Ingest button to generate segments and hypotheses.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              episodes.map((ep) => {
                 const percentDone =
-                  ep.segment_count > 0 ? Math.round((ep.labeled_count / ep.segment_count) * 100) : 0
+                  ep.segment_count > 0
+                    ? Math.round((ep.labeled_count / ep.segment_count) * 100)
+                    : 0
                 const isExpanded = expandedEpisodeId === ep.id
                 const isDeleting = deletingId === `ep-${ep.id}`
 
                 return (
-                  <div
+                  <Collapsible
                     key={ep.id}
-                    className="episode-card"
-                    style={{
-                      background: 'rgba(30, 41, 59, 0.7)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                      borderRadius: '12px',
-                      overflow: 'hidden',
-                      transition: 'border-color 0.2s',
-                    }}
+                    open={isExpanded}
+                    onOpenChange={() => toggleExpand(ep.id)}
+                    className="border"
                   >
-                    <div
-                      style={{
-                        padding: '16px 20px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '16px',
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div style={{ flex: 1, minWidth: '220px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '18px' }}>🎧</span>
-                          <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f8fafc' }}>
+                    <div className="flex flex-wrap items-center gap-4 p-3">
+                      <div className="min-w-56 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="font-heading text-sm font-semibold tracking-wide">
                             {ep.title || ep.external_id}
                           </h4>
-                          <span
-                            style={{
-                              fontSize: '11px',
-                              padding: '2px 8px',
-                              borderRadius: '10px',
-                              background: 'rgba(59, 130, 246, 0.15)',
-                              color: '#60a5fa',
-                              border: '1px solid rgba(59, 130, 246, 0.3)',
-                            }}
-                          >
-                            {ep.external_id}
-                          </span>
+                          <Chip className="bg-info/15 text-info">{ep.external_id}</Chip>
                         </div>
-                        <div style={{ fontSize: '12px', color: '#94a3b8', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                          <span>Show: <strong>{ep.show_id || 'default'}</strong></span>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                          <span>Show: {ep.show_id || 'default'}</span>
                           {ep.duration_seconds && (
-                            <span>Duration: <strong>{Math.round(ep.duration_seconds / 60)}m {Math.round(ep.duration_seconds % 60)}s</strong></span>
+                            <span>
+                              Duration: {Math.round(ep.duration_seconds / 60)}m{' '}
+                              {Math.round(ep.duration_seconds % 60)}s
+                            </span>
                           )}
-                          <span>Total: <strong>{ep.segment_count} segments</strong></span>
-                          <span>Labeled: <strong>{ep.labeled_count}</strong></span>
+                          <span>{ep.segment_count} segments</span>
+                          <span>{ep.labeled_count} labeled</span>
                         </div>
                       </div>
 
-                      {/* Progress pill */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ width: '90px', textAlign: 'right' }}>
-                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#e2e8f0' }}>{percentDone}% done</div>
-                          <div
-                            style={{
-                              height: '5px',
-                              width: '100%',
-                              background: '#334155',
-                              borderRadius: '3px',
-                              overflow: 'hidden',
-                              marginTop: '4px',
-                            }}
-                          >
-                            <div
-                              style={{
-                                height: '100%',
-                                width: `${percentDone}%`,
-                                background: '#10b981',
-                                transition: 'width 0.3s',
-                              }}
-                            />
-                          </div>
+                      <div className="w-28">
+                        <div className="mb-1 text-right font-mono text-xs tabular-nums">
+                          {percentDone}%
                         </div>
-
-                        {/* Actions */}
-                        <button
-                          className="secondary-btn"
-                          onClick={() => toggleExpand(ep.id)}
-                          style={{ padding: '6px 14px', fontSize: '13px' }}
-                        >
-                          {isExpanded ? 'Hide Segments ▲' : `View ${ep.segment_count} Segments ▼`}
-                        </button>
-
-                        <button
-                          className="danger-btn"
-                          disabled={isDeleting}
-                          onClick={() => handleDeleteEpisode(ep)}
-                          style={{
-                            padding: '6px 12px',
-                            fontSize: '13px',
-                            background: 'rgba(239, 68, 68, 0.15)',
-                            color: '#f87171',
-                            border: '1px solid rgba(239, 68, 68, 0.3)',
-                          }}
-                        >
-                          {isDeleting ? 'Deleting...' : '🗑️ Delete Episode'}
-                        </button>
+                        <Progress value={percentDone} />
                       </div>
+
+                      <CollapsibleTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          {isExpanded ? 'Hide segments' : `View ${ep.segment_count} segments`}
+                        </Button>
+                      </CollapsibleTrigger>
+
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={isDeleting}
+                        onClick={() => setPendingDelete({ kind: 'episode', episode: ep })}
+                      >
+                        {isDeleting ? <Spinner data-icon="inline-start" /> : <RiDeleteBin6Line data-icon="inline-start" />}
+                        Delete
+                      </Button>
                     </div>
 
-                    {/* Expanded Segment Drawer */}
-                    {isExpanded && (
-                      <div
-                        style={{
-                          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-                          background: 'rgba(15, 23, 42, 0.6)',
-                          padding: '16px 20px',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                          <h5 style={{ margin: 0, fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8' }}>
-                            Segments in {ep.external_id} ({segments.length})
-                          </h5>
-                          <span style={{ fontSize: '12px', color: '#64748b' }}>
-                            Click play to preview audio or delete unusable slices
-                          </span>
-                        </div>
-
-                        {segmentsLoading ? (
-                          <div style={{ textAlign: 'center', padding: '24px', color: '#94a3b8', fontSize: '13px' }}>
-                            Loading segments...
-                          </div>
-                        ) : segments.length === 0 ? (
-                          <div style={{ textAlign: 'center', padding: '16px', color: '#64748b', fontSize: '13px' }}>
-                            No segments found in this episode.
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '350px', overflowY: 'auto' }}>
-                            {segments.map((seg) => {
-                              const isPlaying = playingAudioUrl === resolveUrl(seg.audio_url)
-                              const isSegDeleting = deletingId === `seg-${seg.id}`
-
-                              return (
-                                <div
-                                  key={seg.id}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    padding: '8px 12px',
-                                    background: 'rgba(30, 41, 59, 0.5)',
-                                    border: '1px solid rgba(255, 255, 255, 0.04)',
-                                    borderRadius: '8px',
-                                    fontSize: '13px',
-                                    gap: '12px',
-                                  }}
-                                >
-                                  {/* Audio play button */}
-                                  <button
-                                    onClick={() => handleTogglePlayAudio(seg.audio_url)}
-                                    style={{
-                                      background: isPlaying ? '#10b981' : 'rgba(255, 255, 255, 0.1)',
-                                      color: '#ffffff',
-                                      border: 'none',
-                                      borderRadius: '50%',
-                                      width: '28px',
-                                      height: '28px',
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontSize: '11px',
-                                      flexShrink: 0,
-                                    }}
-                                    title={isPlaying ? 'Pause' : 'Play audio preview'}
-                                  >
-                                    {isPlaying ? '⏸' : '▶'}
-                                  </button>
-
-                                  {/* Timing and ID */}
-                                  <div style={{ minWidth: '130px', flexShrink: 0 }}>
-                                    <div style={{ fontFamily: 'monospace', fontWeight: 600, color: '#cbd5e1', fontSize: '12px' }}>
-                                      {seg.external_id}
-                                    </div>
-                                    <div style={{ fontSize: '11px', color: '#64748b' }}>
-                                      {seg.start_time.toFixed(1)}s - {seg.end_time.toFixed(1)}s ({seg.duration_seconds.toFixed(1)}s)
-                                    </div>
-                                  </div>
-
-                                  {/* Transcript snippet */}
-                                  <div
-                                    style={{
-                                      flex: 1,
-                                      color: '#e2e8f0',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                    }}
-                                  >
-                                    {seg.seed_text || <span style={{ color: '#64748b', fontStyle: 'italic' }}>No hypothesis</span>}
-                                  </div>
-
-                                  {/* Flags & CMI */}
-                                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
-                                    {seg.cmi !== null && (
-                                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                                        CMI: {seg.cmi}%
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Delete Segment Button */}
-                                  <button
-                                    onClick={() => handleDeleteSegment(seg)}
-                                    disabled={isSegDeleting}
-                                    style={{
-                                      background: 'transparent',
-                                      border: 'none',
-                                      color: '#ef4444',
-                                      cursor: 'pointer',
-                                      padding: '4px 8px',
-                                      borderRadius: '4px',
-                                      fontSize: '14px',
-                                      flexShrink: 0,
-                                      opacity: isSegDeleting ? 0.5 : 0.8,
-                                    }}
-                                    title="Delete this segment"
-                                  >
-                                    {isSegDeleting ? '...' : '🗑️'}
-                                  </button>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
+                    <CollapsibleContent className="border-t bg-muted/20 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="font-heading text-[11px] font-semibold tracking-widest text-muted-foreground uppercase">
+                          Segments in {ep.external_id} ({segments.length})
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          Preview audio or delete unusable slices
+                        </span>
                       </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
 
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
-          <button className="secondary-btn" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
+                      {segmentsLoading ? (
+                        <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                          <Spinner /> Loading segments…
+                        </div>
+                      ) : segments.length === 0 ? (
+                        <div className="py-6 text-center text-sm text-muted-foreground">
+                          No segments found in this episode.
+                        </div>
+                      ) : (
+                        <div className="scrollbar-thin flex max-h-80 flex-col gap-1.5 overflow-y-auto">
+                          {segments.map((seg) => {
+                            const isPlaying = playingAudioUrl === resolveUrl(seg.audio_url)
+                            const isSegDeleting = deletingId === `seg-${seg.id}`
+
+                            return (
+                              <div
+                                key={seg.id}
+                                className="flex items-center gap-3 bg-background p-2 ring-1 ring-foreground/5"
+                              >
+                                <Button
+                                  variant={isPlaying ? 'default' : 'ghost'}
+                                  size="icon-xs"
+                                  onClick={() => handleTogglePlayAudio(seg.audio_url)}
+                                  aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
+                                >
+                                  {isPlaying ? <RiPauseFill /> : <RiPlayFill />}
+                                </Button>
+
+                                <div className="w-36 shrink-0">
+                                  <div className="truncate font-mono text-xs">
+                                    {seg.external_id}
+                                  </div>
+                                  <div className="font-mono text-[10px] text-muted-foreground tabular-nums">
+                                    {seg.start_time.toFixed(1)}–{seg.end_time.toFixed(1)}s (
+                                    {seg.duration_seconds.toFixed(1)}s)
+                                  </div>
+                                </div>
+
+                                <div className="min-w-0 flex-1 truncate font-devanagari text-sm">
+                                  {seg.seed_text || (
+                                    <span className="text-muted-foreground italic">
+                                      No hypothesis
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex shrink-0 items-center gap-1.5">
+                                  {seg.cmi !== null && <Chip>CMI {seg.cmi}%</Chip>}
+                                </div>
+
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  disabled={isSegDeleting}
+                                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                  onClick={() => setPendingDelete({ kind: 'segment', segment: seg })}
+                                  aria-label="Delete segment"
+                                >
+                                  {isSegDeleting ? <Spinner /> : <RiDeleteBin6Line />}
+                                </Button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </CollapsibleContent>
+                  </Collapsible>
+                )
+              })
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={onClose}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDelete?.kind === 'episode' ? 'Delete this episode?' : 'Delete this segment?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete?.kind === 'episode' ? (
+                <>
+                  <span className="font-mono">
+                    {pendingDelete.episode.title || pendingDelete.episode.external_id}
+                  </span>{' '}
+                  and all {pendingDelete.episode.segment_count} of its segments, annotations and
+                  audio files will be permanently removed.
+                </>
+              ) : pendingDelete?.kind === 'segment' ? (
+                <>
+                  <span className="font-mono">{pendingDelete.segment.external_id}</span> will be
+                  permanently removed from the queue and storage.
+                </>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDelete?.kind === 'episode') deleteEpisode(pendingDelete.episode)
+                else if (pendingDelete?.kind === 'segment') deleteSegment(pendingDelete.segment)
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

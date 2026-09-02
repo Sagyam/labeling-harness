@@ -1,4 +1,4 @@
-import React from 'react'
+import { cn } from '@/lib/utils'
 
 interface DiffViewerProps {
   seedText: string
@@ -56,39 +56,38 @@ function computeWordDiff(original: string, modified: string): DiffSegment[] {
   return reversedDiff.reverse()
 }
 
-export const DiffViewer: React.FC<DiffViewerProps> = ({ seedText, currentText }) => {
+export function DiffViewer({ seedText, currentText }: DiffViewerProps) {
   const isIdentical = seedText.trim() === currentText.trim()
   const diffs = computeWordDiff(seedText, currentText)
 
   return (
-    <div className="diff-viewer">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-          Diff vs Seed Hypothesis
+    <div className="flex min-h-0 flex-col bg-card ring-1 ring-foreground/5">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <span className="font-heading text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+          Diff vs seed
         </span>
         <span
-          style={{
-            fontSize: '0.7rem',
-            fontFamily: 'var(--font-mono)',
-            color: isIdentical ? 'var(--emerald)' : 'var(--amber)',
-          }}
+          className={cn(
+            'font-mono text-[11px]',
+            isIdentical ? 'text-muted-foreground' : 'text-warning',
+          )}
         >
-          {isIdentical ? '● Unchanged' : '● Edited'}
+          {isIdentical ? '● unchanged' : '● edited'}
         </span>
       </div>
 
-      <div style={{ wordBreak: 'break-word', lineHeight: 1.7 }}>
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-3 font-devanagari leading-8 break-words">
         {diffs.map((part, index) => {
           if (part.type === 'removed') {
             return (
-              <span key={index} className="diff-del">
+              <span key={index} className="mx-0.5 bg-destructive/15 px-1 text-destructive line-through">
                 {part.value}
               </span>
             )
           }
           if (part.type === 'added') {
             return (
-              <span key={index} className="diff-ins">
+              <span key={index} className="mx-0.5 bg-success/15 px-1 text-success">
                 {part.value}
               </span>
             )
