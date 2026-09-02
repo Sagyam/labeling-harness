@@ -26,27 +26,17 @@ routes:
     model: scribe_v2
     language: ne
 
-  # Gemini 3.5 Flash Lite with the clip attached to a chat completion. A general LLM rather than
+  # Gemini 3.8 Flash with the clip attached to a chat completion. A general LLM rather than
   # a recogniser: it follows the transcript policy well, but it will invent speech over silence,
   # so it is a disagreement signal and never the primary hypothesis.
   #
-  # Configured on the plain slug, not `google/gemini-3.5-flash-lite:batch`. The `:batch` variant
+  # Configured on the plain slug, not `google/gemini-3.8-flash:batch`. The `:batch` variant
   # is rejected on the synchronous endpoint, and OpenRouter's Batch API is text-only and fails
   # any request carrying audio. See docs/decisions.md D22.
-  asr_gemini_flash_lite:
+  asr_gemini_flash:
     provider: openrouter
     api: audio_chat
-    system_id: gemini-3.5-flash-lite
-    model: google/gemini-3.5-flash-lite
+    system_id: gemini-3.8-flash
+    model: google/gemini-3.8-flash
     temperature: 0.0
     max_tokens: 1024
-
-  # Whisper large-v3 through OpenRouter's transcription endpoint. Returns text only -- no word
-  # spans, no confidences -- but it is a genuine recogniser and disagrees with the other two in
-  # useful places.
-  asr_whisper_large_v3:
-    provider: openrouter
-    api: transcription
-    system_id: whisper-large-v3
-    model: openai/whisper-large-v3
-    language: ne

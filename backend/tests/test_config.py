@@ -139,8 +139,7 @@ def test_llm_routes_configured_for_cloud_asr() -> None:
     assert routes.base_url.startswith("https://openrouter.ai")
     assert routes.asr_route_names() == [
         "asr_scribe_v2",
-        "asr_gemini_flash_lite",
-        "asr_whisper_large_v3",
+        "asr_gemini_flash",
     ]
 
 
@@ -151,11 +150,10 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert scribe.model == "scribe_v2"
     assert scribe.language == "ne", "Scribe takes no prompt; the language code is its steering"
 
-    gemini = routes["asr_gemini_flash_lite"]
+    gemini = routes["asr_gemini_flash"]
     assert (gemini.provider, gemini.api) == ("openrouter", "audio_chat")
-
-    whisper = routes["asr_whisper_large_v3"]
-    assert (whisper.provider, whisper.api) == ("openrouter", "transcription")
+    assert gemini.model == "google/gemini-3.8-flash"
+    assert gemini.system_id == "gemini-3.8-flash"
 
 
 def test_no_transcriber_is_configured_on_an_openrouter_batch_variant() -> None:

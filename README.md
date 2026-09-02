@@ -53,11 +53,11 @@ guard — `ingest.youtube.max_duration_seconds` in `config/settings.yaml` — be
 source duration. Ingesting a video is on you as far as its licensing goes; the harness does not
 check.
 
-Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2, Gemini
-3.5 Flash Lite and Whisper large-v3 — so one clip is three calls, billed against your ElevenLabs
-and OpenRouter balances. Both are prepaid, which is the whole reason those two providers are the
-ones wired up. Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to
-exercise the pipeline without spending anything.
+Transcription calls cost money. Two models transcribe every clip — ElevenLabs Scribe v2 and
+Gemini 3.8 Flash — so one clip is two calls, billed against your ElevenLabs and OpenRouter
+balances. Both are prepaid, which is the whole reason those two providers are the ones wired up.
+Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to exercise the
+pipeline without spending anything.
 
 **Triage** is where the time goes. A dense list, highest-priority segment first, with the reason it
 surfaced shown next to it. Most segments are correct, so the dominant motion is listen, `Enter`,
@@ -117,7 +117,7 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_DATABASE__PASSWORD` or `DATABASE_URL` | Postgres credentials |
 | `HARNESS_STORAGE__MINIO__ACCESS_KEY` / `__SECRET_KEY` | MinIO credentials |
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
-| `OPENROUTER_API_KEY` | OpenRouter key; carries the Gemini and Whisper transcribers |
+| `OPENROUTER_API_KEY` | OpenRouter key; carries the Gemini transcriber |
 | `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
 
 `ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines

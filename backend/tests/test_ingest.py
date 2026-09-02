@@ -109,7 +109,7 @@ def test_openrouter_transcribe_is_logged_to_llm_requests(
     sf.write(str(audio_path), np.zeros(16000), 16000, format="FLAC")
 
     client = OpenRouterClient(db_session)
-    result = client.transcribe(audio_path, route="asr_whisper_large_v3", dry_run=True)
+    result = client.transcribe(audio_path, route="asr_gemini_flash", dry_run=True)
 
     assert result.text
     assert result.model
@@ -117,7 +117,7 @@ def test_openrouter_transcribe_is_logged_to_llm_requests(
     logged = db_session.scalars(sa.select(LlmRequest)).all()
     assert len(logged) >= 1
     req = logged[-1]
-    assert req.route == "asr_whisper_large_v3"
+    assert req.route == "asr_gemini_flash"
     assert req.status == "dry_run"
 
 

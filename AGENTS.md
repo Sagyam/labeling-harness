@@ -97,8 +97,8 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Gotchas
 
-- Ingestion spends real money: each `asr*` route transcribes every clip, and three are configured,
-  so a clip costs three calls. Use a short audio file, or `dry_run: true` in
+- Ingestion spends real money: each `asr*` route transcribes every clip, and two are configured,
+  so a clip costs two calls. Use a short audio file, or `dry_run: true` in
   `config/llm_routes.yaml`, when exercising the pipeline. The same arithmetic is why
   `ingest.youtube.max_duration_seconds` exists — cost is linear in source duration, so a YouTube
   URL is a bigger footgun than a file the annotator had to download first.
@@ -113,7 +113,7 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR
   route may name one; `test_config.py` enforces it (D22).
 - Only Scribe returns word spans and per-word log probabilities, so it is both the first route and
-  in practice the only source of the `low_confidence` term. Three different hypotheses are in play
+  in practice the only source of the `low_confidence` term. Two different hypotheses are in play
   and they are easy to conflate: the **primary** (first route) is what CMI is measured on, the
   **seed** (chosen per split at queue build) is what `low_confidence` reads, and rule flags are
   computed over **all** of them at import. Reordering the routes moves the first two.

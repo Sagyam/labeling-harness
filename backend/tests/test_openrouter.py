@@ -246,19 +246,19 @@ def test_a_timeout_is_retried(db_session: Session) -> None:
 
 
 def asr_routes(**kwargs) -> LlmRoutes:
-    """Route table with a Cloud ASR route, mirroring the committed configuration."""
+    """Route table with a Cloud ASR route."""
     base = {
         "enabled": True,
         "dry_run": False,
         "max_retries": 3,
         "retry_backoff_seconds": 0.0,
-        "routes": {"asr_whisper": LlmRoute(api="transcription", model="openai/whisper-large-v3")},
+        "routes": {"asr_whisper": LlmRoute(api="transcription", model="custom/asr-model")},
     }
     return LlmRoutes(**{**base, **kwargs})
 
 
 def transcription(text: str = "आजको meeting मा data हेर्यौं", **extra) -> dict:
-    return {"model": "openai/whisper-large-v3", "text": text, **extra}
+    return {"model": "custom/asr-model", "text": text, **extra}
 
 
 @pytest.fixture
@@ -302,7 +302,7 @@ def test_an_explicit_dry_run_is_marked_and_makes_no_http_call(db_session: Sessio
 
 
 def test_leading_whitespace_is_stripped_from_a_transcript(db_session: Session, clip) -> None:
-    """Whisper prefixes its output with a space; verbatim it shifts every diff against it."""
+    """A recogniser may prefix its output with a space; verbatim it shifts every diff against it."""
     result = make_client(
         db_session,
         lambda r: httpx.Response(200, json=transcription(" आजको meeting ")),
@@ -359,7 +359,7 @@ def test_the_transcription_request_carries_the_model_prompt_and_language(
     )
     assert seen["url"] == "https://openrouter.ai/api/v1/audio/transcriptions"
     body = bytes(seen["body"])
-    assert b"openai/whisper-large-v3" in body
+    assert b"custom/asr-model" in body
     assert b"code-switched" in body
     assert b"ne" in body
 
@@ -371,7 +371,7 @@ def test_every_transcription_is_logged(db_session: Session, clip) -> None:
 
     logged = db_session.scalars(sa.select(LlmRequest)).one()
     assert logged.route == "asr_whisper"
-    assert logged.model == "openai/whisper-large-v3"
+    assert logged.model == "custom/asr-model"
     assert logged.status == "succeeded"
     assert logged.latency_ms is not None
 

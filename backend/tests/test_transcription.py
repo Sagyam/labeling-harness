@@ -41,19 +41,12 @@ def routes(**kwargs) -> LlmRoutes:
                 model="scribe_v2",
                 language="ne",
             ),
-            "asr_gemini_flash_lite": LlmRoute(
+            "asr_gemini_flash": LlmRoute(
                 provider="openrouter",
                 api="audio_chat",
-                system_id="gemini-3.5-flash-lite",
-                model="google/gemini-3.5-flash-lite",
+                system_id="gemini-3.8-flash",
+                model="google/gemini-3.8-flash",
                 temperature=0.0,
-            ),
-            "asr_whisper_large_v3": LlmRoute(
-                provider="openrouter",
-                api="transcription",
-                system_id="whisper-large-v3",
-                model="openai/whisper-large-v3",
-                language="ne",
             ),
             "check": LlmRoute(model="anthropic/claude-sonnet-5"),
         },
@@ -81,7 +74,7 @@ def recorder(monkeypatch):
             return httpx.Response(
                 200,
                 json={
-                    "model": "google/gemini-3.5-flash-lite",
+                    "model": "google/gemini-3.8-flash",
                     "choices": [{"message": {"content": "  जेमिनाइ भन्छ  "}}],
                     "usage": {"prompt_tokens": 88, "completion_tokens": 4, "cost": 3.3e-05},
                 },
@@ -105,8 +98,7 @@ def test_only_asr_routes_become_transcribers() -> None:
     """A `check` route is text inference, not an ASR system; it must not transcribe anything."""
     assert asr_route_names(routes()) == [
         "asr_scribe_v2",
-        "asr_gemini_flash_lite",
-        "asr_whisper_large_v3",
+        "asr_gemini_flash",
     ]
 
 
@@ -114,9 +106,7 @@ def test_the_configured_system_id_wins_over_the_route_name() -> None:
     """system_id is how a hypothesis is attributed for the life of the corpus."""
     table = routes().routes
     assert system_id_for("asr_scribe_v2", table["asr_scribe_v2"]) == "elevenlabs-scribe-v2"
-    assert system_id_for("asr_gemini_flash_lite", table["asr_gemini_flash_lite"]) == (
-        "gemini-3.5-flash-lite"
-    )
+    assert system_id_for("asr_gemini_flash", table["asr_gemini_flash"]) == ("gemini-3.8-flash")
 
 
 def test_a_route_without_a_system_id_falls_back_to_its_name() -> None:
@@ -138,7 +128,7 @@ def test_an_elevenlabs_route_reaches_elevenlabs(db_session: Session, clip, recor
 
 
 def test_an_audio_chat_route_reaches_chat_completions(db_session: Session, clip, recorder) -> None:
-    result = transcribe(db_session, clip, route="asr_gemini_flash_lite", config=routes())
+    result = transcribe(db_session, clip, route="asr_gemini_flash", config=routes())
     assert str(recorder[-1].url) == "https://openrouter.ai/api/v1/chat/completions"
     # A chat model pads its answer; the transcript is what gets stored.
     assert result.text == "जेमिनाइ भन्छ"
@@ -147,7 +137,18 @@ def test_an_audio_chat_route_reaches_chat_completions(db_session: Session, clip,
 def test_a_transcription_route_reaches_the_transcription_endpoint(
     db_session: Session, clip, recorder
 ) -> None:
-    result = transcribe(db_session, clip, route="asr_whisper_large_v3", config=routes())
+    test_routes = routes(
+        routes={
+            **routes().routes,
+            "asr_custom_endpoint": LlmRoute(
+                provider="openrouter",
+                api="transcription",
+                system_id="custom-endpoint",
+                model="custom/asr-model",
+            ),
+        }
+    )
+    result = transcribe(db_session, clip, route="asr_custom_endpoint", config=test_routes)
     assert str(recorder[-1].url) == "https://openrouter.ai/api/v1/audio/transcriptions"
     assert result.text == "विस्पर भन्छ"
 
@@ -170,7 +171,7 @@ def test_a_chat_model_is_told_to_answer_with_the_transcript_alone() -> None:
 def test_the_policy_prompt_is_sent_to_the_audio_chat_model(
     db_session: Session, clip, recorder
 ) -> None:
-    transcribe(db_session, clip, route="asr_gemini_flash_lite", config=routes())
+    transcribe(db_session, clip, route="asr_gemini_flash", config=routes())
     body = bytes(recorder[-1].content)
     assert b"Devanagari" in body
     assert b"input_audio" in body
@@ -179,7 +180,19 @@ def test_the_policy_prompt_is_sent_to_the_audio_chat_model(
 def test_the_policy_prompt_is_sent_to_the_transcription_endpoint(
     db_session: Session, clip, recorder
 ) -> None:
-    transcribe(db_session, clip, route="asr_whisper_large_v3", config=routes())
+    test_routes = routes(
+        routes={
+            **routes().routes,
+            "asr_custom_endpoint": LlmRoute(
+                provider="openrouter",
+                api="transcription",
+                system_id="custom-endpoint",
+                model="custom/asr-model",
+                language="ne",
+            ),
+        }
+    )
+    transcribe(db_session, clip, route="asr_custom_endpoint", config=test_routes)
     body = bytes(recorder[-1].content)
     assert b"Devanagari" in body
     assert b"ne" in body  # the route's language hint
@@ -207,8 +220,7 @@ def test_every_provider_writes_a_request_log_row(db_session: Session, clip, reco
     logged = {row.route: row for row in db_session.scalars(sa.select(LlmRequest))}
     assert set(logged) == {
         "asr_scribe_v2",
-        "asr_gemini_flash_lite",
-        "asr_whisper_large_v3",
+        "asr_gemini_flash",
     }
     assert all(row.status == "succeeded" for row in logged.values())
 
@@ -217,10 +229,10 @@ def test_the_charged_cost_is_recorded_from_the_usage_block(
     db_session: Session, clip, recorder
 ) -> None:
     """OpenRouter reports `cost`; reading only the older `total_cost` logs every call as free."""
-    transcribe(db_session, clip, route="asr_whisper_large_v3", config=routes())
+    transcribe(db_session, clip, route="asr_gemini_flash", config=routes())
     row = db_session.scalars(sa.select(LlmRequest)).one()
     assert row.estimated_cost_usd is not None
-    assert float(row.estimated_cost_usd) == pytest.approx(0.00005)
+    assert float(row.estimated_cost_usd) == pytest.approx(3.3e-05)
 
 
 def test_a_dry_run_reaches_no_provider(db_session: Session, clip, recorder) -> None:

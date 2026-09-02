@@ -200,3 +200,19 @@ stderr, and its progress is lines on stdout. **Reversal:** deleting the module a
 endpoints leaves the upload path exactly as it was; nothing downstream and no table depends on it,
 beyond `episodes.source_uri` carrying a URL instead of a `file://` name for episodes ingested this
 way.
+
+## D24 — Drop Whisper large-v3 from cloud ASR; upgrade secondary to Gemini 3.8 Flash
+Real-world testing showed OpenAI's Whisper large-v3 having poor performance on Nepali-English
+code-switched audio. It returned text without word spans or confidence signals and produced frequent
+transcription errors compared to ElevenLabs Scribe.
+
+Whisper was removed completely from the cloud ASR pipeline, reducing transcription from three calls
+per clip to two (Scribe v2 and Gemini 3.8 Flash) and halving OpenRouter spend per segment.
+Simultaneously, the general LLM audio-chat route was upgraded from `google/gemini-3.5-flash-lite` to
+`google/gemini-3.8-flash` (`asr_gemini_flash`), retaining its role as a disagreement signal and prompt
+follower.
+
+**Reversal:** Re-add `asr_whisper_large_v3` or another dedicated recogniser route to
+`config/llm_routes.yaml`. Historical hypotheses under `whisper-large-v3` remain immutable in
+`asr_hypotheses`.
+

@@ -182,17 +182,15 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 | Route | Provider | API shape | Returns | Steered by |
 |---|---|---|---|---|
 | `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
-| `asr_gemini_flash_lite` | OpenRouter | chat completions with an `input_audio` part | text | the full policy prompt |
-| `asr_whisper_large_v3` | OpenRouter | `/v1/audio/transcriptions` | text | prompt, `language=ne` |
+| `asr_gemini_flash` | OpenRouter | chat completions with an `input_audio` part | text | the full policy prompt |
 
 The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
 code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
 chosen per split at queue build (see above) and is what `low_confidence` reads. Rule flags are a
 third thing again: they are computed at import over *all* hypotheses, not just the primary one.
 
-Scribe is first because it is the only one of the three reporting a confidence signal at all — a
-chat model returns prose, and OpenRouter's Whisper returns text without word spans or log
-probabilities. So reordering the routes moves the CMI measurement to a different model, and it
+Scribe is first because it is the only configured transcriber reporting a confidence signal at all — a
+chat model returns prose. So reordering the routes moves the CMI measurement to a different model, and it
 also moves `low_confidence`, because a hypothesis with no `avg_logprob` never wins the
 train/val "highest confidence" comparison.
 
@@ -202,7 +200,7 @@ no free-text prompt parameter, so it gets a language code and a key-term list in
 
 Gemini is a general LLM rather than a recogniser. It follows the transcript policy well and it
 will also invent plausible speech over silence, which is why it is a disagreement signal and never
-the primary hypothesis. All three run on synchronous endpoints; OpenRouter's Batch API cannot
+the primary hypothesis. Both run on synchronous endpoints; OpenRouter's Batch API cannot
 carry audio at all (decision D22).
 
 ### Fetching the audio instead of uploading it

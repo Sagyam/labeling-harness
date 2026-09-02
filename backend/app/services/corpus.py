@@ -36,7 +36,7 @@ SENTENCES: tuple[str, ...] = (
 #: Realistic upstream system identities. The first is the strongest, as in the real pipeline.
 SYSTEMS: tuple[tuple[str, str], ...] = (
     ("qwen-ne", "sidskarki/Qwen3-ASR-Nepali"),
-    ("whisper-lv3", "openai/whisper-large-v3"),
+    ("gemini-flash", "google/gemini-3.8-flash"),
     ("indicwhisper", "ai4bharat/indicwhisper"),
     ("seamless-m4t", "facebook/seamless-m4t-v2-large"),
     ("mms-ne", "facebook/mms-1b-all"),

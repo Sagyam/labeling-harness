@@ -258,7 +258,7 @@ class OpenRouterClient(ProviderClient):
             LlmRequestFailed: No API key, or the request failed after retries.
         """
         route_config = self.config.routes.get(route)
-        target_model = model or (route_config.model if route_config else "openai/whisper-large-v3")
+        target_model = model or (route_config.model if route_config else "google/gemini-3.8-flash")
         effective_dry_run = self.config.dry_run if dry_run is None else dry_run
 
         audio_file = Path(audio_path)
@@ -362,11 +362,11 @@ class OpenRouterClient(ProviderClient):
         result = AsrResult(
             route=route,
             model=body.get("model", model),
-            # Whisper prefixes its transcript with a space. Stored verbatim it would show up in
+            # Some recognisers prefix transcripts with a space. Stored verbatim it would show up in
             # the editor and shift every character-level diff against it.
             text=body.get("text", "").strip(),
-            # Not every recogniser returns word spans; DeepInfra's Whisper does not. An empty
-            # list would claim the model found no words, which is a different statement.
+            # Not every recogniser returns word spans; an empty list would claim the model found no
+            # words, which is a different statement.
             words=[
                 {"word": w.get("word", ""), "start": w.get("start"), "end": w.get("end")}
                 for w in raw_words
