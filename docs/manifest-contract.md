@@ -53,7 +53,7 @@ export_<episode_id>/
       "avg_logprob": -0.34,
       "no_speech_prob": 0.01,
       "words": [
-        {"word": "So", "start": 123.4, "end": 123.7, "confidence": 0.92,
+        {"word": "So", "start": 0.0, "end": 0.31, "confidence": 0.92,
          "predicted_language": "en", "predicted_script": "latin"}
       ]
     }
@@ -71,6 +71,12 @@ export_<episode_id>/
 Rules:
 
 - `hypotheses` must contain at least one entry; `words` is optional and may be absent or empty.
+- Word `start` and `end` are **seconds from the start of the clip**, not from the start of the
+  episode. The segment's own `start_time` and `end_time` are episode-relative, so the two live on
+  different timelines on purpose: a word list travels with the clip beside it, and
+  `start_time + word.start` is the episode offset when one is wanted. The harness rebases nothing
+  at import — a manifest that supplies episode-relative word times is stored exactly as written and
+  is simply wrong. See [decision D26](decisions.md).
 - `scores` may be partially absent; the harness recomputes none of them, it stores what it receives
   and treats a missing score as null.
 - `flags` is top-level, not inside `scores`, and each entry should be one of the seven rule flags

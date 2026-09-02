@@ -74,7 +74,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `segments` | Time span, clip and peaks object keys, `pipeline_status` |
 | `asr_systems` | One row per upstream ASR system |
 | `asr_hypotheses` | Immutable imported transcripts, one per (segment, system) |
-| `hypothesis_words` | Optional word-level timings, languages and scripts |
+| `hypothesis_words` | Optional word-level timings, languages and scripts; times are **clip-relative** (D26) |
 | `segment_scores` | Imported agreement scores and rule flags, one row per segment |
 
 ### Annotation

@@ -239,3 +239,35 @@ The fix introduces:
 and linear-fade behavior without schema changes.
 
 
+
+## D26 — Word timings are clip-relative; the segment's own span is episode-relative
+`hypothesis_words.start_time` and `end_time` count seconds from the start of the **clip**, while
+`segments.start_time` and `end_time` count seconds from the start of the **episode**. The two
+timelines are deliberate, not an oversight, and the code has always written them this way — it was
+`docs/manifest-contract.md` that documented the wrong one, showing a word starting at the same
+`123.4` as the segment that contains it.
+
+Three reasons the clip is the right origin:
+
+- **The word list travels beside a clip, not beside an episode.** Every export record carries
+  `audio_path: "clips/<segment>.flac"` and the word spans in the same object
+  (`app/services/export.py`). Episode-relative times there are a silent trap: a reader opens a
+  six-second FLAC, seeks to 123.4 s and gets nothing, with no error to explain it.
+- **Clip-relative is measured; episode-relative is derived.** Scribe is handed `seg.clip_path` and
+  reports offsets into that file. Expressing them on the episode timeline means adding
+  `segment.start_time` — a VAD decision (`app/services/silero_vad.py`), shifted again by D25's
+  150 ms speech padding and by the cut landing on a frame boundary rather than the exact float. The
+  stored value should be the one that was observed, with the error-carrying sum left to whoever
+  wants it.
+- **A row stays readable on its own.** Interpreting a `hypothesis_words` row never requires joining
+  up through `asr_hypotheses` to `segments` for an offset, and no derived value goes stale if an
+  episode is deleted and re-ingested under different VAD settings.
+
+`start_time + word.start` is the conversion when an episode timeline is wanted. The harness rebases
+nothing on import, so a manifest supplying episode-relative word times is stored as written and is
+wrong; the contract now says so.
+
+**Reversal:** rebasing to episode-relative means adding `segment.start_time` in
+`app/services/importer.py` where words are inserted, plus a data migration over existing
+`hypothesis_words` rows. Cheap while the table is small, and there is no consumer to break today —
+no API endpoint exposes word times, and only the `analytics` export emits them.
