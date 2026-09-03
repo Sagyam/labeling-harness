@@ -10,6 +10,9 @@ from app.services.alignment import (
     verify_segment_timestamps,
 )
 
+SCRIBE = "elevenlabs-scribe-v2"
+FLASH = "gemini-3.8-flash"
+
 
 def test_align_tokens_dynamic_exact_match() -> None:
     ref = ["हामी", "नेपाली", "हौँ"]
@@ -57,43 +60,150 @@ def test_project_missing_spans_interpolates_gap() -> None:
     assert projected[2].word == "नेपाली"
 
 
-def test_verify_segment_timestamps_detects_deltas() -> None:
+def test_verify_segment_timestamps_scores_a_real_offset() -> None:
+    """The delta must come from two independent sources, not one list against itself.
+
+    Regression guard for the defect this replaced: the old implementation compared each
+    aligned span against ``spans[idx]`` -- an element of the same list -- so every delta
+    was 0.0 whenever the alignment was one-to-one.
+    """
+    reference = [
+        {"word": "हामी", "start": 0.100, "end": 0.500},
+        {"word": "meeting", "start": 0.600, "end": 1.100},
+    ]
+    comparison = [
+        {"word": "हामी", "start": 0.180, "end": 0.545},
+        {"word": "meeting", "start": 0.640, "end": 1.100},
+    ]
+    diffs = verify_segment_timestamps(
+        segment_id="seg_01",
+        reference_words=reference,
+        comparison_words=comparison,
+    )
+    assert len(diffs) == 2
+
+    assert diffs[0].word == "हामी"
+    assert diffs[0].ref_start == 0.100
+    assert diffs[0].comp_start == 0.180
+    assert diffs[0].delta_start_ms == 80.0
+    assert diffs[0].delta_end_ms == 45.0
+    assert diffs[0].max_delta_ms == 80.0
+
+    assert diffs[1].word == "meeting"
+    assert diffs[1].delta_start_ms == 40.0
+    assert diffs[1].delta_end_ms == 0.0
+    assert diffs[1].is_code_switched is True
+
+
+def test_verify_segment_timestamps_identical_sources_are_zero() -> None:
     words = [
         {"word": "हामी", "start": 0.1, "end": 0.5},
         {"word": "meeting", "start": 0.6, "end": 1.1},
     ]
     diffs = verify_segment_timestamps(
         segment_id="seg_01",
-        gold_text="हामी meeting",
-        acoustic_words=words,
+        reference_words=words,
+        comparison_words=list(words),
     )
-    assert len(diffs) == 2
-    assert diffs[0].word == "हामी"
-    assert diffs[0].delta_start_ms == 0.0
-    assert diffs[1].word == "meeting"
-    assert diffs[1].is_code_switched is True
+    assert [d.max_delta_ms for d in diffs] == [0.0, 0.0]
 
 
-def test_run_cross_verification_on_records_summary() -> None:
+def test_verify_segment_timestamps_skips_tokens_present_on_one_side_only() -> None:
+    reference = [
+        {"word": "हामी", "start": 0.10, "end": 0.50},
+        {"word": "सबै", "start": 0.55, "end": 0.80},
+        {"word": "meeting", "start": 0.90, "end": 1.40},
+    ]
+    comparison = [
+        {"word": "हामी", "start": 0.12, "end": 0.50},
+        {"word": "meeting", "start": 0.95, "end": 1.40},
+    ]
+    diffs = verify_segment_timestamps(
+        segment_id="seg_01",
+        reference_words=reference,
+        comparison_words=comparison,
+    )
+    # "सबै" has no counterpart, so it carries no meaningful boundary delta.
+    assert [d.word for d in diffs] == ["हामी", "meeting"]
+    assert diffs[0].delta_start_ms == 20.0
+    assert diffs[1].delta_start_ms == 50.0
+
+
+def test_run_cross_verification_selects_the_two_named_systems() -> None:
     records = [
         {
             "segment_id": "seg_01",
-            "text": "हामी meeting",
             "duration_seconds": 2.0,
             "hypotheses": [
                 {
-                    "system_id": "scribe",
+                    "system_id": "mai-transcribe-2",
+                    "words": [{"word": "हामी", "start": 9.0, "end": 9.5}],
+                },
+                {
+                    "system_id": FLASH,
                     "words": [
-                        {"word": "हामी", "start": 0.1, "end": 0.5},
-                        {"word": "meeting", "start": 0.6, "end": 1.1},
+                        {"word": "हामी", "start": 0.120, "end": 0.500},
+                        {"word": "meeting", "start": 0.600, "end": 1.100},
                     ],
-                }
+                },
+                {
+                    "system_id": SCRIBE,
+                    "words": [
+                        {"word": "हामी", "start": 0.100, "end": 0.500},
+                        {"word": "meeting", "start": 0.600, "end": 1.100},
+                    ],
+                },
             ],
         }
     ]
     summary = run_cross_verification_on_records(records)
+    assert summary.reference_system_id == SCRIBE
+    assert summary.comparison_system_id == FLASH
     assert summary.total_segments == 1
     assert summary.total_tokens_evaluated == 2
+    # 20 ms on one token, 0 ms on the other: both inside 25 ms.
     assert summary.rate_within_25ms == 100.0
-    assert summary.rate_within_50ms == 100.0
+    assert summary.mae_start_ms == 10.0
     assert summary.flagged_segments == []
+
+
+def test_run_cross_verification_skips_records_missing_a_source() -> None:
+    records = [
+        {
+            "segment_id": "seg_01",
+            "duration_seconds": 2.0,
+            "hypotheses": [
+                {"system_id": SCRIBE, "words": [{"word": "हामी", "start": 0.1, "end": 0.5}]},
+            ],
+        },
+        {
+            "segment_id": "seg_02",
+            "duration_seconds": 2.0,
+            "hypotheses": [
+                {"system_id": SCRIBE, "words": [{"word": "हामी", "start": 0.1, "end": 0.5}]},
+                {"system_id": FLASH, "words": [{"word": "हामी", "start": 0.4, "end": 0.5}]},
+            ],
+        },
+    ]
+    summary = run_cross_verification_on_records(records)
+    assert summary.total_segments == 1
+    assert summary.segments_missing_source == 1
+    assert summary.total_tokens_evaluated == 1
+    assert summary.mae_start_ms == 300.0
+
+
+def test_run_cross_verification_flags_divergent_segments() -> None:
+    records = [
+        {
+            "segment_id": "seg_bad",
+            "duration_seconds": 2.0,
+            "hypotheses": [
+                {"system_id": SCRIBE, "words": [{"word": "meeting", "start": 0.10, "end": 0.50}]},
+                {"system_id": FLASH, "words": [{"word": "meeting", "start": 0.85, "end": 1.20}]},
+            ],
+        }
+    ]
+    summary = run_cross_verification_on_records(records, divergence_threshold_ms=200.0)
+    assert len(summary.flagged_segments) == 1
+    assert summary.flagged_segments[0]["segment_id"] == "seg_bad"
+    assert summary.flagged_segments[0]["max_delta_ms"] == 750.0

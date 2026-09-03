@@ -1,11 +1,18 @@
 """Acoustic timestamp cross-verification and word boundary alignment service.
 
-Provides independent word-level acoustic boundary validation for code-switched speech:
-1. Matches ground truth transcript tokens against acoustic model word spans (e.g. Scribe).
-2. Computes per-boundary delta (|Δ_start|, |Δ_end|) in milliseconds.
+Compares word-level boundaries from two *independent* timing sources over the same clip:
+
+1. Matches the two systems' word lists against each other by normalized text.
+2. Computes per-boundary delta (|Δ_start|, |Δ_end|) in milliseconds on matched pairs only.
 3. Evaluates publication sanity-check metrics: % within ±25ms, ±50ms, and ±100ms.
 4. Stratifies boundary precision across Monolingual vs. Code-Switched tokens.
 5. Flags divergent segments (Δ > 200ms) for human-review triage in the harness.
+
+The two sources must be genuinely independent for the numbers to mean anything (D33). Today
+that is ElevenLabs Scribe's native word spans as the reference, against the local CTC forced
+aligner's spans over Gemini Flash's transcript as the comparison. A token present on only one
+side is counted but never scored: two systems that disagree about *which word was said* have
+no meaningful boundary delta to report.
 """
 
 from __future__ import annotations
@@ -17,14 +24,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEV_RE = re.compile(r"[\u0900-\u097F]")
-WORD_TOKEN_RE = re.compile(r"[A-Za-z0-9']+|[\u0900-\u097F]+")
+DEV_RE = re.compile(r"[ऀ-ॿ]")
+WORD_TOKEN_RE = re.compile(r"[A-Za-z0-9']+|[ऀ-ॿ]+")
+
+#: Systems whose word spans are compared on an analytics export. The reference is the system
+#: trusted to be right; the comparison is the one being measured against it.
+DEFAULT_REFERENCE_SYSTEM_ID = "elevenlabs-scribe-v2"
+DEFAULT_COMPARISON_SYSTEM_ID = "gemini-3.8-flash"
 
 
 def normalize_token(tok: str) -> str:
     """Normalize word for robust alignment (NFKC, lowercase, strip punctuation)."""
     norm = unicodedata.normalize("NFKC", tok).strip().lower()
-    return re.sub(r"[^\w\u0900-\u097F]", "", norm)
+    return re.sub(r"[^\wऀ-ॿ]", "", norm)
 
 
 @dataclass
@@ -48,7 +60,7 @@ class WordSpan:
 
 @dataclass
 class TokenBoundaryDiff:
-    """Boundary difference between acoustic baseline and aligned token."""
+    """Boundary difference between two independent timing sources for one matched token."""
 
     word: str
     segment_id: str
@@ -67,11 +79,24 @@ class TokenBoundaryDiff:
 class VerificationSummary:
     """Aggregate statistics for acoustic boundary agreement."""
 
+    #: Which two systems were compared. Recorded so a report can never be misread as a
+    #: system being compared against itself.
+    reference_system_id: str = DEFAULT_REFERENCE_SYSTEM_ID
+    comparison_system_id: str = DEFAULT_COMPARISON_SYSTEM_ID
+
     total_segments: int = 0
+    #: Segments skipped because one of the two systems had no word spans on that record.
+    segments_missing_source: int = 0
     total_tokens_evaluated: int = 0
     devanagari_tokens: int = 0
     latin_tokens: int = 0
     code_switched_tokens: int = 0
+
+    # Coverage: tokens each side offered, and how many found no counterpart.
+    reference_tokens: int = 0
+    comparison_tokens: int = 0
+    unmatched_reference_tokens: int = 0
+    unmatched_comparison_tokens: int = 0
 
     # Agreement tolerances
     within_25ms_count: int = 0
@@ -103,7 +128,11 @@ def align_tokens_dynamic(
     ref_tokens: list[str],
     acoustic_spans: list[WordSpan],
 ) -> list[tuple[str, WordSpan | None]]:
-    """Align reference words with acoustic word spans using Levenshtein distance."""
+    """Align reference words with acoustic word spans using Levenshtein distance.
+
+    Returns exactly one entry per reference token, in reference order. A token with no
+    counterpart is paired with ``None``.
+    """
     n = len(ref_tokens)
     m = len(acoustic_spans)
 
@@ -198,60 +227,76 @@ def project_missing_spans(
     return result
 
 
-def verify_segment_timestamps(
-    segment_id: str,
-    gold_text: str,
-    acoustic_words: list[dict[str, Any]],
-    segment_start: float = 0.0,
-    segment_end: float = 0.0,
-) -> list[TokenBoundaryDiff]:
-    """Cross-verify acoustic word boundaries against ground-truth tokens."""
-    ref_tokens = WORD_TOKEN_RE.findall(gold_text or "")
-    if not ref_tokens or not acoustic_words:
-        return []
-
-    spans = [
+def spans_from_dicts(words: list[dict[str, Any]] | None) -> list[WordSpan]:
+    """Build ``WordSpan``s from exported word dicts, dropping any without both boundaries."""
+    return [
         WordSpan(
             word=str(w.get("word") or ""),
             start=float(w.get("start") or 0.0),
             end=float(w.get("end") or 0.0),
             confidence=w.get("confidence"),
         )
-        for w in acoustic_words
+        for w in (words or [])
         if w.get("start") is not None and w.get("end") is not None
     ]
 
-    if not spans:
+
+def _code_switch_flags(tokens: list[str]) -> list[bool]:
+    """Mark tokens that sit on a script boundary with a neighbour."""
+    tags = ["ne" if DEV_RE.search(t) else "en" for t in tokens]
+    flags = [False] * len(tokens)
+    for k in range(len(tokens)):
+        if (k > 0 and tags[k] != tags[k - 1]) or (k + 1 < len(tags) and tags[k] != tags[k + 1]):
+            flags[k] = True
+    return flags
+
+
+def verify_segment_timestamps(
+    segment_id: str,
+    reference_words: list[dict[str, Any]],
+    comparison_words: list[dict[str, Any]],
+) -> list[TokenBoundaryDiff]:
+    """Cross-verify one segment's word boundaries between two independent timing sources.
+
+    Args:
+        segment_id: Segment the words belong to, carried through onto every diff.
+        reference_words: Word dicts from the system trusted as the boundary reference.
+        comparison_words: Word dicts from the system being measured against it.
+
+    Returns:
+        One ``TokenBoundaryDiff`` per token matched on both sides, in reference order.
+        Tokens appearing on only one side are omitted: they carry no boundary delta.
+    """
+    ref_spans = spans_from_dicts(reference_words)
+    comp_spans = spans_from_dicts(comparison_words)
+    if not ref_spans or not comp_spans:
         return []
 
-    tags = ["ne" if DEV_RE.search(t) else "en" for t in ref_tokens]
-    is_cs = [False] * len(ref_tokens)
-    for k in range(len(ref_tokens)):
-        if (k > 0 and tags[k] != tags[k - 1]) or (k + 1 < len(tags) and tags[k] != tags[k + 1]):
-            is_cs[k] = True
+    ref_tokens = [s.word for s in ref_spans]
+    is_cs = _code_switch_flags(ref_tokens)
 
-    aligned = align_tokens_dynamic(ref_tokens, spans)
+    aligned = align_tokens_dynamic(ref_tokens, comp_spans)
     diffs: list[TokenBoundaryDiff] = []
 
-    for idx, (tok, span) in enumerate(aligned):
-        if span is None:
+    for idx, (tok, comp) in enumerate(aligned):
+        if comp is None:
             continue
 
-        d_start = abs(span.start - spans[min(idx, len(spans) - 1)].start) * 1000.0
-        d_end = abs(span.end - spans[min(idx, len(spans) - 1)].end) * 1000.0
-        max_d = max(d_start, d_end)
+        ref = ref_spans[idx]
+        d_start = abs(ref.start - comp.start) * 1000.0
+        d_end = abs(ref.end - comp.end) * 1000.0
 
         diffs.append(
             TokenBoundaryDiff(
                 word=tok,
                 segment_id=segment_id,
-                ref_start=span.start,
-                ref_end=span.end,
-                comp_start=span.start,
-                comp_end=span.end,
+                ref_start=ref.start,
+                ref_end=ref.end,
+                comp_start=comp.start,
+                comp_end=comp.end,
                 delta_start_ms=round(d_start, 1),
                 delta_end_ms=round(d_end, 1),
-                max_delta_ms=round(max_d, 1),
+                max_delta_ms=round(max(d_start, d_end), 1),
                 is_code_switched=is_cs[idx],
                 is_devanagari=bool(DEV_RE.search(tok)),
             )
@@ -260,39 +305,50 @@ def verify_segment_timestamps(
     return diffs
 
 
+def _words_for_system(hypotheses: list[dict[str, Any]], system_id: str) -> list[dict[str, Any]]:
+    """Word list of the named system, tolerating the ``mock-`` prefix a dry run writes."""
+    accepted = {system_id, f"mock-{system_id}"}
+    for hyp in hypotheses:
+        if hyp.get("system_id") in accepted:
+            return hyp.get("words") or []
+    return []
+
+
 def run_cross_verification_on_records(
     records: list[dict[str, Any]],
     divergence_threshold_ms: float = 200.0,
+    reference_system_id: str = DEFAULT_REFERENCE_SYSTEM_ID,
+    comparison_system_id: str = DEFAULT_COMPARISON_SYSTEM_ID,
 ) -> VerificationSummary:
     """Run full acoustic boundary verification over in-memory export records."""
-    summary = VerificationSummary()
+    summary = VerificationSummary(
+        reference_system_id=reference_system_id,
+        comparison_system_id=comparison_system_id,
+    )
     all_diffs: list[TokenBoundaryDiff] = []
     segment_diffs: dict[str, list[TokenBoundaryDiff]] = {}
 
     for rec in records:
         segment_id = rec.get("segment_id", "unknown")
-        text = rec.get("text", "")
-        duration = float(rec.get("duration_seconds") or 0.0)
-
         hyps = rec.get("hypotheses", [])
-        acoustic_words: list[dict[str, Any]] = []
-        for h in hyps:
-            w_list = h.get("words") or []
-            if w_list:
-                acoustic_words = w_list
-                break
 
-        if not acoustic_words:
+        ref_words = _words_for_system(hyps, reference_system_id)
+        comp_words = _words_for_system(hyps, comparison_system_id)
+        if not ref_words or not comp_words:
+            summary.segments_missing_source += 1
             continue
 
         summary.total_segments += 1
+        summary.reference_tokens += len(ref_words)
+        summary.comparison_tokens += len(comp_words)
+
         diffs = verify_segment_timestamps(
             segment_id=segment_id,
-            gold_text=text,
-            acoustic_words=acoustic_words,
-            segment_start=0.0,
-            segment_end=duration,
+            reference_words=ref_words,
+            comparison_words=comp_words,
         )
+        summary.unmatched_reference_tokens += len(ref_words) - len(diffs)
+        summary.unmatched_comparison_tokens += len(comp_words) - len(diffs)
 
         if diffs:
             all_diffs.extend(diffs)
@@ -357,6 +413,8 @@ def run_cross_verification_on_records(
 def run_cross_verification(
     analytics_jsonl_path: Path,
     divergence_threshold_ms: float = 200.0,
+    reference_system_id: str = DEFAULT_REFERENCE_SYSTEM_ID,
+    comparison_system_id: str = DEFAULT_COMPARISON_SYSTEM_ID,
 ) -> VerificationSummary:
     """Run full acoustic boundary verification over an exported analytics.jsonl."""
     records: list[dict[str, Any]] = []
@@ -366,7 +424,10 @@ def run_cross_verification(
             if line:
                 records.append(json.loads(line))
     return run_cross_verification_on_records(
-        records, divergence_threshold_ms=divergence_threshold_ms
+        records,
+        divergence_threshold_ms=divergence_threshold_ms,
+        reference_system_id=reference_system_id,
+        comparison_system_id=comparison_system_id,
     )
 
 
@@ -378,11 +439,22 @@ def format_verification_report(summary: VerificationSummary) -> str:
         "=" * 72,
         "      ACOUSTIC TIMESTAMP CROSS-VERIFICATION & BOUNDARY GATING REPORT",
         "=" * 72,
+        f"Reference System:          {summary.reference_system_id}",
+        f"Comparison System:         {summary.comparison_system_id}",
         f"Segments Evaluated:        {summary.total_segments}",
-        f"Total Words Aligned:       {summary.total_tokens_evaluated}",
+        f"Segments Skipped:          {summary.segments_missing_source} (a source had no words)",
+        f"Total Words Matched:       {summary.total_tokens_evaluated}",
         f"  • Devanagari (Nepali):   {summary.devanagari_tokens}",
         f"  • Latin (English/Loan):  {summary.latin_tokens}",
         f"  • Code-Switch Boundary:  {summary.code_switched_tokens}",
+        (
+            f"Unmatched (reference):     {summary.unmatched_reference_tokens}"
+            f" of {summary.reference_tokens}"
+        ),
+        (
+            f"Unmatched (comparison):    {summary.unmatched_comparison_tokens}"
+            f" of {summary.comparison_tokens}"
+        ),
         "-" * 72,
         "BOUNDARY AGREEMENT RATES:",
         (
