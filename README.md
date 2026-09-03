@@ -56,9 +56,16 @@ source duration. Ingesting a video is on you as far as its licensing goes; the h
 check.
 
 Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,
-Microsoft MAI-Transcribe 2, and Google Gemini 3.5 Transcribe — so one clip is three calls, billed
+Microsoft MAI-Transcribe 2, and Google Gemini 3.8 Flash — so one clip is three calls, billed
 against your ElevenLabs, OpenRouter, and Google AI Studio balances. All are prepaid, which is why
-those providers are the ones wired up.
+those providers are the ones wired up. Each model hears only the audio; none is shown another's
+transcript, so where they disagree is a measurement rather than an echo.
+
+Word-level timestamps do not all come from the models. Scribe reports its own; Gemini's are
+measured locally by a CTC forced aligner that places its transcript back onto the clip
+(`backend/app/services/forced_align.py`). That model file is ~300 MB and is not committed — build
+it once with `python scripts/export_aligner_onnx.py`. Without it the pipeline still runs, just
+without word spans for that system.
 Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to exercise the
 pipeline without spending anything.
 
@@ -123,7 +130,7 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
 | `OPENROUTER_API_KEY` | OpenRouter key; carries the MAI-Transcribe 2 transcriber |
 | `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
-| `GOOGLE_API_KEY` | Google AI Studio key for Gemini 3.5 Transcribe |
+| `GOOGLE_API_KEY` | Google AI Studio key for Gemini 3.8 Flash |
 
 `ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines
 to serve anonymously. It is a path in YAML because it is not itself a secret; the file it names is,
@@ -135,7 +142,7 @@ Object storage defaults to the local filesystem, so the harness is fully usable 
 
 ```bash
 cd backend
-.venv/bin/python -m pytest              # 496 tests
+.venv/bin/python -m pytest              # 557 tests
 .venv/bin/python -m pytest -m "not db"  # skip the ones that need Postgres
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 cd ../frontend && npm run build         # tsc -b && vite build

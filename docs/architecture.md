@@ -177,7 +177,7 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 |---|---|---|---|---|
 | `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
 | `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne`, the full policy prompt |
-| `asr_gemini_transcribe` | Google AI Studio (direct) | `/v1beta/interactions` | text, word spans | `language: ne`, verbatim mode |
+| `asr_gemini_flash` | Google AI Studio (direct) | `/v1beta/models/…:generateContent` | text only | the full policy prompt, `language: ne` |
 
 The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
 code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
@@ -189,10 +189,15 @@ so it remains the source of the `low_confidence` term. Reordering the routes mov
 measurement to a different model, and it also moves `low_confidence`, because a hypothesis with
 no `avg_logprob` never wins the train/val "highest confidence" comparison.
 
-All three configured models emit verbatim transcriptions with word-level timestamps (decisions D28, D29).
-Ingestion routes each speech clip across all three systems, producing a robust three-way disagreement
-signal during queue prioritization. Scribe is steered by keyterms and language code; MAI-Transcribe 2
-and Gemini 3.5 Transcribe receive language hints and explicit verbatim transcription instructions.
+Ingestion routes each clip across all three systems, producing a three-way disagreement signal for
+queue prioritisation. Each hears only the audio -- no system is ever shown another's transcript,
+which is what keeps their disagreement an independent measurement rather than a correlated one.
+
+The three do not return the same thing. Scribe reports word spans and per-word log probabilities;
+MAI reports text; Gemini 3.8 Flash reports text, and its word spans are measured afterwards by the
+local CTC forced aligner (D31, D32). Gemini is also the one general-purpose model in the set -- it
+obeys the policy prompt, and it may equally editorialise or hallucinate over silence, which is the
+price of the third opinion.
 
 ### Fetching the audio instead of uploading it
 
@@ -236,6 +241,11 @@ behaviour changes, so neither is fixed in passing.
   the other two. The flags survive anyway — the importer recomputes the same rules over the same
   hypotheses — and `avg_logprob` reaches the queue through the seed hypothesis, so the practical
   loss is CMI, which is only ever displayed in the ingest log.
+- **The forced aligner's model file is not in the repository.** It is ~300 MB, against
+  `silero_vad.onnx`'s 2.3 MB, so it is gitignored and built once by
+  `scripts/export_aligner_onnx.py`. Without it, ingestion logs a line and Gemini's hypotheses
+  carry no word spans; nothing else changes, and the boundary report simply finds no comparison
+  source.
 - **Skipping a task audit-logs the wrong old value.** `labeling.skip_task` hard-codes
   `old_values_jsonb={"status": "pending"}`, but any task opened through `/tasks/next` is already
   `in_progress` by then (decision D16). The new value and the action are correct; only the
@@ -247,7 +257,7 @@ Four export kinds, each writing `manifest.json` next to the data:
 
 1. **training** — `train` + `val` splits, approved labels only.
 2. **gold** — `test` split only, retaining `seed_system_id` per segment.
-3. **analytics** — includes word-level fields where hypothesis words were imported, episode metadata (speaker demographics and topic), and automatically generates `timestamp_verification_report.json` measuring word boundary agreement tolerances (<= 25ms, <= 50ms, <= 100ms) and flagging boundary divergence (> 200ms) for human review.
+3. **analytics** — includes word-level fields where hypothesis words were imported, episode metadata (speaker demographics and topic), and automatically generates `timestamp_verification_report.json`. That report compares two independent timing sources — Scribe's own word spans against the forced aligner's spans over Gemini's transcript — on the tokens both agree were said, reporting agreement tolerances (<= 25 ms, <= 50 ms, <= 100 ms) and flagging divergence (> 200 ms) for human review (D33).
 4. **error_mining** — `uncertain` and `unusable_audio` dispositions, for pipeline debugging.
 
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each

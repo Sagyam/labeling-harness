@@ -63,7 +63,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (496 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (557 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -97,8 +97,8 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Gotchas
 
-- Ingestion spends real money: each `asr*` route transcribes every clip, and two are configured,
-  so a clip costs two calls. Use a short audio file, or `dry_run: true` in
+- Ingestion spends real money: each `asr*` route transcribes every clip, and three are configured,
+  so a clip costs three calls. Use a short audio file, or `dry_run: true` in
   `config/llm_routes.yaml`, when exercising the pipeline. The same arithmetic is why
   `ingest.youtube.max_duration_seconds` exists — cost is linear in source duration, so a YouTube
   URL is a bigger footgun than a file the annotator had to download first.
@@ -112,11 +112,20 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   synchronous endpoint, and a batch carrying audio is accepted and *then* terminally fails
   validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR
   route may name one; `test_config.py` enforces it (D22).
-- Only Scribe returns word spans and per-word log probabilities, so it is both the first route and
-  in practice the only source of the `low_confidence` term. Two different hypotheses are in play
-  and they are easy to conflate: the **primary** (first route) is what CMI is measured on, the
-  **seed** (chosen per split at queue build) is what `low_confidence` reads, and rule flags are
-  computed over **all** of them at import. Reordering the routes moves the first two.
+- Only Scribe returns per-word log probabilities, so it is both the first route and in practice the
+  only source of the `low_confidence` term. Two different hypotheses are in play and they are easy
+  to conflate: the **primary** (first route) is what CMI is measured on, the **seed** (chosen per
+  split at queue build) is what `low_confidence` reads, and rule flags are computed over **all** of
+  them at import. Reordering the routes moves the first two.
+- Word spans have two sources and they must not be confused. Scribe *reports* its own; Gemini
+  Flash's are *measured* afterwards by the local CTC aligner in `app/services/forced_align.py`,
+  which is what the `forced_align` flag on a route turns on. Never set that flag on a route that
+  reports its own timings: overwriting Scribe's spans would destroy the independent reference the
+  D27 boundary report compares against, and there is no second source to replace it.
+- The aligner's ONNX model is gitignored (~300 MB) and built by `scripts/export_aligner_onnx.py` in
+  a throwaway venv. `torch` and `transformers` must never enter `backend/pyproject.toml`. A missing
+  model file is a warning and no word spans, never a failed episode -- same contract as
+  `silero_vad.onnx`.
 - The transcribe stage commits per segment on purpose (D20). Do not "tidy" it into one transaction.
 - `/tasks/next` marks the task `in_progress` — that is what makes resume work. A partial unique
   index enforces one active task per segment, so a second one raises `IntegrityError` from the

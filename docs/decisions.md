@@ -303,6 +303,10 @@ Nepali-English conversational speech.
 Existing hypotheses in `asr_hypotheses` recorded under `gemini-3.8-flash` remain immutable.
 
 ## D29 — Add Google AI Studio as third ASR provider with Gemini 3.5 Transcribe
+**Superseded by D31.** The model was right about code-switching and wrong about quota: its
+Live API tier allows 100 requests a day, about four hours of audio. Google AI Studio remains
+the third provider; the model and endpoint changed.
+
 Google AI Studio is admitted as the third cloud inference provider alongside OpenRouter and ElevenLabs,
 wiring `gemini-3.5-transcribe` (`asr_gemini_transcribe`) as a third cloud ASR route.
 
@@ -317,6 +321,10 @@ The provider adheres to Invariant 5 (prepaid provider guarantee) under monitored
 Existing hypotheses under `gemini-3.5-transcribe` remain immutable in `asr_hypotheses`.
 
 ## D30 — VAD-aligned macro-windowing and demultiplexing for Gemini Transcribe under Tier 1 quotas
+**Superseded by D31.** Removed with the model whose quota it existed to work around. Kept
+here because the arithmetic is worth remembering: a per-clip transcriber against a 100 RPD
+cap exhausts a day's quota in about fifteen minutes of audio.
+
 Google AI Studio Tier 1 restricts Live API models (`gemini-3.5-transcribe`) to 10 RPM, 10K TPM, and
 100 RPD (requests per day). Calling Gemini per-clip on 2s–20s utterances exhausts the daily quota after
 only ~15 minutes of audio, while ElevenLabs Scribe v2 and Microsoft MAI-Transcribe 2 have no 100 RPD
@@ -339,6 +347,106 @@ cap and operate best on short clips.
 **Reversal:** Remove the window clustering and demultiplexing block from `app/services/ingest.py` to restore
 direct per-clip dispatch for all routes if quota limits are lifted in higher tiers.
 
+## D31 — Gemini 3.8 Flash on AI Studio generateContent, audio only
+`asr_gemini_transcribe` (`gemini-3.5-transcribe`, `POST /v1beta/interactions`) is replaced by
+`asr_gemini_flash` (`gemini-3.8-flash`, `POST /v1beta/models/{model}:generateContent`), declared
+`api: audio_chat` and carrying the clip inline. Google AI Studio remains the third provider and
+`GOOGLE_API_KEY` is unchanged.
 
+**Why:** the Live API's Tier 1 quota is 10 RPM / 10K TPM / **100 RPD** — roughly four hours of
+audio a day. Every hack in D30 existed to survive that number. `generateContent` has no daily cap
+of that shape, so the clip goes out per segment on the same thread pool as every other route, and
+the windowing, the demuxing and the ten-second pacing sleep all go away.
 
+Two consequences, both deliberate:
 
+- **The corpus prompt applies for the first time.** `transcription.py` accepted a `prompt` and
+  dropped it on the google branch. That was invisible because the Live API's transcription model
+  took no free-text prompt anyway — so the transcript policy had never once been stated to this
+  provider. `generateContent` obeys one, and a test now guards it. The route's `language` code
+  rides on the prompt, as `generateContent` has no parameter for one.
+- **The model is no longer asked for word timestamps**, and `AsrResult.words` is `None` on every
+  real call. Spans come from the forced aligner instead (D32). This is the trade: an endpoint with
+  no daily cap, in exchange for timings measured locally rather than claimed by the model.
+
+The route is `audio_chat` rather than `transcription` because that is what it is — `config.py`
+already documents that shape as "a general LLM being asked to transcribe, [which] may also
+editorialise or hallucinate over silence". Naming it so keeps the risk in configuration instead of
+buried in a client. It also means Flash reports no `avg_logprob` and can never win the seed
+comparison, exactly as its predecessor could not.
+
+It is given **only the audio** — never the other two hypotheses. Feeding it Scribe's and MAI's
+transcripts to reconcile would have been cheaper and would have produced a better single
+transcript, but it would collapse three independent opinions into one correlated output, and
+`word_disagreement_rate` carries 0.40 of the priority score. A queue built on an echo is worse than
+a queue built on a noisier but genuine measurement. It also caps the blast radius of a
+hallucination at one hypothesis out of three.
+
+**Reversal:** restore the `/interactions` payload in `app/llm/google.py` and the route block in
+`config/llm_routes.yaml`. The D30 windowing would have to come back with it; see the git history
+at `eda3562`.
+
+## D32 — Word timestamps from a local CTC forced aligner, not from the model
+`app/services/forced_align.py` places a known transcript back onto its own clip and reports where
+each word starts and ends. Routes opt in with `forced_align: true`; today only `asr_gemini_flash`
+does.
+
+**Why:** forced alignment never chooses words. Given audio and the exact text that was said, it
+finds the most likely monotonic placement of that text onto the waveform. That decouples *which
+words were said* from *when they were said*, and the two questions have different best answers: a
+model may be excellent at the first and unable to report the second. Once they are separate, a
+transcriber returning no timestamps is no longer disqualified, and D33's boundary check gains a
+timing source that is not another cloud vendor.
+
+The acoustic model is a romanizing multilingual CTC head (`facebook/mms-300m-1130-forced-aligner`
+is the reference). Every script folds into one Latin label set before alignment, which is the only
+arrangement that handles Devanagari and Latin *inside a single utterance*. A monolingual English
+head cannot place the majority of this corpus's tokens — the last report counted 2219 Devanagari
+against 1223 Latin.
+
+Runtime is `onnxruntime`, already a dependency, with the trellis and backtrace in numpy. **No torch
+enters the service.** The pattern is `silero_vad.py` verbatim: one CPU-pinned session, and a
+warning rather than an exception when the model is absent, so a missing optional artefact costs
+word spans instead of failing an episode. Spans are clip-relative by construction, satisfying D26 —
+the aligner only ever sees the clip.
+
+Two known soft spots, both cheap to revisit:
+
+- **The model file is ~300 MB** and cannot be committed the way the 2.3 MB `silero_vad.onnx` was.
+  It is gitignored and built once by `scripts/export_aligner_onnx.py`, which needs `torch` and
+  `transformers` in a throwaway venv.
+- **Romanization is approximate.** MMS-FA was trained against `uroman` output; the first
+  implementation uses `indic-transliteration`'s Harvard-Kyoto scheme, already a dependency, folded
+  to the label alphabet. The measurement that decides whether that is good enough is D33's report:
+  a large gap between `rate_within_50ms_devanagari` and `rate_within_50ms_latin` means the
+  romanization is the problem, and the fix is to add the pure-Python `uroman` package behind the
+  same one-function seam.
+
+**Reversal:** set `forced_align: false` on the route. Hypotheses keep their text and lose their
+spans; nothing else reads them.
+
+## D33 — The word boundary report compares two sources, because it previously compared one
+`verify_segment_timestamps` took a gold text and one word list, and computed its delta as
+`abs(span.start - spans[idx].start)` — where `span` was itself an element of `spans`. Both sides of
+every comparison were the same object; `TokenBoundaryDiff` set `ref_start == comp_start`. Whenever
+the alignment was one-to-one the delta was exactly 0.0, and a non-zero value meant only that an
+insertion had shifted an index.
+
+`reports/timestamp_verification_report.json` carries the signature of it: `within_25ms_count` and
+`within_50ms_count` are both `2620`, identical, because the deltas were bimodal — exactly 0 or
+large, never in between. Its headline `rate_within_25ms: 76.12` was the share of tokens that
+aligned at the same index, not the share of boundaries that agreed within 25 ms. **That file
+predates this fix and its numbers mean nothing.**
+
+The root cause was structural rather than a slip: only Scribe returned word spans, so there was no
+second source in the corpus to compare against, and the function was written as though one list
+could verify itself. The aligner (D32) supplies the missing one.
+
+The function now takes two word lists, matches them with the existing `align_tokens_dynamic`, and
+scores only pairs matched on both sides — two systems that disagree about *which word was said*
+have no meaningful boundary delta between them. Tokens on one side only are counted as coverage,
+not as agreement. `run_cross_verification_on_records` selects its two sides by `system_id` rather
+than taking whichever hypothesis happened to carry words first, and the summary now records both
+ids so a report can never again be read as a system compared against itself.
+
+**Reversal:** none worth having. The previous behaviour was a defect, not a design.
