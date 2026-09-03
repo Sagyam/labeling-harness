@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import shutil
@@ -62,6 +63,9 @@ class YouTubeIngestIn(YouTubeProbeIn):
     episode_title: str = ""
     show_id: str = "podcast"
     episode_id: str = ""
+    genre: str = ""
+    topic: str = ""
+    speakers_json: str = ""
 
 
 class YouTubeProbeOut(BaseModel):
@@ -155,12 +159,22 @@ async def start_youtube_ingestion(
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    metadata: dict[str, Any] = {}
+    if body.genre.strip():
+        metadata["genre"] = body.genre.strip()
+    if body.topic.strip():
+        metadata["topic"] = body.topic.strip()
+    if body.speakers_json.strip():
+        with contextlib.suppress(Exception):
+            metadata["speakers"] = json.loads(body.speakers_json)
+
     job = manager.create_job(
         episode_id=final_episode_id,
         show_id=body.show_id.strip() or "podcast",
         title=title,
         work_dir=work_dir,
         source_url=canonical_url(body.url),
+        metadata=metadata,
     )
 
     worker = threading.Thread(
@@ -192,6 +206,9 @@ async def start_ingestion(
     episode_title: str = Form(...),
     show_id: str = Form("podcast"),
     episode_id: str = Form(""),
+    genre: str = Form(""),
+    topic: str = Form(""),
+    speakers_json: str = Form(""),
     settings: Settings = Depends(get_config),
     storage: ObjectStorage = Depends(get_object_storage),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
@@ -223,12 +240,22 @@ async def start_ingestion(
     with open(dest_audio_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
+    metadata: dict[str, Any] = {}
+    if genre.strip():
+        metadata["genre"] = genre.strip()
+    if topic.strip():
+        metadata["topic"] = topic.strip()
+    if speakers_json.strip():
+        with contextlib.suppress(Exception):
+            metadata["speakers"] = json.loads(speakers_json)
+
     job = manager.create_job(
         episode_id=final_episode_id,
         show_id=show_id.strip() or "podcast",
         title=episode_title.strip(),
         work_dir=work_dir,
         audio_path=dest_audio_path,
+        metadata=metadata,
     )
 
     # Launch background thread

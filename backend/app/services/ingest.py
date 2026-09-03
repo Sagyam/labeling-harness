@@ -121,6 +121,7 @@ class IngestJob:
     error: str | None = None
     created_at: float = field(default_factory=time.time)
     logs: list[IngestLog] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     #: Each SSE subscriber registers its queue together with the loop that queue belongs to; the
     #: pipeline runs on a worker thread and must hand work back across that boundary.
     listeners: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = field(
@@ -205,6 +206,7 @@ class IngestionManager:
         work_dir: Path,
         audio_path: Path | None = None,
         source_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> IngestJob:
         job_id = str(uuid.uuid4())
         job = IngestJob(
@@ -215,6 +217,7 @@ class IngestionManager:
             audio_path=audio_path,
             work_dir=work_dir,
             source_url=source_url,
+            metadata=metadata or {},
         )
         self._jobs[job_id] = job
         self._evict_finished()
@@ -562,6 +565,8 @@ def _run_stages(
                         "scores": {
                             "cmi": analysis.cmi,
                             "code_switch_density": analysis.code_switch_density,
+                            "switch_point_count": analysis.switch_point_count,
+                            "discourse_marker_count": analysis.discourse_marker_count,
                             "word_disagreement_rate": word_disagreement_rate,
                             "cer_between_hypotheses": cer_between_hyps,
                             "avg_logprob": primary_hyp["avg_logprob"],
@@ -606,6 +611,7 @@ def _run_stages(
             "source_audio_checksum": source_checksum,
             "pipeline_version": "web_v1",
             "pipeline_commit": "web",
+            **(job.metadata or {}),
         }
 
         # Write episode.json

@@ -1,0 +1,657 @@
+{
+  "total_segments": 96,
+  "total_tokens_evaluated": 3442,
+  "devanagari_tokens": 2219,
+  "latin_tokens": 1223,
+  "code_switched_tokens": 1639,
+  "within_25ms_count": 2620,
+  "within_50ms_count": 2620,
+  "within_100ms_count": 2626,
+  "within_200ms_count": 2711,
+  "rate_within_25ms": 76.12,
+  "rate_within_50ms": 76.12,
+  "rate_within_100ms": 76.29,
+  "rate_within_200ms": 78.76,
+  "mae_start_ms": 107.13,
+  "mae_end_ms": 109.49,
+  "mae_overall_ms": 127.98,
+  "rate_within_50ms_devanagari": 75.62,
+  "rate_within_50ms_latin": 77.02,
+  "rate_within_50ms_code_switch": 74.68,
+  "flagged_segments": [
+    {
+      "segment_id": "phone_review_00001",
+      "divergent_token_count": 19,
+      "total_tokens": 54,
+      "divergence_ratio": 0.352,
+      "max_delta_ms": 600.0,
+      "flagged_words": [
+        "भने",
+        "Redmi",
+        "Seventeen",
+        "5G",
+        "को"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00010",
+      "divergent_token_count": 29,
+      "total_tokens": 67,
+      "divergence_ratio": 0.433,
+      "max_delta_ms": 840.0,
+      "flagged_words": [
+        "feel",
+        "पनि",
+        "very",
+        "similar",
+        "यो"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00011",
+      "divergent_token_count": 21,
+      "total_tokens": 60,
+      "divergence_ratio": 0.35,
+      "max_delta_ms": 1059.0,
+      "flagged_words": [
+        "inches",
+        "को",
+        "IPS",
+        "LCD",
+        "screen"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00012",
+      "divergent_token_count": 16,
+      "total_tokens": 56,
+      "divergence_ratio": 0.286,
+      "max_delta_ms": 1100.0,
+      "flagged_words": [
+        "पनि",
+        "तपाईँले",
+        "HD",
+        "screen",
+        "मात्र"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00015",
+      "divergent_token_count": 57,
+      "total_tokens": 66,
+      "divergence_ratio": 0.864,
+      "max_delta_ms": 1020.0,
+      "flagged_words": [
+        "मलाई",
+        "त्यस्तो",
+        "ठुलो",
+        "difference",
+        "चैँ"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00017",
+      "divergent_token_count": 13,
+      "total_tokens": 52,
+      "divergence_ratio": 0.25,
+      "max_delta_ms": 700.0,
+      "flagged_words": [
+        "Subway",
+        "Surfer",
+        "Temple",
+        "चाहिँ",
+        "चल्छ।"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00021",
+      "divergent_token_count": 9,
+      "total_tokens": 54,
+      "divergence_ratio": 0.167,
+      "max_delta_ms": 861.0,
+      "flagged_words": [
+        "चैँ",
+        "हल्का",
+        "different",
+        "लाग्यो",
+        "हामीलाई।"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00026",
+      "divergent_token_count": 3,
+      "total_tokens": 58,
+      "divergence_ratio": 0.052,
+      "max_delta_ms": 640.0,
+      "flagged_words": [
+        "आइसकेका",
+        "छौं",
+        "र"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00029",
+      "divergent_token_count": 5,
+      "total_tokens": 25,
+      "divergence_ratio": 0.2,
+      "max_delta_ms": 859.0,
+      "flagged_words": [
+        "यदि",
+        "हजार",
+        "छ",
+        "एउटा",
+        "नकिनेर"
+      ]
+    },
+    {
+      "segment_id": "phone_review_00030",
+      "divergent_token_count": 30,
+      "total_tokens": 50,
+      "divergence_ratio": 0.6,
+      "max_delta_ms": 780.0,
+      "flagged_words": [
+        "हजार",
+        "रुपियाँको",
+        "अब",
+        "premium",
+        "mid"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00000",
+      "divergent_token_count": 1,
+      "total_tokens": 8,
+      "divergence_ratio": 0.125,
+      "max_delta_ms": 440.0,
+      "flagged_words": [
+        "strong"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00002",
+      "divergent_token_count": 6,
+      "total_tokens": 14,
+      "divergence_ratio": 0.429,
+      "max_delta_ms": 1020.0,
+      "flagged_words": [
+        "okay",
+        "सय",
+        "पचास",
+        "सानो",
+        "पुन्टेको"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00005",
+      "divergent_token_count": 10,
+      "total_tokens": 14,
+      "divergence_ratio": 0.714,
+      "max_delta_ms": 920.0,
+      "flagged_words": [
+        "rupees",
+        "excise",
+        "per",
+        "litre",
+        "है"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00006",
+      "divergent_token_count": 4,
+      "total_tokens": 11,
+      "divergence_ratio": 0.364,
+      "max_delta_ms": 660.0,
+      "flagged_words": [
+        "सबै",
+        "जोडेर",
+        "जोड्छ",
+        "tax"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00008",
+      "divergent_token_count": 29,
+      "total_tokens": 45,
+      "divergence_ratio": 0.644,
+      "max_delta_ms": 1500.0,
+      "flagged_words": [
+        "margin",
+        "त्यसपछि",
+        "अनि",
+        "हाम्रो",
+        "four"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00009",
+      "divergent_token_count": 12,
+      "total_tokens": 27,
+      "divergence_ratio": 0.444,
+      "max_delta_ms": 1401.0,
+      "flagged_words": [
+        "हाम्रो",
+        "नेपाली",
+        "जनताको",
+        "income",
+        "to"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00010",
+      "divergent_token_count": 2,
+      "total_tokens": 11,
+      "divergence_ratio": 0.182,
+      "max_delta_ms": 1520.0,
+      "flagged_words": [
+        "East",
+        "सस्तो"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00011",
+      "divergent_token_count": 20,
+      "total_tokens": 50,
+      "divergence_ratio": 0.4,
+      "max_delta_ms": 1160.0,
+      "flagged_words": [
+        "छ",
+        "त",
+        "वर्षभन्दा",
+        "अगाडि",
+        "या"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00012",
+      "divergent_token_count": 25,
+      "total_tokens": 43,
+      "divergence_ratio": 0.581,
+      "max_delta_ms": 1760.0,
+      "flagged_words": [
+        "राख्न",
+        "तर",
+        "मान्छेको",
+        "आय",
+        "स्रोत"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00016",
+      "divergent_token_count": 17,
+      "total_tokens": 28,
+      "divergence_ratio": 0.607,
+      "max_delta_ms": 2460.0,
+      "flagged_words": [
+        "सरकारले",
+        "बिस्तारै",
+        "गर्दै",
+        "नि",
+        "you"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00017",
+      "divergent_token_count": 25,
+      "total_tokens": 31,
+      "divergence_ratio": 0.806,
+      "max_delta_ms": 1739.0,
+      "flagged_words": [
+        "थियो।",
+        "ल",
+        "है",
+        "जहाँ",
+        "चाहिँ"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00018",
+      "divergent_token_count": 15,
+      "total_tokens": 29,
+      "divergence_ratio": 0.517,
+      "max_delta_ms": 1340.0,
+      "flagged_words": [
+        "भन",
+        "न",
+        "के",
+        "भयो",
+        "अब"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00020",
+      "divergent_token_count": 9,
+      "total_tokens": 21,
+      "divergence_ratio": 0.429,
+      "max_delta_ms": 2059.0,
+      "flagged_words": [
+        "अनि",
+        "नै",
+        "हेप्ने",
+        "छ",
+        "क्या।"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00021",
+      "divergent_token_count": 2,
+      "total_tokens": 5,
+      "divergence_ratio": 0.4,
+      "max_delta_ms": 320.0,
+      "flagged_words": [
+        "यो",
+        "industry"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00022",
+      "divergent_token_count": 4,
+      "total_tokens": 20,
+      "divergence_ratio": 0.2,
+      "max_delta_ms": 1020.0,
+      "flagged_words": [
+        "एकदम",
+        "एकदम",
+        "एकदम",
+        "यो"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00025",
+      "divergent_token_count": 22,
+      "total_tokens": 26,
+      "divergence_ratio": 0.846,
+      "max_delta_ms": 1181.0,
+      "flagged_words": [
+        "एक",
+        "मात्रै",
+        "होला",
+        "सरकारले",
+        "tax"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00027",
+      "divergent_token_count": 8,
+      "total_tokens": 16,
+      "divergence_ratio": 0.5,
+      "max_delta_ms": 740.0,
+      "flagged_words": [
+        "अब",
+        "तिमीले",
+        "अहिले",
+        "अहिले",
+        "restaurant"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00029",
+      "divergent_token_count": 28,
+      "total_tokens": 62,
+      "divergence_ratio": 0.452,
+      "max_delta_ms": 1179.0,
+      "flagged_words": [
+        "हैन",
+        "हजार",
+        "रुपेमा",
+        "यो",
+        "restaurant"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00030",
+      "divergent_token_count": 30,
+      "total_tokens": 53,
+      "divergence_ratio": 0.566,
+      "max_delta_ms": 1360.0,
+      "flagged_words": [
+        "के",
+        "गर्यो",
+        "होला",
+        "म",
+        "हामी"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00032",
+      "divergent_token_count": 16,
+      "total_tokens": 35,
+      "divergence_ratio": 0.457,
+      "max_delta_ms": 1640.0,
+      "flagged_words": [
+        "खोलेछ।",
+        "Uh",
+        "so",
+        "रक्सी",
+        "मात्रै"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00033",
+      "divergent_token_count": 10,
+      "total_tokens": 24,
+      "divergence_ratio": 0.417,
+      "max_delta_ms": 861.0,
+      "flagged_words": [
+        "metropolitan",
+        "मा",
+        "अब",
+        "rent",
+        "मार्छ"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00034",
+      "divergent_token_count": 6,
+      "total_tokens": 10,
+      "divergence_ratio": 0.6,
+      "max_delta_ms": 1260.0,
+      "flagged_words": [
+        "this",
+        "doesn't",
+        "make",
+        "sense",
+        "me"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00035",
+      "divergent_token_count": 35,
+      "total_tokens": 49,
+      "divergence_ratio": 0.714,
+      "max_delta_ms": 1040.0,
+      "flagged_words": [
+        "cap",
+        "गर्दिन्छ",
+        "price",
+        "हरूदेखि",
+        "लिएर।"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00038",
+      "divergent_token_count": 13,
+      "total_tokens": 15,
+      "divergence_ratio": 0.867,
+      "max_delta_ms": 1680.0,
+      "flagged_words": [
+        "त",
+        "अहिले",
+        "मान्छेले",
+        "पहिला",
+        "त"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00040",
+      "divergent_token_count": 11,
+      "total_tokens": 13,
+      "divergence_ratio": 0.846,
+      "max_delta_ms": 1080.0,
+      "flagged_words": [
+        "same",
+        "यही",
+        "हो",
+        "हैन",
+        "यो"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00042",
+      "divergent_token_count": 2,
+      "total_tokens": 20,
+      "divergence_ratio": 0.1,
+      "max_delta_ms": 460.0,
+      "flagged_words": [
+        "not",
+        "capitalism"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00046",
+      "divergent_token_count": 41,
+      "total_tokens": 44,
+      "divergence_ratio": 0.932,
+      "max_delta_ms": 1620.0,
+      "flagged_words": [
+        "आएर",
+        "नयाँ",
+        "launch",
+        "गर्न",
+        "गाह्रो"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00047",
+      "divergent_token_count": 11,
+      "total_tokens": 18,
+      "divergence_ratio": 0.611,
+      "max_delta_ms": 860.0,
+      "flagged_words": [
+        "अनि",
+        "like",
+        "the",
+        "choices",
+        "choice"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00049",
+      "divergent_token_count": 15,
+      "total_tokens": 26,
+      "divergence_ratio": 0.577,
+      "max_delta_ms": 1060.0,
+      "flagged_words": [
+        "एकदमै",
+        "भइराछ",
+        "के",
+        "अहिले।",
+        "हैन"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00054",
+      "divergent_token_count": 9,
+      "total_tokens": 37,
+      "divergence_ratio": 0.243,
+      "max_delta_ms": 840.0,
+      "flagged_words": [
+        "like",
+        "Ncell",
+        "र",
+        "NTC",
+        "मात्रै"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00055",
+      "divergent_token_count": 13,
+      "total_tokens": 25,
+      "divergence_ratio": 0.52,
+      "max_delta_ms": 1819.0,
+      "flagged_words": [
+        "जब",
+        "competition",
+        "हुन्छ",
+        "जति",
+        "धेरै"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00057",
+      "divergent_token_count": 21,
+      "total_tokens": 49,
+      "divergence_ratio": 0.429,
+      "max_delta_ms": 920.0,
+      "flagged_words": [
+        "ल्याउने",
+        "भनेर",
+        "त्यो",
+        "high",
+        "time"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00058",
+      "divergent_token_count": 29,
+      "total_tokens": 33,
+      "divergence_ratio": 0.879,
+      "max_delta_ms": 980.0,
+      "flagged_words": [
+        "सबै",
+        "Then",
+        "Ncell",
+        "came",
+        "into"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00059",
+      "divergent_token_count": 14,
+      "total_tokens": 37,
+      "divergence_ratio": 0.378,
+      "max_delta_ms": 1240.0,
+      "flagged_words": [
+        "package",
+        "के",
+        "data",
+        "के",
+        "के"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00061",
+      "divergent_token_count": 2,
+      "total_tokens": 7,
+      "divergence_ratio": 0.286,
+      "max_delta_ms": 399.0,
+      "flagged_words": [
+        "हामीले",
+        "choices"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00062",
+      "divergent_token_count": 1,
+      "total_tokens": 16,
+      "divergence_ratio": 0.062,
+      "max_delta_ms": 239.0,
+      "flagged_words": [
+        "हैन"
+      ]
+    },
+    {
+      "segment_id": "why_is_beer_so_expensive_in_nepal_kusang_00063",
+      "divergent_token_count": 11,
+      "total_tokens": 15,
+      "divergence_ratio": 0.733,
+      "max_delta_ms": 860.0,
+      "flagged_words": [
+        "पनि",
+        "अर्को",
+        "dimension",
+        "मा",
+        "ल्याइने"
+      ]
+    }
+  ]
+}

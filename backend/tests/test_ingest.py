@@ -200,6 +200,14 @@ def test_analyze_transcript_calculates_cmi_and_flags() -> None:
     assert res.latin_count == 2
     assert res.cmi == 40.0  # 100 * (5 - 3) / 5
     assert res.code_switch_density == 0.4
+    assert res.switch_point_count == 2
+    assert res.discourse_marker_count == 0
+
+    # With discourse marker
+    text_with_dm = "So हामीले project meeting गर्नु पर्छ"
+    res_dm = analyze_transcript(text_with_dm, duration_seconds=4.0)
+    assert res_dm.switch_point_count == 3
+    assert res_dm.discourse_marker_count == 1
 
 
 # --- Stage 5: End-to-End Pipeline Execution ---------------------------------------------

@@ -268,6 +268,9 @@ export interface YouTubeIngestIn {
   episode_title?: string
   show_id?: string
   episode_id?: string
+  genre?: string
+  topic?: string
+  speakers_json?: string
 }
 
 export interface EpisodeSummary {

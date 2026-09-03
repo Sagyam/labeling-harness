@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
+  RiArrowDownSLine,
+  RiArrowRightSLine,
   RiCheckLine,
   RiErrorWarningLine,
   RiFileMusicLine,
   RiUploadCloud2Line,
+  RiUserVoiceLine,
   RiYoutubeLine,
 } from '@remixicon/react'
 import { toast } from 'sonner'
@@ -96,6 +99,38 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
   const [isProbing, setIsProbing] = useState<boolean>(false)
   const [probeError, setProbeError] = useState<string | null>(null)
 
+  // Sociolinguistic metadata state
+  const [showSociolinguistics, setShowSociolinguistics] = useState<boolean>(false)
+  const [genre, setGenre] = useState<string>('podcast')
+  const [topic, setTopic] = useState<string>('')
+  const [spk0Name, setSpk0Name] = useState<string>('')
+  const [spk0Gender, setSpk0Gender] = useState<string>('')
+  const [spk0Origin, setSpk0Origin] = useState<string>('')
+  const [spk1Name, setSpk1Name] = useState<string>('')
+  const [spk1Gender, setSpk1Gender] = useState<string>('')
+  const [spk1Origin, setSpk1Origin] = useState<string>('')
+
+  const buildSpeakersJson = () => {
+    const speakers: Record<string, any> = {}
+    if (spk0Name.trim() || spk0Gender || spk0Origin.trim()) {
+      speakers['spk0'] = {
+        name: spk0Name.trim() || 'Host',
+        role: 'host',
+        gender: spk0Gender || undefined,
+        origin: spk0Origin.trim() || undefined,
+      }
+    }
+    if (spk1Name.trim() || spk1Gender || spk1Origin.trim()) {
+      speakers['spk1'] = {
+        name: spk1Name.trim() || 'Guest',
+        role: 'guest',
+        gender: spk1Gender || undefined,
+        origin: spk1Origin.trim() || undefined,
+      }
+    }
+    return Object.keys(speakers).length > 0 ? JSON.stringify(speakers) : ''
+  }
+
   // Execution state
   const [jobId, setJobId] = useState<string | null>(null)
   const [jobSource, setJobSource] = useState<SourceTab>('file')
@@ -157,6 +192,9 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
     formData.append('episode_title', episodeTitle.trim())
     formData.append('show_id', showId.trim() || 'podcast')
     formData.append('episode_id', episodeId.trim())
+    formData.append('genre', genre.trim())
+    formData.append('topic', topic.trim())
+    formData.append('speakers_json', buildSpeakersJson())
 
     try {
       const res = await api.startIngest(formData)
@@ -185,6 +223,9 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
         episode_title: episodeTitle.trim(),
         show_id: showId.trim() || 'podcast',
         episode_id: episodeId.trim(),
+        genre: genre.trim(),
+        topic: topic.trim(),
+        speakers_json: buildSpeakersJson(),
       })
       setJobSource('youtube')
       setJobId(res.job_id)
@@ -312,6 +353,15 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
     probedTitleRef.current = ''
     setEpisodeTitle('')
     setEpisodeId('')
+    setGenre('podcast')
+    setTopic('')
+    setSpk0Name('')
+    setSpk0Gender('')
+    setSpk0Origin('')
+    setSpk1Name('')
+    setSpk1Gender('')
+    setSpk1Origin('')
+    setShowSociolinguistics(false)
     setLogs([])
     setCompletedSummary(null)
     onClose()
@@ -535,6 +585,110 @@ export function IngestModal({ isOpen, onClose, onComplete }: IngestModalProps) {
                       onChange={(e) => setEpisodeId(e.target.value)}
                     />
                   </Field>
+                </div>
+
+                {/* Sociolinguistics & Speaker Metadata Toggle */}
+                <div className="rounded-lg border bg-card p-3">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowSociolinguistics((prev) => !prev)}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <RiUserVoiceLine className="size-4 text-primary" />
+                      Speaker Demographics &amp; Topic (Sociolinguistics · Optional)
+                    </span>
+                    {showSociolinguistics ? (
+                      <RiArrowDownSLine className="size-4" />
+                    ) : (
+                      <RiArrowRightSLine className="size-4" />
+                    )}
+                  </button>
+
+                  {showSociolinguistics && (
+                    <div className="mt-3 flex flex-col gap-3.5 border-t pt-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field>
+                          <FieldLabel htmlFor="genre">Genre / Category</FieldLabel>
+                          <Input
+                            id="genre"
+                            placeholder="e.g. podcast_interview, tech_review"
+                            value={genre}
+                            onChange={(e) => setGenre(e.target.value)}
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="topic">Topic / Domain</FieldLabel>
+                          <Input
+                            id="topic"
+                            placeholder="e.g. tech_gadgets, business, lifestyle"
+                            value={topic}
+                            onChange={(e) => setTopic(e.target.value)}
+                          />
+                        </Field>
+                      </div>
+
+                      {/* Speaker 0 (Host) */}
+                      <div className="rounded border bg-muted/20 p-2.5">
+                        <div className="mb-2 text-xs font-medium text-foreground">
+                          Speaker 0 (Host / Primary)
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <Input
+                            placeholder="Name (e.g. Sushant)"
+                            value={spk0Name}
+                            onChange={(e) => setSpk0Name(e.target.value)}
+                          />
+                          <select
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            value={spk0Gender}
+                            onChange={(e) => setSpk0Gender(e.target.value)}
+                          >
+                            <option value="">Gender (optional)</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="non_binary">Non-binary</option>
+                            <option value="other">Other</option>
+                          </select>
+                          <Input
+                            placeholder="Dialect / Origin (e.g. Kathmandu)"
+                            value={spk0Origin}
+                            onChange={(e) => setSpk0Origin(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Speaker 1 (Guest) */}
+                      <div className="rounded border bg-muted/20 p-2.5">
+                        <div className="mb-2 text-xs font-medium text-foreground">
+                          Speaker 1 (Guest / Secondary)
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <Input
+                            placeholder="Name (e.g. Kusang)"
+                            value={spk1Name}
+                            onChange={(e) => setSpk1Name(e.target.value)}
+                          />
+                          <select
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            value={spk1Gender}
+                            onChange={(e) => setSpk1Gender(e.target.value)}
+                          >
+                            <option value="">Gender (optional)</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="non_binary">Non-binary</option>
+                            <option value="other">Other</option>
+                          </select>
+                          <Input
+                            placeholder="Dialect / Origin (e.g. Kathmandu)"
+                            value={spk1Origin}
+                            onChange={(e) => setSpk1Origin(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

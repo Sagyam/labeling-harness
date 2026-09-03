@@ -20,6 +20,29 @@ DEV_RE = re.compile(r"[\u0900-\u097F]")
 TOK_RE = re.compile(r"[A-Za-z']+|[\u0900-\u097F]+|\d+")
 
 
+DISCOURSE_MARKERS: frozenset[str] = frozenset(
+    {
+        "so",
+        "actually",
+        "basically",
+        "like",
+        "literally",
+        "anyway",
+        "anyhow",
+        "meanwhile",
+        "well",
+        "yeah",
+        "yes",
+        "no",
+        "okay",
+        "ok",
+        "right",
+        "fine",
+        "see",
+    }
+)
+
+
 @dataclass(frozen=True)
 class TokenAnalysisResult:
     """Outcome of token tagging and code-mixing analysis on a transcript."""
@@ -30,6 +53,8 @@ class TokenAnalysisResult:
     cmi: float
     code_switch_density: float
     flags: list[str]
+    switch_point_count: int = 0
+    discourse_marker_count: int = 0
 
 
 def analyze_transcript(
@@ -73,6 +98,9 @@ def analyze_transcript(
 
     csd = min(1.0, max(0.0, cmi / 100.0))
 
+    switch_points = sum(1 for i in range(1, len(tags)) if tags[i] != tags[i - 1])
+    dm_count = sum(1 for tok in tokens if tok.lower() in DISCOURSE_MARKERS)
+
     flags = compute_flags(
         duration_seconds=duration_seconds,
         hypotheses=[FlagHypothesis(text=text, no_speech_prob=no_speech_prob)],
@@ -86,4 +114,6 @@ def analyze_transcript(
         cmi=cmi,
         code_switch_density=csd,
         flags=flags,
+        switch_point_count=switch_points,
+        discourse_marker_count=dm_count,
     )

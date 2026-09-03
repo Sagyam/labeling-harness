@@ -17,7 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -174,6 +174,7 @@ def _record(
         record["p_en"] = segment.p_en
         record["lid"] = segment.lid
         record["notes"] = label.notes
+        record["episode_metadata"] = segment.episode.metadata_jsonb
         record["scores"] = (
             {
                 "cer_between_hypotheses": segment.scores.cer_between_hypotheses,
@@ -332,6 +333,20 @@ def export_dataset(
         json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+    if kind == "analytics" and records:
+        try:
+            from app.services.alignment import run_cross_verification_on_records
+
+            verif_summary = run_cross_verification_on_records(records)
+            verif_path = output_dir / "timestamp_verification_report.json"
+            verif_path.write_text(
+                json.dumps(asdict(verif_summary), indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            logger.info("timestamp_verification_report_written", path=str(verif_path))
+        except Exception as exc:
+            logger.warning("timestamp_verification_failed", error=str(exc))
 
     logger.info("export_complete", kind=kind, rows=len(records), directory=str(output_dir))
     return ExportResult(
