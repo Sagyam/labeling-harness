@@ -11,6 +11,8 @@ time. What you approve becomes a versioned, reproducible dataset.
 It does not train models, manage users, or serve more than one annotator. It is built for one fast
 human.
 
+![Ingestion pipeline: upload or YouTube URL, normalize, VAD segment, transcribe with every cloud ASR route, analyse, import and build the queue](docs/diagrams/ingest-pipeline.svg)
+
 ## Quick start
 
 Everything in containers:
@@ -158,3 +160,4 @@ a 76% accept rate.
 | [docs/architecture.md](docs/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
 | [docs/decisions.md](docs/decisions.md) | Every design decision, why it was made, what reversing costs |
 | [docs/manifest-contract.md](docs/manifest-contract.md) | The import format, and the transcript policy |
+| [docs/diagrams/](docs/diagrams/) | Figure sources (HTML), plus `.svg` and print-ready `.pdf` exports |

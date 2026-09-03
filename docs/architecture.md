@@ -2,21 +2,7 @@
 
 ## System boundary
 
-```text
-    Raw podcast audio: uploaded in the Web UI, or fetched from a YouTube URL
-                               │
-                               ▼
-    ┌──────────────────────────┴───────────────────────────────────────┐
-    │ Harness Web & Ingestion Pipeline                                 │
-    │   Upload or YouTube fetch -> Loudnorm & VAD -> Cloud ASR (3x)    │
-    │   -> Multi-System Scores & Rule Flags -> Auto Queue Build        │
-    │                                                                  │
-    │ Review & Labeling:                                               │
-    │   Triage Mode & Editor Mode (Web UI) -> Decisions & Labels       │
-    │   Postgres = source of truth; MinIO/local FS = clips and peaks   │
-    │   Export -> 4 dataset kinds (train, gold, analytics, error_mine) │
-    └──────────────────────────────────────────────────────────────────┘
-```
+![Ingestion pipeline: upload or YouTube URL, normalize, VAD segment, transcribe with every cloud ASR route, analyse, import and build the queue](diagrams/ingest-pipeline.svg)
 
 The harness provides an end-to-end web workflow: the annotator selects a podcast file directly in
 the browser or pastes a YouTube URL, watches real-time progress and logs as it normalizes, segments,
@@ -63,6 +49,8 @@ checksum is an error unless `--allow-clip-change` is passed.
 
 ## Data model
 
+![Core data model: episodes own segments; each segment carries ASR hypotheses, one scores row, queue tasks and append-only labels](diagrams/data-model.svg)
+
 Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 
 ### Provenance and content
@@ -91,6 +79,8 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 
 ### Status discipline
 
+![Annotation task lifecycle: pending to in_progress to done, with skip returning the task to pending and every decision writing one of four dispositions](diagrams/annotation-lifecycle.svg)
+
 Exactly three status fields, each with one owner:
 
 - `segments.pipeline_status` — `imported | queued | labeled | excluded`
@@ -108,6 +98,8 @@ and two exports of "the same" dataset would differ. Splits are at **episode** le
 one episode share speaker, recording conditions and topic, so a segment-level split leaks.
 
 ## Priority formula
+
+![Priority score composition: word disagreement 0.40 and rule flags 0.15 are computed over every hypothesis; low confidence 0.25 and code-switch density 0.20 read a single hypothesis; the four weights sum to 1.0](diagrams/priority-scoring.svg)
 
 ```text
 priority_score =

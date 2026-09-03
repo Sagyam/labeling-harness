@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Core data model</title>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:  #ffffff;
+      --color-ink:    #1b2430;
+      --color-muted:  #55606e;
+      --color-accent: #146b6b;
+      --font-sans:  'Inter', system-ui, sans-serif;
+      --font-serif: 'Source Serif 4', Georgia, serif;
+      --font-mono:  'IBM Plex Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 720px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--color-muted); margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: 1.5rem; font-weight: 600;
+      letter-spacing: -0.01em; line-height: 1.15;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Figure 4 · ER / data model</p>
+    <h1>Core data model</h1>
+
+    <svg viewBox="0 48 560 496" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="data-model-title data-model-desc">
+      <title id="data-model-title">Core data model</title>
+      <desc id="data-model-desc">Segments are the centre of the schema. Each episode owns many segments; each segment carries many immutable ASR hypotheses, exactly one row of imported scores and rule flags, many queue tasks bearing a priority score, and many append-only label rows recording the annotator's disposition. Provenance and audit tables are omitted.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#146b6b"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#ffffff"/>
+
+      <!-- ============ RELATIONSHIP LINES (before boxes) ============ -->
+      <!-- episodes 1 to N segments -->
+      <line x1="164" y1="184" x2="164" y2="224" stroke="#55606e" stroke-width="1"/>
+      <!-- segments 1 to N annotation_tasks -->
+      <line x1="164" y1="320" x2="164" y2="360" stroke="#55606e" stroke-width="1"/>
+      <!-- segments 1 to 1 segment_scores -->
+      <line x1="272" y1="272" x2="304" y2="272" stroke="#55606e" stroke-width="1"/>
+      <!-- segments 1 to N asr_hypotheses (elbow up-right) -->
+      <path d="M 232,224 V 212 Q 232,204 240,204 H 376 Q 384,204 384,196 V 184" fill="none" stroke="#55606e" stroke-width="1"/>
+      <!-- segments 1 to N segment_labels (elbow down-right) -->
+      <path d="M 232,320 V 332 Q 232,340 240,340 H 376 Q 384,340 384,348 V 360" fill="none" stroke="#55606e" stroke-width="1"/>
+
+      <!-- ============ CARDINALITY ============ -->
+      <text x="176" y="200" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">1</text>
+      <text x="176" y="220" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">N</text>
+
+      <text x="176" y="336" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">1</text>
+      <text x="176" y="356" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">N</text>
+
+      <text x="276" y="264" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">1</text>
+      <text x="300" y="264" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="end">1</text>
+
+      <text x="240" y="216" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">1</text>
+      <text x="392" y="196" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">N</text>
+
+      <text x="240" y="336" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">1</text>
+      <text x="392" y="356" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace">N</text>
+
+      <!-- ============ ENTITIES ============ -->
+      <!-- episodes -->
+      <rect x="56" y="88" width="216" height="96" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="68" y="112" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">episodes</text>
+      <line x1="68" y1="124" x2="260" y2="124" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="68" y="144" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace"># episode_id</text>
+      <text x="68" y="160" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">split</text>
+      <text x="68" y="176" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">duration_seconds</text>
+
+      <!-- segments (FOCAL) -->
+      <rect x="56" y="224" width="216" height="96" rx="6" fill="#ffffff"/>
+      <rect x="56" y="224" width="216" height="96" rx="6" fill="rgba(20,107,107,0.09)" stroke="#146b6b" stroke-width="1.2"/>
+      <text x="68" y="248" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">segments</text>
+      <line x1="68" y1="260" x2="260" y2="260" stroke="rgba(20,107,107,0.30)" stroke-width="0.8"/>
+      <text x="68" y="280" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace"># segment_id</text>
+      <text x="68" y="296" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">→ episode_id</text>
+      <text x="68" y="312" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">pipeline_status</text>
+
+      <!-- annotation_tasks -->
+      <rect x="56" y="360" width="216" height="96" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="68" y="384" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">annotation_tasks</text>
+      <line x1="68" y1="396" x2="260" y2="396" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="68" y="416" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">→ segment_id</text>
+      <text x="68" y="432" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">priority_score</text>
+      <text x="68" y="448" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">status</text>
+
+      <!-- asr_hypotheses -->
+      <rect x="304" y="88" width="216" height="96" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="316" y="112" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">asr_hypotheses</text>
+      <line x1="316" y1="124" x2="508" y2="124" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="316" y="144" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">→ segment_id</text>
+      <text x="316" y="160" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">→ system_id</text>
+      <text x="316" y="176" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">avg_logprob</text>
+
+      <!-- segment_scores -->
+      <rect x="304" y="224" width="216" height="96" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="316" y="248" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">segment_scores</text>
+      <line x1="316" y1="260" x2="508" y2="260" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="316" y="280" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">→ segment_id</text>
+      <text x="316" y="296" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">word_disagreement_rate</text>
+      <text x="316" y="312" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">flags_jsonb</text>
+
+      <!-- segment_labels -->
+      <rect x="304" y="360" width="216" height="96" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="316" y="384" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">segment_labels</text>
+      <line x1="316" y1="396" x2="508" y2="396" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="316" y="416" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">→ segment_id</text>
+      <text x="316" y="432" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">disposition</text>
+      <text x="316" y="448" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">final_text</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="496" x2="520" y2="496" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="40" y="516" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <rect x="112" y="504" width="16" height="12" rx="2" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="136" y="516" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">TABLE</text>
+
+      <rect x="208" y="504" width="16" height="12" rx="2" fill="rgba(20,107,107,0.09)" stroke="#146b6b" stroke-width="1.2"/>
+      <text x="232" y="516" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">FOCAL</text>
+
+      <text x="304" y="516" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em"># PRIMARY KEY</text>
+
+      <text x="424" y="516" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">→ FOREIGN KEY</text>
+    </svg>
+  </div>
+</body>
+</html>

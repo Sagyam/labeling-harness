@@ -16,3 +16,6 @@ data/
 exports/
 .mise.local.toml
 .playwright-mcp/
+
+# diagram build font cache
+docs/diagrams/.fontcache/

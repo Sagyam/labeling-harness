@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Annotation task lifecycle</title>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:  #ffffff;
+      --color-ink:    #1b2430;
+      --color-muted:  #55606e;
+      --color-accent: #146b6b;
+      --font-sans:  'Inter', system-ui, sans-serif;
+      --font-serif: 'Source Serif 4', Georgia, serif;
+      --font-mono:  'IBM Plex Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 720px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--color-muted); margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: 1.5rem; font-weight: 600;
+      letter-spacing: -0.01em; line-height: 1.15;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Figure 3 · State machine</p>
+    <h1>Annotation task lifecycle</h1>
+
+    <svg viewBox="0 0 560 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="annotation-lifecycle-title annotation-lifecycle-desc">
+      <title id="annotation-lifecycle-title">Annotation task lifecycle</title>
+      <desc id="annotation-lifecycle-desc">A queue task starts pending, becomes in_progress when the annotator requests the next task, and reaches done once a decision is recorded. Every decision writes one of four dispositions — accepted_unchanged, edited, unusable_audio or uncertain — as an append-only segment_labels row. Skipping returns the task to pending and writes an event but no label.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#146b6b"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#ffffff"/>
+
+      <!-- ============ ZONE (drawn first) ============ -->
+      <rect x="316" y="144" width="204" height="208" rx="8" fill="rgba(27,36,48,0.02)" stroke="rgba(27,36,48,0.10)" stroke-width="0.8"/>
+      <rect x="368" y="136" width="100" height="16" rx="2" fill="#ffffff"/>
+      <text x="418" y="148" fill="rgba(27,36,48,0.45)" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">DISPOSITION</text>
+
+      <!-- ============ COLUMN EYEBROW ============ -->
+      <text x="166" y="56" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">TASK STATUS</text>
+
+      <!-- ============ ARROWS (before boxes) ============ -->
+      <!-- start -> pending -->
+      <line x1="166" y1="88" x2="166" y2="104" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- pending -> in_progress -->
+      <line x1="166" y1="152" x2="166" y2="216" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- in_progress -> skipped -->
+      <line x1="166" y1="280" x2="166" y2="320" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- in_progress -> disposition group -->
+      <line x1="268" y1="248" x2="316" y2="248" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- skipped -> pending (return, dashed) -->
+      <path d="M 166,368 V 392 Q 166,400 158,400 H 56 Q 48,400 48,392 V 136 Q 48,128 56,128 H 64" fill="none" stroke="#55606e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- disposition group -> done -->
+      <path d="M 418,352 V 404 Q 418,412 410,412 H 174 Q 166,412 166,420 V 440" fill="none" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <!-- done -> end -->
+      <line x1="166" y1="488" x2="166" y2="508" stroke="#55606e" stroke-width="1.2"/>
+
+      <!-- ============ ARROW LABELS ============ -->
+      <rect x="176" y="176" width="112" height="16" rx="2" fill="#ffffff"/>
+      <text x="232" y="188" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.06em">GET /tasks/next</text>
+
+      <rect x="176" y="284" width="80" height="16" rx="2" fill="#ffffff"/>
+      <text x="216" y="296" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.06em">POST /skip</text>
+
+      <rect x="64" y="376" width="144" height="16" rx="2" fill="#ffffff"/>
+      <text x="136" y="388" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.06em">re-queued, no label</text>
+
+      <rect x="236" y="388" width="112" height="16" rx="2" fill="#ffffff"/>
+      <text x="292" y="400" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.06em">segment_labels</text>
+
+      <!-- ============ START / END ============ -->
+      <circle cx="166" cy="80" r="6" fill="#1b2430"/>
+      <circle cx="166" cy="516" r="8" fill="none" stroke="#1b2430" stroke-width="1.2"/>
+      <circle cx="166" cy="516" r="5" fill="#1b2430"/>
+
+      <!-- ============ STATES ============ -->
+      <rect x="64" y="104" width="204" height="48" rx="8" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="166" y="134" fill="#1b2430" font-size="16" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">pending</text>
+
+      <rect x="64" y="216" width="204" height="64" rx="8" fill="#ffffff"/>
+      <rect x="64" y="216" width="204" height="64" rx="8" fill="rgba(20,107,107,0.09)" stroke="#146b6b" stroke-width="1.2"/>
+      <text x="166" y="244" fill="#1b2430" font-size="16" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">in_progress</text>
+      <text x="166" y="264" fill="#55606e" font-size="12" font-family="'Inter', sans-serif" text-anchor="middle">annotator holds the task</text>
+
+      <rect x="64" y="320" width="204" height="48" rx="8" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="166" y="350" fill="#1b2430" font-size="16" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">skipped</text>
+
+      <rect x="64" y="440" width="204" height="48" rx="8" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="166" y="470" fill="#1b2430" font-size="16" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">done</text>
+
+      <!-- ============ DISPOSITION CHIPS ============ -->
+      <rect x="328" y="176" width="180" height="32" rx="6" fill="rgba(27,36,48,0.05)" stroke="#55606e" stroke-width="0.8"/>
+      <text x="418" y="196" fill="#1b2430" font-size="12" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">accepted_unchanged</text>
+
+      <rect x="328" y="220" width="180" height="32" rx="6" fill="rgba(27,36,48,0.05)" stroke="#55606e" stroke-width="0.8"/>
+      <text x="418" y="240" fill="#1b2430" font-size="12" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">edited</text>
+
+      <rect x="328" y="264" width="180" height="32" rx="6" fill="rgba(27,36,48,0.05)" stroke="#55606e" stroke-width="0.8"/>
+      <text x="418" y="284" fill="#1b2430" font-size="12" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">unusable_audio</text>
+
+      <rect x="328" y="308" width="180" height="32" rx="6" fill="rgba(27,36,48,0.05)" stroke="#55606e" stroke-width="0.8"/>
+      <text x="418" y="328" fill="#1b2430" font-size="12" font-weight="500" font-family="'IBM Plex Mono', monospace" text-anchor="middle">uncertain</text>
+
+      <!-- ============ ANNOTATION CALLOUT ============ -->
+      <circle cx="352" cy="412" r="2" fill="#1b2430"/>
+      <path d="M 400 460 Q 372 440 356 416" fill="none" stroke="rgba(27,36,48,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="520" y="476" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">labels are append-only;</text>
+      <text x="520" y="496" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">the latest row wins</text>
+
+      <!-- ============ LEGEND ============ -->
+      <line x1="40" y1="568" x2="520" y2="568" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+      <text x="40" y="588" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <rect x="112" y="576" width="16" height="12" rx="2" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
+      <text x="136" y="588" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">STATE</text>
+
+      <rect x="208" y="576" width="16" height="12" rx="2" fill="rgba(20,107,107,0.09)" stroke="#146b6b" stroke-width="1.2"/>
+      <text x="232" y="588" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">FOCAL</text>
+
+      <rect x="304" y="576" width="16" height="12" rx="2" fill="rgba(27,36,48,0.05)" stroke="#55606e" stroke-width="0.8"/>
+      <text x="328" y="588" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">LABEL VALUE</text>
+    </svg>
+  </div>
+</body>
+</html>
