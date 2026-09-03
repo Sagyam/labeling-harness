@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.config import LlmRoute, LlmRoutes
 from app.llm.base import AsrResult, LlmRouteNotConfigured
 from app.llm.elevenlabs import ElevenLabsClient
+from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
 
 #: Sent with every ASR request that accepts a prompt. Two jobs: state the transcript policy, and
@@ -104,6 +105,12 @@ def transcribe(
             audio_path,
             route=route,
             keyterms=list(DEFAULT_KEYTERMS),
+            dry_run=dry_run,
+        )
+    if route_config.provider == "google":
+        return GoogleClient(session, config=routes, client=client).transcribe(
+            audio_path,
+            route=route,
             dry_run=dry_run,
         )
     return OpenRouterClient(session, config=routes, client=client).transcribe(

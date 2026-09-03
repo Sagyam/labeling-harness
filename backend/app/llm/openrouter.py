@@ -344,7 +344,11 @@ class OpenRouterClient(ProviderClient):
                 files = {"file": (audio_file.name, handle, "audio/flac")}
                 # verbose_json is the only shape that reports the detected language and the
                 # segment spans; plain json returns the text alone.
-                data = {"model": model, "response_format": "verbose_json"}
+                data = {
+                    "model": model,
+                    "response_format": "verbose_json",
+                    "timestamp_granularities[]": "word",
+                }
                 if prompt:
                     data["prompt"] = prompt
                 if language:

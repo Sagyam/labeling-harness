@@ -288,3 +288,33 @@ divergence exceeds 200ms are isolated in the report as an audit triage queue.
 the automated export report has zero runtime database dependency and runs entirely in memory over the export
 batch.
 
+## D28 — Swap secondary transcriber to Microsoft MAI-Transcribe 2 on OpenRouter
+The secondary cloud ASR route (`asr_gemini_flash`), which used `google/gemini-3.8-flash` via chat
+completions with audio attachments (`audio_chat`), is replaced by `microsoft/mai-transcribe-2`
+(`asr_mai_transcribe_2`) routed through OpenRouter's `/audio/transcriptions` endpoint.
+
+**Why:** MAI-Transcribe 2 is a dedicated multilingual speech-to-text model with native support for
+code-switching and automatic language identification. Routing it through OpenRouter adheres strictly to
+Invariant 5 (prepaid billing control), preserves the commit-per-segment and 2-call-per-clip ingestion
+budget (paired with ElevenLabs Scribe v2 as primary), and tests lower WER performance against real
+Nepali-English conversational speech.
+
+**Reversal:** Revert `config/llm_routes.yaml` to configure `asr_gemini_flash` under `google/gemini-3.8-flash`.
+Existing hypotheses in `asr_hypotheses` recorded under `gemini-3.8-flash` remain immutable.
+
+## D29 — Add Google AI Studio as third ASR provider with Gemini 3.5 Transcribe
+Google AI Studio is admitted as the third cloud inference provider alongside OpenRouter and ElevenLabs,
+wiring `gemini-3.5-transcribe` (`asr_gemini_transcribe`) as a third cloud ASR route.
+
+**Why:** Gemini 3.5 Transcribe is a dedicated speech-to-text model based on Gemini audio understanding.
+It natively handles intra-sentence code-switching, verbatim transcription, and word-level timestamps
+via the Google Interactions API (`POST /v1beta/interactions`). Operating alongside ElevenLabs Scribe v2
+and Microsoft MAI-Transcribe 2 on OpenRouter, all three configured models now emit verbatim transcripts
+and word-level timestamps, creating a rich three-way disagreement signal during ingestion.
+The provider adheres to Invariant 5 (prepaid provider guarantee) under monitored, prepaid billing terms.
+
+**Reversal:** Remove `asr_gemini_transcribe` from `config/llm_routes.yaml` and delete `app/llm/google.py`.
+Existing hypotheses under `gemini-3.5-transcribe` remain immutable in `asr_hypotheses`.
+
+
+

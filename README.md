@@ -55,9 +55,10 @@ guard — `ingest.youtube.max_duration_seconds` in `config/settings.yaml` — be
 source duration. Ingesting a video is on you as far as its licensing goes; the harness does not
 check.
 
-Transcription calls cost money. Two models transcribe every clip — ElevenLabs Scribe v2 and
-Gemini 3.8 Flash — so one clip is two calls, billed against your ElevenLabs and OpenRouter
-balances. Both are prepaid, which is the whole reason those two providers are the ones wired up.
+Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,
+Microsoft MAI-Transcribe 2, and Google Gemini 3.5 Transcribe — so one clip is three calls, billed
+against your ElevenLabs, OpenRouter, and Google AI Studio balances. All are prepaid, which is why
+those providers are the ones wired up.
 Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to exercise the
 pipeline without spending anything.
 
@@ -120,8 +121,9 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_DATABASE__PASSWORD` or `DATABASE_URL` | Postgres credentials |
 | `HARNESS_STORAGE__MINIO__ACCESS_KEY` / `__SECRET_KEY` | MinIO credentials |
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
-| `OPENROUTER_API_KEY` | OpenRouter key; carries the Gemini transcriber |
+| `OPENROUTER_API_KEY` | OpenRouter key; carries the MAI-Transcribe 2 transcriber |
 | `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
+| `GOOGLE_API_KEY` | Google AI Studio key for Gemini 3.5 Transcribe |
 
 `ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines
 to serve anonymously. It is a path in YAML because it is not itself a secret; the file it names is,

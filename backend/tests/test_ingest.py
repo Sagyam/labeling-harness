@@ -13,6 +13,7 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
 from app.models import AnnotationTask, Episode, LlmRequest, Segment
 from app.services.analysis import analyze_transcript
@@ -110,15 +111,31 @@ def test_openrouter_transcribe_is_logged_to_llm_requests(
     sf.write(str(audio_path), np.zeros(16000), 16000, format="FLAC")
 
     client = OpenRouterClient(db_session)
-    result = client.transcribe(audio_path, route="asr_gemini_flash", dry_run=True)
+    result = client.transcribe(audio_path, route="asr_mai_transcribe_2", dry_run=True)
 
     assert result.text
-    assert result.model
+    assert result.model == "microsoft/mai-transcribe-2"
     # Must be logged in db_session
     logged = db_session.scalars(sa.select(LlmRequest)).all()
     assert len(logged) >= 1
     req = logged[-1]
-    assert req.route == "asr_gemini_flash"
+    assert req.route == "asr_mai_transcribe_2"
+    assert req.status == "dry_run"
+
+
+def test_google_transcribe_is_logged_to_llm_requests(db_session: Session, tmp_path: Path) -> None:
+    audio_path = tmp_path / "test.flac"
+    sf.write(str(audio_path), np.zeros(16000), 16000, format="FLAC")
+
+    client = GoogleClient(db_session)
+    result = client.transcribe(audio_path, route="asr_gemini_transcribe", dry_run=True)
+
+    assert result.text
+    assert result.model == "gemini-3.5-transcribe"
+    logged = db_session.scalars(sa.select(LlmRequest)).all()
+    assert len(logged) >= 1
+    req = logged[-1]
+    assert req.route == "asr_gemini_transcribe"
     assert req.status == "dry_run"
 
 

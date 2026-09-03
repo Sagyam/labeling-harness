@@ -7,6 +7,7 @@
 enabled: true
 base_url: https://openrouter.ai/api/v1
 elevenlabs_base_url: https://api.elevenlabs.io/v1
+google_base_url: https://generativelanguage.googleapis.com/v1beta
 default_timeout_seconds: 60
 default_max_tokens: 1024
 max_retries: 3
@@ -26,17 +27,23 @@ routes:
     model: scribe_v2
     language: ne
 
-  # Gemini 3.8 Flash with the clip attached to a chat completion. A general LLM rather than
-  # a recogniser: it follows the transcript policy well, but it will invent speech over silence,
-  # so it is a disagreement signal and never the primary hypothesis.
-  #
-  # Configured on the plain slug, not `google/gemini-3.8-flash:batch`. The `:batch` variant
-  # is rejected on the synchronous endpoint, and OpenRouter's Batch API is text-only and fails
-  # any request carrying audio. See docs/decisions.md D22.
-  asr_gemini_flash:
+  # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
+  # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash
+  # as the secondary disagreement signal (decision D28).
+  asr_mai_transcribe_2:
     provider: openrouter
-    api: audio_chat
-    system_id: gemini-3.8-flash
-    model: google/gemini-3.8-flash
-    temperature: 0.0
-    max_tokens: 1024
+    api: transcription
+    system_id: mai-transcribe-2
+    model: microsoft/mai-transcribe-2
+    language: ne
+
+  # Gemini 3.5 Transcribe via Google AI Studio (GOOGLE_API_KEY). Dedicated speech recogniser
+  # operating in verbatim mode with word-level timestamps (decision D29).
+  asr_gemini_transcribe:
+    provider: google
+    api: transcription
+    system_id: gemini-3.5-transcribe
+    model: gemini-3.5-transcribe
+    language: ne
+
+

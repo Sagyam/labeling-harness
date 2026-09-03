@@ -176,26 +176,23 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 | Route | Provider | API shape | Returns | Steered by |
 |---|---|---|---|---|
 | `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
-| `asr_gemini_flash` | OpenRouter | chat completions with an `input_audio` part | text | the full policy prompt |
+| `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne`, the full policy prompt |
+| `asr_gemini_transcribe` | Google AI Studio (direct) | `/v1beta/interactions` | text, word spans | `language: ne`, verbatim mode |
 
 The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
 code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
 chosen per split at queue build (see above) and is what `low_confidence` reads. Rule flags are a
 third thing again: they are computed at import over *all* hypotheses, not just the primary one.
 
-Scribe is first because it is the only configured transcriber reporting a confidence signal at all — a
-chat model returns prose. So reordering the routes moves the CMI measurement to a different model, and it
-also moves `low_confidence`, because a hypothesis with no `avg_logprob` never wins the
-train/val "highest confidence" comparison.
+Scribe is first because it is the only configured transcriber reporting per-word log probabilities —
+so it remains the source of the `low_confidence` term. Reordering the routes moves the CMI
+measurement to a different model, and it also moves `low_confidence`, because a hypothesis with
+no `avg_logprob` never wins the train/val "highest confidence" comparison.
 
-Every model is told the audio is code-switched and that a word is written in the script of its own
-language — Nepali in Devanagari, English in Latin. Scribe is the exception, not by choice: it has
-no free-text prompt parameter, so it gets a language code and a key-term list instead.
-
-Gemini is a general LLM rather than a recogniser. It follows the transcript policy well and it
-will also invent plausible speech over silence, which is why it is a disagreement signal and never
-the primary hypothesis. Both run on synchronous endpoints; OpenRouter's Batch API cannot
-carry audio at all (decision D22).
+All three configured models emit verbatim transcriptions with word-level timestamps (decisions D28, D29).
+Ingestion routes each speech clip across all three systems, producing a robust three-way disagreement
+signal during queue prioritization. Scribe is steered by keyterms and language code; MAI-Transcribe 2
+and Gemini 3.5 Transcribe receive language hints and explicit verbatim transcription instructions.
 
 ### Fetching the audio instead of uploading it
 

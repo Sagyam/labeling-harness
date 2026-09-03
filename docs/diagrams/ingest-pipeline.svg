@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 560 656" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ingest-pipeline-title ingest-pipeline-desc">
       <title id="ingest-pipeline-title">Ingestion pipeline</title>
-      <desc id="ingest-pipeline-desc">An episode arrives either as a browser upload or as a YouTube URL fetched server-side, then passes through four stages — loudness normalization to 16 kHz mono FLAC, Silero VAD segmentation into speech turns, transcription of every clip by every configured cloud ASR route, and analysis of cross-system disagreement — before segments, hypotheses, scores and queue tasks are written in a single import pass. Transcription calls two external services, ElevenLabs Scribe v2 and Gemini 3.8 Flash via OpenRouter.</desc>
+      <desc id="ingest-pipeline-desc">An episode arrives either as a browser upload or as a YouTube URL fetched server-side, then passes through four stages — loudness normalization to 16 kHz mono FLAC, Silero VAD segmentation into speech turns, transcription of every clip by every configured cloud ASR route, and analysis of cross-system disagreement — before segments, hypotheses, scores and queue tasks are written in a single import pass. Transcription calls three external services: ElevenLabs Scribe v2, Microsoft MAI-Transcribe 2 via OpenRouter, and Google Gemini 3.5 Transcribe.</desc>
       <defs>
         <style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,400&amp;display=swap');</style>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
@@ -12,9 +12,9 @@
       <rect width="100%" height="100%" fill="#ffffff"/>
 
       <!-- ============ ZONE (drawn first) ============ -->
-      <rect x="300" y="288" width="220" height="160" rx="8" fill="rgba(27,36,48,0.02)" stroke="rgba(27,36,48,0.10)" stroke-width="0.8"/>
-      <rect x="316" y="280" width="88" height="16" rx="2" fill="#ffffff"/>
-      <text x="360" y="292" fill="rgba(27,36,48,0.45)" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">CLOUD ASR</text>
+      <rect x="300" y="280" width="220" height="186" rx="8" fill="rgba(27,36,48,0.02)" stroke="rgba(27,36,48,0.10)" stroke-width="0.8"/>
+      <rect x="316" y="272" width="88" height="16" rx="2" fill="#ffffff"/>
+      <text x="360" y="284" fill="rgba(27,36,48,0.45)" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">CLOUD ASR</text>
 
       <!-- ============ ARROWS (before boxes) ============ -->
       <!-- Upload -> Normalize (shared x, straight) -->
@@ -29,10 +29,12 @@
       <line x1="158" y1="384" x2="158" y2="416" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
       <!-- Analyse -> Import -->
       <line x1="158" y1="472" x2="158" y2="504" stroke="#55606e" stroke-width="1.2" marker-end="url(#arrow)"/>
-      <!-- Transcribe -> Scribe (external, dashed, shared y) -->
-      <line x1="276" y1="344" x2="316" y2="344" stroke="#55606e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
-      <!-- Transcribe -> Gemini (external, dashed, elbow) -->
-      <path d="M 276,368 H 284 Q 292,368 292,376 V 400 Q 292,408 300,408 H 316" fill="none" stroke="#55606e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- Transcribe -> Scribe (external, dashed, elbow) -->
+      <path d="M 276,340 H 290 Q 298,340 298,330 V 324 Q 298,318 306,318 H 316" fill="none" stroke="#55606e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- Transcribe -> MAI-Transcribe 2 (external, dashed, straight) -->
+      <line x1="276" y1="356" x2="316" y2="368" stroke="#55606e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- Transcribe -> Gemini 3.5 (external, dashed, elbow) -->
+      <path d="M 276,370 H 290 Q 298,370 298,390 V 412 Q 298,422 306,422 H 316" fill="none" stroke="#55606e" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
 
       <!-- ============ ARROW LABELS (masked, gap to stroke) ============ -->
       <rect x="98" y="304" width="48" height="16" rx="2" fill="#ffffff"/>
@@ -58,25 +60,28 @@
       <text x="410" y="92" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">yt-dlp · id only</text>
 
       <!-- Normalize -->
+      <rect x="40" y="152" width="236" height="56" rx="6" fill="#ffffff"/>
       <rect x="40" y="152" width="236" height="56" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
       <text x="158" y="176" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Normalize</text>
-      <text x="158" y="196" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">loudnorm → 16 kHz FLAC</text>
+      <text x="158" y="196" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">16 kHz mono FLAC · loudnorm</text>
 
       <!-- Segment -->
+      <rect x="40" y="240" width="236" height="56" rx="6" fill="#ffffff"/>
       <rect x="40" y="240" width="236" height="56" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
       <text x="158" y="264" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Segment</text>
-      <text x="158" y="284" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">Silero VAD · 2–20 s</text>
+      <text x="158" y="284" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">Silero VAD · 2–20s turns</text>
 
-      <!-- Transcribe (FOCAL) -->
+      <!-- Transcribe (STAGE) -->
       <rect x="40" y="328" width="236" height="56" rx="6" fill="#ffffff"/>
-      <rect x="40" y="328" width="236" height="56" rx="6" fill="rgba(20,107,107,0.09)" stroke="#146b6b" stroke-width="1.2"/>
+      <rect x="40" y="328" width="236" height="56" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
       <text x="158" y="352" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Transcribe</text>
-      <text x="158" y="372" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">every asr* route</text>
+      <text x="158" y="372" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">3 routes · commit per clip</text>
 
       <!-- Analyse -->
+      <rect x="40" y="416" width="236" height="56" rx="6" fill="#ffffff"/>
       <rect x="40" y="416" width="236" height="56" rx="6" fill="#ffffff" stroke="#1b2430" stroke-width="1"/>
-      <text x="158" y="440" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Analyse</text>
-      <text x="158" y="460" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">CMI · disagreement</text>
+      <text x="158" y="440" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Analyse &amp; score</text>
+      <text x="158" y="460" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">disagreement · CMI · rules</text>
 
       <!-- Import & build queue (FOCAL) -->
       <rect x="40" y="504" width="236" height="56" rx="6" fill="#ffffff"/>
@@ -85,23 +90,29 @@
       <text x="158" y="548" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">→ annotation_tasks</text>
 
       <!-- Scribe v2 (external) -->
-      <rect x="316" y="320" width="188" height="48" rx="6" fill="#ffffff"/>
-      <rect x="316" y="320" width="188" height="48" rx="6" fill="rgba(27,36,48,0.03)" stroke="rgba(27,36,48,0.30)" stroke-width="1"/>
-      <text x="410" y="342" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Scribe v2</text>
-      <text x="410" y="360" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">ElevenLabs · logprob</text>
+      <rect x="316" y="298" width="188" height="44" rx="6" fill="#ffffff"/>
+      <rect x="316" y="298" width="188" height="44" rx="6" fill="rgba(27,36,48,0.03)" stroke="rgba(27,36,48,0.30)" stroke-width="1"/>
+      <text x="410" y="318" fill="#1b2430" font-size="15" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Scribe v2</text>
+      <text x="410" y="334" fill="#55606e" font-size="11" font-family="'IBM Plex Mono', monospace" text-anchor="middle">ElevenLabs · logprob</text>
 
-      <!-- Gemini 3.8 Flash (external) -->
-      <rect x="316" y="384" width="188" height="48" rx="6" fill="#ffffff"/>
-      <rect x="316" y="384" width="188" height="48" rx="6" fill="rgba(27,36,48,0.03)" stroke="rgba(27,36,48,0.30)" stroke-width="1"/>
-      <text x="410" y="406" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Gemini 3.8 Flash</text>
-      <text x="410" y="424" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">OpenRouter · text</text>
+      <!-- MAI-Transcribe 2 (external) -->
+      <rect x="316" y="350" width="188" height="44" rx="6" fill="#ffffff"/>
+      <rect x="316" y="350" width="188" height="44" rx="6" fill="rgba(27,36,48,0.03)" stroke="rgba(27,36,48,0.30)" stroke-width="1"/>
+      <text x="410" y="370" fill="#1b2430" font-size="15" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">MAI-Transcribe 2</text>
+      <text x="410" y="386" fill="#55606e" font-size="11" font-family="'IBM Plex Mono', monospace" text-anchor="middle">OpenRouter · verbatim</text>
+
+      <!-- Gemini 3.5 Transcribe (external) -->
+      <rect x="316" y="402" width="188" height="44" rx="6" fill="#ffffff"/>
+      <rect x="316" y="402" width="188" height="44" rx="6" fill="rgba(27,36,48,0.03)" stroke="rgba(27,36,48,0.30)" stroke-width="1"/>
+      <text x="410" y="422" fill="#1b2430" font-size="15" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Gemini 3.5 Transcribe</text>
+      <text x="410" y="438" fill="#55606e" font-size="11" font-family="'IBM Plex Mono', monospace" text-anchor="middle">Google AI Studio · verbatim</text>
 
       <!-- ============ ANNOTATION CALLOUT ============ -->
-      <circle cx="410" cy="448" r="2" fill="#1b2430"/>
-      <path d="M 436 488 Q 420 470 410 452" fill="none" stroke="rgba(27,36,48,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
-      <text x="520" y="504" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">every route transcribes</text>
-      <text x="520" y="524" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">every clip — cost is</text>
-      <text x="520" y="544" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">linear in duration</text>
+      <circle cx="410" cy="466" r="2" fill="#1b2430"/>
+      <path d="M 436 492 Q 420 480 410 468" fill="none" stroke="rgba(27,36,48,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="520" y="508" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">every route transcribes</text>
+      <text x="520" y="528" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">every clip — cost is</text>
+      <text x="520" y="548" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">linear in duration</text>
 
       <!-- ============ LEGEND ============ -->
       <line x1="40" y1="596" x2="520" y2="596" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>

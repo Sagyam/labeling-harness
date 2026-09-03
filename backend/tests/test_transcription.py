@@ -79,6 +79,37 @@ def recorder(monkeypatch):
                     "usage": {"prompt_tokens": 88, "completion_tokens": 4, "cost": 3.3e-05},
                 },
             )
+        if "generativelanguage.googleapis.com" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "output_text": "गुगल भन्छ",
+                    "steps": [
+                        {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "गुगल भन्छ",
+                                    "annotations": [
+                                        {
+                                            "type": "word_info",
+                                            "text": "गुगल",
+                                            "start_offset": "0.1s",
+                                            "end_offset": "0.3s",
+                                        },
+                                        {
+                                            "type": "word_info",
+                                            "text": "भन्छ",
+                                            "start_offset": "0.4s",
+                                            "end_offset": "0.6s",
+                                        },
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                },
+            )
         return httpx.Response(
             200,
             json={"text": "विस्पर भन्छ", "usage": {"seconds": 2, "cost": 0.00005}},
@@ -88,6 +119,7 @@ def recorder(monkeypatch):
     monkeypatch.setattr("app.llm.base.ProviderClient._get_client", lambda self: mock)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     return seen
 
 
@@ -151,6 +183,28 @@ def test_a_transcription_route_reaches_the_transcription_endpoint(
     result = transcribe(db_session, clip, route="asr_custom_endpoint", config=test_routes)
     assert str(recorder[-1].url) == "https://openrouter.ai/api/v1/audio/transcriptions"
     assert result.text == "विस्पर भन्छ"
+
+
+def test_a_google_route_reaches_google_interactions(db_session: Session, clip, recorder) -> None:
+    test_routes = routes(
+        routes={
+            **routes().routes,
+            "asr_gemini_transcribe": LlmRoute(
+                provider="google",
+                api="transcription",
+                system_id="gemini-3.5-transcribe",
+                model="gemini-3.5-transcribe",
+                language="ne",
+            ),
+        }
+    )
+    result = transcribe(db_session, clip, route="asr_gemini_transcribe", config=test_routes)
+    assert "generativelanguage.googleapis.com" in str(recorder[-1].url)
+    assert result.text == "गुगल भन्छ"
+    assert result.words == [
+        {"word": "गुगल", "start": 0.1, "end": 0.3},
+        {"word": "भन्छ", "start": 0.4, "end": 0.6},
+    ]
 
 
 # --- the transcript policy reaches every provider that can read it -------------------------

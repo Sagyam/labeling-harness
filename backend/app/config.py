@@ -286,7 +286,7 @@ class LlmRoute(BaseModel):
 
     model_config = _STRICT
 
-    provider: Literal["openrouter", "elevenlabs"] = "openrouter"
+    provider: Literal["openrouter", "elevenlabs", "google"] = "openrouter"
     api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
     #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
@@ -303,6 +303,8 @@ class LlmRoute(BaseModel):
     def _check_provider_api(self) -> LlmRoute:
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
+        if self.provider == "google" and self.api != "transcription":
+            raise ValueError("the google provider only offers api: transcription")
         return self
 
 
@@ -311,7 +313,7 @@ class LlmRoutes(BaseModel):
 
     OpenRouter is the default and carries all text inference. A second provider is permitted only
     when it is prepaid, so that the blast radius of a runaway job stays bounded by a balance
-    (decisions D10, D21).
+    (decisions D10, D21, D29).
     """
 
     model_config = _STRICT
@@ -319,6 +321,7 @@ class LlmRoutes(BaseModel):
     enabled: bool = False
     base_url: str = "https://openrouter.ai/api/v1"
     elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
+    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     default_timeout_seconds: float = 30.0
     default_max_tokens: int = 1024
     max_retries: int = 3
