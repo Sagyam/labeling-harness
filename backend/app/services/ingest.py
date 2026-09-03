@@ -14,6 +14,7 @@ import asyncio
 import concurrent.futures
 import datetime as dt
 import difflib
+import hashlib
 import itertools
 import json
 import shutil
@@ -31,6 +32,7 @@ import soundfile as sf
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings, load_llm_routes
+from app.llm.base import AsrResult, dry_run_transcript
 from app.llm.transcription import (
     ASR_PROMPT,
     asr_route_names,
@@ -41,6 +43,7 @@ from app.services.analysis import analyze_transcript
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
+    CutSegment,
     SileroVAD,
     extract_clips,
     segment_audio_to_slices,
@@ -327,6 +330,150 @@ def _mean_pairwise_disagreement(sequences: list[list[str]] | list[str]) -> float
     return round(1.0 - (sum(ratios) / len(ratios)), 4)
 
 
+def cluster_segments_into_windows(
+    segments: list[CutSegment], target_duration: float = 150.0
+) -> list[list[CutSegment]]:
+    """Cluster consecutive VAD segments into macro-windows.
+
+    Windows never slice across an utterance because cluster boundaries align strictly with
+    VAD segment boundaries (which fall on natural silence pauses).
+
+    Args:
+        segments: Sorted list of segments from Stage 2 VAD.
+        target_duration: Target maximum span in seconds for each macro-window (default: 150s).
+
+    Returns:
+        List of windows, where each window is a non-empty list of consecutive CutSegments.
+    """
+    if not segments:
+        return []
+
+    windows: list[list[CutSegment]] = []
+    current_window: list[CutSegment] = []
+
+    for seg in segments:
+        if not current_window:
+            current_window.append(seg)
+            continue
+
+        span = seg.end_time - current_window[0].start_time
+        if span > target_duration:
+            windows.append(current_window)
+            current_window = [seg]
+        else:
+            current_window.append(seg)
+
+    if current_window:
+        windows.append(current_window)
+
+    return windows
+
+
+def extract_window_clip(
+    norm_flac: Path | str,
+    start_sec: float,
+    end_sec: float,
+    output_path: Path,
+) -> Path:
+    """Extract a macro-window audio slice from normalized FLAC as 16 kHz mono FLAC."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_data, sr = sf.read(str(norm_flac), dtype="float32")
+    if audio_data.ndim > 1:
+        audio_data = audio_data[:, 0]
+    start_frame = max(0, round(start_sec * sr))
+    end_frame = min(len(audio_data), round(end_sec * sr))
+    slice_data = audio_data[start_frame:end_frame]
+    sf.write(str(output_path), slice_data, sr, format="FLAC", subtype="PCM_16")
+    return output_path
+
+
+def demux_window_words_to_segments(
+    window: list[CutSegment], asr_result: AsrResult
+) -> dict[str, AsrResult]:
+    """Demultiplex macro-window transcription words and text into constituent segments.
+
+    Enforces Invariant D26: word timings are clip-relative (`hypothesis_words.start_time`
+    counts seconds from the start of the clip).
+
+    Args:
+        window: Consecutive CutSegments that formed the transcribed macro-window.
+        asr_result: AsrResult from transcribing the macro-window audio slice.
+
+    Returns:
+        Mapping from `segment_id` to the segment's demultiplexed `AsrResult`.
+    """
+    if not window:
+        return {}
+
+    window_start = window[0].start_time
+    words = asr_result.words or []
+
+    # Map words to segments. Consecutive segments are ordered and non-overlapping.
+    words_by_seg_id: dict[str, list[dict[str, Any]]] = {seg.segment_id: [] for seg in window}
+
+    for w in words:
+        raw_word = w.get("word", "")
+        w_start = float(w.get("start", 0.0))
+        w_end = float(w.get("end", 0.0))
+        abs_start = window_start + w_start
+        abs_end = window_start + w_end
+        abs_mid = (abs_start + abs_end) / 2.0
+
+        # Find the segment closest to this word's midpoint
+        best_seg: CutSegment | None = None
+        best_dist = float("inf")
+        for seg in window:
+            if seg.start_time <= abs_mid <= seg.end_time:
+                best_seg = seg
+                best_dist = 0.0
+                break
+            dist = seg.start_time - abs_mid if abs_mid < seg.start_time else abs_mid - seg.end_time
+            if dist < best_dist:
+                best_dist = dist
+                best_seg = seg
+
+        if best_seg is not None:
+            # Convert to clip-relative timestamps (Invariant D26)
+            clip_start = max(0.0, abs_start - best_seg.start_time)
+            clip_end = min(best_seg.duration, max(clip_start, abs_end - best_seg.start_time))
+            words_by_seg_id[best_seg.segment_id].append(
+                {
+                    "word": raw_word,
+                    "start": round(clip_start, 3),
+                    "end": round(clip_end, 3),
+                }
+            )
+
+    results: dict[str, AsrResult] = {}
+    for seg in window:
+        seg_words = words_by_seg_id[seg.segment_id]
+        if seg_words:
+            seg_text = " ".join(cw["word"] for cw in seg_words).strip()
+        else:
+            if asr_result.dry_run:
+                mock_hash = hashlib.sha256(
+                    f"{seg.segment_id}:{asr_result.model}".encode()
+                ).hexdigest()
+                seg_text, seg_words = dry_run_transcript(mock_hash)
+            else:
+                seg_text = ""
+                seg_words = None
+
+        results[seg.segment_id] = AsrResult(
+            route=asr_result.route,
+            model=asr_result.model,
+            text=seg_text,
+            words=seg_words if seg_words else None,
+            avg_logprob=asr_result.avg_logprob,
+            no_speech_prob=asr_result.no_speech_prob,
+            latency_ms=asr_result.latency_ms,
+            dry_run=asr_result.dry_run,
+            raw=asr_result.raw,
+        )
+
+    return results
+
+
 def run_pipeline(
     job: IngestJob,
     session_factory: Callable[[], Session],
@@ -477,25 +624,90 @@ def _run_stages(
 
             # Persistent HTTP client for connection pooling across all concurrent requests
             with httpx.Client(timeout=routes.default_timeout_seconds) as http_client:
+                # Identify routes that require macro-windowing to stay within Tier 1 quotas
+                # (Gemini 3.5 Transcribe has 10 RPM, 10K TPM, 100 RPD on Tier 1)
+                google_routes = [
+                    r
+                    for r in asr_routes
+                    if routes.routes.get(r) and routes.routes.get(r).provider == "google"
+                ]
+                clip_routes = [r for r in asr_routes if r not in google_routes]
 
-                def _process_segment(seg_idx: int, seg: Any) -> dict[str, Any]:
-                    # Rec 1: Concurrent model dispatch per segment across configured routes
-                    with concurrent.futures.ThreadPoolExecutor(
-                        max_workers=max(1, len(asr_routes))
-                    ) as route_pool:
-                        route_futures = [
-                            route_pool.submit(
-                                transcribe,
+                # Demultiplexed hypotheses for windowed routes:
+                # route_name -> {segment_id: AsrResult}
+                windowed_results: dict[str, dict[str, AsrResult]] = {r: {} for r in google_routes}
+
+                if google_routes and segments:
+                    windows = cluster_segments_into_windows(segments, target_duration=150.0)
+                    job.log(
+                        f"Macro-windowing: grouped {len(segments)} segments into {len(windows)} "
+                        f"windows (~150s each) for {len(google_routes)} Google route(s)"
+                    )
+                    windows_dir = job.work_dir / "windows"
+                    windows_dir.mkdir(parents=True, exist_ok=True)
+
+                    for g_route in google_routes:
+                        for win_idx, window in enumerate(windows):
+                            win_start = window[0].start_time
+                            win_end = window[-1].end_time
+                            win_clip = windows_dir / f"{g_route}_win_{win_idx:04d}.flac"
+                            extract_window_clip(norm_flac, win_start, win_end, win_clip)
+
+                            win_res = transcribe(
                                 locked_session,
-                                seg.clip_path,
-                                route=r_name,
+                                win_clip,
+                                route=g_route,
                                 config=routes,
                                 prompt=ASR_PROMPT,
                                 client=http_client,
                             )
-                            for r_name in asr_routes
-                        ]
-                        results = [f.result() for f in route_futures]
+                            seg_results = demux_window_words_to_segments(window, win_res)
+                            windowed_results[g_route].update(seg_results)
+
+                            # Pacing delay between macro-windows to stay under 4 RPM and 5,000 TPM
+                            if not win_res.dry_run and (win_idx + 1 < len(windows)):
+                                time.sleep(10.0)
+
+                def _process_segment(seg_idx: int, seg: Any) -> dict[str, Any]:
+                    # Rec 1: Concurrent model dispatch per segment across clip-based routes
+                    clip_results: dict[str, AsrResult] = {}
+                    if clip_routes:
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=max(1, len(clip_routes))
+                        ) as route_pool:
+                            future_to_route = {
+                                route_pool.submit(
+                                    transcribe,
+                                    locked_session,
+                                    seg.clip_path,
+                                    route=r_name,
+                                    config=routes,
+                                    prompt=ASR_PROMPT,
+                                    client=http_client,
+                                ): r_name
+                                for r_name in clip_routes
+                            }
+                            for f in concurrent.futures.as_completed(future_to_route):
+                                r_name = future_to_route[f]
+                                clip_results[r_name] = f.result()
+
+                    # Combine results in configured hypothesis order (asr_routes order)
+                    results: list[AsrResult] = []
+                    for r_name in asr_routes:
+                        if r_name in google_routes:
+                            res = windowed_results[r_name].get(seg.segment_id)
+                            if res is None:
+                                res = transcribe(
+                                    locked_session,
+                                    seg.clip_path,
+                                    route=r_name,
+                                    config=routes,
+                                    prompt=ASR_PROMPT,
+                                    client=http_client,
+                                )
+                            results.append(res)
+                        else:
+                            results.append(clip_results[r_name])
 
                     # Preserve configured hypothesis order (results[0] is primary)
                     hypotheses: list[dict[str, Any]] = []

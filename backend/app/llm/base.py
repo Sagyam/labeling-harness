@@ -12,6 +12,7 @@ a balance the owner chose to put there (decisions D10, D21).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import time
@@ -192,6 +193,7 @@ class ProviderClient:
         started = time.monotonic()
         last_error = "no attempt was made"
         for attempt in range(attempts):
+            response: httpx.Response | None = None
             try:
                 response = send()
             except httpx.HTTPError as exc:
@@ -203,5 +205,11 @@ class ProviderClient:
                 if response.status_code not in RETRYABLE_STATUS:
                     break
             if attempt + 1 < attempts:
-                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
+                backoff = self.config.retry_backoff_seconds * (2**attempt)
+                if response is not None and response.status_code == 429:
+                    retry_after_header = response.headers.get("retry-after")
+                    if retry_after_header:
+                        with contextlib.suppress(ValueError):
+                            backoff = max(backoff, float(retry_after_header))
+                time.sleep(backoff)
         return None, last_error, int((time.monotonic() - started) * 1000)

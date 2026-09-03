@@ -10,8 +10,8 @@ elevenlabs_base_url: https://api.elevenlabs.io/v1
 google_base_url: https://generativelanguage.googleapis.com/v1beta
 default_timeout_seconds: 60
 default_max_tokens: 1024
-max_retries: 3
-retry_backoff_seconds: 0.5
+max_retries: 4
+retry_backoff_seconds: 2.0
 dry_run: false
 routes:
   # ElevenLabs Scribe v2, called directly (ELEVEN_LABS_API_KEY). The only transcriber configured

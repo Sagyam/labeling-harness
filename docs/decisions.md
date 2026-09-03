@@ -316,5 +316,29 @@ The provider adheres to Invariant 5 (prepaid provider guarantee) under monitored
 **Reversal:** Remove `asr_gemini_transcribe` from `config/llm_routes.yaml` and delete `app/llm/google.py`.
 Existing hypotheses under `gemini-3.5-transcribe` remain immutable in `asr_hypotheses`.
 
+## D30 — VAD-aligned macro-windowing and demultiplexing for Gemini Transcribe under Tier 1 quotas
+Google AI Studio Tier 1 restricts Live API models (`gemini-3.5-transcribe`) to 10 RPM, 10K TPM, and
+100 RPD (requests per day). Calling Gemini per-clip on 2s–20s utterances exhausts the daily quota after
+only ~15 minutes of audio, while ElevenLabs Scribe v2 and Microsoft MAI-Transcribe 2 have no 100 RPD
+cap and operate best on short clips.
+
+**Why macro-windowing:**
+1. **Token & Duration Sweet Spot**: Gemini audio tokenization (~32 tokens/sec) consumes ~4,800 tokens for
+   a 150s (2.5 min) window, using ~48% of the 10,000 TPM limit while pacing at 2–3 RPM (well under 10 RPM).
+2. **Quota Multiplication**: 100 RPD provides 250 minutes (>4.1 hours) of audio per day (~10 full episodes)
+   instead of failing halfway through a single episode.
+3. **Natural Silence Boundaries**: Consecutive VAD segments are clustered up to 150s. Because boundaries
+   align strictly with VAD segment boundaries (which snap to conversational pauses), zero words are ever
+   sliced across window cuts.
+4. **Timestamp Demultiplexing**: Gemini's verbatim word timestamps (`start_offset`, `end_offset`) are mapped
+   back to their constituent segments and converted to clip-relative timestamps, strictly satisfying
+   Invariant D26.
+5. **Independent Scribe & MAI Dispatch**: Scribe and MAI continue receiving short clips concurrently,
+   preserving their low hallucination rates.
+
+**Reversal:** Remove the window clustering and demultiplexing block from `app/services/ingest.py` to restore
+direct per-clip dispatch for all routes if quota limits are lifted in higher tiers.
+
+
 
 
