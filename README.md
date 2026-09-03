@@ -95,6 +95,7 @@ Run from the repository root with the backend virtualenv:
 backend/.venv/bin/python scripts/import_manifest.py  export_show-a_ep012/ [--dry-run]
 backend/.venv/bin/python scripts/build_queue.py      [--episode show-a_ep012]
 backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-version v1
+backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
 backend/.venv/bin/python scripts/report_status.py    [--format html]
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 ```
@@ -102,7 +103,7 @@ backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for develo
 `export_dataset.py` writes four kinds — `training`, `gold`, `analytics`, `error_mining` — each with
 a `manifest.json` recording label version, policy version, filters, row counts, per-file checksums,
 timestamp, git commit and the contributing import runs. The same inputs produce byte-identical
-output.
+output. For `analytics`, `timestamp_verification_report.json` is generated automatically.
 
 ## Configuration
 

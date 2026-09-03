@@ -271,3 +271,20 @@ wrong; the contract now says so.
 `app/services/importer.py` where words are inserted, plus a data migration over existing
 `hypothesis_words` rows. Cheap while the table is small, and there is no consumer to break today —
 no API endpoint exposes word times, and only the `analytics` export emits them.
+
+
+## D27 — Word-level acoustic boundary cross-verification runs automatically on analytics export
+Rather than requiring annotators to manually adjust word boundary sliders in the browser (which slows
+annotation down by 10x and violates the "no word-level editing UI" guidance in AGENTS.md), word-level
+acoustic boundary alignment is evaluated algorithmically on export (`app/services/alignment.py`).
+
+Whenever `POST /export` runs for `kind="analytics"`, the export service automatically executes dynamic
+sequence alignment between the human-verified/gold transcript tokens and the acoustic model's word spans
+(`hypothesis_words`). It calculates tolerance agreement rates (<= 25ms, <= 50ms, <= 100ms) and emits
+`timestamp_verification_report.json` directly into the export directory. Segments where boundary
+divergence exceeds 200ms are isolated in the report as an audit triage queue.
+
+**Reversal:** if word-level UI editing ever becomes necessary, it can read from `hypothesis_words` directly;
+the automated export report has zero runtime database dependency and runs entirely in memory over the export
+batch.
+
