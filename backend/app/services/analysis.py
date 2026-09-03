@@ -8,6 +8,8 @@ two implementations of one formula.
 
 from __future__ import annotations
 
+import difflib
+import itertools
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -117,3 +119,19 @@ def analyze_transcript(
         switch_point_count=switch_points,
         discourse_marker_count=dm_count,
     )
+
+
+def mean_pairwise_disagreement(sequences: list[list[str]] | list[str]) -> float:
+    """Mean 1 - similarity over every unordered pair of hypotheses.
+
+    Operates on word lists or on raw strings, giving a word-level or character-level rate from
+    the same comparison. Fewer than two hypotheses means nothing disagreed, which is 0.0 -- the
+    same value the scorer reads for a missing rate.
+    """
+    if len(sequences) < 2:
+        return 0.0
+    ratios = [
+        difflib.SequenceMatcher(None, sequences[i], sequences[j]).ratio()
+        for i, j in itertools.combinations(range(len(sequences)), 2)
+    ]
+    return round(1.0 - (sum(ratios) / len(ratios)), 4)

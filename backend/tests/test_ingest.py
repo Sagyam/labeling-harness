@@ -16,10 +16,9 @@ from sqlalchemy.orm import Session
 from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
 from app.models import AnnotationTask, Episode, LlmRequest, Segment
-from app.services.analysis import analyze_transcript
+from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.ingest import (
     IngestJob,
-    _mean_pairwise_disagreement,
     manager,
     normalize_audio,
     run_pipeline,
@@ -174,34 +173,34 @@ def test_locked_session_thread_safety(db_session: Session) -> None:
 
 
 def test_two_identical_hypotheses_disagree_not_at_all() -> None:
-    assert _mean_pairwise_disagreement([["a", "b"], ["a", "b"]]) == 0.0
+    assert mean_pairwise_disagreement([["a", "b"], ["a", "b"]]) == 0.0
 
 
 def test_one_hypothesis_cannot_disagree_with_anything() -> None:
     """The scorer reads a missing rate as 0.0; a lone system must produce the same value."""
-    assert _mean_pairwise_disagreement([["a", "b"]]) == 0.0
-    assert _mean_pairwise_disagreement([]) == 0.0
+    assert mean_pairwise_disagreement([["a", "b"]]) == 0.0
+    assert mean_pairwise_disagreement([]) == 0.0
 
 
 def test_disagreement_over_two_systems_is_the_single_comparison_between_them() -> None:
     """Adding a third transcriber must not change what two transcribers already scored."""
     pair = [["a", "b", "c"], ["a", "b", "d"]]
     expected = 1.0 - difflib.SequenceMatcher(None, pair[0], pair[1]).ratio()
-    assert _mean_pairwise_disagreement(pair) == round(expected, 4)
+    assert mean_pairwise_disagreement(pair) == round(expected, 4)
 
 
 def test_a_third_hypothesis_informs_the_rate_rather_than_being_ignored() -> None:
     """Three systems means three pairs. An outlier should move the score, not vanish."""
-    agreeing = _mean_pairwise_disagreement([["a", "b"], ["a", "b"], ["a", "b"]])
-    one_outlier = _mean_pairwise_disagreement([["a", "b"], ["a", "b"], ["x", "y"]])
+    agreeing = mean_pairwise_disagreement([["a", "b"], ["a", "b"], ["a", "b"]])
+    one_outlier = mean_pairwise_disagreement([["a", "b"], ["a", "b"], ["x", "y"]])
     assert agreeing == 0.0
     assert one_outlier > 0.0
 
 
 def test_the_same_helper_gives_a_character_rate_from_raw_strings() -> None:
     """cer_between_hypotheses is the same comparison at character granularity."""
-    assert _mean_pairwise_disagreement(["hello", "hello"]) == 0.0
-    assert _mean_pairwise_disagreement(["hello", "world"]) > 0.0
+    assert mean_pairwise_disagreement(["hello", "hello"]) == 0.0
+    assert mean_pairwise_disagreement(["hello", "world"]) > 0.0
 
 
 # --- Stage 4: Token Analysis & Scoring --------------------------------------------------

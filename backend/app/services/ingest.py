@@ -13,9 +13,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import datetime as dt
-import difflib
 import hashlib
-import itertools
 import json
 import shutil
 import subprocess
@@ -39,7 +37,7 @@ from app.llm.transcription import (
     system_id_for,
     transcribe,
 )
-from app.services.analysis import analyze_transcript
+from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
@@ -312,22 +310,6 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
 
     info = sf.info(str(output_path))
     return float(info.duration)
-
-
-def _mean_pairwise_disagreement(sequences: list[list[str]] | list[str]) -> float:
-    """Mean 1 - similarity over every unordered pair of hypotheses.
-
-    Operates on word lists or on raw strings, giving a word-level or character-level rate from
-    the same comparison. Fewer than two hypotheses means nothing disagreed, which is 0.0 -- the
-    same value the scorer reads for a missing rate.
-    """
-    if len(sequences) < 2:
-        return 0.0
-    ratios = [
-        difflib.SequenceMatcher(None, sequences[i], sequences[j]).ratio()
-        for i, j in itertools.combinations(range(len(sequences)), 2)
-    ]
-    return round(1.0 - (sum(ratios) / len(ratios)), 4)
 
 
 def cluster_segments_into_windows(
@@ -734,8 +716,8 @@ def _run_stages(
                     # of the three pairs, so a third hypothesis informs the queue rather than being
                     # paid for and ignored.
                     texts = [h["text"] for h in hypotheses]
-                    word_disagreement_rate = _mean_pairwise_disagreement([t.split() for t in texts])
-                    cer_between_hyps = _mean_pairwise_disagreement(texts)
+                    word_disagreement_rate = mean_pairwise_disagreement([t.split() for t in texts])
+                    cer_between_hyps = mean_pairwise_disagreement(texts)
 
                     primary_hyp = hypotheses[0]
                     analysis = analyze_transcript(
