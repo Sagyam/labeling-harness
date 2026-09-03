@@ -37,13 +37,19 @@ routes:
     model: microsoft/mai-transcribe-2
     language: ne
 
-  # Gemini 3.5 Transcribe via Google AI Studio (GOOGLE_API_KEY). Dedicated speech recogniser
-  # operating in verbatim mode with word-level timestamps (decision D29).
-  asr_gemini_transcribe:
+  # Gemini 3.8 Flash via Google AI Studio (GOOGLE_API_KEY), on the ordinary generateContent
+  # endpoint with the clip inlined (decision D31). `audio_chat` is the honest name for it: a
+  # general model being asked to transcribe, which obeys the transcript prompt but may also
+  # editorialise or hallucinate over silence. It sees only audio -- never the other two
+  # hypotheses -- so its disagreement with them stays an independent signal.
+  #
+  # It returns no word timestamps. Word spans for this system come from the local forced
+  # aligner (app/services/forced_align.py, decision D32).
+  asr_gemini_flash:
     provider: google
-    api: transcription
-    system_id: gemini-3.5-transcribe
-    model: gemini-3.5-transcribe
+    api: audio_chat
+    system_id: gemini-3.8-flash
+    model: gemini-3.8-flash
     language: ne
 
 

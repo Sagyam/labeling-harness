@@ -127,14 +127,14 @@ def test_google_transcribe_is_logged_to_llm_requests(db_session: Session, tmp_pa
     sf.write(str(audio_path), np.zeros(16000), 16000, format="FLAC")
 
     client = GoogleClient(db_session)
-    result = client.transcribe(audio_path, route="asr_gemini_transcribe", dry_run=True)
+    result = client.transcribe(audio_path, route="asr_gemini_flash", dry_run=True)
 
     assert result.text
-    assert result.model == "gemini-3.5-transcribe"
+    assert result.model == "gemini-3.8-flash"
     logged = db_session.scalars(sa.select(LlmRequest)).all()
     assert len(logged) >= 1
     req = logged[-1]
-    assert req.route == "asr_gemini_transcribe"
+    assert req.route == "asr_gemini_flash"
     assert req.status == "dry_run"
 
 

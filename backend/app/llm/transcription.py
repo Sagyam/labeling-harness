@@ -111,6 +111,7 @@ def transcribe(
         return GoogleClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
+            prompt=prompt,
             dry_run=dry_run,
         )
     return OpenRouterClient(session, config=routes, client=client).transcribe(

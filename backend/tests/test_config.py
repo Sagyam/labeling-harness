@@ -140,7 +140,7 @@ def test_llm_routes_configured_for_cloud_asr() -> None:
     assert routes.asr_route_names() == [
         "asr_scribe_v2",
         "asr_mai_transcribe_2",
-        "asr_gemini_transcribe",
+        "asr_gemini_flash",
     ]
 
 
@@ -157,10 +157,12 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert mai.system_id == "mai-transcribe-2"
     assert mai.language == "ne"
 
-    gemini = routes["asr_gemini_transcribe"]
-    assert (gemini.provider, gemini.api) == ("google", "transcription")
-    assert gemini.model == "gemini-3.5-transcribe"
-    assert gemini.system_id == "gemini-3.5-transcribe"
+    gemini = routes["asr_gemini_flash"]
+    assert (gemini.provider, gemini.api) == ("google", "audio_chat"), (
+        "a general model asked to transcribe, not a dedicated recogniser -- name it so"
+    )
+    assert gemini.model == "gemini-3.8-flash"
+    assert gemini.system_id == "gemini-3.8-flash"
     assert gemini.language == "ne"
 
 

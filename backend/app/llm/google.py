@@ -1,11 +1,21 @@
-"""Google AI Studio client for Gemini speech-to-text models.
+"""Google AI Studio client for Gemini speech-to-text.
 
-Google AI Studio is the third inference provider admitted to the harness (decision D29). Like
-OpenRouter and ElevenLabs, calls are prepaid (monitored and balance-capped) to adhere to the
-prepaid provider guarantee (invariant 5).
+Google AI Studio is the third inference provider admitted to the harness (D29). Like OpenRouter
+and ElevenLabs, calls are prepaid -- monitored and balance-capped -- to adhere to the prepaid
+provider guarantee (invariant 5).
 
-Gemini 3.5 Transcribe (``gemini-3.5-transcribe``) provides speech recognition with automatic
-code-switching detection, verbatim mode, and word-level timestamps via the Interactions API.
+The route calls ``gemini-3.8-flash`` on the ordinary ``generateContent`` endpoint with the clip
+inlined, not the Live API's dedicated transcription model (D31). Two consequences follow, and
+both are deliberate:
+
+* **No word timestamps.** ``generateContent`` returns text. Word spans for this system come
+  from the local forced aligner (``app/services/forced_align.py``), which is why the model is
+  never asked for them and never trusted with them.
+* **The corpus prompt applies.** A general model obeys a prompt, so the transcript policy --
+  Nepali in Devanagari, English in Latin, verbatim, no translation -- finally reaches Gemini.
+  It is also a general model being asked to transcribe, so it may editorialise or hallucinate
+  over silence; that is why it is one of three independent audio-only hypotheses and never sees
+  the other two.
 """
 
 from __future__ import annotations
@@ -35,37 +45,31 @@ logger = get_logger(__name__)
 API_KEY_ENV = "GOOGLE_API_KEY"
 FALLBACK_KEY_ENV = "GEMINI_API_KEY"
 
+#: Clips are FLAC by invariant 6.
+AUDIO_MIME_TYPE = "audio/flac"
 
-def _parse_word_annotations(body: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract word-level annotations from the Interactions API response."""
-    words: list[dict[str, Any]] = []
-    for step in body.get("steps") or []:
-        for content in step.get("content") or []:
-            for annotation in content.get("annotations") or []:
-                if annotation.get("type") == "word_info":
-                    raw_text = annotation.get("text", "")
-                    start_str = annotation.get("start_offset", "")
-                    end_str = annotation.get("end_offset", "")
-                    try:
-                        start_sec = (
-                            float(str(start_str).rstrip("s"))
-                            if start_str is not None and str(start_str).strip()
-                            else 0.0
-                        )
-                        end_sec = (
-                            float(str(end_str).rstrip("s"))
-                            if end_str is not None and str(end_str).strip()
-                            else 0.0
-                        )
-                    except ValueError:
-                        start_sec = 0.0
-                        end_sec = 0.0
-                    words.append({"word": raw_text, "start": start_sec, "end": end_sec})
-    return words
+
+def parse_transcript(body: dict[str, Any]) -> str:
+    """Join the text parts of the first candidate that has any.
+
+    A model may split its answer over several parts, and may return a candidate carrying only
+    metadata (a safety block, a tool call); such a candidate yields no text and the next one is
+    tried.
+    """
+    for candidate in body.get("candidates") or []:
+        content = candidate.get("content") or {}
+        texts = [
+            str(part["text"])
+            for part in content.get("parts") or []
+            if isinstance(part, dict) and part.get("text")
+        ]
+        if texts:
+            return "".join(texts).strip()
+    return ""
 
 
 class GoogleClient(ProviderClient):
-    """A logged, retrying client for Google AI Studio's Gemini transcription API."""
+    """A logged, retrying client for Google AI Studio's Gemini models."""
 
     def __init__(
         self,
@@ -86,21 +90,26 @@ class GoogleClient(ProviderClient):
         audio_path: Path | str,
         *,
         route: str,
+        prompt: str | None = None,
         language: str | None = None,
         dry_run: bool | None = None,
         timeout_seconds: float | None = None,
     ) -> AsrResult:
-        """Transcribe one audio clip with Gemini Transcribe in verbatim mode.
+        """Transcribe one audio clip by asking Gemini to write down what it hears.
 
         Args:
             audio_path: Path to the audio file (16 kHz mono FLAC).
             route: Route name from ``config/llm_routes.yaml``.
-            language: BCP-47 language hint, overriding route configuration.
+            prompt: Transcript policy to steer the model. Unlike the Live API's transcription
+                model, ``generateContent`` obeys one.
+            language: BCP-47 language hint, overriding route configuration. Appended to the
+                prompt, as ``generateContent`` has no language parameter of its own.
             dry_run: Override the configured dry-run mode.
             timeout_seconds: Override default timeout.
 
         Returns:
-            The ASR transcription result, with verbatim text and word timestamps.
+            The transcription result. ``words`` is always ``None`` on a real call: word spans
+            for this system come from the forced aligner, not the model.
 
         Raises:
             LlmRouteNotConfigured: If the route is missing from configuration.
@@ -150,36 +159,30 @@ class GoogleClient(ProviderClient):
         )
         target_lang = language or route_config.language
 
-        url = f"{self.config.google_base_url.rstrip('/')}/interactions"
+        url = f"{self.config.google_base_url.rstrip('/')}/models/{model_id}:generateContent"
         headers = {
             "x-goog-api-key": self.api_key,
             "Content-Type": "application/json",
         }
 
         with open(audio_file, "rb") as handle:
-            audio_bytes = handle.read()
-        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            audio_b64 = base64.b64encode(handle.read()).decode("ascii")
 
-        transcription_config: dict[str, Any] = {
-            "mode": {
-                "type": "verbatim",
-                "timestamp_granularities": ["word"],
-            }
-        }
+        instruction = prompt or ""
         if target_lang:
-            transcription_config["language_codes"] = [target_lang]
+            hint = f"Primary language code: {target_lang}."
+            instruction = f"{instruction}\n\n{hint}".strip() if instruction else hint
+
+        parts: list[dict[str, Any]] = []
+        if instruction:
+            parts.append({"text": instruction})
+        parts.append({"inline_data": {"mime_type": AUDIO_MIME_TYPE, "data": audio_b64}})
 
         payload = {
-            "model": model_id,
-            "input": [
-                {
-                    "type": "audio",
-                    "data": audio_b64,
-                    "mime_type": "audio/flac",
-                }
-            ],
-            "generation_config": {
-                "transcription_config": transcription_config,
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "temperature": route_config.temperature or 0.0,
+                "responseModalities": ["TEXT"],
             },
         }
 
@@ -201,24 +204,11 @@ class GoogleClient(ProviderClient):
             raise LlmRequestFailed(f"Google Gemini transcription failed: {last_error}")
 
         body = response.json()
-        output_text = body.get("output_text")
-        if not output_text:
-            for step in body.get("steps") or []:
-                for content in step.get("content") or []:
-                    if content.get("type") == "text" and "text" in content:
-                        output_text = content["text"]
-                        break
-                if output_text:
-                    break
-
-        transcript_text = (output_text or "").strip()
-        words = _parse_word_annotations(body)
-
         result = AsrResult(
             route=route,
             model=model_id,
-            text=transcript_text,
-            words=words if words else None,
+            text=parse_transcript(body),
+            words=None,
             latency_ms=latency_ms,
             raw=body,
         )

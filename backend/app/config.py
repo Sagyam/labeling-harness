@@ -303,8 +303,8 @@ class LlmRoute(BaseModel):
     def _check_provider_api(self) -> LlmRoute:
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
-        if self.provider == "google" and self.api != "transcription":
-            raise ValueError("the google provider only offers api: transcription")
+        if self.provider == "google" and self.api not in ("transcription", "audio_chat"):
+            raise ValueError("the google provider only offers api: transcription or audio_chat")
         return self
 
 
