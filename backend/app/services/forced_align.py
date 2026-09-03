@@ -22,13 +22,14 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import soundfile as sf
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
-from app.services.alignment import DEV_RE, WordSpan, project_missing_spans
+from app.services.alignment import DEV_RE, WORD_TOKEN_RE, WordSpan, project_missing_spans
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -359,3 +360,31 @@ def _logsumexp(logits: np.ndarray) -> np.ndarray:
     """Row-wise log-sum-exp, kept 2-D so it broadcasts back over the label axis."""
     peak = logits.max(axis=-1, keepdims=True)
     return peak + np.log(np.exp(logits - peak).sum(axis=-1, keepdims=True))
+
+
+def align_text(
+    aligner: ForcedAligner,
+    audio_path: Path | str,
+    text: str,
+) -> list[dict[str, Any]] | None:
+    """Align a transcript against its clip and return word dicts for the importer.
+
+    The bridge between a transcriber that returned text only and ``hypothesis_words``. Tokens
+    come from the same ``WORD_TOKEN_RE`` the analysis and verification paths use, so a word
+    means the same thing on both sides of the comparison.
+
+    Returns ``None`` when there is nothing to align or the aligner could not place anything --
+    the hypothesis is still perfectly valid text, just without spans.
+    """
+    tokens = WORD_TOKEN_RE.findall(text or "")
+    if not tokens:
+        return None
+
+    spans = aligner.align(audio_path, tokens)
+    if not spans:
+        return None
+
+    return [
+        {"word": span.word, "start": span.start, "end": span.end, "confidence": span.confidence}
+        for span in spans
+    ]

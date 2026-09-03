@@ -217,3 +217,14 @@ def test_load_settings_does_not_read_dotenv_implicitly(
     monkeypatch.delenv("HARNESS_APP__ENVIRONMENT", raising=False)
     monkeypatch.chdir(tmp_path)
     assert load_settings().app.environment == "local"
+
+
+def test_only_the_transcriber_without_timestamps_asks_for_forced_alignment() -> None:
+    """A route that reports its own word spans must keep them (D32).
+
+    Scribe measures word timings and per-word logprobs itself, and overwriting them with the
+    aligner's would destroy the independent reference D27's boundary check compares against.
+    """
+    routes = load_llm_routes().routes
+    aligned = {name for name, route in routes.items() if route.forced_align}
+    assert aligned == {"asr_gemini_flash"}

@@ -37,6 +37,7 @@ from app.llm.transcription import (
     transcribe,
 )
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
+from app.services.forced_align import ForcedAligner, align_text
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
@@ -452,6 +453,15 @@ def _run_stages(
             f"across {len(asr_routes)} systems ({systems})..."
         )
 
+        # One aligner per run: the ONNX session is loaded once and its Run() is thread-safe,
+        # so every segment worker shares it. Absent model means no word spans, not a failure.
+        aligning_routes = {
+            r for r in asr_routes if getattr(routes.routes.get(r), "forced_align", False)
+        }
+        aligner = ForcedAligner() if aligning_routes and not routes.dry_run else None
+        if aligner is not None and not aligner.available:
+            job.log("Forced aligner model not available -- word spans will be skipped.")
+
         with session_factory() as raw_session:
             locked_session = LockedSession(raw_session)
             progress_lock = threading.Lock()
@@ -495,6 +505,19 @@ def _run_stages(
                             # A dry run returns canned text. Name the system so it can never be
                             # mistaken for real model output in the queue or at export.
                             sys_name = f"mock-{sys_name}"
+
+                        # A transcriber that reports its own timings keeps them; one that does
+                        # not gets them measured locally against the clip (D32). Never on a dry
+                        # run: there is no real speech behind canned text to align it to.
+                        words = asr_res.words
+                        if (
+                            words is None
+                            and aligner is not None
+                            and route_name in aligning_routes
+                            and not asr_res.dry_run
+                        ):
+                            words = align_text(aligner, seg.clip_path, asr_res.text)
+
                         hypotheses.append(
                             {
                                 "system_id": sys_name,
@@ -502,7 +525,7 @@ def _run_stages(
                                 "text": asr_res.text,
                                 "avg_logprob": asr_res.avg_logprob,
                                 "no_speech_prob": asr_res.no_speech_prob,
-                                "words": asr_res.words,
+                                "words": words,
                             }
                         )
 

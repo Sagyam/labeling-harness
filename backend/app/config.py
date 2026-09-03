@@ -298,6 +298,9 @@ class LlmRoute(BaseModel):
     timeout_seconds: float | None = None
     max_tokens: int | None = None
     temperature: float | None = None
+    #: Fill this route's word spans with the local CTC forced aligner (D32). For a transcriber
+    #: that returns no timestamps of its own; a route that reports them keeps what it reported.
+    forced_align: bool = False
 
     @model_validator(mode="after")
     def _check_provider_api(self) -> LlmRoute:

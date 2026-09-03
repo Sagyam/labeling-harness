@@ -51,5 +51,6 @@ routes:
     system_id: gemini-3.8-flash
     model: gemini-3.8-flash
     language: ne
+    forced_align: true
 
 

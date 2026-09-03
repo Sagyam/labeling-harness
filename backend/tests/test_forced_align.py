@@ -12,9 +12,11 @@ from pathlib import Path
 
 import numpy as np
 
+from app.services.alignment import WordSpan
 from app.services.forced_align import (
     ForcedAligner,
     align_emissions,
+    align_text,
     build_target,
     ctc_forced_align,
     romanize,
@@ -179,3 +181,49 @@ def test_a_missing_model_degrades_to_none_rather_than_raising(tmp_path: Path) ->
     )
     assert aligner.available is False
     assert aligner.align(tmp_path / "nonexistent.flac", ["a"]) is None
+
+
+# --- text to importer word dicts --------------------------------------------------------
+
+
+class _StubAligner:
+    """Stands in for a loaded ForcedAligner; align_text only needs .align()."""
+
+    def __init__(self, spans: list[WordSpan] | None) -> None:
+        self.spans = spans
+        self.seen_tokens: list[str] = []
+
+    def align(self, audio_path, tokens, sample_rate: int = 16000):
+        self.seen_tokens = tokens
+        return self.spans
+
+
+def test_align_text_returns_word_dicts_shaped_for_the_importer(tmp_path: Path) -> None:
+    stub = _StubAligner(
+        [
+            WordSpan(word="हामी", start=0.1, end=0.5, confidence=0.9),
+            WordSpan(word="meeting", start=0.6, end=1.1, confidence=0.8),
+        ]
+    )
+    words = align_text(stub, tmp_path / "clip.flac", "हामी meeting")
+    assert words == [
+        {"word": "हामी", "start": 0.1, "end": 0.5, "confidence": 0.9},
+        {"word": "meeting", "start": 0.6, "end": 1.1, "confidence": 0.8},
+    ]
+
+
+def test_align_text_tokenizes_mixed_script_text(tmp_path: Path) -> None:
+    stub = _StubAligner([])
+    align_text(stub, tmp_path / "clip.flac", "आजको meeting मा, data हेर्यौं!")
+    assert stub.seen_tokens == ["आजको", "meeting", "मा", "data", "हेर्यौं"]
+
+
+def test_align_text_returns_none_when_the_aligner_declines(tmp_path: Path) -> None:
+    assert align_text(_StubAligner(None), tmp_path / "clip.flac", "हामी") is None
+    assert align_text(_StubAligner([]), tmp_path / "clip.flac", "हामी") is None
+
+
+def test_align_text_returns_none_when_there_is_nothing_to_align(tmp_path: Path) -> None:
+    stub = _StubAligner([WordSpan(word="x", start=0.0, end=0.1)])
+    assert align_text(stub, tmp_path / "clip.flac", "") is None
+    assert align_text(stub, tmp_path / "clip.flac", "   ...   ") is None
