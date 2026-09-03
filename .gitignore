@@ -19,3 +19,8 @@ exports/
 
 # diagram build font cache
 docs/diagrams/.fontcache/
+
+# Forced-alignment acoustic model: ~300 MB, built by scripts/export_aligner_onnx.py.
+# silero_vad.onnx is committed because it is 2.3 MB; this one cannot be.
+backend/app/services/models/mms_fa.onnx
+backend/app/services/models/mms_fa_vocab.json
