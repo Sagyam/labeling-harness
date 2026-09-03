@@ -208,7 +208,7 @@ def project_missing_spans(
                 next_start = aligned[q][1].start  # type: ignore[union-attr]
                 break
 
-        gap = max(0.05, next_start - prev_end)
+        gap = max(0.0, next_start - prev_end)
         m_start = idx
         while m_start > 0 and aligned[m_start - 1][1] is None:
             m_start -= 1

@@ -207,3 +207,20 @@ def test_run_cross_verification_flags_divergent_segments() -> None:
     assert len(summary.flagged_segments) == 1
     assert summary.flagged_segments[0]["segment_id"] == "seg_bad"
     assert summary.flagged_segments[0]["max_delta_ms"] == 750.0
+
+
+def test_project_missing_spans_never_overlaps_its_neighbours() -> None:
+    """With no acoustic room between two anchors, a projected span must be degenerate.
+
+    The forced aligner leans on this: a token it could not place -- bare digits, punctuation --
+    sits between two words that may be exactly adjacent. A minimum-width span there would run
+    past the next word's start.
+    """
+    aligned = [
+        ("a", WordSpan(word="a", start=0.0, end=0.5)),
+        ("123", None),
+        ("b", WordSpan(word="b", start=0.5, end=1.0)),
+    ]
+    projected = project_missing_spans(aligned, segment_start=0.0, segment_end=1.0)
+    assert projected[1].start >= projected[0].end
+    assert projected[1].end <= projected[2].start
