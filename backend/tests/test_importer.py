@@ -185,6 +185,31 @@ def test_word_timestamps_are_imported_in_order(
     assert positions == list(range(len(positions)))
 
 
+def test_a_speaker_label_survives_import_and_a_missing_one_stays_null(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Diarization is only useful if the label reaches the database (D36)."""
+    root = build_export_fixture(tmp_path / "export_spk", episode_id="spk_ep", segments=1)
+    manifest = root / "segments.jsonl"
+    lines = []
+    for line in manifest.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        words = record["hypotheses"][0]["words"]
+        words[0]["speaker"] = "spk_1"
+        if len(words) > 1:
+            words[1]["speaker"] = "spk_2"
+        lines.append(json.dumps(record, ensure_ascii=False))
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    run_import(db_session, root, storage, settings)
+    hypothesis = db_session.scalars(sa.select(AsrHypothesis)).first()
+    labels = [w.speaker for w in hypothesis.words]
+    assert labels[0] == "spk_1"
+    assert labels[1] == "spk_2"
+    # Every other transcriber reports none; absent must stay null, not become a default.
+    assert all(label is None for label in labels[2:])
+
+
 def test_import_succeeds_without_word_timestamps(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:

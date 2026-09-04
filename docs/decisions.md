@@ -506,3 +506,43 @@ the documented way to obey one, and it is provider-agnostic.
 
 **Reversal:** the AI Studio client is at `f607de2:backend/app/llm/google.py` and needs
 `GOOGLE_API_KEY` back in the environment. Its quota problem comes back with it.
+
+## D36 — Gemini 3.5 Transcribe on Vertex AI as a fourth ASR system, with word-level diarization
+`asr_gemini_transcribe` calls `gemini-3.5-transcribe` at `interactions:create` on Vertex AI, with
+a `transcriptionConfig` asking for word timestamps and speaker diarization. It is the fourth
+`asr*` route and the second transcriber in the corpus to report word spans of its own.
+
+**Why the model:** it is a dedicated recogniser that handles intra-sentence code-switching, and
+`languageCodes: [ne-NP, en-US]` says so in the request rather than hoping a single hint covers
+both halves. D29 already judged the model right for this corpus and was defeated by AI Studio's
+quota, not by the transcription; D35 removes that obstacle.
+
+**Why it does not replace Gemini 3.8 Flash.** Flash stays, on its own route, unchanged. The two
+answer different questions — Flash is a general model whose failure mode is editorialising, and
+the recogniser's is mishearing — and the owner has not yet seen a Flash transcript on this corpus.
+Four routes is four paid calls per clip, a third more than before, and that is the price of the
+comparison. Dropping a route is one line in `config/llm_routes.yaml` once the answer is in.
+
+**Verbatim has no field on this API.** Vertex's `TranscriptionConfig` carries `languageCodes`,
+`diarizationMode`, `timestampGranularities` and `customVocabulary`, and nothing that selects
+verbatim over the "smart" mode that strips disfluencies — which are exactly what this corpus is
+collecting. So the instruction is prose, in `systemInstruction`, from the same `SCRIPT_POLICY` the
+other prompted routes get. The no-transliteration rule rides there too, stated in both directions,
+because a multilingual model's default is to normalise a code-switched utterance into one script
+and that would silently destroy the measurement the corpus exists to make.
+
+**Speaker labels get a column.** `hypothesis_words.speaker`, nullable, migration `facb0b37b4f8`.
+Requesting diarization and discarding it would have been the more expensive way to buy nothing.
+The label is clip-local and hypothesis-local: `spk_1` here is not `spk_1` in the hypothesis beside
+it, and it is not `segments.speaker_id`, which names a person from an upstream manifest. Its use
+is the comparison *within* one clip — two labels mean a turn boundary the VAD segmenter assumed
+was not there, which is a rule flag waiting to be written and a reason a clip may be unusable.
+Null means "not diarized" and stays null for the other three systems; nothing backfills it.
+
+The route does not set `forced_align`. It reports its own timings, and D32's rule holds: the
+aligner fills spans that are missing, it never overwrites spans a model measured.
+
+**Reversal:** delete the route. Hypotheses already recorded under `gemini-3.5-transcribe` stay
+immutable, and `scripts/purge_asr_system.py` removes them if they are not wanted. The column would
+outlive the route and should — it costs a nullable string and it is what any future diarizing
+transcriber writes to.

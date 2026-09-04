@@ -45,7 +45,12 @@
                 },
                 "confidence": {"type": ["number", "null"]},
                 "predicted_language": {"type": ["string", "null"], "maxLength": 16},
-                "predicted_script": {"type": ["string", "null"], "maxLength": 16}
+                "predicted_script": {"type": ["string", "null"], "maxLength": 16},
+                "speaker": {
+                  "type": ["string", "null"],
+                  "maxLength": 32,
+                  "description": "Diarization label as the transcriber reported it (spk_1). Clip-local: comparable within one hypothesis, and unrelated to the segment's speaker_id."
+                }
               },
               "additionalProperties": true
             }

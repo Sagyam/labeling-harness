@@ -54,7 +54,7 @@ export_<episode_id>/
       "no_speech_prob": 0.01,
       "words": [
         {"word": "So", "start": 0.0, "end": 0.31, "confidence": 0.92,
-         "predicted_language": "en", "predicted_script": "latin"}
+         "predicted_language": "en", "predicted_script": "latin", "speaker": "spk_1"}
       ]
     }
   ],
@@ -71,6 +71,10 @@ export_<episode_id>/
 Rules:
 
 - `hypotheses` must contain at least one entry; `words` is optional and may be absent or empty.
+- A word's `speaker` is the diarization label the transcriber that produced *this hypothesis*
+  reported, and it is optional. It is scoped to the clip and to that one hypothesis: `spk_1` here
+  is not `spk_1` in the hypothesis beside it, and it is not the segment's `speaker_id`, which names
+  a person. Omit it rather than inventing one — null means "not diarized".
 - Word `start` and `end` are **seconds from the start of the clip**, not from the start of the
   episode. The segment's own `start_time` and `end_time` are episode-relative, so the two live on
   different timelines on purpose: a word list travels with the clip beside it, and

@@ -181,6 +181,10 @@ class HypothesisWord(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     predicted_language: Mapped[str | None] = mapped_column(String(16))
     predicted_script: Mapped[str | None] = mapped_column(String(16))
+    #: Diarization label as the transcriber reported it (``spk_1``), clip-local and comparable
+    #: only within one hypothesis. Two speakers here mean a turn boundary inside the clip, which
+    #: the VAD segmenter assumed there was not.
+    speaker: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[dt.datetime] = utc_now_column()
 
     hypothesis: Mapped[AsrHypothesis] = relationship(back_populates="words")

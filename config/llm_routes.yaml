@@ -41,6 +41,25 @@ routes:
     model: microsoft/mai-transcribe-2
     language: ne
 
+  # Gemini 3.5 Transcribe on Vertex AI, via interactions:create with a transcriptionConfig
+  # (D36). A dedicated recogniser: it is the second transcriber here that returns word spans of
+  # its own, and the only one that reports which speaker said each word.
+  #
+  # Both language codes are sent, because a code-switched clip is not one language with
+  # loanwords in it. Verbatim transcription has no field on this API -- the alternative "smart"
+  # mode strips exactly the disfluencies this corpus is collecting -- so it is stated in the
+  # system instruction along with the no-transliteration rule, from SCRIPT_POLICY in
+  # app/llm/transcription.py. Never set forced_align here: it reports its own timings, and
+  # overwriting them would cost the boundary report its second source (D33).
+  asr_gemini_transcribe:
+    provider: vertex
+    api: transcription
+    system_id: gemini-3.5-transcribe
+    model: gemini-3.5-transcribe
+    language_codes:
+      - ne-NP
+      - en-US
+
   # Gemini 3.8 Flash on Vertex AI, on the ordinary generateContent endpoint with the clip
   # inlined (D31, D35). `audio_chat` is the honest name for it: a general model being asked to
   # transcribe, which obeys the transcript prompt but may also editorialise or hallucinate over

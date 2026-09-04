@@ -140,6 +140,7 @@ def test_llm_routes_configured_for_cloud_asr() -> None:
     assert routes.asr_route_names() == [
         "asr_scribe_v2",
         "asr_mai_transcribe_2",
+        "asr_gemini_transcribe",
         "asr_gemini_flash",
     ]
 
@@ -156,6 +157,14 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert mai.model == "microsoft/mai-transcribe-2"
     assert mai.system_id == "mai-transcribe-2"
     assert mai.language == "ne"
+
+    transcribe_route = routes["asr_gemini_transcribe"]
+    assert (transcribe_route.provider, transcribe_route.api) == ("vertex", "transcription")
+    assert transcribe_route.model == "gemini-3.5-transcribe"
+    assert transcribe_route.system_id == "gemini-3.5-transcribe"
+    assert transcribe_route.language_codes == ["ne-NP", "en-US"], (
+        "a code-switched clip is not one language with loanwords in it"
+    )
 
     gemini = routes["asr_gemini_flash"]
     assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (
@@ -222,9 +231,20 @@ def test_load_settings_does_not_read_dotenv_implicitly(
 def test_only_the_transcriber_without_timestamps_asks_for_forced_alignment() -> None:
     """A route that reports its own word spans must keep them (D32).
 
-    Scribe measures word timings and per-word logprobs itself, and overwriting them with the
-    aligner's would destroy the independent reference D27's boundary check compares against.
+    Scribe and Gemini 3.5 Transcribe measure their own word timings, and overwriting them with
+    the aligner's would destroy the independent references D33's boundary check compares.
     """
     routes = load_llm_routes().routes
     aligned = {name for name, route in routes.items() if route.forced_align}
     assert aligned == {"asr_gemini_flash"}
+
+
+def test_only_the_dedicated_recogniser_is_asked_for_speaker_labels() -> None:
+    """Diarization comes with `api: transcription` on Vertex, and nothing else offers it."""
+    routes = load_llm_routes().routes
+    diarizing = {
+        name
+        for name, route in routes.items()
+        if route.provider == "vertex" and route.api == "transcription"
+    }
+    assert diarizing == {"asr_gemini_transcribe"}

@@ -63,7 +63,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (557 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (576 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -97,8 +97,8 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Gotchas
 
-- Ingestion spends real money: each `asr*` route transcribes every clip, and three are configured,
-  so a clip costs three calls. Use a short audio file, or `dry_run: true` in
+- Ingestion spends real money: each `asr*` route transcribes every clip, and four are configured,
+  so a clip costs four calls. Use a short audio file, or `dry_run: true` in
   `config/llm_routes.yaml`, when exercising the pipeline. The same arithmetic is why
   `ingest.youtube.max_duration_seconds` exists — cost is linear in source duration, so a YouTube
   URL is a bigger footgun than a file the annotator had to download first.
@@ -117,11 +117,20 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   to conflate: the **primary** (first route) is what CMI is measured on, the **seed** (chosen per
   split at queue build) is what `low_confidence` reads, and rule flags are computed over **all** of
   them at import. Reordering the routes moves the first two.
-- Word spans have two sources and they must not be confused. Scribe *reports* its own; Gemini
-  Flash's are *measured* afterwards by the local CTC aligner in `app/services/forced_align.py`,
-  which is what the `forced_align` flag on a route turns on. Never set that flag on a route that
-  reports its own timings: overwriting Scribe's spans would destroy the independent reference the
-  D27 boundary report compares against, and there is no second source to replace it.
+- Word spans have two sources and they must not be confused. Scribe, MAI and Gemini 3.5
+  Transcribe *report* their own; Gemini Flash's are *measured* afterwards by the local CTC aligner
+  in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.
+  Never set that flag on a route that reports its own timings: overwriting them would destroy the
+  independent references the D33 boundary report compares.
+- Only `asr_gemini_transcribe` diarizes, and its labels land on `hypothesis_words.speaker` (D36).
+  They are clip-local — `spk_1` in one hypothesis is not `spk_1` in another, and neither is
+  `segments.speaker_id`. Do not join on them across hypotheses, and do not backfill the column for
+  a transcriber that reported nothing: null means "not diarized", which is the honest value for
+  three of the four systems.
+- Vertex AI authenticates with Application Default Credentials, not an API key (D35). Absent
+  credentials fail the route at request time with a logged `llm_requests` row, the same as a
+  missing key elsewhere. `google-auth` is in the dependency list for the credential lookup and the
+  token refresh only — the requests are plain `httpx`, like every other client in `app/llm/`.
 - The aligner's ONNX model is gitignored (~300 MB) and built by `scripts/export_aligner_onnx.py` in
   a throwaway venv. `torch` and `transformers` must never enter `backend/pyproject.toml`. A missing
   model file is a warning and no word spans, never a failed episode -- same contract as

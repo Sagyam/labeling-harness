@@ -141,6 +141,7 @@ def _hypothesis_payload(hypothesis: AsrHypothesis, *, include_words: bool) -> di
                 "confidence": word.confidence,
                 "predicted_language": word.predicted_language,
                 "predicted_script": word.predicted_script,
+                "speaker": word.speaker,
             }
             for word in hypothesis.words
         ]

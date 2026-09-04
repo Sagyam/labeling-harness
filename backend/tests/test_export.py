@@ -221,6 +221,10 @@ def test_analytics_export_includes_word_level_fields(
     assert records
     assert any(r["hypotheses"][0].get("words") for r in records)
     assert "scores" in records[0]
+    # The speaker label is exported even where no transcriber reported one, so a consumer can
+    # tell "nobody diarized this" from "the field was dropped".
+    words = next(r["hypotheses"][0]["words"] for r in records if r["hypotheses"][0].get("words"))
+    assert "speaker" in words[0]
 
 
 def test_analytics_export_succeeds_without_word_timestamps(

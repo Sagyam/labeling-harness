@@ -55,16 +55,18 @@ guard — `ingest.youtube.max_duration_seconds` in `config/settings.yaml` — be
 source duration. Ingesting a video is on you as far as its licensing goes; the harness does not
 check.
 
-Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,
-Microsoft MAI-Transcribe 2, and Google Gemini 3.8 Flash — so one clip is three calls, billed
-against your ElevenLabs, OpenRouter and Google Cloud accounts. Every attempt is written to
+Transcription calls cost money. Four models transcribe every clip — ElevenLabs Scribe v2,
+Microsoft MAI-Transcribe 2, Google Gemini 3.5 Transcribe and Google Gemini 3.8 Flash — so one
+clip is four calls, billed against your ElevenLabs, OpenRouter and Google Cloud accounts. Every attempt is written to
 `llm_requests`, which is the only record of what an ingest spent, so watch that table (or a
 provider-side budget alert) rather than expecting the harness to stop you. Each model hears only
 the audio; none is shown another's transcript, so where they disagree is a measurement rather
 than an echo.
 
-Word-level timestamps do not all come from the models. Scribe reports its own; Gemini's are
-measured locally by a CTC forced aligner that places its transcript back onto the clip
+Word-level timestamps do not all come from the models. Scribe, MAI and Gemini 3.5 Transcribe
+report their own — and Gemini 3.5 Transcribe also says which speaker said each word, so a clip
+with a turn in it can be spotted. Gemini 3.8 Flash returns none, and its spans are measured
+locally by a CTC forced aligner that places its transcript back onto the clip
 (`backend/app/services/forced_align.py`). That model file is ~300 MB and is not committed — build
 it once with `python scripts/export_aligner_onnx.py`. Without it the pipeline still runs, just
 without word spans for that system.
@@ -145,7 +147,7 @@ Object storage defaults to the local filesystem, so the harness is fully usable 
 
 ```bash
 cd backend
-.venv/bin/python -m pytest              # 557 tests
+.venv/bin/python -m pytest              # 576 tests
 .venv/bin/python -m pytest -m "not db"  # skip the ones that need Postgres
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 cd ../frontend && npm run build         # tsc -b && vite build

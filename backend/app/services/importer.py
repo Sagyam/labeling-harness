@@ -325,6 +325,7 @@ def _import_hypotheses(
                     confidence=word.get("confidence"),
                     predicted_language=word.get("predicted_language"),
                     predicted_script=word.get("predicted_script"),
+                    speaker=word.get("speaker"),
                 )
                 for position, word in enumerate(words)
             )
