@@ -164,6 +164,10 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   optional and not a shortcut. Google blocks on the prompt/audio by default and answers with no
   candidates — so the failure arrives as an empty hypothesis rather than an error and drags that
   clip's disagreement rate. A transcriber's job is to write down what was said.
+- `backend/uv.lock` is committed and the image installs from it, hash-checked (D43). Add a
+  dependency by editing `pyproject.toml` and running `uv lock`, then commit both -- a
+  `pyproject.toml` change alone will not reach the container, and `uv export --frozen` fails
+  loudly when the two disagree.
 - The aligner's ONNX model is gitignored (~317 MB) and **downloads itself when missing** (D42),
   pinned to a commit and digest-checked, so the container no longer needs the export.
   `scripts/export_aligner_onnx.py` remains for provenance; `torch` and `transformers` must never

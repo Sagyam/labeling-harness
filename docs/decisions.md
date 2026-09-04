@@ -833,3 +833,28 @@ degrade the same way an absent file always did.
 
 **Reversal:** delete the module and the `_load` call; the export script alone gets you the file
 back.
+
+## D43 — The dependency lockfile is committed, and the image installs from it
+`backend/uv.lock` is tracked. The container no longer runs `pip install -e .` against
+`pyproject.toml`; it exports the locked set with `uv export --frozen --no-dev` and installs that
+with `--require-hashes`, then installs the app itself with `--no-deps`.
+
+**Why:** every dependency in `pyproject.toml` is an open `>=` floor with no upper bound, and the
+image resolved them fresh at build time. An image rebuilt months from now would have picked up a
+different `onnxruntime` or `numpy` — the two libraries that decide CTC alignment numerics and
+float rounding — and the corpus exists to measure things. D5 freezes the splits, D6 makes
+hypotheses immutable and D42 pins the acoustic model to a commit for exactly this reason; the
+dependency set was the last unpinned input, and the one most likely to drift silently.
+
+Hashes ride along with the versions in the export, so a substituted or corrupted wheel fails the
+install rather than shipping. `--no-deps` on the editable install stops pip re-resolving anything
+the lock already decided.
+
+**A side benefit worth keeping:** the dependency layer now precedes `COPY app`, so a one-line code
+change no longer reinstalls all 65 packages.
+
+**What this does not cover:** the build still fetches `hatchling` through pip's build isolation,
+and `uv` itself is pinned by image tag rather than digest. Both are build-time tools that cannot
+change runtime behaviour, which is where the reproducibility argument actually bites.
+
+**Reversal:** delete the lockfile and restore `pip install -e .`; nothing else depends on it.
