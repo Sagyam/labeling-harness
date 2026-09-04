@@ -52,7 +52,7 @@ def sample_requests(db_session: Session) -> list[LlmRequest]:
         ),
         # Vertex AI Gemini 3.5 Transcribe failed
         LlmRequest(
-            route="asr_gemini_transcribe",
+            route="asr_gemini_composite",
             model="gemini-3.5-transcribe",
             input_summary="vertex_transcribe: clip1.flac",
             prompt_tokens=None,
@@ -121,7 +121,7 @@ def test_get_costs_summary_and_breakdowns(client: TestClient, sample_requests) -
     assert "asr_scribe_v2" in models
     assert "asr_mai_transcribe_2" in models
     assert "asr_gemini_flash" in models
-    assert "asr_gemini_transcribe" in models
+    assert "asr_gemini_composite" in models
 
     # Pricing catalog
     catalog = data["pricing_catalog"]

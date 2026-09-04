@@ -140,7 +140,7 @@ def test_llm_routes_configured_for_cloud_asr() -> None:
     assert routes.asr_route_names() == [
         "asr_scribe_v2",
         "asr_mai_transcribe_2",
-        "asr_gemini_transcribe",
+        "asr_gemini_composite",
         "asr_gemini_flash",
     ]
 
@@ -158,16 +158,23 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert mai.system_id == "mai-transcribe-2"
     assert mai.language == "ne"
 
-    transcribe_route = routes["asr_gemini_transcribe"]
-    assert (transcribe_route.provider, transcribe_route.api) == ("google", "transcription")
-    assert transcribe_route.model == "gemini-3.5-transcribe"
-    assert transcribe_route.system_id == "gemini-3.5-transcribe"
-    assert transcribe_route.language_codes == ["ne-NP", "en-US"], (
-        "a code-switched clip is not one language with loanwords in it"
+    transcribe_route = routes["asr_gemini_composite"]
+    assert (transcribe_route.provider, transcribe_route.api) == ("vertex", "transcription")
+    assert transcribe_route.system_id == "gemini-composite"
+    assert transcribe_route.restore_script_route == "script_restore", (
+        "the recogniser writes one script and cannot be told not to; the restore step is the "
+        "other half of this system (D41)"
+    )
+    assert transcribe_route.language_codes == ["ne-NP"], (
+        "a second code empties every clip past ~15s -- measured, deterministic (D41)"
+    )
+    assert not transcribe_route.forced_align, "it reports its own spans; the restore keeps them"
+    assert transcribe_route.model == "gemini-3.5-transcribe-preview", (
+        "Vertex suffixes the recogniser `-preview`; the bare id is a 404 there (D39)"
     )
 
     gemini = routes["asr_gemini_flash"]
-    assert (gemini.provider, gemini.api) == ("google", "audio_chat"), (
+    assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (
         "a general model asked to transcribe, not a dedicated recogniser -- name it so"
     )
     assert gemini.model == "gemini-3.8-flash"
@@ -239,12 +246,23 @@ def test_only_the_transcriber_without_timestamps_asks_for_forced_alignment() -> 
     assert aligned == {"asr_gemini_flash"}
 
 
+def test_nothing_is_held_out_of_the_disagreement_score_any_more() -> None:
+    """The composite restores script, so its disagreement is recognition again, not orthography.
+
+    D40 held the raw recogniser out because it wrote English in Devanagari and so disagreed with
+    every other system on every English token for free. D41's restore step removes that artefact,
+    which puts all four systems back in the comparison.
+    """
+    routes = load_llm_routes().routes
+    assert {name for name, route in routes.items() if route.exclude_from_disagreement} == set()
+
+
 def test_only_the_dedicated_recogniser_is_asked_for_speaker_labels() -> None:
-    """Diarization comes with `api: transcription` on Google, and nothing else offers it."""
+    """Diarization comes with `api: transcription` on Vertex, and nothing else offers it."""
     routes = load_llm_routes().routes
     diarizing = {
         name
         for name, route in routes.items()
-        if route.provider == "google" and route.api == "transcription"
+        if route.provider == "vertex" and route.api == "transcription"
     }
-    assert diarizing == {"asr_gemini_transcribe"}
+    assert diarizing == {"asr_gemini_composite"}

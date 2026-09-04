@@ -34,6 +34,7 @@ from app.llm.base import AsrResult
 from app.llm.transcription import (
     ASR_PROMPT,
     asr_route_names,
+    disagreement_excluded_system_ids,
     system_id_for,
     transcribe,
 )
@@ -576,22 +577,35 @@ def _run_stages(
                         ):
                             words = align_text(aligner, seg.clip_path, asr_res.text)
 
-                        hypotheses.append(
-                            {
-                                "system_id": sys_name,
-                                "model_id": asr_res.model,
-                                "text": asr_res.text,
-                                "avg_logprob": asr_res.avg_logprob,
-                                "no_speech_prob": asr_res.no_speech_prob,
-                                "words": words,
-                            }
-                        )
+                        hypothesis = {
+                            "system_id": sys_name,
+                            "model_id": asr_res.model,
+                            "text": asr_res.text,
+                            "avg_logprob": asr_res.avg_logprob,
+                            "no_speech_prob": asr_res.no_speech_prob,
+                            "words": words,
+                        }
+                        # Provenance, not a hypothesis: the importer routes every key it does
+                        # not recognise into `metadata_jsonb`, so this never reaches `text_raw`,
+                        # the disagreement comparison or the analysis (D41).
+                        if asr_res.metadata:
+                            hypothesis.update(asr_res.metadata)
+                        hypotheses.append(hypothesis)
 
                     # Cross-system disagreement, averaged over every pair of systems. With two
                     # systems this is the single comparison between them; with three it is the mean
                     # of the three pairs, so a third hypothesis informs the queue rather than being
                     # paid for and ignored.
-                    texts = [h["text"] for h in hypotheses]
+                    #
+                    # A route flagged `exclude_from_disagreement` is held out (D39). It is still
+                    # stored and exported; it just does not vote, because its disagreement is an
+                    # orthography artefact rather than evidence that anything was misheard.
+                    held_out = disagreement_excluded_system_ids(routes)
+                    texts = [
+                        h["text"]
+                        for h in hypotheses
+                        if h["system_id"].removeprefix("mock-") not in held_out
+                    ]
                     word_disagreement_rate = mean_pairwise_disagreement([t.split() for t in texts])
                     cer_between_hyps = mean_pairwise_disagreement(texts)
 

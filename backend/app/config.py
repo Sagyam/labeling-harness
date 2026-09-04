@@ -287,7 +287,7 @@ class LlmRoute(BaseModel):
 
     model_config = _STRICT
 
-    provider: Literal["openrouter", "elevenlabs", "google", "vertex"] = "openrouter"
+    provider: Literal["openrouter", "elevenlabs", "vertex"] = "openrouter"
     api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
     #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
@@ -306,18 +306,25 @@ class LlmRoute(BaseModel):
     #: Fill this route's word spans with the local CTC forced aligner (D32). For a transcriber
     #: that returns no timestamps of its own; a route that reports them keeps what it reported.
     forced_align: bool = False
+    #: Name of the text route that puts this route's transcript back into mixed script (D41).
+    #: Set only on a recogniser that writes everything in one script and cannot be told not to.
+    #: The rewrite preserves the token count exactly, so each restored word keeps the span the
+    #: recogniser measured for it -- this is not forced alignment and must not be confused with
+    #: ``forced_align``.
+    restore_script_route: str | None = None
+    #: Keep this route's hypothesis out of the cross-system disagreement scores (D39). For a
+    #: transcriber whose disagreement is an artefact of its orthography rather than of what it
+    #: heard: `word_disagreement_rate` is a raw token comparison and carries 0.40 of the priority
+    #: score, so a system writing another script disagrees on every foreign word for free. The
+    #: hypothesis is still stored, exported and shown -- only the comparison drops it.
+    exclude_from_disagreement: bool = False
 
     @model_validator(mode="after")
     def _check_provider_api(self) -> LlmRoute:
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
-        if self.provider in ("google", "vertex") and self.api not in (
-            "transcription",
-            "audio_chat",
-        ):
-            raise ValueError(
-                f"the {self.provider} provider only offers api: transcription or audio_chat"
-            )
+        if self.provider == "vertex" and self.api not in ("transcription", "audio_chat"):
+            raise ValueError("the vertex provider only offers api: transcription or audio_chat")
         return self
 
 
@@ -325,7 +332,7 @@ class LlmRoutes(BaseModel):
     """Routing table for every inference provider.
 
     OpenRouter is the default and carries all text inference. A provider is called directly when
-    OpenRouter cannot reach it -- ElevenLabs Scribe (D21), Google AI Studio / Gemini (D29, D38).
+    OpenRouter cannot reach it -- ElevenLabs Scribe (D21), Gemini on Vertex AI (D35, D39).
     What every route shares is that its calls are logged to ``llm_requests``, which is the only
     spend record there is.
     """
@@ -335,8 +342,12 @@ class LlmRoutes(BaseModel):
     enabled: bool = False
     base_url: str = "https://openrouter.ai/api/v1"
     elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
-    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    vertex_base_url: str = "https://aiplatform.googleapis.com/v1beta1"
+    #: GCP project the Vertex calls bill and quota against. Blank here so the committed file names
+    #: no project; ``GOOGLE_CLOUD_PROJECT`` fills it in.
     vertex_project: str = ""
+    #: Region serving the models. ``global`` serves both; ``us-central1`` is the only other
+    #: location that carries the recogniser.
     vertex_location: str = ""
     default_timeout_seconds: float = 30.0
     default_max_tokens: int = 1024

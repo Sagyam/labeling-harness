@@ -8,11 +8,14 @@ Vertex AI.
 The transcript policy lives here too. The corpus is code-switched, and the rule is that a word is
 written in the script of the language it belongs to, so every model that can be told anything is
 told both that the mixing is expected and which script each half takes. Scribe takes no prose
-instruction at all, which is why it is given a language code and key terms instead.
+instruction at all, which is why it is given a language code and key terms instead. Gemini 3.5
+Transcribe takes neither -- prose is refused and key terms cost it its speaker labels -- so it has
+no lever at all, and renders English words in Devanagari (D39).
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,8 +27,12 @@ from sqlalchemy.orm import Session
 from app.config import LlmRoute, LlmRoutes
 from app.llm.base import AsrResult, LlmRouteNotConfigured
 from app.llm.elevenlabs import ElevenLabsClient
-from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
+from app.llm.script_restore import restore_script
+from app.llm.vertex import VertexClient
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 #: The transcript policy itself, and the whole of what a dedicated speech recogniser is told.
 #: The rule that matters most is the one a multilingual model gets wrong by default: it will
@@ -77,6 +84,70 @@ def system_id_for(route_name: str, route_config: LlmRoute | None) -> str:
     return route_name.removeprefix("asr_").replace("_", "-") or "asr"
 
 
+def disagreement_excluded_system_ids(config: LlmRoutes) -> frozenset[str]:
+    """The ``system_id`` of every route held out of the cross-system disagreement scores.
+
+    Disagreement is recomputed in two places -- at ingest and again after a purge -- and they must
+    agree, so both read the hold-out set from here rather than naming a system of their own.
+    """
+    return frozenset(
+        system_id_for(name, route)
+        for name, route in config.routes.items()
+        if route.exclude_from_disagreement
+    )
+
+
+def _restore_script(
+    session: Session,
+    result: AsrResult,
+    *,
+    restore_route: str,
+    routes: LlmRoutes,
+    client: httpx.Client | None,
+    dry_run: bool | None,
+) -> AsrResult:
+    """Put a single-script transcript back into mixed script, keeping every span (D41).
+
+    The recogniser decided what was said and when; this only decides how it is spelled. One
+    restored token per recognised token, so each word keeps the span the recogniser measured --
+    no re-alignment, and `forced_align` stays off for this route (D33).
+
+    The original Devanagari is kept in `metadata`, which becomes the hypothesis's
+    `metadata_jsonb`. It is provenance only: it is never scored, never compared and never
+    exported as a transcript.
+    """
+    if not result.words:
+        return result
+
+    tokens = [str(w["word"]) for w in result.words]
+    if len(tokens) != len(result.text.split()):
+        # The restored text is rebuilt from the spans, so a word list that does not cover the
+        # transcript would silently truncate it. Vertex returns them 1:1; say so loudly if that
+        # ever stops being true rather than shipping a short transcript.
+        logger.warning(
+            "restore_script_token_text_mismatch",
+            route=restore_route,
+            words=len(tokens),
+            text_tokens=len(result.text.split()),
+        )
+    tokens_meta = {"script_restore_text_tokens": len(result.text.split())}
+    restored, meta = restore_script(
+        session, tokens, route=restore_route, config=routes, client=client, dry_run=dry_run
+    )
+    words = [{**word, "word": new} for word, new in zip(result.words, restored, strict=True)]
+    return replace(
+        result,
+        text=" ".join(restored),
+        words=words,
+        metadata={
+            **(result.metadata or {}),
+            "text_devanagari": result.text,
+            **tokens_meta,
+            **meta,
+        },
+    )
+
+
 def transcribe(
     session: Session,
     audio_path: Path | str,
@@ -118,17 +189,29 @@ def transcribe(
             keyterms=list(DEFAULT_KEYTERMS),
             dry_run=dry_run,
         )
-    if route_config.provider in ("google", "vertex"):
-        # A dedicated recogniser (gemini-3.5-transcribe) rejects developer/system instructions
-        # on the Interactions API (Google returns 400 "Developer instruction is not enabled").
-        # Steering is configured purely through transcription_config (verbatim mode, languages).
+    if route_config.provider == "vertex":
+        # The dedicated recogniser takes no steering at all. Vertex answers a systemInstruction
+        # with 400 "The input system_instruction is not supported.", a text part in `contents` is
+        # accepted but ignored, and custom vocabulary is accepted and then silently costs the
+        # route its speaker labels (D39). So it gets the audio, the language codes and nothing
+        # else -- and, having no way to be told otherwise, writes English in Devanagari.
         dedicated = route_config.api == "transcription"
-        return GoogleClient(session, config=routes, client=client).transcribe(
+        result = VertexClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
             prompt=None if dedicated else prompt,
             dry_run=dry_run,
         )
+        if route_config.restore_script_route:
+            result = _restore_script(
+                session,
+                result,
+                restore_route=route_config.restore_script_route,
+                routes=routes,
+                client=client,
+                dry_run=dry_run,
+            )
+        return result
     return OpenRouterClient(session, config=routes, client=client).transcribe(
         audio_path,
         route=route,

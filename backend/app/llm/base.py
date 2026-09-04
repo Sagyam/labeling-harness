@@ -87,6 +87,10 @@ class AsrResult:
     estimated_cost_usd: Decimal | None = None
     dry_run: bool = False
     raw: dict[str, Any] | None = None
+    #: Extra facts about how this transcript was produced, carried into the hypothesis's
+    #: ``metadata_jsonb``. Never scored, never compared, never exported as a transcript -- it is
+    #: provenance, not a hypothesis (D41).
+    metadata: dict[str, Any] | None = None
 
 
 #: Canned transcripts for dry runs, chosen by file hash. Callers must key off ``dry_run`` and

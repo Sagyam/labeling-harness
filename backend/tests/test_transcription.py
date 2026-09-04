@@ -21,6 +21,7 @@ from app.llm.transcription import (
     ASR_PROMPT,
     SCRIPT_POLICY,
     asr_route_names,
+    disagreement_excluded_system_ids,
     system_id_for,
     transcribe,
 )
@@ -74,39 +75,54 @@ def recorder(monkeypatch):
         if "elevenlabs" in str(request.url):
             return httpx.Response(200, json={"text": "स्क्राइब भन्छ", "words": []})
         if "chat/completions" in str(request.url):
+            body = json.loads(request.content)
+            content = "  जेमिनाइ भन्छ  "
+            if "TOKENS:" in body["messages"][0]["content"]:
+                # A script-restoration call: answer with one token out per token in.
+                sent = json.loads(body["messages"][0]["content"].split("TOKENS:")[1])
+                content = json.dumps(
+                    ["Gemini" if t == "गुगल" else t for t in sent], ensure_ascii=False
+                )
             return httpx.Response(
                 200,
                 json={
                     "model": "google/gemini-3.8-flash",
-                    "choices": [{"message": {"content": "  जेमिनाइ भन्छ  "}}],
+                    "choices": [{"message": {"content": content}}],
                     "usage": {"prompt_tokens": 88, "completion_tokens": 4, "cost": 3.3e-05},
                 },
             )
-        if str(request.url).endswith("/interactions"):
+        if "transcribe-preview:generateContent" in str(request.url):
             return httpx.Response(
                 200,
                 json={
-                    "status": "completed",
-                    "steps": [
+                    "candidates": [
                         {
-                            "type": "model_output",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "गुगल भन्छ",
-                                    "annotations": [
-                                        {
-                                            "type": "word_info",
-                                            "text": "गुगल",
-                                            "start_offset": "0s",
-                                            "end_offset": "0.5s",
-                                            "speaker": "spk_1",
-                                        }
-                                    ],
-                                }
-                            ],
+                            "content": {
+                                "role": "model",
+                                "parts": [
+                                    {
+                                        "text": "गुगल भन्छ",
+                                        "audioTranscription": {
+                                            "text": "गुगल भन्छ",
+                                            "speakerLabel": "spk:0",
+                                            "words": [
+                                                {
+                                                    "word": "गुगल",
+                                                    "startOffset": "0s",
+                                                    "endOffset": "0.5s",
+                                                },
+                                                {
+                                                    "word": "भन्छ",
+                                                    "startOffset": "0.5s",
+                                                    "endOffset": "0.9s",
+                                                },
+                                            ],
+                                        },
+                                    }
+                                ],
+                            }
                         }
-                    ],
+                    ]
                 },
             )
         if ":generateContent" in str(request.url):
@@ -123,7 +139,8 @@ def recorder(monkeypatch):
     monkeypatch.setattr("app.llm.base.ProviderClient._get_client", lambda self: mock)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("VERTEX_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     return seen
 
 
@@ -299,42 +316,62 @@ def test_transcribe_accepts_and_uses_custom_http_client(
     assert len(calls) == 1
 
 
-# --- Google AI Studio / Gemini API dispatch ------------------------------------------------
+# --- Vertex AI / Gemini dispatch -----------------------------------------------------------
 
 
-def _google_routes(**route_kwargs) -> LlmRoutes:
-    """The base table plus one Google route of the requested shape."""
+def _vertex_routes(**route_kwargs) -> LlmRoutes:
+    """The base table plus one Vertex route of the requested shape."""
     return routes(
-        google_base_url="https://generativelanguage.googleapis.com/v1beta",
-        routes={**routes().routes, "asr_google": LlmRoute(provider="google", **route_kwargs)},
+        vertex_base_url="https://aiplatform.googleapis.com/v1beta1",
+        vertex_project="test-project",
+        vertex_location="global",
+        routes={
+            **routes().routes,
+            "asr_vertex": LlmRoute(provider="vertex", **route_kwargs),
+            "script_restore": LlmRoute(
+                provider="openrouter", api="chat", model="google/gemini-3.8-flash"
+            ),
+        },
     )
 
 
-def test_a_google_transcription_route_reaches_interactions(
+def test_a_vertex_transcription_route_reaches_generate_content(
     db_session: Session, clip, recorder
 ) -> None:
-    """The dedicated recogniser: word spans and speaker labels come back with the text."""
-    config = _google_routes(
+    """The dedicated recogniser: word spans and speaker labels come back with the text.
+
+    The model id carries `-preview` on Vertex and the endpoint is `:generateContent`, never
+    `interactions` -- the two mistakes that broke the first Vertex attempt (D39).
+    """
+    config = _vertex_routes(
         api="transcription",
-        model="gemini-3.5-transcribe",
+        model="gemini-3.5-transcribe-preview",
         system_id="gemini-3.5-transcribe",
         language_codes=["ne-NP", "en-US"],
     )
-    result = transcribe(db_session, clip, route="asr_google", config=config)
-
-    assert str(recorder[-1].url).endswith("/interactions")
-    assert result.text == "गुगल भन्छ"
-    assert result.words == [{"word": "गुगल", "start": 0.0, "end": 0.5, "speaker": "spk_1"}]
-
-
-def test_a_google_audio_chat_route_reaches_generate_content(
-    db_session: Session, clip, recorder
-) -> None:
-    config = _google_routes(api="audio_chat", model="gemini-3.8-flash", language="ne")
-    result = transcribe(db_session, clip, route="asr_google", config=config)
+    result = transcribe(db_session, clip, route="asr_vertex", config=config)
 
     url = str(recorder[-1].url)
-    assert url.endswith("/models/gemini-3.8-flash:generateContent")
+    assert url.endswith(
+        "/projects/test-project/locations/global/publishers/google/models"
+        "/gemini-3.5-transcribe-preview:generateContent"
+    )
+    assert "interactions" not in url
+    assert result.text == "गुगल भन्छ"
+    assert result.words == [
+        {"word": "गुगल", "start": 0.0, "end": 0.5, "speaker": "spk:0"},
+        {"word": "भन्छ", "start": 0.5, "end": 0.9, "speaker": "spk:0"},
+    ]
+
+
+def test_a_vertex_audio_chat_route_reaches_generate_content(
+    db_session: Session, clip, recorder
+) -> None:
+    config = _vertex_routes(api="audio_chat", model="gemini-3.8-flash", language="ne")
+    result = transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    url = str(recorder[-1].url)
+    assert url.endswith("/publishers/google/models/gemini-3.8-flash:generateContent")
     assert result.text == "फ्ल्यास भन्छ"
     # generateContent returns text; word spans come from the forced aligner (D32).
     assert result.words is None
@@ -343,33 +380,96 @@ def test_a_google_audio_chat_route_reaches_generate_content(
 def test_a_dedicated_recogniser_omits_system_instruction(
     db_session: Session, clip, recorder
 ) -> None:
-    """A dedicated speech recogniser rejects developer instruction with HTTP 400."""
-    config = _google_routes(api="transcription", model="gemini-3.5-transcribe")
-    transcribe(db_session, clip, route="asr_google", config=config, prompt=ASR_PROMPT)
+    """Vertex answers one with 400 "The input system_instruction is not supported."."""
+    config = _vertex_routes(api="transcription", model="gemini-3.5-transcribe-preview")
+    transcribe(db_session, clip, route="asr_vertex", config=config, prompt=ASR_PROMPT)
 
     sent = json.loads(recorder[-1].content)
-    assert "system_instruction" not in sent
+    assert "systemInstruction" not in sent
+    assert all("text" not in part for part in sent["contents"][0]["parts"])
 
 
-def test_a_google_chat_model_gets_the_whole_prompt(db_session: Session, clip, recorder) -> None:
-    config = _google_routes(api="audio_chat", model="gemini-3.8-flash")
-    transcribe(db_session, clip, route="asr_google", config=config)
+def test_a_vertex_chat_model_gets_the_whole_prompt(db_session: Session, clip, recorder) -> None:
+    config = _vertex_routes(api="audio_chat", model="gemini-3.8-flash")
+    transcribe(db_session, clip, route="asr_vertex", config=config)
 
-    parts = json.loads(recorder[-1].content)["contents"][0]["parts"]
-    assert ASR_PROMPT in parts[0]["text"]
+    sent = json.loads(recorder[-1].content)
+    assert ASR_PROMPT in sent["systemInstruction"]["parts"][0]["text"]
 
 
-def test_a_dedicated_recogniser_omits_custom_vocabulary(
+def test_a_dedicated_recogniser_gets_no_steering_at_all(
     db_session: Session, clip, recorder
 ) -> None:
-    config = _google_routes(api="transcription", model="gemini-3.5-transcribe")
-    transcribe(db_session, clip, route="asr_google", config=config)
+    """Prose is rejected and vocabulary costs the speaker labels, so neither is sent (D39)."""
+    config = _vertex_routes(api="transcription", model="gemini-3.5-transcribe-preview")
+    transcribe(db_session, clip, route="asr_vertex", config=config)
 
     sent = json.loads(recorder[-1].content)
-    config = sent["generation_config"]["transcription_config"]
-    assert "custom_vocabulary" not in config
-    assert config["mode"]["diarization_mode"] == "speaker"
-    assert config["mode"]["timestamp_granularities"] == ["word"]
+    config = sent["generationConfig"]["audioTranscriptionConfig"]
+    assert "customVocabulary" not in config
+    assert config["diarization"] is True
+    assert config["wordTimestamp"] is True
+
+
+def test_a_composite_route_restores_script_and_keeps_every_span(
+    db_session: Session, clip, recorder
+) -> None:
+    """The recogniser decides what and when; the restore decides only how it is spelled (D41)."""
+    config = _vertex_routes(
+        api="transcription",
+        model="gemini-3.5-transcribe-preview",
+        system_id="gemini-composite",
+        restore_script_route="script_restore",
+    )
+    plain = transcribe(
+        db_session,
+        clip,
+        route="asr_vertex",
+        config=_vertex_routes(api="transcription", model="gemini-3.5-transcribe-preview"),
+    )
+    restored = transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    assert plain.words is not None and restored.words is not None
+    assert restored.text == "Gemini भन्छ"
+    assert [w["word"] for w in restored.words] == ["Gemini", "भन्छ"]
+    # Same count, same spans, same speaker -- only the spelling moved.
+    assert len(restored.words) == len(plain.words)
+    assert [(w["start"], w["end"], w["speaker"]) for w in restored.words] == [
+        (w["start"], w["end"], w["speaker"]) for w in plain.words
+    ]
+
+
+def test_the_composite_keeps_the_devanagari_as_metadata_not_as_a_hypothesis(
+    db_session: Session, clip, recorder
+) -> None:
+    """Curiosity only: it must never reach `text`, and so never the comparison or the queue."""
+    config = _vertex_routes(
+        api="transcription",
+        model="gemini-3.5-transcribe-preview",
+        restore_script_route="script_restore",
+    )
+    result = transcribe(db_session, clip, route="asr_vertex", config=config)
+    assert (result.metadata or {})["text_devanagari"] == "गुगल भन्छ"
+    assert "गुगल" not in result.text
+
+
+def test_a_route_without_a_restore_route_is_left_alone(db_session: Session, clip, recorder) -> None:
+    config = _vertex_routes(api="transcription", model="gemini-3.5-transcribe-preview")
+    result = transcribe(db_session, clip, route="asr_vertex", config=config)
+    assert result.text == "गुगल भन्छ"
+    assert result.metadata is None
+
+
+def test_the_hold_out_set_is_named_by_system_id_not_by_route_name() -> None:
+    """Ingest and purge both key off `system_id`; a route name here would silently match nothing."""
+    table = routes()
+    held = table.routes["asr_gemini_flash"].model_copy(update={"exclude_from_disagreement": True})
+    config = routes(routes={**table.routes, "asr_gemini_flash": held})
+    assert disagreement_excluded_system_ids(config) == frozenset({"gemini-3.8-flash"})
+
+
+def test_nothing_is_held_out_by_default() -> None:
+    assert disagreement_excluded_system_ids(routes()) == frozenset()
 
 
 def test_the_policy_forbids_transliteration_in_both_directions() -> None:

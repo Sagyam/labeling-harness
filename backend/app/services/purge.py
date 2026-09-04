@@ -28,6 +28,8 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from app.config import LlmRoutes, load_llm_routes
+from app.llm.transcription import disagreement_excluded_system_ids
 from app.models import AsrHypothesis, AsrSystem, AuditLog, Segment, SegmentScore
 from app.models.content import HypothesisWord
 from app.services.analysis import mean_pairwise_disagreement
@@ -97,8 +99,13 @@ def _dump_rows(
     return rows
 
 
-def _rescore(session: Session, segment_ids: set[int]) -> int:
-    """Recompute disagreement for segments whose hypothesis set just changed."""
+def _rescore(session: Session, segment_ids: set[int], config: LlmRoutes | None = None) -> int:
+    """Recompute disagreement for segments whose hypothesis set just changed.
+
+    Reads the same hold-out set as the ingest path (D39): a system excluded there and counted
+    here would silently rewrite every score a purge touched.
+    """
+    held_out = set(disagreement_excluded_system_ids(config or load_llm_routes()))
     rescored = 0
     for segment_id in sorted(segment_ids):
         score = session.get(SegmentScore, segment_id)
@@ -106,7 +113,12 @@ def _rescore(session: Session, segment_ids: set[int]) -> int:
             continue
         texts = list(
             session.scalars(
-                sa.select(AsrHypothesis.text_raw).where(AsrHypothesis.segment_id == segment_id)
+                sa.select(AsrHypothesis.text_raw)
+                .join(AsrSystem, AsrSystem.id == AsrHypothesis.asr_system_id)
+                .where(
+                    AsrHypothesis.segment_id == segment_id,
+                    AsrSystem.system_id.not_in(held_out) if held_out else sa.true(),
+                )
             ).all()
         )
         score.word_disagreement_rate = mean_pairwise_disagreement([t.split() for t in texts])
@@ -123,6 +135,7 @@ def purge_asr_system(
     rescore: bool = True,
     actor: str = "owner",
     dry_run: bool = False,
+    config: LlmRoutes | None = None,
 ) -> PurgeReport:
     """Delete one ASR system, its hypotheses and their word spans.
 
@@ -131,6 +144,7 @@ def purge_asr_system(
         system_id: ``asr_systems.system_id`` to remove.
         dump_dir: Directory the pre-delete JSONL dump is written into.
         rescore: Recompute disagreement scores on the affected segments.
+        config: Routing table, for the disagreement hold-out set. Defaults to the committed one.
         actor: Recorded on the audit entry.
         dry_run: Report what would be removed, touching nothing.
 
@@ -195,7 +209,7 @@ def purge_asr_system(
     session.flush()
 
     if rescore:
-        report.segments_rescored = _rescore(session, segment_ids)
+        report.segments_rescored = _rescore(session, segment_ids, config)
 
     session.add(
         AuditLog(

@@ -642,3 +642,158 @@ backend image installs, is built `--enable-libsoxr`, so the fallback should stay
 change. `test_normalization_discards_content_above_nyquist_instead_of_folding_it` guards it by
 comparing an out-of-band probe against an anchor-only control; on the old chain it fails with a
 50 dB excess.
+
+## D39 — Gemini runs on Vertex AI under one restricted API key (supersedes D38, restores D35/D36)
+Both Google models move back to Vertex AI. `app/llm/google.py` and `provider: google` are deleted;
+`app/llm/vertex.py` and `provider: vertex` replace them. `asr_gemini_transcribe` calls
+**`gemini-3.5-transcribe-preview`** and `asr_gemini_flash` calls `gemini-3.8-flash`, both at
+`projects/{project}/locations/global/publishers/google/models/{model}:generateContent` on
+`aiplatform.googleapis.com`. The `system_id` of each route is unchanged, so hypotheses recorded
+before and after stay comparable.
+
+**Why:** D38 put the models on AI Studio, whose quota is per key and cannot be raised, and stage 3
+began failing with `HTTP 429 ... You exceeded your current quota` — the same tax D29 and D30 were
+built around and D35 was written to escape. Vertex quota is project-scoped.
+
+**What actually broke the first Vertex attempt (D35/D36).** Not an allowlist, and not the project.
+The two surfaces name the model differently: Vertex serves `gemini-3.5-transcribe-preview` and
+returns 404 for the bare `gemini-3.5-transcribe` that the old client asked for, in every region.
+Probed directly: `preview` is `PUBLIC_PREVIEW` on both `global` and `us-central1` and absent from
+`europe-west4`; `gemini-3.8-flash` is `GA` on the same two. D38's other correction still stands —
+`interactions:create` was never a valid endpoint — but there is no Interactions API on Vertex at
+all, so the fix is `:generateContent` with `generationConfig.audioTranscriptionConfig`
+(`diarization`, `wordTimestamp`, `languageCodes`; every other spelling is deprecated).
+
+**Auth is one API key, not ADC.** D35 assumed Vertex required Application Default Credentials.
+It does not: a Google Cloud API key restricted to `aiplatform.googleapis.com` authenticates the
+project-scoped endpoint, and responses come back `trafficType: ON_DEMAND` — paid project traffic,
+not a free tier. So `google-auth`, the service-account JSON and the docker credential mount all
+stay deleted, and the harness keeps the single-key shape it has for OpenRouter and ElevenLabs. The
+key travels as an `x-goog-api-key` header rather than `?key=`, because httpx puts request URLs in
+its error strings and `_send_with_retries` copies those into `llm_requests.error_message`. Least
+privilege is the key's own restriction plus `roles/aiplatform.expressUser` on the service account
+behind it — the key is refused by `generativelanguage.googleapis.com` with a 403.
+
+**The recogniser accepts no steering, and that has a cost worth stating.** `systemInstruction` is
+a hard `400 The input system_instruction is not supported.`; a text part in `contents` is accepted
+and silently ignored; and `customVocabulary` is accepted with a 200 and then suppresses
+`speakerLabel` entirely — measured three runs each way on one clip, labelled `spk:0` without it and
+unlabelled with it. AI Studio at least answered 400 for that combination, so the constraint now
+lives in the client, which drops the field and warns. Diarization is why the route exists (D36);
+trading it for term biasing would be the expensive way to buy nothing.
+
+The consequence is that `SCRIPT_POLICY` cannot reach this model by any route, and it therefore
+**transliterates English into Devanagari** — `active` → `एक्टिभ`, `range` → `रेन्ज`, measured on a
+real clip. That is a property of the model, not a bug, and it means this system will always score
+badly on script fidelity. It is kept because it is the only transcriber reporting speaker labels,
+and D36's split stands: Flash takes a `systemInstruction`, honours the no-transliteration rule and
+may editorialise; the recogniser gets the script wrong and gets the spans right. Dropping the route
+remains one line in `config/llm_routes.yaml` if that trade stops being worth four paid calls a clip.
+
+**Speaker labels are per segment.** Vertex returns one `Part` per speaker turn carrying
+`speakerLabel` (`spk:0`), not a label per word as the Interactions API did, so the client fans each
+segment's label onto its own words to keep `hypothesis_words.speaker` a per-word column.
+
+**Reversal:** returning to AI Studio is `provider`, the base URL, the model id and the payload
+builder — and it re-enters the quota trap that caused this. Moving to ADC would mean restoring
+`google-auth` and a credential mount for no gain now that a key authenticates the same endpoint.
+
+## D40 — Gemini 3.5 Transcribe is held out of the disagreement scores, not out of the corpus
+`asr_gemini_transcribe` carries `exclude_from_disagreement: true`. Its hypothesis is still
+requested, stored, exported and shown; it simply does not enter `word_disagreement_rate` or
+`cer_between_hypotheses`.
+
+**Why:** the route writes English words in Devanagari and cannot be told otherwise (D39).
+`mean_pairwise_disagreement` is a raw `difflib` comparison over tokens with no script
+normalisation, so this system disagrees with the other three on *every* English token without
+anything having been misheard. `word_disagreement_rate` is the heaviest term in the priority score
+at 0.40, so counting it would push the most heavily code-switched segments up the annotation queue
+for a reason that is not difficulty — a bias aimed precisely at the phenomenon the corpus exists
+to study. Measured on one segment: 0.0 with the hold-out, 0.3333 without, from orthography alone.
+
+Stage 4's CMI and Devanagari/Latin ratio were never at risk: they read `hypotheses[0]`, which is
+`asr_scribe_v2`.
+
+**Why keep the hypothesis at all.** It is the only transcriber reporting speaker labels, and its
+self-reported spans are the second timing reference the D33 boundary report compares. Beyond that,
+a whole-corpus transcript that renders every English word phonetically in Devanagari, time-aligned
+against three transcripts that keep Latin, is a parallel resource that cannot easily be bought:
+see the uses recorded against this decision. Deleting it to tidy the score would throw that away.
+
+**Implementation.** The flag lives on `LlmRoute`, and both places that compute disagreement --
+`ingest.py` at transcribe time and `purge.py` when a purge changes a segment's hypothesis set --
+read the hold-out set from `disagreement_excluded_system_ids()` in `app/llm/transcription.py`.
+They must never name a system independently: a system excluded at ingest and counted at rescore
+would silently rewrite every score a purge touched.
+
+**Reversal:** drop the flag. If the disagreement metric ever becomes script-aware, the hold-out
+stops being necessary and the route rejoins the comparison with no other change.
+
+## D41 — Gemini Composite: the recogniser hears, a reasoning model spells (supersedes D40's hold-out)
+`asr_gemini_transcribe` becomes `asr_gemini_composite`, `system_id: gemini-composite`. Gemini 3.5
+Transcribe on Vertex still hears the clip and still supplies the text, the word spans and the
+speaker labels. Its token list is then passed to Gemini 3.8 Flash on **OpenRouter**, which rewrites
+each token into the script its own language uses. The result is recorded as one system, named so
+the seam is visible; the paper discloses the two-model pipeline.
+
+**Why:** D39 established that this recogniser accepts no steering of any kind, and therefore writes
+English phonetically in Devanagari (`active` → `एक्टिभ`) with no lever to stop it. D40 dealt with
+that by holding it out of the disagreement scores. Restoring the script instead fixes the cause
+rather than the symptom, so `exclude_from_disagreement` is dropped and the corpus is back to
+**four voting systems**. Measured on a 30 s clip: 93 tokens in, 93 out, 18 restored, 0 same-script
+edits.
+
+**One token in, one token out.** This is the whole design, and it is enforced in code, not asked
+for in the prompt. Each restored word inherits the span the recogniser measured for it, so there is
+no re-alignment and the forced aligner is not involved — `forced_align` stays false here (D33). A
+rewrite returning a different token count is retried and then fails the segment: padding or
+truncating would give every word after the first divergence someone else's timing, which is far
+worse than a segment that fails loudly. `app/llm/script_restore.py` owns this.
+
+**The rewrite runs on OpenRouter, not Vertex.** It is text inference, which is where OpenRouter
+belongs in this harness, and Vertex answers Flash with a spurious `blockReason: SAFETY` often
+enough to matter (below). Only the audio call needs Vertex, because only Vertex serves the
+recogniser at all.
+
+**A reasoning layer can lie, so its lying is measured.** A token that comes back in the *same*
+script but different (`मिटिङ` → `बैठक`) is the model correcting the recogniser rather than
+transliterating it. That is counted per hypothesis as `script_restore_same_script_edits` and
+carried in `metadata_jsonb`, so a suspect segment can be found again. It is reported rather than
+raised: one disputed token must not cost an episode. Standalone `asr_gemini_flash` is retained
+partly as the control on this layer — it is the only route that hears audio and writes Latin
+directly, so where it and the composite disagree on a script decision is the audit set.
+
+**The raw Devanagari is kept as provenance, not as a hypothesis.** It rides in the hypothesis's
+`metadata_jsonb` as `text_devanagari` and never reaches `text_raw`, the disagreement comparison,
+the analysis or the queue. Its value is a word-aligned Devanagari/Latin parallel corpus that the
+pipeline now produces for free.
+
+### Two Gemini failure modes found while building this, both silent
+
+**One language code, not two.** Sending two or more `languageCodes` makes the recogniser return
+HTTP 200 with *no content* for any clip past roughly 15 seconds. Deterministic, three runs per
+cell:
+
+| `languageCodes` | 15 s | 18 s | 20 s | 25 s | 30 s |
+|---|---|---|---|---|---|
+| `[ne-NP, en-US]` | 45 w | EMPTY | EMPTY | EMPTY | EMPTY |
+| `[ne-NP]` | 49 w | 59 w | 64 w | 77 w | 93 w |
+| `[en-US]` | EMPTY | EMPTY | EMPTY | EMPTY | 2 w |
+| `[ne-NP, en-US, hi-IN]` | 42 w | 1 w | EMPTY | EMPTY | 4 w |
+
+`MAX_SEG_SECONDS = 20.0`, so a second code silently blanks the long end of every episode. This
+supersedes D36's "send both codes" reasoning: that was right about the corpus and wrong about what
+the API can do, and `en-US` was never buying script correctness anyway — the restore step is what
+buys it. Scribe and MAI were swept at the same durations and are clean, so the cliff is Gemini's,
+not the audio's.
+
+**An empty 200 is not a success.** Both Gemini routes could return one — the recogniser past the
+duration limit, and `audio_chat` on a spurious `blockReason: SAFETY` that clears on retry with the
+request unchanged (observed on 4 of 7 clips in one sweep, then not reproducible on the same clip
+minutes later; `OFF` is a valid threshold and the categories are correct, so it is not a
+configuration error). `_send_with_retries` only ever sees a 200, so emptiness is now judged and
+retried in `vertex.py`. An empty `audio_chat` answer with *no* block reason is still accepted:
+`ASR_PROMPT` asks for an empty string when there is no intelligible speech.
+
+**Reversal:** drop `restore_script_route` and the composite is the raw recogniser again — at which
+point D40's hold-out has to come back with it, because the orthography artefact returns.

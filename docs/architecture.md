@@ -179,8 +179,8 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 |---|---|---|---|---|
 | `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
 | `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne`, the full policy prompt |
-| `asr_gemini_transcribe` | Google AI Studio (direct) | `POST /v1beta/interactions` | text, word spans, speaker per word | the script policy, `language_codes: [ne-NP, en-US]` |
-| `asr_gemini_flash` | Google AI Studio (direct) | `POST /v1beta/models/…:generateContent` | text only | the full policy prompt, `language: ne` |
+| `asr_gemini_composite` | Vertex AI (audio) + OpenRouter (script restore) | `POST …/gemini-3.5-transcribe-preview:generateContent`, then a chat rewrite | text, word spans, speaker per segment | `language_codes: [ne-NP]` only; no prompt reaches the recogniser |
+| `asr_gemini_flash` | Vertex AI (direct) | `POST …/gemini-3.8-flash:generateContent` | text only | the full policy prompt as `systemInstruction`, `language: ne` |
 
 The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
 code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
@@ -205,7 +205,7 @@ afterwards by the local CTC forced aligner (D31, D32). Flash is the one general-
 the set -- it obeys the policy prompt, and it may equally editorialise or hallucinate over
 silence, which is the price of that opinion.
 
-Only `asr_gemini_transcribe` diarizes. Its labels are stored on `hypothesis_words.speaker` and
+Only `asr_gemini_composite` diarizes. Its labels are stored on `hypothesis_words.speaker` and
 are clip-local: `spk_1` in one hypothesis is not `spk_1` in another, and neither is a
 `segments.speaker_id` from an upstream manifest. What they are good for is the comparison inside
 one clip -- two labels mean a turn boundary the VAD segmenter assumed was not there. Scribe is

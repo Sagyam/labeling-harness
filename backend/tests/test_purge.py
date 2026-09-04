@@ -13,6 +13,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from app.config import load_llm_routes
 from app.models import AsrHypothesis, AsrSystem, AuditLog, Episode, Segment, SegmentScore
 from app.models.content import HypothesisWord
 from app.services.purge import PurgedSystemNotFound, purge_asr_system
@@ -159,3 +160,63 @@ def test_purge_can_be_previewed_without_deleting_anything(
     assert report.dump_path is None
     assert db_session.scalar(sa.select(AsrSystem).where(AsrSystem.system_id == DOOMED)) is not None
     assert len(db_session.scalars(sa.select(AsrHypothesis)).all()) == 4
+
+
+def test_the_rescore_holds_out_the_same_systems_the_ingest_does(
+    db_session: Session, tmp_path: Path
+) -> None:
+    """A system excluded at ingest and counted here would rewrite every score a purge touched.
+
+    Nothing is held out in the committed table today (D41 lifted D40's hold-out), so the hold-out
+    is injected here: the mechanism has to keep working for the next route that needs it.
+    """
+    episode = Episode(external_id="ep_holdout", split="train")
+    db_session.add(episode)
+    db_session.flush()
+
+    third = "mai-transcribe-2"
+    systems = {}
+    for name in (KEPT, DOOMED, third):
+        system = AsrSystem(system_id=name, model_id=name)
+        db_session.add(system)
+        systems[name] = system
+    db_session.flush()
+
+    segment = Segment(
+        episode_id=episode.id,
+        external_id="seg_holdout",
+        start_time=0.0,
+        end_time=2.0,
+        duration_seconds=2.0,
+        clip_object_key="clips/seg_holdout.flac",
+        clip_checksum="0" * 64,
+    )
+    db_session.add(segment)
+    db_session.flush()
+    db_session.add(
+        SegmentScore(
+            segment_id=segment.id, word_disagreement_rate=0.99, cer_between_hypotheses=0.99
+        )
+    )
+    for name, text in (
+        (KEPT, "आजको meeting मा"),
+        (DOOMED, "आजको मिटिङ मा"),  # same words, one script -- the artefact a hold-out exists for
+        (third, "आजको meeting मा"),
+    ):
+        db_session.add(
+            AsrHypothesis(segment_id=segment.id, asr_system_id=systems[name].id, text_raw=text)
+        )
+    db_session.flush()
+
+    table = load_llm_routes()
+    held = table.routes["asr_gemini_composite"].model_copy(
+        update={"system_id": DOOMED, "exclude_from_disagreement": True}
+    )
+    config = table.model_copy(update={"routes": {**table.routes, "asr_gemini_composite": held}})
+    purge_asr_system(db_session, system_id=third, dump_dir=tmp_path, rescore=True, config=config)
+
+    score = db_session.get(SegmentScore, segment.id)
+    assert score is not None
+    # Only KEPT is left in the comparison, so nothing disagrees. Counting the held-out
+    # hypothesis would score its single-script spelling as disagreement instead.
+    assert score.word_disagreement_rate == 0.0

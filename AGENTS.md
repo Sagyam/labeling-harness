@@ -122,20 +122,45 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.
   Never set that flag on a route that reports its own timings: overwriting them would destroy the
   independent references the D33 boundary report compares.
-- Only `asr_gemini_transcribe` diarizes, and its labels land on `hypothesis_words.speaker` (D36).
-  They are clip-local — `spk_1` in one hypothesis is not `spk_1` in another, and neither is
+- Only `asr_gemini_composite` diarizes, and its labels land on `hypothesis_words.speaker` (D36).
+  Vertex reports the label per *segment* Part, and the client fans it onto each word of that
+  segment. They are clip-local — `spk:0` in one hypothesis is not `spk:0` in another, and neither is
   `segments.speaker_id`. Do not join on them across hypotheses, and do not backfill the column for
   a transcriber that reported nothing: null means "not diarized", which is the honest value for
   three of the four systems.
-- Google models (`gemini-3.5-transcribe`, `gemini-3.8-flash`) authenticate with a single
-  standard API key (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) via `app/llm/google.py` (D38).
-  Like every other provider in the harness, no GCP Application Default Credentials, local gcloud
-  token stores, or service-account file paths are used.
-- On the Google Interactions API (`POST /v1beta/interactions`), Google strictly forbids combining
-  `custom_vocabulary` with `diarization_mode` or `timestamp_granularities` — sending both returns
-  an immediate HTTP 400 Bad Request. The harness prioritizes word timestamps and speaker
-  diarization, so `custom_vocabulary` must never be added to that route.
-- Every Google transcription request turns safety filtering **off** (`BLOCK_NONE`). This is not
+- Gemini runs on **Vertex AI**, not AI Studio, via `app/llm/vertex.py` (D39). Auth is one API key
+  (`VERTEX_API_KEY`, restricted to `aiplatform.googleapis.com`) sent as an `x-goog-api-key`
+  header, never a `?key=` query parameter — httpx puts URLs in its error strings and those are
+  copied into `llm_requests.error_message`. No Application Default Credentials, gcloud token
+  stores, or service-account files.
+- **The recogniser's model id is `gemini-3.5-transcribe-preview` on Vertex and
+  `gemini-3.5-transcribe` on AI Studio.** Asking Vertex for the bare id is a 404 in every region.
+  That, not an allowlist, is what broke the first Vertex attempt. There is no Interactions API on
+  Vertex: both routes are `:generateContent`, and the recogniser is configured through
+  `generationConfig.audioTranscriptionConfig` (`diarization`, `wordTimestamp`, `languageCodes` —
+  the other spellings are deprecated).
+- The composite's recogniser accepts **no steering at all** and must not be given any. A
+  `systemInstruction` is a hard 400; a text part is accepted and ignored; and `customVocabulary`
+  is accepted with a 200 and then silently suppresses `speakerLabel` entirely (measured: three
+  runs each, labelled without it, unlabelled with it). Vertex fails silently here where AI Studio
+  at least answered 400, so the client drops the field and warns rather than trusting a comment.
+- Because nothing can be told to it, that recogniser **transliterates English into Devanagari**
+  (`active` → `एक्टिभ`). `asr_gemini_composite` fixes this after the fact: Flash on OpenRouter
+  rewrites the token list into mixed script (D41). **One token in, one token out** — each restored
+  word keeps the span the recogniser measured, so there is no re-alignment and `forced_align`
+  stays false. A misaligned rewrite fails the segment; never pad or truncate it.
+- `asr_gemini_composite.language_codes` is **`[ne-NP]` alone, and must stay that way**. Two or more
+  codes make the recogniser answer HTTP 200 with no content for clips past ~15 s, and
+  `MAX_SEG_SECONDS = 20.0`. This supersedes D36's both-codes reasoning.
+- **An empty 200 from Gemini is a failure, not a transcript**, and `_send_with_retries` cannot see
+  it — `vertex.py` judges emptiness itself and retries. The exception is `audio_chat` returning
+  empty with no `blockReason`: `ASR_PROMPT` asks for that when there is no intelligible speech.
+- The raw Devanagari lives in the hypothesis's `metadata_jsonb` as `text_devanagari`. It is
+  provenance: keep it out of `text_raw`, the disagreement comparison, the analysis and the queue.
+- Nothing is held out of the disagreement scores today, but the mechanism stays: both computation
+  sites -- `ingest.py` and `purge.py` -- read the hold-out from `disagreement_excluded_system_ids()`.
+  Naming a system in either place independently silently desynchronises the two.
+- Every Vertex transcription request turns safety filtering **off** (`OFF`). This is not
   optional and not a shortcut. Google blocks on the prompt/audio by default and answers with no
   candidates — so the failure arrives as an empty hypothesis rather than an error and drags that
   clip's disagreement rate. A transcriber's job is to write down what was said.

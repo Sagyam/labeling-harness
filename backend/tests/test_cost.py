@@ -78,6 +78,17 @@ def test_vertex_gemini_38_flash_token_pricing() -> None:
     assert cost_mixed == Decimal("0.001500")
 
 
+def test_the_preview_model_id_is_still_priced_as_a_transcriber() -> None:
+    """Vertex suffixes the recogniser `-preview`; a missed match would silently cost $0 (D39)."""
+    cost = calculate_vertex_cost(
+        "gemini-3.5-transcribe-preview", prompt_tokens=1_000_000, completion_tokens=0
+    )
+    assert cost == calculate_vertex_cost(
+        "gemini-3.5-transcribe", prompt_tokens=1_000_000, completion_tokens=0
+    )
+    assert cost > 0
+
+
 def test_vertex_gemini_35_transcribe_pricing() -> None:
     # Gemini 3.5 Transcribe: $3.50/1M input, $21.00/1M output
     cost = calculate_vertex_cost(
@@ -113,7 +124,7 @@ def test_pricing_catalog_contains_all_active_routes() -> None:
     models = {entry["model"] for entry in MODEL_PRICING_CATALOG}
     assert "scribe_v2" in models
     assert "microsoft/mai-transcribe-2" in models
-    assert "gemini-3.5-transcribe" in models
+    assert "gemini-3.5-transcribe-preview" in models
     assert "gemini-3.8-flash" in models
 
     vendors = {entry["vendor"] for entry in MODEL_PRICING_CATALOG}

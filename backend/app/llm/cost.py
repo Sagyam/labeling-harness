@@ -6,10 +6,12 @@ Tracks cost across the 3 AI vendors used by the harness:
 3. Google Cloud Vertex AI:
    - Gemini 3.8 Flash: $0.75 / 1M prompt tokens, $3.75 / 1M completion tokens.
    - Gemini 3.5 Transcribe: $3.50 / 1M input tokens, $21.00 / 1M output tokens (or ~$0.0368/min).
+   Served on Vertex AI as of D39; `gemini-3.5-transcribe-preview` still matches on 'transcribe'.
 """
 
 from __future__ import annotations
 
+import re
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
@@ -70,13 +72,16 @@ MODEL_PRICING_CATALOG: list[dict[str, Any]] = [
     },
     {
         "vendor": "Google Cloud Vertex AI",
-        "route": "asr_gemini_transcribe",
-        "model": "gemini-3.5-transcribe",
+        "route": "asr_gemini_composite",
+        "model": "gemini-3.5-transcribe-preview",
         "pricing_unit": "tokens_or_minute",
         "input_per_m_usd": 3.50,
         "output_per_m_usd": 21.00,
         "effective_rate_display": "$3.50 / 1M in, $21.00 / 1M out (~$0.0368 / min audio)",
-        "description": "Dedicated recognizer with word timestamps & speaker diarization.",
+        "description": (
+            "Dedicated recognizer with word timestamps & speaker diarization; a cheap "
+            "OpenRouter text call restores script afterwards (D41)."
+        ),
     },
 ]
 
@@ -150,7 +155,7 @@ def calculate_vertex_cost(
     """Calculate Vertex AI cost based on token usage or audio duration.
 
     Args:
-        model: Model name (e.g. gemini-3.8-flash or gemini-3.5-transcribe).
+        model: Model name (e.g. gemini-3.8-flash or gemini-3.5-transcribe-preview).
         prompt_tokens: Input / prompt tokens consumed.
         completion_tokens: Output / candidates tokens consumed.
         duration_seconds: Audio duration in seconds (used as fallback).
@@ -186,9 +191,6 @@ def calculate_vertex_cost(
     return Decimal("0.000000")
 
 
-calculate_gemini_cost = calculate_vertex_cost
-
-
 def vendor_for_route_or_model(route: str, model: str | None = None) -> str:
     """Resolve human-readable vendor name from route name or model slug."""
     try:
@@ -199,7 +201,7 @@ def vendor_for_route_or_model(route: str, model: str | None = None) -> str:
             provider = cfg.routes[route].provider
             if provider == "elevenlabs":
                 return "ElevenLabs"
-            if provider in ("vertex", "google"):
+            if provider == "vertex":
                 return "Google Cloud Vertex AI"
             if provider == "openrouter":
                 return "OpenRouter"
@@ -209,11 +211,14 @@ def vendor_for_route_or_model(route: str, model: str | None = None) -> str:
     r = (route or "").lower()
     m = (model or "").lower()
 
-    # Avoid matching 'scribe' inside 'transcribe'
+    # `scribe` must not match inside `transcribe`: every Gemini recogniser model id ends in
+    # "-transcribe", so a plain substring test bills them to ElevenLabs. This only bites for a
+    # route missing from the routing table -- a historical row, or one renamed since it was
+    # logged -- which is exactly when the fallback is load-bearing.
     if (
         "elevenlabs" in r
         or "elevenlabs" in m
-        or "scribe" in m
+        or re.search(r"(?<!tran)scribe", m)
         or r.startswith("asr_scribe")
         or r.startswith("scribe")
     ):

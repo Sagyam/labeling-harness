@@ -8,7 +8,11 @@
 enabled: true
 base_url: https://openrouter.ai/api/v1
 elevenlabs_base_url: https://api.elevenlabs.io/v1
-google_base_url: https://generativelanguage.googleapis.com/v1beta
+vertex_base_url: https://aiplatform.googleapis.com/v1beta1
+# GCP project and region for Vertex AI. Left blank so the committed file names no project:
+# GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION fill them in. `global` serves both models.
+vertex_project: ""
+vertex_location: ""
 default_timeout_seconds: 60
 default_max_tokens: 1024
 max_retries: 3
@@ -38,38 +42,65 @@ routes:
     model: microsoft/mai-transcribe-2
     language: ne
 
-  # Gemini 3.5 Transcribe via Google's Interactions API (GEMINI_API_KEY). A dedicated speech
-  # recogniser: it is the second transcriber here that returns word spans of its own, and the only
-  # one that reports which speaker said each word.
+  # Gemini Composite (D41): Gemini 3.5 Transcribe on Vertex hears the clip, and Gemini 3.8 Flash
+  # on OpenRouter puts the result back into mixed script. Presented as one system, and named so
+  # that the seam is visible -- the paper discloses the two-model pipeline.
   #
-  # Both language codes are sent, because a code-switched clip is not one language with
-  # loanwords in it. Verbatim mode is requested along with word timestamps and speaker diarization.
-  # custom_vocabulary is omitted because the API rejects combining custom vocabulary with
-  # diarization or word timestamps. Never set forced_align here: it reports its own timings.
-  asr_gemini_transcribe:
-    provider: google
+  # The recogniser is the second transcriber here that returns word spans of its own, and the only
+  # one reporting which speaker said each word. It writes English phonetically in Devanagari and
+  # accepts no steering at all to stop it, so the restore step does that afterwards on the token
+  # list, one token in one token out. Spans therefore survive untouched: never set forced_align
+  # here, the timings are the recogniser's own (D33).
+  #
+  # !! The model id carries a `-preview` suffix on Vertex and does NOT on AI Studio. Asking Vertex
+  # !! for the bare `gemini-3.5-transcribe` is a 404 in every region -- that, not an allowlist,
+  # !! is what broke the first Vertex attempt (D35/D36).
+  #
+  # Word timestamps and diarization are plain booleans on audioTranscriptionConfig, and there is
+  # no verbatim/smart switch at all. Custom vocabulary is accepted and then silently suppresses
+  # the speaker labels, so it is never sent (D39).
+  asr_gemini_composite:
+    provider: vertex
     api: transcription
-    system_id: gemini-3.5-transcribe
-    model: gemini-3.5-transcribe
+    system_id: gemini-composite
+    model: gemini-3.5-transcribe-preview
+    restore_script_route: script_restore
+    # ONE language code, and this is not a preference. Two or more codes make the recogniser
+    # return an empty transcript for any clip past about 15 seconds -- measured, deterministic,
+    # HTTP 200 with no content (D41). The VAD cutter runs to MAX_SEG_SECONDS = 20, so a second
+    # code silently blanks the long end of every episode. `ne-NP` alone is the only setting that
+    # survives 30s, and `en-US` was never buying script correctness anyway: that is what the
+    # restore step is for. This supersedes D36's "send both codes" reasoning, which was right
+    # about the corpus and wrong about what the API can do.
     language_codes:
       - ne-NP
-      - en-US
 
-  # Gemini 3.8 Flash on Google AI Studio, on the generateContent endpoint with the clip
-  # inlined (GEMINI_API_KEY). `audio_chat` is the honest name for it: a general model being asked to
+  # Gemini 3.8 Flash on Vertex AI, on the generateContent endpoint with the clip inlined
+  # (VERTEX_API_KEY). `audio_chat` is the honest name for it: a general model being asked to
   # transcribe, which obeys the transcript prompt but may also editorialise or hallucinate over
   # silence. It sees only audio -- never the other hypotheses -- so its disagreement with them
   # stays an independent signal.
   #
+  # Unlike the recogniser above it accepts a systemInstruction, so it is the only Gemini route
+  # that honours the no-transliteration rule and writes English in Latin script.
+  #
   # It returns no word timestamps. Word spans for this system come from the local forced
   # aligner (app/services/forced_align.py, decision D32).
   asr_gemini_flash:
-    provider: google
+    provider: vertex
     api: audio_chat
     system_id: gemini-3.8-flash
     model: gemini-3.8-flash
     language: ne
     forced_align: true
 
-
-
+  # Text-only, no audio: the second half of gemini-composite. It runs on OpenRouter because that
+  # is where text inference belongs here, and because Vertex answers Flash with a spurious
+  # `blockReason: SAFETY` often enough to matter (D41). Not an `asr*` route, so it never becomes
+  # an ASR system of its own.
+  script_restore:
+    provider: openrouter
+    api: chat
+    model: google/gemini-3.8-flash
+    temperature: 0.0
+    max_tokens: 4096
