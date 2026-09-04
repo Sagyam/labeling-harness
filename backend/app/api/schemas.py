@@ -277,3 +277,107 @@ class ExportHistoryItem(BaseModel):
     row_counts_by_split: dict[str, int]
     exported_at: str | None = None
     file_bytes: int = 0
+
+
+# --- Cost Tracker Models -------------------------------------------------------------------
+
+
+class CostSummaryOut(BaseModel):
+    """High-level summary of AI inference spend and request counts."""
+
+    total_cost_usd: float
+    total_requests: int
+    successful_requests: int
+    failed_requests: int
+    dry_run_requests: int
+    average_latency_ms: float | None = None
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+
+
+class VendorCostOut(BaseModel):
+    """Aggregate spend and performance metrics per vendor."""
+
+    vendor: str
+    cost_usd: float
+    percentage: float
+    requests: int
+    successful: int
+    failed: int
+    dry_run: int
+    average_latency_ms: float | None = None
+
+
+class ModelCostOut(BaseModel):
+    """Aggregate spend per model / route."""
+
+    route: str
+    model: str
+    vendor: str
+    cost_usd: float
+    requests: int
+    successful: int
+    failed: int
+    dry_run: int
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    average_latency_ms: float | None = None
+    effective_rate_display: str | None = None
+
+
+class CostTimelinePointOut(BaseModel):
+    """Daily cost data point for trend charting."""
+
+    date: str
+    cost_usd: float
+    requests: int
+    by_vendor: dict[str, float] = Field(default_factory=dict)
+
+
+class PricingCatalogItemOut(BaseModel):
+    """Published pricing reference entry."""
+
+    vendor: str
+    route: str
+    model: str
+    pricing_unit: str
+    base_rate_usd: float | None = None
+    keyterm_rate_usd: float | None = None
+    input_per_m_usd: float | None = None
+    output_per_m_usd: float | None = None
+    effective_rate_display: str
+    description: str
+
+
+class CostReportOut(BaseModel):
+    """Full cost report payload for the dashboard."""
+
+    summary: CostSummaryOut
+    vendor_breakdown: list[VendorCostOut]
+    model_breakdown: list[ModelCostOut]
+    daily_timeline: list[CostTimelinePointOut]
+    pricing_catalog: list[PricingCatalogItemOut]
+
+
+class LlmRequestItemOut(BaseModel):
+    """One individual inference request ledger record."""
+
+    id: int
+    route: str
+    model: str | None = None
+    vendor: str
+    status: str
+    estimated_cost_usd: float
+    latency_ms: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    input_summary: str | None = None
+    error_message: str | None = None
+    created_at: dt.datetime
+
+
+class CostRequestsListOut(BaseModel):
+    """Paginated list of request ledger items."""
+
+    total: int
+    items: list[LlmRequestItemOut]

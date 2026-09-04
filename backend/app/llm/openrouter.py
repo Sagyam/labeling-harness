@@ -39,6 +39,7 @@ from app.llm.base import (
     ProviderClient,
     dry_run_transcript,
 )
+from app.llm.cost import calculate_openrouter_cost, get_audio_duration
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -272,10 +273,18 @@ class OpenRouterClient(ProviderClient):
                 request_hash=request_hash,
                 input_summary=summary,
                 status="dry_run",
+                cost=Decimal("0.0"),
             )
             logger.info("asr_dry_run", route=route, model=target_model, file=str(audio_file))
             text, words = dry_run_transcript(request_hash)
-            return AsrResult(route=route, model=target_model, text=text, words=words, dry_run=True)
+            return AsrResult(
+                route=route,
+                model=target_model,
+                text=text,
+                words=words,
+                dry_run=True,
+                estimated_cost_usd=Decimal("0.0"),
+            )
 
         if not self.config.enabled:
             raise LlmDisabledError(
@@ -381,7 +390,8 @@ class OpenRouterClient(ProviderClient):
             avg_logprob=body.get("avg_logprob"),
             no_speech_prob=body.get("no_speech_prob"),
             latency_ms=latency_ms,
-            estimated_cost_usd=_usage_cost(body.get("usage") or {}),
+            estimated_cost_usd=_usage_cost(body.get("usage") or {})
+            or calculate_openrouter_cost(model, duration_seconds=get_audio_duration(audio_file)),
             raw=body,
         )
         self._log(

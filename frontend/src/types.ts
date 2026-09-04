@@ -378,4 +378,92 @@ export interface ExportHistoryItem {
   file_bytes: number
 }
 
+// --- Cost Tracker Types ---------------------------------------------------------------------
+
+export interface CostSummary {
+  total_cost_usd: number
+  total_requests: number
+  successful_requests: number
+  failed_requests: number
+  dry_run_requests: number
+  average_latency_ms: number | null
+  total_prompt_tokens: number
+  total_completion_tokens: number
+}
+
+export interface VendorCostBreakdown {
+  vendor: string
+  cost_usd: number
+  percentage: number
+  requests: number
+  successful: number
+  failed: number
+  dry_run: number
+  average_latency_ms: number | null
+}
+
+export interface ModelCostBreakdown {
+  route: string
+  model: string
+  vendor: string
+  cost_usd: number
+  requests: number
+  successful: number
+  failed: number
+  dry_run: number
+  prompt_tokens: number
+  completion_tokens: number
+  average_latency_ms: number | null
+  effective_rate_display: string | null
+}
+
+export interface CostTimelinePoint {
+  date: string
+  cost_usd: number
+  requests: number
+  by_vendor: Record<string, number>
+}
+
+export interface PricingCatalogItem {
+  vendor: string
+  route: string
+  model: string
+  pricing_unit: string
+  base_rate_usd?: number | null
+  keyterm_rate_usd?: number | null
+  input_per_m_usd?: number | null
+  output_per_m_usd?: number | null
+  effective_rate_display: string
+  description: string
+}
+
+export interface CostReportResponse {
+  summary: CostSummary
+  vendor_breakdown: VendorCostBreakdown[]
+  model_breakdown: ModelCostBreakdown[]
+  daily_timeline: CostTimelinePoint[]
+  pricing_catalog: PricingCatalogItem[]
+}
+
+export interface LlmRequestItem {
+  id: number
+  route: string
+  model: string | null
+  vendor: string
+  status: 'succeeded' | 'failed' | 'dry_run' | string
+  estimated_cost_usd: number
+  latency_ms: number | null
+  prompt_tokens: number | null
+  completion_tokens: number | null
+  input_summary: string | null
+  error_message: string | null
+  created_at: string
+}
+
+export interface CostRequestsResponse {
+  total: number
+  items: LlmRequestItem[]
+}
+
+
 

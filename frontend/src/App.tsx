@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { AnalyticsView } from '@/components/AnalyticsView'
+import { CostTrackerView } from '@/components/CostTrackerView'
 import { EditorView } from '@/components/EditorView'
 import { EpisodesView } from '@/components/EpisodesView'
 import { ExportView } from '@/components/ExportView'
@@ -16,7 +17,26 @@ export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [activeQueue, setActiveQueue] = useState<string>('review')
-  const [activeMode, setActiveMode] = useState<HeaderMode>('triage')
+
+  const initialMode = (() => {
+    const params = new URLSearchParams(window.location.search)
+    const modeParam = params.get('mode')
+    const hash = window.location.hash.replace('#', '')
+    const target = modeParam || hash
+    if (['triage', 'editor', 'episodes', 'analytics', 'export', 'costs'].includes(target)) {
+      return target as HeaderMode
+    }
+    return 'triage'
+  })()
+  const [activeMode, setActiveModeState] = useState<HeaderMode>(initialMode)
+
+  const setActiveMode = useCallback((m: HeaderMode) => {
+    setActiveModeState(m)
+    if (window.location.hash !== `#${m}`) {
+      window.history.replaceState(null, '', `#${m}`)
+    }
+  }, [])
+
   const [episodeFilter, setEpisodeFilter] = useState<string | null>(null)
 
   // Ingestion modal state
@@ -318,6 +338,9 @@ export default function App() {
       } else if (e.key === '5') {
         e.preventDefault()
         setActiveMode('export')
+      } else if (e.key === '6') {
+        e.preventDefault()
+        setActiveMode('costs')
       }
     }
     window.addEventListener('keydown', handleGlobalKeyDown)
@@ -358,6 +381,8 @@ export default function App() {
         <AnalyticsView />
       ) : activeMode === 'export' ? (
         <ExportView />
+      ) : activeMode === 'costs' ? (
+        <CostTrackerView />
       ) : activeMode === 'editor' && currentTask ? (
         <EditorView
           task={currentTask}

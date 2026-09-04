@@ -571,3 +571,17 @@ The alternative considered and not taken: making ingestion skip a failing route 
 the hypotheses that succeeded. That is a genuine robustness improvement against any provider
 outage, but it silently changes the disagreement denominator per clip, so it is its own decision
 rather than a bug fix smuggled in here.
+
+## D37 — Unified multi-vendor AI cost tracking and dashboard
+A centralized pricing calculation engine (`app/llm/cost.py`) and analytics service
+(`app/services/costs.py`) compute, record, and aggregate inference spend across ElevenLabs,
+OpenRouter, and Google Cloud Vertex AI into `llm_requests`, backed by `GET /costs` and
+`GET /costs/requests` and an interactive UI dashboard.
+
+**Why:** External provider dashboards are delayed, fragmented across 3 separate vendor consoles,
+and prior code wrote `estimated_cost_usd=None` for Vertex AI and ElevenLabs calls. D37 ensures
+every request computes exact unit costs (audio duration or token consumption), logs them
+atomically, and offers real-time auditability in the UI.
+
+**Reversal:** None. Costs remain append-only in `llm_requests`.
+

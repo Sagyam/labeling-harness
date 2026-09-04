@@ -4,6 +4,7 @@ import {
   RiFolderDownloadLine,
   RiFolderMusicLine,
   RiInboxLine,
+  RiMoneyDollarCircleLine,
   RiPlayFill,
   RiQuestionLine,
   RiUploadCloud2Line,
@@ -17,7 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import type { HealthResponse, StatsResponse } from '@/types'
 
-export type HeaderMode = 'triage' | 'editor' | 'episodes' | 'analytics' | 'export'
+export type HeaderMode = 'triage' | 'editor' | 'episodes' | 'analytics' | 'export' | 'costs'
 
 interface HeaderProps {
   stats: StatsResponse | null
@@ -79,6 +80,7 @@ export function Header({
     { id: 'episodes', label: 'Episodes', icon: RiFolderMusicLine, count: episodeCount },
     { id: 'analytics', label: 'Analytics', icon: RiBarChartBoxLine },
     { id: 'export', label: 'Export', icon: RiFolderDownloadLine },
+    { id: 'costs', label: 'Cost Tracker', icon: RiMoneyDollarCircleLine },
   ]
 
   return (

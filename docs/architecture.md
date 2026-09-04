@@ -307,6 +307,8 @@ the same inputs and filters produce byte-identical output.
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
 | `GET /export/history` | List previous exported dataset artifacts on disk |
+| `GET /costs` | Aggregate AI inference cost report across ElevenLabs, OpenRouter, and Vertex AI |
+| `GET /costs/requests` | Filterable, paginated audit ledger of all external AI requests and incurred spend |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
 `annotation_events` row carrying the client-reported elapsed time, and an `audit_logs` entry.

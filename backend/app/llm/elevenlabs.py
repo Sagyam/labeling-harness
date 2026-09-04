@@ -13,6 +13,7 @@ both are set from the route configuration.
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from app.llm.base import (
     ProviderClient,
     dry_run_transcript,
 )
+from app.llm.cost import calculate_elevenlabs_cost, get_audio_duration
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -98,10 +100,18 @@ class ElevenLabsClient(ProviderClient):
                 request_hash=request_hash,
                 input_summary=summary,
                 status="dry_run",
+                cost=Decimal("0.0"),
             )
             logger.info("asr_dry_run", route=route, model=model_id, file=str(audio_file))
             text, words = dry_run_transcript(request_hash)
-            return AsrResult(route=route, model=model_id, text=text, words=words, dry_run=True)
+            return AsrResult(
+                route=route,
+                model=model_id,
+                text=text,
+                words=words,
+                dry_run=True,
+                estimated_cost_usd=Decimal("0.0"),
+            )
 
         if not self.config.enabled:
             raise LlmDisabledError(
@@ -152,6 +162,10 @@ class ElevenLabsClient(ProviderClient):
 
         body = response.json()
         words = _parse_words(body.get("words") or [])
+        duration = get_audio_duration(audio_file)
+        if duration is None and words:
+            duration = max((w.get("end") or 0.0 for w in words), default=None)
+        cost = calculate_elevenlabs_cost(duration or 0.0, has_keyterms=bool(keyterms))
         result = AsrResult(
             route=route,
             model=model_id,
@@ -161,9 +175,7 @@ class ElevenLabsClient(ProviderClient):
             # Scribe reports no speech-absence probability. Absent means unknown, not confident.
             no_speech_prob=None,
             latency_ms=latency_ms,
-            # Scribe bills against the account balance rather than per response, so there is no
-            # per-request cost to record. The call itself is still logged.
-            estimated_cost_usd=None,
+            estimated_cost_usd=cost,
             raw=body,
         )
         self._log(
@@ -173,6 +185,7 @@ class ElevenLabsClient(ProviderClient):
             input_summary=summary,
             status="succeeded",
             output=body,
+            cost=cost,
             latency_ms=latency_ms,
         )
         return result

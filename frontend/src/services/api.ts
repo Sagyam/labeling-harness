@@ -25,6 +25,8 @@ import {
   AnalyticsReport,
   ExportResponse,
   ExportHistoryItem,
+  CostReportResponse,
+  CostRequestsResponse,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -294,5 +296,28 @@ export const api = {
 
   getExportDownloadUrl: (kind: string, filename: string): string => {
     return resolveUrl(`/export/download/${kind}/${filename}`)
+  },
+
+  getCosts: (): Promise<CostReportResponse> => {
+    return request<CostReportResponse>('/costs')
+  },
+
+  getCostRequests: (params?: {
+    vendor?: string
+    route?: string
+    status?: string
+    search?: string
+    limit?: number
+    offset?: number
+  }): Promise<CostRequestsResponse> => {
+    const query = new URLSearchParams()
+    if (params?.vendor) query.set('vendor', params.vendor)
+    if (params?.route) query.set('route', params.route)
+    if (params?.status) query.set('status', params.status)
+    if (params?.search) query.set('search', params.search)
+    if (params?.limit !== undefined) query.set('limit', String(params.limit))
+    if (params?.offset !== undefined) query.set('offset', String(params.offset))
+    const qStr = query.toString()
+    return request<CostRequestsResponse>(`/costs/requests${qStr ? `?${qStr}` : ''}`)
   },
 }

@@ -50,6 +50,7 @@ const NAVIGATION: Shortcut[] = [
   ['Switch to Episodes & Segments', ['3']],
   ['Switch to Analytics dashboard', ['4']],
   ['Switch to Dataset Export', ['5']],
+  ['Switch to Cost Tracker', ['6']],
   ['Toggle shortcuts reference', ['?']],
 ]
 

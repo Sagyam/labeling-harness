@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import os
 import threading
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -39,6 +40,7 @@ from app.llm.base import (
     ProviderClient,
     dry_run_transcript,
 )
+from app.llm.cost import calculate_vertex_cost, get_audio_duration
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -340,10 +342,18 @@ class VertexClient(ProviderClient):
                 request_hash=request_hash,
                 input_summary=summary,
                 status="dry_run",
+                cost=Decimal("0.0"),
             )
             logger.info("vertex_dry_run", route=route, model=model_id, file=str(audio_file))
             text, words = dry_run_transcript(request_hash)
-            return AsrResult(route=route, model=model_id, text=text, words=words, dry_run=True)
+            return AsrResult(
+                route=route,
+                model=model_id,
+                text=text,
+                words=words,
+                dry_run=True,
+                estimated_cost_usd=Decimal("0.0"),
+            )
 
         if not self.config.enabled:
             raise LlmDisabledError(
@@ -424,6 +434,17 @@ class VertexClient(ProviderClient):
                 "vertex_response_blocked", route=route, model=model_id, reason=block_reason
             )
 
+        usage = body.get("usageMetadata") or {}
+        prompt_tokens = usage.get("promptTokenCount")
+        completion_tokens = usage.get("candidatesTokenCount")
+        duration = get_audio_duration(audio_file)
+        cost = calculate_vertex_cost(
+            model_id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            duration_seconds=duration,
+        )
+
         self._log(
             route=route,
             model=model_id,
@@ -431,6 +452,9 @@ class VertexClient(ProviderClient):
             input_summary=summary,
             status="succeeded",
             output=body,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost=cost,
             latency_ms=latency_ms,
         )
         return AsrResult(
@@ -439,6 +463,7 @@ class VertexClient(ProviderClient):
             text=text,
             words=words,
             latency_ms=latency_ms,
+            estimated_cost_usd=cost,
             raw=body,
         )
 
