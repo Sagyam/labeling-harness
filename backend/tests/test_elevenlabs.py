@@ -1,8 +1,8 @@
 """Tests for the ElevenLabs Scribe client.
 
-Scribe is the one provider called directly rather than through OpenRouter, so the guarantees that
-made that acceptable -- prepaid billing, a row in ``llm_requests`` for every attempt, and no
-fabricated transcript when the key is missing -- are the ones under test here. Everything runs
+Scribe is called directly rather than through OpenRouter, so the guarantees that hold for every
+provider here -- a row in ``llm_requests`` for every attempt, and no fabricated transcript when
+the key is missing -- are the ones under test. Everything runs
 against a mocked HTTP layer; the suite never makes a paid call.
 """
 
