@@ -18,7 +18,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import type { HealthResponse, StatsResponse } from '@/types'
 
-export type HeaderMode = 'triage' | 'editor' | 'episodes' | 'analytics' | 'export' | 'costs'
+export type HeaderMode =
+  | 'triage'
+  | 'editor'
+  | 'episodes'
+  | 'analytics'
+  | 'export'
+  | 'costs'
+  | 'ingest'
 
 interface HeaderProps {
   stats: StatsResponse | null
@@ -27,7 +34,6 @@ interface HeaderProps {
   onChangeMode: (mode: HeaderMode) => void
   onResume: () => void
   onOpenHelp: () => void
-  onOpenIngest: () => void
   health: HealthResponse | null
 }
 
@@ -47,7 +53,6 @@ export function Header({
   onChangeMode,
   onResume,
   onOpenHelp,
-  onOpenIngest,
   health,
 }: HeaderProps) {
   const isHealthy = health?.status === 'ok'
@@ -196,12 +201,17 @@ export function Header({
           {/* Ingest Action */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="outline" size="sm" onClick={onOpenIngest} className="h-8 gap-1.5 text-xs">
+              <Button
+                variant={activeMode === 'ingest' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => onChangeMode('ingest')}
+                className="h-8 gap-1.5 text-xs"
+              >
                 <RiUploadCloud2Line className="size-3.5" />
                 Ingest
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Ingest audio clip or YouTube link through ASR pipeline</TooltipContent>
+            <TooltipContent>Ingest audio clip or YouTube link through ASR pipeline (7)</TooltipContent>
           </Tooltip>
 
           {/* Resume Action */}

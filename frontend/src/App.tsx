@@ -7,7 +7,7 @@ import { EditorView } from '@/components/EditorView'
 import { EpisodesView } from '@/components/EpisodesView'
 import { ExportView } from '@/components/ExportView'
 import { Header, type HeaderMode } from '@/components/Header'
-import { IngestModal } from '@/components/IngestModal'
+import { IngestView } from '@/components/IngestView'
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
 import { TriageView } from '@/components/TriageView'
 import { api } from '@/services/api'
@@ -23,7 +23,9 @@ export default function App() {
     const modeParam = params.get('mode')
     const hash = window.location.hash.replace('#', '')
     const target = modeParam || hash
-    if (['triage', 'editor', 'episodes', 'analytics', 'export', 'costs'].includes(target)) {
+    if (
+      ['triage', 'editor', 'episodes', 'analytics', 'export', 'costs', 'ingest'].includes(target)
+    ) {
       return target as HeaderMode
     }
     return 'triage'
@@ -38,9 +40,6 @@ export default function App() {
   }, [])
 
   const [episodeFilter, setEpisodeFilter] = useState<string | null>(null)
-
-  // Ingestion modal state
-  const [isIngestOpen, setIsIngestOpen] = useState<boolean>(false)
 
   // Triage state
   const [queueRows, setQueueRows] = useState<QueueRow[]>([])
@@ -95,6 +94,15 @@ export default function App() {
   useEffect(() => {
     loadQueue(activeQueue)
   }, [activeQueue, loadQueue])
+
+  const handleIngestComplete = (episodeId: string) => {
+    refreshStats()
+    loadQueue(activeQueue)
+    setActiveMode('triage')
+    toast.success(`Episode '${episodeId}' ingested`, {
+      description: 'The priority queue has been updated.',
+    })
+  }
 
   // Resume active task
   const handleResume = async () => {
@@ -341,6 +349,9 @@ export default function App() {
       } else if (e.key === '6') {
         e.preventDefault()
         setActiveMode('costs')
+      } else if (e.key === '7') {
+        e.preventDefault()
+        setActiveMode('ingest')
       }
     }
     window.addEventListener('keydown', handleGlobalKeyDown)
@@ -362,7 +373,6 @@ export default function App() {
         }}
         onResume={handleResume}
         onOpenHelp={() => setIsHelpOpen(true)}
-        onOpenIngest={() => setIsIngestOpen(true)}
         health={health}
       />
 
@@ -371,7 +381,7 @@ export default function App() {
         <EpisodesView
           onOpenEditor={handleOpenEditor}
           onTriageEpisode={handleTriageEpisode}
-          onOpenIngest={() => setIsIngestOpen(true)}
+          onOpenIngest={() => setActiveMode('ingest')}
           onDataChanged={() => {
             refreshStats()
             loadQueue(activeQueue)
@@ -383,6 +393,8 @@ export default function App() {
         <ExportView />
       ) : activeMode === 'costs' ? (
         <CostTrackerView />
+      ) : activeMode === 'ingest' ? (
+        <IngestView onComplete={handleIngestComplete} />
       ) : activeMode === 'editor' && currentTask ? (
         <EditorView
           task={currentTask}
@@ -421,19 +433,6 @@ export default function App() {
           onBulkAccept={handleBulkAccept}
         />
       )}
-
-      <IngestModal
-        isOpen={isIngestOpen}
-        onClose={() => setIsIngestOpen(false)}
-        onComplete={(episodeId) => {
-          refreshStats()
-          loadQueue(activeQueue)
-          setActiveMode('triage')
-          toast.success(`Episode '${episodeId}' ingested`, {
-            description: 'The priority queue has been updated.',
-          })
-        }}
-      />
 
       <KeyboardShortcutsModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>

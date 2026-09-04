@@ -215,6 +215,22 @@ export interface IngestLogEntry {
   message: string
 }
 
+/** One ASR system's failure on a clip that was dropped from the run. */
+export interface DiscardFailure {
+  route: string
+  system_id: string
+  error: string
+}
+
+/** A segment dropped mid-run rather than failing the whole episode (D46). */
+export interface DiscardedSegment {
+  segment_id: string
+  start_time: number
+  end_time: number
+  stage: 'asr' | 'analysis' | string
+  failures: DiscardFailure[]
+}
+
 export interface IngestJobStatus {
   job_id: string
   status: 'pending' | 'processing' | 'completed' | 'failed'
@@ -236,6 +252,11 @@ export interface IngestJobStatus {
   show_id: string
   title: string
   logs: IngestLogEntry[]
+  discarded_segments: DiscardedSegment[]
+  /** system_id -> how many segments it cost, most expensive first. */
+  discarded_by_system: Record<string, number>
+  /** What the run produced. Null until it finishes. */
+  summary: Record<string, any> | null
 }
 
 export type IngestEvent =
@@ -247,6 +268,7 @@ export type IngestEvent =
       active_segments: number
       total_segments: number
     }
+  | { type: 'discard'; segment: DiscardedSegment }
   | { type: 'complete'; summary: Record<string, any>; episode_id: string }
   | { type: 'error'; error: string }
 

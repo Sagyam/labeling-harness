@@ -891,3 +891,100 @@ but 4,096 now has a large margin over a 391-token worst case, so it stays.
 
 **Reversal:** drop `reasoning_enabled: false` from the route; the field going unset restores the
 provider default.
+
+## D45 — A Gemini block arrives on `finishReason`, and the audio route stops thinking too
+`vertex.py` judges a response through `withheld_reason`, which reads **both**
+`promptFeedback.blockReason` (the input refused) and `candidates[0].finishReason` (the output
+withheld). `asr_gemini_flash` sets `reasoning_enabled: false`, and `script_restore` moves to
+Vertex.
+
+**The bug.** The empty-200 check read `promptFeedback.blockReason` only. Over 229 ad hoc calls
+against the live API that field was never populated once — not even on a block forced with
+`BLOCK_LOW_AND_ABOVE`. A real block on Gemini 3.8 Flash comes back as HTTP 200 with
+`finishReason: "SAFETY"`, populated `safetyRatings` carrying `"blocked": true`, and a `content` of
+`{"role": "model"}` with no parts. `audio_chat` is allowed to answer with an empty string —
+`ASR_PROMPT` asks for one over silence — so a censored clip and a silent clip were the same
+observation, and the censored one became an empty hypothesis in the corpus logged as *succeeded*.
+Verified end to end: a captured block body through `VertexClient.transcribe` returned `text=''`,
+raised nothing, and wrote `status='succeeded'`. `asr_gemini_composite` was never exposed
+(`wants_words` makes an empty transcript fail there), only `asr_gemini_flash`.
+
+`PROHIBITED_CONTENT`, `BLOCKLIST` and `SPII` are non-configurable filters that no `safetySettings`
+threshold turns off, so they are caught here regardless of D39's `OFF`. `MAX_TOKENS` and
+`RECITATION` are not safety but mean the same thing for a transcript.
+
+**D41's spurious `SAFETY` does not reproduce.** 171 calls found none: 35 with the exact
+`audio_chat` payload, and 136 replaying `script_restore`'s real prompts from the failed ingest
+across four safety configurations (none, `OFF`×4, `OFF`×5 with `CIVIC_INTEGRITY`, `BLOCK_NONE`×4).
+There is also no record to check it against — the retry loop only logs a *final* failure, so a
+block that cleared on retry left no row at all. That is what moves `script_restore` to Vertex,
+where the audio already goes. `VertexClient.complete` mirrors `OpenRouterClient.complete` so a
+text route names a provider in configuration rather than in code. The cost of the move is
+visibility: OpenRouter reports the model's reasoning *text*, which is how D44 was diagnosed;
+Vertex reports only `thoughtsTokenCount`. Switch the route's `provider` back if that matters more.
+
+**`OFF` is doing real work, so keep it.** At `BLOCK_LOW_AND_ABOVE` all 7 clips of a Nepali phone
+review blocked, on `DANGEROUS_CONTENT` at probability LOW–MEDIUM with severity NEGLIGIBLE
+(scores 0.20–0.35). That is classifier noise on low-resource-language speech, and `OFF` is what
+keeps it off the corpus.
+
+**Thinking off on the audio route.** Measured over 35 clips of 20 s: a mean 895 thought tokens
+against 88 tokens of transcript — 91% of billed output, ~170k thought tokens per hour of audio —
+and `thinkingBudget: 0` takes it to zero with the transcript unchanged. Unlike D44's route this one
+has no `max_tokens`, so nothing made the spend visible. `reasoning_enabled` is one route field
+spelled per provider: `reasoning: {enabled}` on OpenRouter, `generationConfig.thinkingConfig` on
+Vertex. **Never set it on an `api: transcription` route** — the dedicated recogniser answers any
+`thinkingConfig` with `400 Thinking is not enabled for this model`, and reports zero thought
+tokens anyway.
+
+**Reversal:** `withheld_reason` is a strict improvement and should stay. The route settings are
+one line each.
+
+## D46 — A refused clip costs its segment, never the episode
+A segment that cannot be transcribed by **every** configured ASR system is discarded and the run
+continues. Only an episode with nothing left fails. What was dropped, and which system dropped it,
+rides in the ingest summary and in the SSE stream as it happens.
+
+**Why:** stage 3 is where all the money is — it dispatches every `asr*` route at every clip — and
+it was all-or-nothing. One refusal in the last minute of a two-hour episode threw away every paid
+transcript that had already succeeded. The first real ingest died exactly that way on segment 34
+of a 14-minute video (D44), and the same failure on a podcast would have cost hours of inference
+to re-run.
+
+**All systems or none, for that segment.** A segment scored from three systems where its
+neighbours used four is not a cheaper segment, it is a differently-measured one:
+`word_disagreement_rate` is a mean over the pairs present and carries 0.40 of the priority score,
+and nothing downstream records which pairs those were. Dropping the segment keeps every surviving
+one comparable. The clip file is unlinked so it cannot reach the manifest's upload by accident;
+the `llm_requests` rows stay, because they are the spend record (D34) and that money was spent.
+
+**No fraction threshold.** An episode that loses 60% of its segments is a bad episode, but failing
+the run over it re-creates the problem this decision exists to remove. The discard rate is reported
+loudly — a `warn` log line, a count in the summary, a per-system tally — and left as the
+annotator's call.
+
+**Blame is counted, not buried.** `discard_summary()` returns segments-lost per `system_id`. A run
+where one vendor accounts for every discard is a vendor problem, and that is only visible if the
+count is kept.
+
+**Reversal:** re-raise instead of recording in `_process_segment`, and stage 3 is all-or-nothing
+again.
+
+## D47 — Ingestion is a page, not a dismissible modal
+`IngestView` replaces `IngestModal`, reachable at `#ingest`, from the header button, and on `7`.
+
+**Why:** an ingest runs for as long as the episode is long, and it was being watched through a
+dialog that closed on a stray Escape, took the whole app hostage while it was open, and lost the
+log when it went. A discard summary that only exists at the end of a run needs somewhere it can
+still be read afterwards. The running job's id is parked in `localStorage`, so the page reattaches
+to a pipeline it was not watching — after navigation, and across a browser reload.
+
+**A finished job is read, not streamed.** The SSE endpoint replays a job's whole history on
+connect and the server closes the stream once the job ends. `EventSource` treats a closed stream as
+a failure and reconnects every few seconds — so attaching to a finished job replayed its log into
+the page over and over: seven copies and growing, measured. The status endpoint now carries the
+completion summary as well, so a finished job is rendered entirely from that one request and no
+stream is opened; a live job opens one, and closes it on the terminal event. React's `StrictMode`
+double-mount was hiding inside the same bug.
+
+**Reversal:** the component is self-contained; nothing else reads `ACTIVE_JOB_KEY`.
