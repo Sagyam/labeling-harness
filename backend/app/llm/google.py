@@ -383,9 +383,6 @@ class GoogleClient(ProviderClient):
             ],
             "generation_config": generation_config,
         }
-        if instruction:
-            payload["system_instruction"] = instruction
-
         return payload
 
     @staticmethod

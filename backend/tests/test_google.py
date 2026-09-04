@@ -326,7 +326,7 @@ def test_a_route_without_language_codes_falls_back_to_its_single_hint(
 
 
 @pytest.mark.db
-def test_the_transcript_policy_rides_on_the_system_instruction(
+def test_a_dedicated_transcription_route_omits_system_instruction(
     db_session: Session, clip: Path
 ) -> None:
     seen: list[httpx.Request] = []
@@ -339,7 +339,7 @@ def test_the_transcript_policy_rides_on_the_system_instruction(
         clip, route=TRANSCRIBE_ROUTE, prompt="DO NOT TRANSLITERATE."
     )
     sent = json.loads(seen[0].content)
-    assert sent["system_instruction"] == "DO NOT TRANSLITERATE."
+    assert "system_instruction" not in sent
 
 
 @pytest.mark.db

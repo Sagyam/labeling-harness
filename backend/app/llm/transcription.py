@@ -119,15 +119,14 @@ def transcribe(
             dry_run=dry_run,
         )
     if route_config.provider in ("google", "vertex"):
-        # A dedicated recogniser gets the policy without the chat-model scaffolding: telling a
-        # speech model to skip the preamble it was never going to write is noise in a system
-        # instruction. custom_vocabulary is omitted because the API rejects combining custom
-        # vocabulary with diarization or word timestamps.
+        # A dedicated recogniser (gemini-3.5-transcribe) rejects developer/system instructions
+        # on the Interactions API (Google returns 400 "Developer instruction is not enabled").
+        # Steering is configured purely through transcription_config (verbatim mode, languages).
         dedicated = route_config.api == "transcription"
         return GoogleClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
-            prompt=SCRIPT_POLICY if dedicated and prompt else prompt,
+            prompt=None if dedicated else prompt,
             dry_run=dry_run,
         )
     return OpenRouterClient(session, config=routes, client=client).transcribe(

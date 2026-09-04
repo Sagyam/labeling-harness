@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_ID = "facebook/mms-300m-1130-forced-aligner"
+DEFAULT_MODEL_ID = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 DEFAULT_OUT_DIR = REPO_ROOT / "backend" / "app" / "services" / "models"
 #: Any waveform length works at runtime -- the time axis is exported dynamic. This is only the
 #: shape torch traces with.
@@ -98,9 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_quantize:
         from onnxruntime.quantization import QuantType, quantize_dynamic
 
-        print(f"quantizing to int8 -> {model_path}")
-        quantize_dynamic(str(fp32_path), str(model_path), weight_type=QuantType.QInt8)
-        fp32_path.unlink()
+        quantize_dynamic(
+            str(fp32_path),
+            str(model_path),
+            weight_type=QuantType.QInt8,
+            op_types_to_quantize=["MatMul"],
+        )
+        fp32_path.unlink(missing_ok=True)
+        data_path = fp32_path.with_name(f"{fp32_path.name}.data")
+        data_path.unlink(missing_ok=True)
 
     size_mb = model_path.stat().st_size / (1024 * 1024)
     print(f"wrote {model_path} ({size_mb:.0f} MB)")

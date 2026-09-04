@@ -340,16 +340,15 @@ def test_a_google_audio_chat_route_reaches_generate_content(
     assert result.words is None
 
 
-def test_a_dedicated_recogniser_gets_the_policy_without_the_chat_scaffolding(
+def test_a_dedicated_recogniser_omits_system_instruction(
     db_session: Session, clip, recorder
 ) -> None:
-    """Telling a speech model not to write a preamble is noise in a system instruction."""
+    """A dedicated speech recogniser rejects developer instruction with HTTP 400."""
     config = _google_routes(api="transcription", model="gemini-3.5-transcribe")
-    transcribe(db_session, clip, route="asr_google", config=config)
+    transcribe(db_session, clip, route="asr_google", config=config, prompt=ASR_PROMPT)
 
     sent = json.loads(recorder[-1].content)
-    assert sent["system_instruction"] == SCRIPT_POLICY
-    assert "nothing else" not in sent["system_instruction"]
+    assert "system_instruction" not in sent
 
 
 def test_a_google_chat_model_gets_the_whole_prompt(db_session: Session, clip, recorder) -> None:
