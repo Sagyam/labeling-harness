@@ -108,6 +108,46 @@ def test_the_request_targets_openrouter_with_the_route_model(db_session: Session
     assert seen["body"]["max_tokens"] == 64
 
 
+def test_thinking_is_left_to_the_provider_unless_the_route_says_otherwise(
+    db_session: Session,
+) -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = httpx.Response(200, content=request.content).json()
+        return httpx.Response(200, json=completion())
+
+    make_client(db_session, handler).complete("check", [{"role": "user", "content": "hi"}])
+    assert "reasoning" not in seen["body"]
+
+
+def test_a_route_can_turn_thinking_off(db_session: Session) -> None:
+    """Gemini 3.x thinks by default, and on a mechanical rewrite it thinks until it is truncated.
+
+    47% of the first episode's script restorations came back cut off mid-array with 96% of the
+    token budget spent on reasoning, which fails the segment outright (D44).
+    """
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = httpx.Response(200, content=request.content).json()
+        return httpx.Response(200, json=completion())
+
+    config = routes(
+        routes={"check": LlmRoute(model="google/gemini-3.8-flash", reasoning_enabled=False)}
+    )
+    make_client(db_session, handler, config=config).complete(
+        "check", [{"role": "user", "content": "hi"}]
+    )
+    assert seen["body"]["reasoning"] == {"enabled": False}
+
+
+def test_the_committed_script_restore_route_does_not_think() -> None:
+    from app.config import load_llm_routes
+
+    assert load_llm_routes().routes["script_restore"].reasoning_enabled is False
+
+
 def test_a_missing_api_key_is_refused(db_session: Session) -> None:
     client = make_client(db_session, lambda r: httpx.Response(200), api_key="")
     with pytest.raises(LlmRequestFailed, match="OPENROUTER_API_KEY"):

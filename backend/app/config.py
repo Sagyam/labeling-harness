@@ -303,6 +303,12 @@ class LlmRoute(BaseModel):
     timeout_seconds: float | None = None
     max_tokens: int | None = None
     temperature: float | None = None
+    #: Whether the model may think before answering, for a chat route on a provider that offers
+    #: it. ``None`` sends nothing and takes the provider's default, which for Gemini 3.x is
+    #: thinking ON: 47% of the first episode's script restorations were truncated at
+    #: ``max_tokens`` with 96% of the budget spent on reasoning, and a rewrite cut off mid-array
+    #: fails the whole segment. Set it False on any route whose task is mechanical.
+    reasoning_enabled: bool | None = None
     #: Fill this route's word spans with the local CTC forced aligner (D32). For a transcriber
     #: that returns no timestamps of its own; a route that reports them keeps what it reported.
     forced_align: bool = False

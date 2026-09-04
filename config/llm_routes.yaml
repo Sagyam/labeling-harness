@@ -104,3 +104,10 @@ routes:
     model: google/gemini-3.8-flash
     temperature: 0.0
     max_tokens: 4096
+    # Thinking OFF, and this is load-bearing (D44). Transliterating a token list is a lookup, not
+    # a problem: left to its default the model spent a mean 2,843 reasoning tokens per segment,
+    # truncated 24 of 51 rewrites at max_tokens mid-array -- which fails the segment, since a
+    # partial array cannot be aligned -- and talked itself out of rule 2 in the process, deciding
+    # to restore "intended" rather than heard orthography. The retries could not save it either:
+    # temperature 0 makes all three attempts the same draw.
+    reasoning_enabled: false

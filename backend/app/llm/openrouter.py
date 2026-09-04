@@ -140,6 +140,11 @@ class OpenRouterClient(ProviderClient):
         temperature = temperature if temperature is not None else route_config.temperature
         if temperature is not None:
             payload["temperature"] = temperature
+        if route_config.reasoning_enabled is not None:
+            # OpenRouter's normalised switch: on Gemini it becomes thinkingBudget, on the
+            # reasoning models it becomes their own effort control. Left unset the provider
+            # decides, and Gemini 3.x decides to think.
+            payload["reasoning"] = {"enabled": route_config.reasoning_enabled}
 
         request_hash = self._hash(payload)
         summary = self._summarize(messages)
