@@ -607,3 +607,38 @@ at `https://generativelanguage.googleapis.com/v1beta`. All Vertex AI Application
 The flat payload schema and exclusion of `custom_vocabulary` remain mandatory under Google's API specification.
 
 
+
+## D39 — Anti-aliased downsampling to 16 kHz with libsoxr (completes D25)
+D25 chased audible clicking in ingested clips and fixed four real problems at the cut boundaries:
+speech padding, a raised-cosine edge fade, energy-aware pause snapping, and two-pass linear
+`loudnorm`. Those fixes hold — measured on shipped clips, every cut lands in silence, the first and
+last samples are zero, and the second pass applies a constant 1.5101x gain with no pumping
+whatsoever (106 dB against a no-loudnorm control). The clicking nevertheless remained, because it
+was never at the boundaries: it was spread through the body of every clip.
+
+The cause was the last filter in stage 1, `aresample=16000`. FFmpeg's built-in resampler defaults to
+a short filter with the cutoff at 0.97 of Nyquist, and its stopband is far too shallow for a 3:1
+decimation. Measured with pure tones through the real pipeline, it passes 8.2 kHz at -15 dB and
+8.5 kHz at -26 dB. Nothing above 8 kHz can survive a move to 16 kHz — it folds back, mirrored, on
+top of the audio that is kept. The source episode carries -24 dB of its energy in the 8-10 kHz
+band, which is exactly where sibilants live, so every /s/ and /ʃ/ deposited a burst of
+near-Nyquist noise into the 7-8 kHz band: about 1.2 audible ticks per second, and roughly an
+eighth of all energy in the clips' top octave.
+
+The fix routes the resample through libsoxr:
+`aresample=resampler=soxr:precision=28:cutoff=0.95:osr=16000`. It rejects the same tones at
+-158 dB. End to end through `normalize_audio`, out-of-band content that previously folded down at
+-35 dB now lands at -125 dB; on the real episode, mean alias falls from -48 dB to -139 dB. The
+speech band is untouched (96 dB agreement below 6 kHz) and the passband stays flat to 7.6 kHz.
+
+`_resample_filter` probes for libsoxr once per process by running the filter on a tenth of a second
+of silence, and falls back to a lengthened built-in filter (`filter_size=256:cutoff=0.91`, which
+measures -55 dB) with a loud warning rather than degrading in silence. Debian's `ffmpeg`, which the
+backend image installs, is built `--enable-libsoxr`, so the fallback should stay unused.
+
+**Clips ingested before this change carry the alias baked in and must be re-ingested to benefit.**
+
+**Reversal:** `SOXR_RESAMPLE` and `SWR_RESAMPLE_FALLBACK` in `app/services/ingest.py` are the whole
+change. `test_normalization_discards_content_above_nyquist_instead_of_folding_it` guards it by
+comparing an out-of-band probe against an anchor-only control; on the old chain it fails with a
+50 dB excess.

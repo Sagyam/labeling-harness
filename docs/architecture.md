@@ -154,7 +154,9 @@ browser -- or pastes a YouTube URL and lets the server fetch it (below) -- and w
 queue. `POST /ingest` starts a background job and returns a job id; the five stages are:
 
 1. **Normalize** — FFmpeg two-pass `loudnorm` to 16 kHz mono FLAC with linear normalization,
-   avoiding dynamic AGC gain pumping between words.
+   avoiding dynamic AGC gain pumping between words. The downsample runs through libsoxr, whose
+   stopband is steep enough that content above 8 kHz is discarded rather than folded back into the
+   clip as alias (D39).
 2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns padded by 150 ms, bounded to 2.0 s–20.0 s,
    snapping long-turn subdivisions to low-energy pauses with a 15 ms raised-cosine edge fade so
    slices do not click.

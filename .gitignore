@@ -24,3 +24,7 @@ docs/diagrams/.fontcache/
 # silero_vad.onnx is committed because it is 2.3 MB; this one cannot be.
 backend/app/services/models/mms_fa.onnx
 backend/app/services/models/mms_fa_vocab.json
+
+# Ground-truth source audio and A/B renders kept for audio debugging (D39)
+original.mp3
+reports/audio-ab/

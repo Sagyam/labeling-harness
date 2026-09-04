@@ -64,6 +64,57 @@ def test_normalize_audio_converts_to_16khz_mono_flac(tmp_path: Path) -> None:
     assert info.format == "FLAC"
 
 
+def test_normalization_discards_content_above_nyquist_instead_of_folding_it(
+    tmp_path: Path,
+) -> None:
+    """Dropping to 16 kHz must remove everything above 8 kHz, not fold it back below.
+
+    Whatever survives the anti-alias filter reappears mirrored around 8 kHz. Speech carries real
+    energy at 8-10 kHz -- that is where sibilants live -- so a leaky filter turns every /s/ into a
+    burst of near-Nyquist noise, which is heard as a click.
+
+    The probe is a low anchor tone plus noise confined entirely above 8 kHz, and it is measured
+    against a control run of the anchor alone. Every bit of that noise has to be gone, so the two
+    runs must agree: whatever the probe shows above the control is alias and nothing else.
+    Comparing the two rather than asserting an absolute floor keeps the test honest about the
+    leakage of its own window and of loudnorm's limiter.
+    """
+    sr = 48000
+    n = sr * 4
+    rng = np.random.default_rng(0)
+    anchor = 0.1 * np.sin(2 * np.pi * 200 * np.arange(n) / sr)
+
+    spectrum = np.fft.rfft(rng.normal(size=n))
+    freqs = np.fft.rfftfreq(n, 1 / sr)
+    spectrum[(freqs < 8200) | (freqs > 14000)] = 0.0
+    out_of_band = np.fft.irfft(spectrum, n=n)
+    out_of_band *= 0.05 / np.sqrt(np.mean(out_of_band**2))
+
+    def alias_db(name: str, samples: np.ndarray) -> float:
+        src = tmp_path / f"{name}.wav"
+        out = tmp_path / f"{name}.flac"
+        sf.write(str(src), samples.astype(np.float32), sr, format="WAV")
+        normalize_audio(src, out)
+
+        audio, out_sr = sf.read(str(out), dtype="float64")
+        audio = audio[out_sr:-out_sr]  # drop loudnorm's ramp at either end
+        power = np.abs(np.fft.rfft(audio * np.hanning(len(audio)))) ** 2
+        bins = np.fft.rfftfreq(len(audio), 1 / out_sr)
+        anchor_power = power[(bins > 150) & (bins < 250)].sum()
+        away_from_anchor = power[(bins > 1000) & (bins < 8000)].sum()
+        return float(10 * np.log10(away_from_anchor / anchor_power))
+
+    probe = alias_db("probe", anchor + out_of_band)
+    control = alias_db("control", anchor)
+
+    # The shipped default (`aresample=16000`) folded this noise down at about -35 dB against a
+    # control near -85 dB: a 50 dB excess, and plainly audible. A correct filter leaves no gap.
+    assert probe - control < 6.0, (
+        f"content above 8 kHz folded back into the clip: probe {probe:.1f} dB vs "
+        f"control {control:.1f} dB, an excess of {probe - control:.1f} dB"
+    )
+
+
 # --- Stage 2: Silero VAD Segmentation ---------------------------------------------------
 
 
