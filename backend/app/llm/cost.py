@@ -186,6 +186,9 @@ def calculate_vertex_cost(
     return Decimal("0.000000")
 
 
+calculate_gemini_cost = calculate_vertex_cost
+
+
 def vendor_for_route_or_model(route: str, model: str | None = None) -> str:
     """Resolve human-readable vendor name from route name or model slug."""
     try:
@@ -196,7 +199,7 @@ def vendor_for_route_or_model(route: str, model: str | None = None) -> str:
             provider = cfg.routes[route].provider
             if provider == "elevenlabs":
                 return "ElevenLabs"
-            if provider == "vertex":
+            if provider in ("vertex", "google"):
                 return "Google Cloud Vertex AI"
             if provider == "openrouter":
                 return "OpenRouter"

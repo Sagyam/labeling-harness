@@ -8,10 +8,7 @@
 enabled: true
 base_url: https://openrouter.ai/api/v1
 elevenlabs_base_url: https://api.elevenlabs.io/v1
-# GCP project and region for Vertex AI. Left blank so the committed file names no project:
-# GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION fill them in.
-vertex_project: ""
-vertex_location: ""
+google_base_url: https://generativelanguage.googleapis.com/v1beta
 default_timeout_seconds: 60
 default_max_tokens: 1024
 max_retries: 3
@@ -41,28 +38,16 @@ routes:
     model: microsoft/mai-transcribe-2
     language: ne
 
-  # !! CURRENTLY FAILS EVERY CALL -- and takes the episode with it. This project is not
-  # !! allowlisted for the Interactions API: interactions:create answers
-  # !! `400 RESOURCE_PROJECT_INVALID` for every model, including a nonsense one, in every
-  # !! location. A route that raises aborts the segment and stage 3 fails the job, so an ingest
-  # !! will die on its first segment *after* paying for the other three routes.
-  # !!
-  # !! Comment this block out to ingest, or get the project allowlisted (post the project id on
-  # !! discuss.ai.google.dev; `gen-lang-client-*` projects are the usual case). To re-check
-  # !! access, run one clip through this route -- a 200 means it landed. See D36.
-  #
-  # Gemini 3.5 Transcribe on Vertex AI, via interactions:create with a transcriptionConfig
-  # (D36). A dedicated recogniser: it is the second transcriber here that returns word spans of
-  # its own, and the only one that reports which speaker said each word.
+  # Gemini 3.5 Transcribe via Google's Interactions API (GEMINI_API_KEY). A dedicated speech
+  # recogniser: it is the second transcriber here that returns word spans of its own, and the only
+  # one that reports which speaker said each word.
   #
   # Both language codes are sent, because a code-switched clip is not one language with
-  # loanwords in it. Verbatim transcription has no field on this API -- the alternative "smart"
-  # mode strips exactly the disfluencies this corpus is collecting -- so it is stated in the
-  # system instruction along with the no-transliteration rule, from SCRIPT_POLICY in
-  # app/llm/transcription.py. Never set forced_align here: it reports its own timings, and
-  # overwriting them would cost the boundary report its second source (D33).
+  # loanwords in it. Verbatim mode is requested along with word timestamps and speaker diarization.
+  # custom_vocabulary is omitted because the API rejects combining custom vocabulary with
+  # diarization or word timestamps. Never set forced_align here: it reports its own timings.
   asr_gemini_transcribe:
-    provider: vertex
+    provider: google
     api: transcription
     system_id: gemini-3.5-transcribe
     model: gemini-3.5-transcribe
@@ -70,8 +55,8 @@ routes:
       - ne-NP
       - en-US
 
-  # Gemini 3.8 Flash on Vertex AI, on the ordinary generateContent endpoint with the clip
-  # inlined (D31, D35). `audio_chat` is the honest name for it: a general model being asked to
+  # Gemini 3.8 Flash on Google AI Studio, on the generateContent endpoint with the clip
+  # inlined (GEMINI_API_KEY). `audio_chat` is the honest name for it: a general model being asked to
   # transcribe, which obeys the transcript prompt but may also editorialise or hallucinate over
   # silence. It sees only audio -- never the other hypotheses -- so its disagreement with them
   # stays an independent signal.
@@ -79,11 +64,12 @@ routes:
   # It returns no word timestamps. Word spans for this system come from the local forced
   # aligner (app/services/forced_align.py, decision D32).
   asr_gemini_flash:
-    provider: vertex
+    provider: google
     api: audio_chat
     system_id: gemini-3.8-flash
     model: gemini-3.8-flash
     language: ne
     forced_align: true
+
 
 

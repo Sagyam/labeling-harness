@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 from app.config import LlmRoute, LlmRoutes
 from app.llm.base import AsrResult, LlmRouteNotConfigured
 from app.llm.elevenlabs import ElevenLabsClient
+from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
-from app.llm.vertex import VertexClient
 
 #: The transcript policy itself, and the whole of what a dedicated speech recogniser is told.
 #: The rule that matters most is the one a multilingual model gets wrong by default: it will
@@ -118,16 +118,16 @@ def transcribe(
             keyterms=list(DEFAULT_KEYTERMS),
             dry_run=dry_run,
         )
-    if route_config.provider == "vertex":
+    if route_config.provider in ("google", "vertex"):
         # A dedicated recogniser gets the policy without the chat-model scaffolding: telling a
         # speech model to skip the preamble it was never going to write is noise in a system
-        # instruction, and the key terms it does accept are the ones Scribe gets.
+        # instruction. custom_vocabulary is omitted because the API rejects combining custom
+        # vocabulary with diarization or word timestamps.
         dedicated = route_config.api == "transcription"
-        return VertexClient(session, config=routes, client=client).transcribe(
+        return GoogleClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
             prompt=SCRIPT_POLICY if dedicated and prompt else prompt,
-            custom_vocabulary=list(DEFAULT_KEYTERMS) if dedicated else None,
             dry_run=dry_run,
         )
     return OpenRouterClient(session, config=routes, client=client).transcribe(

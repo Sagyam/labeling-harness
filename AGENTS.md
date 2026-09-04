@@ -127,30 +127,18 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   `segments.speaker_id`. Do not join on them across hypotheses, and do not backfill the column for
   a transcriber that reported nothing: null means "not diarized", which is the honest value for
   three of the four systems.
-- Vertex AI authenticates with Application Default Credentials, not an API key (D35). Absent
-  credentials fail the route at request time with a logged `llm_requests` row, the same as a
-  missing key elsewhere. `google-auth` is in the dependency list for the credential lookup and the
-  token refresh only — the requests are plain `httpx`, like every other client in `app/llm/`, and
-  the refresh goes through `_HttpxRequest` in `app/llm/vertex.py` for the same reason. Do not
-  reach for `google.auth.transport.requests`: it needs `requests`, which is not a dependency and
-  must not become one. A test asserts the transport works without it, because nothing else would
-  catch it until a live call.
-- A *user* credential (`gcloud auth application-default login`) belongs to no project, so Vertex
-  needs `x-goog-user-project` on the request; a service account belongs to one and is rejected
-  for sending it without `serviceusage.services.use`. `_auth_headers` sends it only for the
-  former. Do not "simplify" this into always sending it.
-- Every Vertex transcription request turns safety filtering **off**, on both request shapes. This
-  is not optional and not a shortcut. Vertex blocks on the *prompt* by default and answers
-  `HTTP 200` with no candidates and a `promptFeedback.blockReason` — so the failure arrives as an
-  empty hypothesis rather than an error, reads as "the model heard nothing", and drags that
-  clip's disagreement rate. Measured: a Nepali news podcast discussing a bridge collapse is
-  blocked by default and transcribes cleanly with the filters off. A transcriber's job is to
-  write down what was said.
-- The two Vertex APIs disagree about field names, and both spellings are load-bearing:
-  `interactions:create` takes `mimeTypeString` on its audio block (the `mime_type` JSON key binds
-  to a legacy enum that rejects `audio/flac`) and spells a safety category `type`;
-  `generateContent` takes `inline_data.mime_type` as a plain string and spells the category
-  `category`. Both are asserted in `test_vertex.py`.
+- Google models (`gemini-3.5-transcribe`, `gemini-3.8-flash`) authenticate with a single
+  standard API key (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) via `app/llm/google.py` (D38).
+  Like every other provider in the harness, no GCP Application Default Credentials, local gcloud
+  token stores, or service-account file paths are used.
+- On the Google Interactions API (`POST /v1beta/interactions`), Google strictly forbids combining
+  `custom_vocabulary` with `diarization_mode` or `timestamp_granularities` — sending both returns
+  an immediate HTTP 400 Bad Request. The harness prioritizes word timestamps and speaker
+  diarization, so `custom_vocabulary` must never be added to that route.
+- Every Google transcription request turns safety filtering **off** (`BLOCK_NONE`). This is not
+  optional and not a shortcut. Google blocks on the prompt/audio by default and answers with no
+  candidates — so the failure arrives as an empty hypothesis rather than an error and drags that
+  clip's disagreement rate. A transcriber's job is to write down what was said.
 - The aligner's ONNX model is gitignored (~300 MB) and built by `scripts/export_aligner_onnx.py` in
   a throwaway venv. `torch` and `transformers` must never enter `backend/pyproject.toml`. A missing
   model file is a warning and no word spans, never a failed episode -- same contract as

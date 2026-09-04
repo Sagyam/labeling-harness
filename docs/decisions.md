@@ -585,3 +585,25 @@ atomically, and offers real-time auditability in the UI.
 
 **Reversal:** None. Costs remain append-only in `llm_requests`.
 
+## D38 — Gemini models switch to Google AI Studio API key and Interactions API fix (supersedes D35 and D36 Vertex endpoint)
+Both Google models (`gemini-3.5-transcribe` and `gemini-3.8-flash`) authenticate with a single,
+standard API key (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) targeting the public Gemini Developer API
+at `https://generativelanguage.googleapis.com/v1beta`. All Vertex AI Application Default Credentials
+(ADC), service account json paths, and `google-auth` token refresh plumbing are removed.
+
+**Why:**
+1. **Single standard API key:** Consistent with ElevenLabs and OpenRouter, eliminating machine-local
+   GCloud token caches, ADC configurations, and IAM permissions.
+2. **Interactions API URL and schema:** The previous implementation failed with `400 RESOURCE_PROJECT_INVALID`
+   because it incorrectly targeted `interactions:create` (an invalid custom verb on Google REST endpoints)
+   and wrapped parameters in fabricated nested structures. The real Gemini Developer API endpoint is
+   `POST /v1beta/interactions` accepting a flat schema (`model`, `input`, and `generation_config`).
+3. **Dropping custom vocabulary:** Google's Interactions API explicitly disallows combining
+   `custom_vocabulary` with `diarization_mode` or `timestamp_granularities` (throwing 400 Bad Request).
+   The harness prioritizes word-level timestamps and speaker diarization for downstream scoring and
+   boundary alignment, so `custom_vocabulary` is omitted entirely.
+
+**Reversal:** Reintroducing Vertex ADC would require restoring `google-auth` and `app/llm/vertex.py`.
+The flat payload schema and exclusion of `custom_vocabulary` remain mandatory under Google's API specification.
+
+

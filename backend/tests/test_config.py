@@ -159,7 +159,7 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert mai.language == "ne"
 
     transcribe_route = routes["asr_gemini_transcribe"]
-    assert (transcribe_route.provider, transcribe_route.api) == ("vertex", "transcription")
+    assert (transcribe_route.provider, transcribe_route.api) == ("google", "transcription")
     assert transcribe_route.model == "gemini-3.5-transcribe"
     assert transcribe_route.system_id == "gemini-3.5-transcribe"
     assert transcribe_route.language_codes == ["ne-NP", "en-US"], (
@@ -167,7 +167,7 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     )
 
     gemini = routes["asr_gemini_flash"]
-    assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (
+    assert (gemini.provider, gemini.api) == ("google", "audio_chat"), (
         "a general model asked to transcribe, not a dedicated recogniser -- name it so"
     )
     assert gemini.model == "gemini-3.8-flash"
@@ -240,11 +240,11 @@ def test_only_the_transcriber_without_timestamps_asks_for_forced_alignment() -> 
 
 
 def test_only_the_dedicated_recogniser_is_asked_for_speaker_labels() -> None:
-    """Diarization comes with `api: transcription` on Vertex, and nothing else offers it."""
+    """Diarization comes with `api: transcription` on Google, and nothing else offers it."""
     routes = load_llm_routes().routes
     diarizing = {
         name
         for name, route in routes.items()
-        if route.provider == "vertex" and route.api == "transcription"
+        if route.provider == "google" and route.api == "transcription"
     }
     assert diarizing == {"asr_gemini_transcribe"}

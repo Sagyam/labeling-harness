@@ -16,9 +16,6 @@ dependencies = [
     "numpy>=2.1",
     "soundfile>=0.12",
     "httpx>=0.27",
-    # Vertex AI authenticates with Application Default Credentials rather than an API key.
-    # Only the credential lookup and token refresh are used; the requests are plain httpx.
-    "google-auth>=2.35",
     "minio>=7.2",
     "structlog>=24.4",
     "indic-transliteration>=2.3",

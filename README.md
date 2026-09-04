@@ -133,9 +133,7 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_STORAGE__MINIO__ACCESS_KEY` / `__SECRET_KEY` | MinIO credentials |
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
 | `OPENROUTER_API_KEY` | OpenRouter key; carries the MAI-Transcribe 2 transcriber |
-| `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Service account JSON for Vertex AI (`roles/aiplatform.user`); blank uses `gcloud` ADC |
-| `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | GCP project billed for Vertex AI, and the region serving it |
+| `GEMINI_API_KEY` | Gemini Developer API / Google AI Studio key for Gemini 3.5 Transcribe and 3.8 Flash |
 
 `ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines
 to serve anonymously. It is a path in YAML because it is not itself a secret; the file it names is,

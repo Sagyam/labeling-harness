@@ -287,7 +287,7 @@ class LlmRoute(BaseModel):
 
     model_config = _STRICT
 
-    provider: Literal["openrouter", "elevenlabs", "vertex"] = "openrouter"
+    provider: Literal["openrouter", "elevenlabs", "google", "vertex"] = "openrouter"
     api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
     #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
@@ -311,8 +311,13 @@ class LlmRoute(BaseModel):
     def _check_provider_api(self) -> LlmRoute:
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
-        if self.provider == "vertex" and self.api not in ("transcription", "audio_chat"):
-            raise ValueError("the vertex provider only offers api: transcription or audio_chat")
+        if self.provider in ("google", "vertex") and self.api not in (
+            "transcription",
+            "audio_chat",
+        ):
+            raise ValueError(
+                f"the {self.provider} provider only offers api: transcription or audio_chat"
+            )
         return self
 
 
@@ -320,9 +325,9 @@ class LlmRoutes(BaseModel):
     """Routing table for every inference provider.
 
     OpenRouter is the default and carries all text inference. A provider is called directly when
-    OpenRouter cannot reach it -- ElevenLabs Scribe (D21), Vertex AI (D35). How a vendor bills is
-    not a criterion (D34); what every route shares is that its calls are logged to
-    ``llm_requests``, which is the only spend record there is.
+    OpenRouter cannot reach it -- ElevenLabs Scribe (D21), Google AI Studio / Gemini (D29, D38).
+    What every route shares is that its calls are logged to ``llm_requests``, which is the only
+    spend record there is.
     """
 
     model_config = _STRICT
@@ -330,9 +335,7 @@ class LlmRoutes(BaseModel):
     enabled: bool = False
     base_url: str = "https://openrouter.ai/api/v1"
     elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
-    #: GCP project billed for Vertex AI calls, and the region serving them. Left blank here so
-    #: the committed file names no project; ``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION``
-    #: fill them in. ``global`` is a location like any other and has its own unprefixed host.
+    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     vertex_project: str = ""
     vertex_location: str = ""
     default_timeout_seconds: float = 30.0

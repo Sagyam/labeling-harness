@@ -177,8 +177,8 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 |---|---|---|---|---|
 | `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
 | `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne`, the full policy prompt |
-| `asr_gemini_transcribe` | Vertex AI (direct) | `interactions:create` | text, word spans, speaker per word | the script policy, `language_codes: [ne-NP, en-US]`, key terms |
-| `asr_gemini_flash` | Vertex AI (direct) | `publishers/google/models/…:generateContent` | text only | the full policy prompt, `language: ne` |
+| `asr_gemini_transcribe` | Google AI Studio (direct) | `POST /v1beta/interactions` | text, word spans, speaker per word | the script policy, `language_codes: [ne-NP, en-US]` |
+| `asr_gemini_flash` | Google AI Studio (direct) | `POST /v1beta/models/…:generateContent` | text only | the full policy prompt, `language: ne` |
 
 The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
 code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
@@ -307,7 +307,7 @@ the same inputs and filters produce byte-identical output.
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
 | `GET /export/history` | List previous exported dataset artifacts on disk |
-| `GET /costs` | Aggregate AI inference cost report across ElevenLabs, OpenRouter, and Vertex AI |
+| `GET /costs` | Aggregate AI inference cost report across ElevenLabs, OpenRouter, and Google |
 | `GET /costs/requests` | Filterable, paginated audit ledger of all external AI requests and incurred spend |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
