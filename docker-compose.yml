@@ -52,6 +52,11 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-global}
       HARNESS_API__AUTH_TOKEN: ${HARNESS_API__AUTH_TOKEN:-}
+      # The forced-alignment model (~317 MB) downloads itself on first use. It lands in
+      # the mounted ./data volume rather than an image layer, so it survives `up` and is
+      # fetched once. Set HARNESS_ALIGNER_NO_DOWNLOAD=1 to keep the old skip-spans mode.
+      HARNESS_ALIGNER_MODEL_DIR: /app/data/models
+      HARNESS_ALIGNER_NO_DOWNLOAD: ${HARNESS_ALIGNER_NO_DOWNLOAD:-}
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:

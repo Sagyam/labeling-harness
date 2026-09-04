@@ -20,6 +20,7 @@ construction -- the aligner only ever sees the clip.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -29,13 +30,21 @@ import soundfile as sf
 from indic_transliteration import sanscript
 from indic_transliteration.sanscript import transliterate
 
+from app.services.aligner_model import ensure_aligner_model
 from app.services.alignment import DEV_RE, WORD_TOKEN_RE, WordSpan, project_missing_spans
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "models" / "mms_fa.onnx"
-DEFAULT_VOCAB_PATH = Path(__file__).resolve().parent / "models" / "mms_fa_vocab.json"
+#: Where the acoustic model lives. Overridable because the container points it at the mounted
+#: ``/app/data`` volume: the file is ~317 MB and downloading it again on every `up` would be a
+#: poor trade for keeping it inside an image layer.
+MODEL_DIR_ENV = "HARNESS_ALIGNER_MODEL_DIR"
+DEFAULT_MODEL_DIR = Path(
+    os.environ.get(MODEL_DIR_ENV) or (Path(__file__).resolve().parent / "models")
+)
+DEFAULT_MODEL_PATH = DEFAULT_MODEL_DIR / "mms_fa.onnx"
+DEFAULT_VOCAB_PATH = DEFAULT_MODEL_DIR / "mms_fa_vocab.json"
 
 SAMPLE_RATE = 16000
 #: Names a CTC vocabulary may give the blank label, in the order they are tried.
@@ -255,9 +264,16 @@ class ForcedAligner:
         self,
         model_path: Path | str | None = None,
         vocab_path: Path | str | None = None,
+        auto_download: bool | None = None,
     ) -> None:
         self.model_path = Path(model_path or DEFAULT_MODEL_PATH)
         self.vocab_path = Path(vocab_path or DEFAULT_VOCAB_PATH)
+        # Fetch only into the default location. A caller who named a path is pointing at a file
+        # they manage -- a fixture, an export, a mount -- and silently downloading 317 MB over
+        # their choice would be the wrong kind of helpful.
+        self._auto_download = (
+            (model_path is None and vocab_path is None) if auto_download is None else auto_download
+        )
         self._session: object | None = None
         self._vocab: dict[str, int] | None = None
         self._blank_id = 0
@@ -271,12 +287,21 @@ class ForcedAligner:
 
     def _load(self) -> None:
         if not self.model_path.is_file() or not self.vocab_path.is_file():
-            logger.warning(
-                "forced_aligner_model_missing",
-                model=str(self.model_path),
-                vocab=str(self.vocab_path),
-            )
-            return
+            # Fetch it rather than complain about it. One aligner is built per ingest run, before
+            # the segment thread pool starts, so this runs once and single-threaded.
+            if self._auto_download and ensure_aligner_model(self.model_path, self.vocab_path):
+                pass
+            else:
+                logger.warning(
+                    "forced_aligner_model_missing",
+                    model=str(self.model_path),
+                    vocab=str(self.vocab_path),
+                    hint=(
+                        "set HARNESS_ALIGNER_MODEL_DIR, or unset HARNESS_ALIGNER_NO_DOWNLOAD, "
+                        "or build it with scripts/export_aligner_onnx.py"
+                    ),
+                )
+                return
         try:
             import onnxruntime as ort
 

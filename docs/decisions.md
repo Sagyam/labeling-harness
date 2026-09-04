@@ -797,3 +797,39 @@ retried in `vertex.py`. An empty `audio_chat` answer with *no* block reason is s
 
 **Reversal:** drop `restore_script_route` and the composite is the raw recogniser again — at which
 point D40's hold-out has to come back with it, because the orthography artefact returns.
+
+## D42 — The aligner model downloads itself, pinned and digest-checked
+`ForcedAligner` fetches `mms_fa.onnx` and its vocabulary when they are missing, instead of warning
+and skipping word spans. The artefact is `onnx/model_int8.onnx` from
+`onnx-community/mms-300m-1130-forced-aligner-ONNX`, pinned to commit `2100fb24` and verified
+against a SHA-256 digest. `app/services/aligner_model.py` owns it.
+
+**Why:** D32 keeps `torch` and `transformers` out of `pyproject.toml`, so the only way to obtain
+the model was `scripts/export_aligner_onnx.py` in a throwaway venv — impossible inside the runtime
+container, which is exactly where the file kept being absent. The community export is the same
+graph the script produces: one `input_values` input of `[batch, samples]`, one `logits` output of
+`[batch, frames, 31]`, and the same 31-label romanized vocabulary. Verified against a real clip
+before adopting it. The export script stays for provenance and for rebuilding from the weights.
+
+**Pinned to a commit, not a branch, and checked against a digest.** This is an executable graph
+that runs over every clip in the corpus. A branch could move under a benchmark that already ran,
+and a truncated transfer that still loads would put quietly wrong spans on every segment — worse
+than no aligner. The download lands on a temporary file and is renamed only after its digest
+matches, so a failed transfer leaves nothing that could be mistaken for a model next run.
+
+**It fetches only into the default location.** A caller who names `model_path` is pointing at a
+file they manage — a fixture, their own export, a mount — and downloading 317 MB over that choice
+would be the wrong kind of helpful. `HARNESS_ALIGNER_NO_DOWNLOAD=1` refuses the fetch entirely,
+for an air-gapped or bandwidth-constrained run.
+
+**Where it lands.** `HARNESS_ALIGNER_MODEL_DIR` moves the directory; the container sets it to
+`/app/data/models`, inside the existing bind mount. Keeping it out of the image means the image
+stays small and the model is fetched once rather than on every `up`. The file is chmod 644 after
+download because the container writes as root into a mount the host user has to be able to remove.
+
+**A failed download is still not an error.** D32's contract is unchanged: no model means no word
+spans, never a failed episode. Unreachable network, disabled fetch and digest mismatch all
+degrade the same way an absent file always did.
+
+**Reversal:** delete the module and the `_load` call; the export script alone gets you the file
+back.

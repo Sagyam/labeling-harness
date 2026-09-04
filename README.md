@@ -133,6 +133,8 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_STORAGE__MINIO__ACCESS_KEY` / `__SECRET_KEY` | MinIO credentials |
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
 | `OPENROUTER_API_KEY` | OpenRouter key; carries the MAI-Transcribe 2 transcriber |
+| `HARNESS_ALIGNER_NO_DOWNLOAD` | Set to 1 to refuse the forced-aligner model download and skip word spans |
+| `HARNESS_ALIGNER_MODEL_DIR` | Where the aligner model is kept; the container uses `/app/data/models` |
 | `VERTEX_API_KEY` | Vertex AI key, restricted to `aiplatform.googleapis.com`; carries Gemini 3.5 Transcribe and 3.8 Flash |
 | `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | Project the Vertex calls bill and quota against, and the region serving them (`global`) |
 

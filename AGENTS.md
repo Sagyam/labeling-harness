@@ -164,10 +164,15 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   optional and not a shortcut. Google blocks on the prompt/audio by default and answers with no
   candidates — so the failure arrives as an empty hypothesis rather than an error and drags that
   clip's disagreement rate. A transcriber's job is to write down what was said.
-- The aligner's ONNX model is gitignored (~300 MB) and built by `scripts/export_aligner_onnx.py` in
-  a throwaway venv. `torch` and `transformers` must never enter `backend/pyproject.toml`. A missing
-  model file is a warning and no word spans, never a failed episode -- same contract as
-  `silero_vad.onnx`.
+- The aligner's ONNX model is gitignored (~317 MB) and **downloads itself when missing** (D42),
+  pinned to a commit and digest-checked, so the container no longer needs the export.
+  `scripts/export_aligner_onnx.py` remains for provenance; `torch` and `transformers` must never
+  enter `backend/pyproject.toml`. A missing *or unfetchable* model is a warning and no word spans,
+  never a failed episode -- same contract as `silero_vad.onnx`.
+- The fetch only writes to the **default** path. Passing `model_path`/`vocab_path` explicitly
+  disables it, which is what keeps fixtures and the degradation test from pulling 317 MB.
+  `HARNESS_ALIGNER_MODEL_DIR` moves it (the container uses `/app/data/models`, inside the bind
+  mount, so it survives `up`); `HARNESS_ALIGNER_NO_DOWNLOAD=1` refuses it.
 - The transcribe stage commits per segment on purpose (D20). Do not "tidy" it into one transaction.
 - `/tasks/next` marks the task `in_progress` — that is what makes resume work. A partial unique
   index enforces one active task per segment, so a second one raises `IntegrityError` from the
