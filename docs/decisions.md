@@ -858,3 +858,36 @@ and `uv` itself is pinned by image tag rather than digest. Both are build-time t
 change runtime behaviour, which is where the reproducibility argument actually bites.
 
 **Reversal:** delete the lockfile and restore `pip install -e .`; nothing else depends on it.
+
+## D44 — The script-restore route runs with thinking off
+`script_restore` sends OpenRouter's `reasoning: {enabled: false}`. Routes carry a
+`reasoning_enabled` field for this; it is unset everywhere else, so every other route keeps
+whatever the provider does by default.
+
+**Why:** the first full ingest failed at `script restoration failed: unparseable rewrite: no JSON
+array in the response`, and the rewrite was not unparseable — it was truncated. Gemini 3.8 Flash
+thinks by default, and on a task that is a dictionary lookup it thought until the budget ran out:
+24 of the run's 51 rewrites returned `finish_reason: length` with the JSON array stopping
+mid-token, a mean 2,843 reasoning tokens against a 4,096 cap and 3,929 on the worst call. A
+partial array cannot be aligned to the spans, so each of those failed its segment, and
+`temperature: 0.0` made all three retry attempts the same draw.
+
+**The thinking was not neutral, either.** The 3,929-token trace was spent circling one token,
+`ट्युन`, over whether the speaker said "tune" or "tuned", and it concluded that it should restore
+the *intended* orthography rather than the heard one — rule 2 of the instruction reasoned away in
+the open, on a route whose entire premise is that it changes script and nothing else.
+`count_same_script_edits` does not catch that class of drift: it only sees Devanagari that came
+back as different Devanagari, not Devanagari that came back as the wrong Latin word. Turning
+thinking off removes the surface the argument happened on.
+
+**Cost, measured against that run:** ~469 prompt and ~206 completion tokens per segment, ~$0.0011
+a call, against $3.31 per hour of audio with thinking on — about a sixteenth, with the retries
+gone.
+
+**What this does not fix.** `_extract_array` still reports a truncated response as "no JSON array",
+which is what sent the diagnosis to the wrong place; `finish_reason` is never read. Raising
+`max_tokens` was rejected as the fix — it buys headroom for the rambling rather than removing it —
+but 4,096 now has a large margin over a 391-token worst case, so it stays.
+
+**Reversal:** drop `reasoning_enabled: false` from the route; the field going unset restores the
+provider default.
