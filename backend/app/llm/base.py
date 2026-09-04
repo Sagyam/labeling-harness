@@ -5,9 +5,9 @@ everywhere: it is written to ``llm_requests`` before it can be forgotten, it ret
 status codes that are worth retrying, and a dry run never reaches the network. Those three live
 here so that adding a provider cannot quietly opt out of any of them.
 
-Billing control is the reason the log exists. Every provider wired into this codebase must be
-prepaid -- a topped-up balance, never an invoice -- so that a runaway ingest can at worst exhaust
-a balance the owner chose to put there (decisions D10, D21).
+Billing control is the reason the log exists. It is also the only spend record the harness keeps:
+no provider is excluded for how it bills (D34), so ``llm_requests`` -- one row per attempt, with
+route, model, status and latency -- is what an ingest's cost is reconstructed from afterwards.
 """
 
 from __future__ import annotations

@@ -134,6 +134,10 @@ threads safely commit each completed segment independently without holding long-
 **Reversal:** trivial, but it would make a long job all-or-nothing.
 
 ## D21 — The provider rule is "prepaid", not "OpenRouter"; ElevenLabs Scribe is called directly
+**The prepaid half is superseded by D34.** The half that survives is the one that mattered in
+practice: `app/llm/base.py` holds the retry policy, the dry-run switch and the `llm_requests`
+write, so a new provider inherits the guarantees instead of reimplementing them.
+
 The point of routing everything through OpenRouter (D10) was never the vendor. It was that
 OpenRouter is topped up rather than invoiced, so the worst outcome of a runaway ingest is an
 exhausted balance the owner chose to fund. ElevenLabs bills the same way, which means sending
@@ -450,3 +454,26 @@ than taking whichever hypothesis happened to carry words first, and the summary 
 ids so a report can never again be read as a system compared against itself.
 
 **Reversal:** none worth having. The previous behaviour was a defect, not a design.
+
+## D34 — Drop the prepaid-only provider rule; spend is controlled by the switches, not the vendor
+Invariant 5 required every inference provider to be prepaid — a balance the owner topped up,
+never an invoice — and D10, D21 and D29 each argued a provider in on those terms. The rule is
+removed. What remains of the invariant is the part that was doing the work: every call goes
+through a named route and a client in `app/llm/`, and writes an `llm_requests` row.
+
+**Why:** the rule stopped selecting for anything. It never bounded spend to a useful number — a
+balance large enough to ingest a real episode is a balance large enough to be wasted — and the
+things that actually cap a runaway ingest are unrelated to how the vendor bills: `dry_run` in
+`config/llm_routes.yaml`, `ingest.youtube.max_duration_seconds`, the fixed set of `asr*` routes,
+and the fact that a job transcribes a finite list of clips and then stops. Meanwhile the rule
+excluded Vertex AI, which is postpaid, and which is where Google now serves its models (D35). A
+provider chosen for its billing page rather than for what it can transcribe is the wrong trade on
+a corpus whose whole purpose is measuring transcription quality.
+
+The mitigation is that spend stays visible rather than capped: `llm_requests` records every
+attempt, with route, model, status and latency, and it is the only spend record the harness has.
+A GCP budget alert is the owner's job and lives outside this repository.
+
+**Reversal:** restore the sentence to `AGENTS.md` and drop every postpaid route. Nothing in the
+code enforced the rule — no test asserted it and no client checked it — so the reversal is
+documentation plus a routing table, which is exactly why it was worth so little.

@@ -1,10 +1,10 @@
 """OpenRouter client.
 
 **All text inference from this codebase goes through OpenRouter**, and so does every ASR model
-OpenRouter can reach. No direct calls to OpenAI, Anthropic, Google, Groq or Mistral. The reason is
-billing control: OpenRouter is prepaid, so there is no possibility of a surprise invoice. The one
-provider called directly is ElevenLabs Scribe, which is prepaid on the same terms and is therefore
-subject to the same reasoning rather than an exception to it (decision D21).
+OpenRouter can reach: one key, one bill and one client for the long tail of models nobody is going
+to write a client for. The providers called directly are the ones OpenRouter cannot reach at all --
+ElevenLabs Scribe (D21) and Vertex AI (D35) -- not exceptions bought with an argument about
+billing (D34).
 
 Two request shapes reach an ASR model here, and they are not interchangeable:
 

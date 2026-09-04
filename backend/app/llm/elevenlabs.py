@@ -1,9 +1,9 @@
 """ElevenLabs Scribe speech-to-text client.
 
-The one provider in this codebase that is called directly rather than through OpenRouter. It
-earns the exception the same way OpenRouter did: the account is prepaid, so a runaway ingest can
-exhaust a balance but cannot produce an invoice (decision D21). Every call still lands in
-``llm_requests``, so the billing audit trail has no gap in it.
+Called directly rather than through OpenRouter, because OpenRouter cannot reach Scribe at all --
+and Scribe is the only transcriber the harness has that returns word spans *and* per-word log
+probabilities (decision D21). Every call still lands in ``llm_requests``, so the billing audit
+trail has no gap in it.
 
 Scribe has no free-text prompt parameter -- unlike a chat model, it cannot be told in prose that
 the audio is code-switched. The levers it does offer are ``language_code`` and ``keyterms``, and

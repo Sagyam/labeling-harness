@@ -33,12 +33,12 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
    boolean that duplicates one.
 4. **Splits are frozen at import**, per episode, hashed from `(episode_id, split_seed)`. Never
    recompute them; a recomputed split silently invalidates every earlier benchmark.
-5. **Every inference provider is prepaid, and every call is routed and logged.** Inference goes
-   through a named route in `config/llm_routes.yaml` and a client in `app/llm/`, and writes an
-   `llm_requests` row. OpenRouter carries all text inference and every ASR model it can reach;
-   ElevenLabs Scribe is called directly because it is prepaid on the same terms (D21). Adding a
-   third provider means proving it is prepaid first — a balance can be exhausted, an invoice
-   cannot be refused. Billing control is the reason, and it is the whole of the reason.
+5. **Every inference call is routed and logged.** Inference goes through a named route in
+   `config/llm_routes.yaml` and a client in `app/llm/`, and writes an `llm_requests` row —
+   whichever vendor served it, and whether it succeeded, failed or was a dry run. There is no
+   longer a prepaid-only rule (D34): a provider is chosen for what it can transcribe, and spend is
+   controlled by `dry_run`, `ingest.youtube.max_duration_seconds` and the `llm_requests` audit
+   trail rather than by the shape of the vendor's billing.
 6. **Clips are 16 kHz mono FLAC.** Anything else is rejected at import, before any row is written.
 7. **Every decision writes three rows in one transaction**: a label, an `annotation_events` row
    with the client-reported elapsed time, and an `audit_logs` entry. The one exception is skip,

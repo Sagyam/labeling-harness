@@ -57,9 +57,11 @@ check.
 
 Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,
 Microsoft MAI-Transcribe 2, and Google Gemini 3.8 Flash — so one clip is three calls, billed
-against your ElevenLabs, OpenRouter, and Google AI Studio balances. All are prepaid, which is why
-those providers are the ones wired up. Each model hears only the audio; none is shown another's
-transcript, so where they disagree is a measurement rather than an echo.
+against your ElevenLabs, OpenRouter and Google accounts. Every attempt is written to
+`llm_requests`, which is the only record of what an ingest spent, so watch that table (or a
+provider-side budget alert) rather than expecting the harness to stop you. Each model hears only
+the audio; none is shown another's transcript, so where they disagree is a measurement rather
+than an echo.
 
 Word-level timestamps do not all come from the models. Scribe reports its own; Gemini's are
 measured locally by a CTC forced aligner that places its transcript back onto the clip

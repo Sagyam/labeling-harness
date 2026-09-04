@@ -1,5 +1,6 @@
-# Inference routing. Every provider here is prepaid: a runaway job can exhaust a balance the
-# owner topped up, but cannot produce an invoice. That, not the vendor, is the rule (D10, D21).
+# Inference routing. Every call made through this table is logged to `llm_requests` -- route,
+# model, status, latency -- which is the only record of what an ingest spent. How a vendor bills
+# is not a criterion for being here (D34).
 #
 # A route named `asr*` becomes one ASR system during ingestion, in the order written below. The
 # first route is the primary hypothesis: it supplies the text that analysis, CMI and the rule

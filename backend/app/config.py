@@ -314,9 +314,10 @@ class LlmRoute(BaseModel):
 class LlmRoutes(BaseModel):
     """Routing table for every inference provider.
 
-    OpenRouter is the default and carries all text inference. A second provider is permitted only
-    when it is prepaid, so that the blast radius of a runaway job stays bounded by a balance
-    (decisions D10, D21, D29).
+    OpenRouter is the default and carries all text inference. A provider is called directly when
+    OpenRouter cannot reach it -- ElevenLabs Scribe (D21), Vertex AI (D35). How a vendor bills is
+    not a criterion (D34); what every route shares is that its calls are logged to
+    ``llm_requests``, which is the only spend record there is.
     """
 
     model_config = _STRICT
