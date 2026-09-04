@@ -53,6 +53,25 @@ CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 #: Clips are FLAC by invariant 6.
 AUDIO_MIME_TYPE = "audio/flac"
 
+#: Categories Vertex filters on by default. Turned off for every transcription request.
+#:
+#: A transcriber must not decline to write down what was said. Vertex's default thresholds block
+#: on the *prompt*, and a blocked prompt is not an error: it comes back HTTP 200 with an empty
+#: candidate list and a ``promptFeedback.blockReason``. That lands in the corpus as a silent empty
+#: hypothesis, which is worse than a failure -- it reads as "the model heard nothing" and drags
+#: the disagreement rate for that clip. Measured on a Nepali news podcast discussing a bridge
+#: collapse: blocked by default, transcribed cleanly with these off.
+_HARM_CATEGORIES = (
+    "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_DANGEROUS_CONTENT",
+    "HARM_CATEGORY_HARASSMENT",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+)
+#: The two APIs spell the category field differently: `category` on generateContent, `type` on
+#: interactions:create. Same enum, same thresholds.
+GENERATE_CONTENT_SAFETY = [{"category": c, "threshold": "OFF"} for c in _HARM_CATEGORIES]
+INTERACTION_SAFETY = [{"type": c, "threshold": "OFF"} for c in _HARM_CATEGORIES]
+
 #: Only version carrying ``interactions:create``. ``generateContent`` is on it too, so one
 #: version serves both shapes.
 API_VERSION = "v1beta1"
@@ -397,6 +416,14 @@ class VertexClient(ProviderClient):
         else:
             text, words = parse_generate_content(body), None
 
+        block_reason = (body.get("promptFeedback") or {}).get("blockReason")
+        if block_reason and not text:
+            # Safety is switched off above, so reaching here means a filter this route cannot
+            # turn off. Say so: the alternative is an empty hypothesis nobody can account for.
+            logger.warning(
+                "vertex_response_blocked", route=route, model=model_id, reason=block_reason
+            )
+
         self._log(
             route=route,
             model=model_id,
@@ -466,10 +493,14 @@ class VertexClient(ProviderClient):
                 "model": route_config.model,
                 "generationConfig": generation,
             },
+            "safetySettings": INTERACTION_SAFETY,
             "content": {
                 "audio": {
                     "data": audio_b64,
-                    "mime_type": AUDIO_MIME_TYPE,
+                    # `mimeTypeString`, not `mime_type`: the latter JSON key binds to a legacy
+                    # enum field on AudioContent, which rejects "audio/flac" outright. Verified
+                    # against the live API -- the discovery document lists only this spelling.
+                    "mimeTypeString": AUDIO_MIME_TYPE,
                     "sampleRate": 16000,
                     "channels": 1,
                 }
@@ -507,4 +538,5 @@ class VertexClient(ProviderClient):
                 "temperature": route_config.temperature or 0.0,
                 "responseModalities": ["TEXT"],
             },
+            "safetySettings": GENERATE_CONTENT_SAFETY,
         }

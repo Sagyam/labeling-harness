@@ -382,7 +382,9 @@ def test_the_clip_is_inlined_as_base64_flac_on_both_shapes(db_session: Session, 
     client.transcribe(clip, route=FLASH_ROUTE)
 
     audio = json.loads(seen[0].content)["interaction"]["content"]["audio"]
-    assert audio["mime_type"] == "audio/flac"
+    # `mimeTypeString`, not `mime_type` -- the latter is a legacy enum that rejects "audio/flac".
+    assert audio["mimeTypeString"] == "audio/flac"
+    assert "mime_type" not in audio
     assert base64.b64decode(audio["data"]) == b"mock audio bytes"
 
     inline = json.loads(seen[1].content)["contents"][0]["parts"][-1]["inline_data"]
@@ -552,3 +554,60 @@ def test_the_refresh_transport_needs_no_second_http_library(
     )
     assert client._auth_headers()["Authorization"] == "Bearer fresh"
     assert seen and seen[0].method == "POST"
+
+
+# --- safety filtering -----------------------------------------------------------------------
+
+
+@pytest.mark.db
+def test_safety_filtering_is_off_on_both_request_shapes(db_session: Session, clip: Path) -> None:
+    """A transcriber must not decline to write down what was said.
+
+    Vertex blocks on the *prompt* by default and answers HTTP 200 with no candidates, so the
+    failure arrives as an empty hypothesis rather than an error. Measured against a Nepali news
+    podcast discussing a bridge collapse: blocked by default, clean transcript with these off.
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if "interactions" in str(request.url):
+            return httpx.Response(200, json=_interaction_body("ok"))
+        return httpx.Response(200, json=_generate_content_body("ok"))
+
+    client = make_client(db_session, handler)
+    client.transcribe(clip, route=TRANSCRIBE_ROUTE)
+    client.transcribe(clip, route=FLASH_ROUTE)
+
+    categories = {
+        "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "HARM_CATEGORY_HARASSMENT",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+    }
+    # interactions:create spells the category field `type`...
+    interaction = json.loads(seen[0].content)["interaction"]
+    assert {s["type"] for s in interaction["safetySettings"]} == categories
+    assert {s["threshold"] for s in interaction["safetySettings"]} == {"OFF"}
+    # ...and generateContent spells it `category`, at the top level of the request.
+    generate = json.loads(seen[1].content)
+    assert {s["category"] for s in generate["safetySettings"]} == categories
+    assert {s["threshold"] for s in generate["safetySettings"]} == {"OFF"}
+
+
+@pytest.mark.db
+def test_a_blocked_response_is_logged_rather_than_passed_off_as_silence(
+    db_session: Session, clip: Path, capsys
+) -> None:
+    """An empty transcript with a block reason must not look like "the model heard nothing"."""
+    body = {
+        "candidates": [],
+        "promptFeedback": {"blockReason": "SAFETY", "blockReasonMessage": "blocked"},
+    }
+    client = make_client(db_session, lambda r: httpx.Response(200, json=body))
+    result = client.transcribe(clip, route=FLASH_ROUTE)
+
+    assert result.text == ""
+    logged = capsys.readouterr().out
+    assert "vertex_response_blocked" in logged
+    assert "SAFETY" in logged

@@ -139,6 +139,18 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   needs `x-goog-user-project` on the request; a service account belongs to one and is rejected
   for sending it without `serviceusage.services.use`. `_auth_headers` sends it only for the
   former. Do not "simplify" this into always sending it.
+- Every Vertex transcription request turns safety filtering **off**, on both request shapes. This
+  is not optional and not a shortcut. Vertex blocks on the *prompt* by default and answers
+  `HTTP 200` with no candidates and a `promptFeedback.blockReason` — so the failure arrives as an
+  empty hypothesis rather than an error, reads as "the model heard nothing", and drags that
+  clip's disagreement rate. Measured: a Nepali news podcast discussing a bridge collapse is
+  blocked by default and transcribes cleanly with the filters off. A transcriber's job is to
+  write down what was said.
+- The two Vertex APIs disagree about field names, and both spellings are load-bearing:
+  `interactions:create` takes `mimeTypeString` on its audio block (the `mime_type` JSON key binds
+  to a legacy enum that rejects `audio/flac`) and spells a safety category `type`;
+  `generateContent` takes `inline_data.mime_type` as a plain string and spells the category
+  `category`. Both are asserted in `test_vertex.py`.
 - The aligner's ONNX model is gitignored (~300 MB) and built by `scripts/export_aligner_onnx.py` in
   a throwaway venv. `torch` and `transformers` must never enter `backend/pyproject.toml`. A missing
   model file is a warning and no word spans, never a failed episode -- same contract as
