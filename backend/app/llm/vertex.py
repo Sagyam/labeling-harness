@@ -26,6 +26,7 @@ import threading
 from pathlib import Path
 from typing import Any, NoReturn
 
+import google.auth.transport
 import httpx
 from sqlalchemy.orm import Session
 
@@ -58,6 +59,59 @@ API_VERSION = "v1beta1"
 
 _credentials_lock = threading.Lock()
 _credentials: Any = None
+
+#: Seconds allowed for a token refresh. Short: a refresh that is not answered promptly is a
+#: broken deployment, not a slow one, and every ASR call behind it is already waiting.
+TOKEN_REFRESH_TIMEOUT = 30.0
+
+
+class _HttpxResponse(google.auth.transport.Response):
+    """One refresh response, in the shape google-auth reads."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        self._response = response
+
+    @property
+    def status(self) -> int:
+        return self._response.status_code
+
+    @property
+    def headers(self) -> Any:
+        return self._response.headers
+
+    @property
+    def data(self) -> bytes:
+        return self._response.content
+
+
+class _HttpxRequest(google.auth.transport.Request):
+    """google-auth's transport interface, backed by the client this module already has.
+
+    google-auth ships adapters for ``requests`` and ``urllib3``. This codebase carries neither,
+    and pulling in a second HTTP library so that a token could be refreshed would be a strange
+    reason to have two. The interface is three methods wide.
+    """
+
+    def __init__(self, client: httpx.Client) -> None:
+        self._client = client
+
+    def __call__(
+        self,
+        url: str,
+        method: str = "GET",
+        body: Any = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> _HttpxResponse:
+        response = self._client.request(
+            method,
+            url,
+            content=body,
+            headers=headers,
+            timeout=timeout or TOKEN_REFRESH_TIMEOUT,
+        )
+        return _HttpxResponse(response)
 
 
 def _default_credentials() -> Any:
@@ -173,17 +227,35 @@ class VertexClient(ProviderClient):
             location or self.config.vertex_location or os.environ.get(LOCATION_ENV) or "global"
         )
 
-    def _bearer_token(self) -> str:
-        """A live access token, refreshed when the cached one has expired."""
+    def _auth_headers(self) -> dict[str, str]:
+        """A live bearer token, plus the quota project a user credential needs.
+
+        A service account belongs to a project and bills quota there, so it needs no header. The
+        credentials from ``gcloud auth application-default login`` are a *person*, who belongs to
+        no project, and Vertex AI refuses the call unless the request names one. Sending the
+        header unconditionally would be worse than not sending it: a service account without
+        ``serviceusage.services.use`` on the named project is rejected for asking.
+        """
         if self._access_token is not None:
-            return self._access_token
-        import google.auth.transport.requests
+            return {"Authorization": f"Bearer {self._access_token}"}
+
+        import google.oauth2.credentials
 
         credentials = _default_credentials()
         with _credentials_lock:
             if not credentials.valid:
-                credentials.refresh(google.auth.transport.requests.Request())
-            return str(credentials.token)
+                credentials.refresh(_HttpxRequest(self._get_client()))
+            token = str(credentials.token)
+
+        headers = {"Authorization": f"Bearer {token}"}
+        quota_project = getattr(credentials, "quota_project_id", None)
+        if not quota_project and isinstance(credentials, google.oauth2.credentials.Credentials):
+            # A user login with no `gcloud auth application-default set-quota-project` run
+            # against it. The project being billed for the inference is the honest default.
+            quota_project = self.project
+        if quota_project:
+            headers["x-goog-user-project"] = quota_project
+        return headers
 
     def _base_url(self) -> str:
         """The regional Vertex AI host and the project path under it.
@@ -270,7 +342,7 @@ class VertexClient(ProviderClient):
             )
 
         try:
-            token = self._bearer_token()
+            auth_headers = self._auth_headers()
         except Exception as exc:  # google.auth raises several unrelated types
             self._fail(
                 route,
@@ -300,7 +372,7 @@ class VertexClient(ProviderClient):
                 route_config, audio_b64=audio_b64, instruction=prompt, language=language
             )
 
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        headers = {**auth_headers, "Content-Type": "application/json"}
 
         def send() -> httpx.Response:
             return self._get_client().post(url, json=payload, headers=headers, timeout=timeout)

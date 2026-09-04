@@ -431,3 +431,124 @@ def test_an_exhausted_retry_budget_is_logged_and_raised(db_session: Session, cli
     client = make_client(db_session, lambda r: httpx.Response(503, text="unavailable"))
     with pytest.raises(LlmRequestFailed, match="Vertex AI transcription failed"):
         client.transcribe(clip, route=TRANSCRIBE_ROUTE)
+
+
+# --- credentials ----------------------------------------------------------------------------
+
+
+class _FakeServiceAccount:
+    """Stands in for a service account key. Service accounts carry no quota project."""
+
+    token = "sa-token"
+    valid = True
+    quota_project_id = None
+
+
+def _user_credentials(quota_project_id: str | None = None):
+    """Real ``google.oauth2.credentials.Credentials`` -- the type an ADC login produces.
+
+    Built rather than faked, because what the client keys off is exactly that type.
+    """
+    import google.oauth2.credentials
+
+    return google.oauth2.credentials.Credentials(
+        token="user-token", quota_project_id=quota_project_id
+    )
+
+
+@pytest.fixture
+def headers_for(db_session: Session, monkeypatch):
+    """Build the outbound headers for a given credential object."""
+
+    def build(credentials: object) -> dict[str, str]:
+        monkeypatch.setattr("app.llm.vertex._default_credentials", lambda: credentials)
+        client = VertexClient(db_session, config=routes(), access_token=None)
+        return client._auth_headers()
+
+    return build
+
+
+@pytest.mark.db
+def test_a_user_credential_names_the_quota_project(headers_for) -> None:
+    """A person belongs to no project, so Vertex refuses the call unless one is named."""
+    headers = headers_for(_user_credentials())
+    assert headers["Authorization"] == "Bearer user-token"
+    assert headers["x-goog-user-project"] == "test-project"
+
+
+@pytest.mark.db
+def test_an_explicit_quota_project_on_the_credential_wins(headers_for) -> None:
+    headers = headers_for(_user_credentials(quota_project_id="billed-elsewhere"))
+    assert headers["x-goog-user-project"] == "billed-elsewhere"
+
+
+@pytest.mark.db
+def test_a_service_account_is_not_sent_a_quota_project(headers_for) -> None:
+    """It bills to its own project, and is rejected for asking without serviceusage.use."""
+    headers = headers_for(_FakeServiceAccount())
+    assert headers["Authorization"] == "Bearer sa-token"
+    assert "x-goog-user-project" not in headers
+
+
+@pytest.mark.db
+def test_an_expired_credential_is_refreshed_before_use(db_session: Session, monkeypatch) -> None:
+    """An ingest outlives a token, so the client must refresh rather than fail late."""
+    refreshed: list[object] = []
+
+    class _Expiring:
+        token = "stale"
+        valid = False
+        quota_project_id = None
+
+        def refresh(self, request: object) -> None:
+            refreshed.append(request)
+            self.token = "fresh"
+            self.valid = True
+
+    credentials = _Expiring()
+    monkeypatch.setattr("app.llm.vertex._default_credentials", lambda: credentials)
+    headers = VertexClient(db_session, config=routes(), access_token=None)._auth_headers()
+
+    assert refreshed, "an expired token must be refreshed, not sent as-is"
+    assert headers["Authorization"] == "Bearer fresh"
+
+
+@pytest.mark.db
+def test_the_refresh_transport_needs_no_second_http_library(
+    db_session: Session, monkeypatch
+) -> None:
+    """google-auth's own adapters want `requests` or `urllib3`; this project carries neither.
+
+    A regression here is invisible until a real call is made, because every other test injects
+    an access token and never refreshes.
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"access_token": "fresh", "expires_in": 3600})
+
+    class _Expiring:
+        token = "stale"
+        valid = False
+        quota_project_id = None
+
+        def refresh(self, request: object) -> None:
+            # Exercise the transport the way google-auth does: call it, read the response.
+            response = request(
+                "https://oauth2.googleapis.com/token", method="POST", body=b"grant_type=refresh"
+            )
+            assert response.status == 200
+            assert b"access_token" in response.data
+            self.token = "fresh"
+            self.valid = True
+
+    monkeypatch.setattr("app.llm.vertex._default_credentials", lambda: _Expiring())
+    client = VertexClient(
+        db_session,
+        config=routes(),
+        access_token=None,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert client._auth_headers()["Authorization"] == "Bearer fresh"
+    assert seen and seen[0].method == "POST"

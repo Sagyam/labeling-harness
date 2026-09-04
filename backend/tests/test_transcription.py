@@ -126,7 +126,10 @@ def recorder(monkeypatch):
     monkeypatch.setattr("app.llm.base.ProviderClient._get_client", lambda self: mock)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
-    monkeypatch.setattr("app.llm.vertex.VertexClient._bearer_token", lambda self: "test-token")
+    monkeypatch.setattr(
+        "app.llm.vertex.VertexClient._auth_headers",
+        lambda self: {"Authorization": "Bearer test-token"},
+    )
     return seen
 
 

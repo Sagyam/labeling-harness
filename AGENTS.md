@@ -63,7 +63,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (576 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (581 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -130,7 +130,15 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 - Vertex AI authenticates with Application Default Credentials, not an API key (D35). Absent
   credentials fail the route at request time with a logged `llm_requests` row, the same as a
   missing key elsewhere. `google-auth` is in the dependency list for the credential lookup and the
-  token refresh only — the requests are plain `httpx`, like every other client in `app/llm/`.
+  token refresh only — the requests are plain `httpx`, like every other client in `app/llm/`, and
+  the refresh goes through `_HttpxRequest` in `app/llm/vertex.py` for the same reason. Do not
+  reach for `google.auth.transport.requests`: it needs `requests`, which is not a dependency and
+  must not become one. A test asserts the transport works without it, because nothing else would
+  catch it until a live call.
+- A *user* credential (`gcloud auth application-default login`) belongs to no project, so Vertex
+  needs `x-goog-user-project` on the request; a service account belongs to one and is rejected
+  for sending it without `serviceusage.services.use`. `_auth_headers` sends it only for the
+  former. Do not "simplify" this into always sending it.
 - The aligner's ONNX model is gitignored (~300 MB) and built by `scripts/export_aligner_onnx.py` in
   a throwaway venv. `torch` and `transformers` must never enter `backend/pyproject.toml`. A missing
   model file is a warning and no word spans, never a failed episode -- same contract as
