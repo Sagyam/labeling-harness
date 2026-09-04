@@ -303,11 +303,18 @@ class LlmRoute(BaseModel):
     timeout_seconds: float | None = None
     max_tokens: int | None = None
     temperature: float | None = None
-    #: Whether the model may think before answering, for a chat route on a provider that offers
-    #: it. ``None`` sends nothing and takes the provider's default, which for Gemini 3.x is
-    #: thinking ON: 47% of the first episode's script restorations were truncated at
-    #: ``max_tokens`` with 96% of the budget spent on reasoning, and a rewrite cut off mid-array
-    #: fails the whole segment. Set it False on any route whose task is mechanical.
+    #: Whether the model may think before answering. Provider-normalised: OpenRouter sends
+    #: ``reasoning: {enabled: ...}``, Vertex sends ``generationConfig.thinkingConfig``.
+    #:
+    #: ``None`` sends nothing and takes the provider's default, which for Gemini 3.x is thinking
+    #: ON -- and expensively so. On text it truncated 47% of the first episode's script
+    #: restorations at ``max_tokens`` with 96% of the budget spent reasoning (D44); on
+    #: ``audio_chat`` it spends a mean 895 thought tokens against 88 tokens of transcript, 91% of
+    #: billed output, for no measured gain (D45). Set it False on any route whose task is
+    #: mechanical.
+    #:
+    #: Never set on an ``api: transcription`` route: the dedicated recogniser answers any
+    #: ``thinkingConfig`` with ``400 Thinking is not enabled for this model``.
     reasoning_enabled: bool | None = None
     #: Fill this route's word spans with the local CTC forced aligner (D32). For a transcriber
     #: that returns no timestamps of its own; a route that reports them keeps what it reported.
@@ -329,8 +336,10 @@ class LlmRoute(BaseModel):
     def _check_provider_api(self) -> LlmRoute:
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
-        if self.provider == "vertex" and self.api not in ("transcription", "audio_chat"):
-            raise ValueError("the vertex provider only offers api: transcription or audio_chat")
+        if self.provider == "vertex" and self.api not in ("transcription", "audio_chat", "chat"):
+            raise ValueError(
+                "the vertex provider only offers api: transcription, audio_chat or chat"
+            )
         return self
 
 

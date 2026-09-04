@@ -40,9 +40,11 @@ from sqlalchemy.orm import Session
 
 from app.config import LlmRoute, LlmRoutes
 from app.llm.base import (
+    INPUT_SUMMARY_LIMIT,
     AsrResult,
     LlmDisabledError,
     LlmRequestFailed,
+    LlmResult,
     LlmRouteNotConfigured,
     ProviderClient,
     dry_run_transcript,
@@ -77,6 +79,76 @@ _HARM_CATEGORIES = (
     "HARM_CATEGORY_SEXUALLY_EXPLICIT",
 )
 SAFETY_SETTINGS = [{"category": c, "threshold": "OFF"} for c in _HARM_CATEGORIES]
+
+#: ``finishReason`` values that mean the answer was withheld rather than finished.
+#:
+#: This is the field that actually carries a block on Gemini 3.x (D45). Measured over 229 ad hoc
+#: calls: ``promptFeedback`` was never populated once, not even on a forced block -- the block
+#: arrives as ``candidates[0].finishReason: "SAFETY"`` with a populated ``safetyRatings`` and a
+#: ``content`` of ``{"role": "model"}`` carrying no parts. Reading only ``promptFeedback`` sees an
+#: ordinary empty answer, which for ``audio_chat`` is a legitimate result (``ASR_PROMPT`` asks for
+#: an empty string over silence) -- so a blocked clip became an empty hypothesis, logged as
+#: succeeded.
+#:
+#: ``PROHIBITED_CONTENT``, ``BLOCKLIST`` and ``SPII`` come from non-configurable filters that no
+#: ``safetySettings`` threshold can switch off, so they must be caught here regardless of D39's
+#: ``OFF``. ``MAX_TOKENS`` and ``RECITATION`` are not safety, but they mean the same thing for a
+#: transcript: what came back is not what the model was asked for.
+WITHHELD_FINISH_REASONS = frozenset(
+    {
+        "SAFETY",
+        "PROHIBITED_CONTENT",
+        "BLOCKLIST",
+        "SPII",
+        "RECITATION",
+        "IMAGE_SAFETY",
+        "MAX_TOKENS",
+        "OTHER",
+    }
+)
+
+
+def withheld_reason(body: dict[str, Any]) -> str | None:
+    """Why this response carries no usable answer, or ``None`` if it finished normally.
+
+    Checks both halves of Gemini's split: ``promptFeedback.blockReason`` is the *input* being
+    refused, ``candidates[0].finishReason`` is the *output* being withheld. The harness watched
+    only the first for a long time and Gemini only ever uses the second (D45).
+    """
+    block_reason = (body.get("promptFeedback") or {}).get("blockReason")
+    if block_reason:
+        return f"promptFeedback.blockReason={block_reason}"
+
+    for candidate in body.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        finish = candidate.get("finishReason")
+        if finish in WITHHELD_FINISH_REASONS:
+            blocked = [
+                r.get("category")
+                for r in candidate.get("safetyRatings") or []
+                if isinstance(r, dict) and r.get("blocked")
+            ]
+            detail = f" ({', '.join(c for c in blocked if c)})" if blocked else ""
+            return f"finishReason={finish}{detail}"
+    return None
+
+
+def apply_thinking(generation_config: dict[str, Any], reasoning_enabled: bool | None) -> None:
+    """Write Gemini's thinking switch into a ``generationConfig``, when the route has an opinion.
+
+    ``thinkingBudget: 0`` is how Vertex spells "do not think"; OpenRouter spells the same route
+    field as ``reasoning: {enabled: false}``. Measured on a 20 s clip: ``audio_chat`` spends a
+    mean 895 thought tokens against 88 tokens of transcript -- 91% of billed output -- and
+    ``budget: 0`` takes that to 0 with the transcript unchanged (D45).
+
+    Never call this for ``api: transcription``. The dedicated recogniser answers any
+    ``thinkingConfig`` at all with ``400 Thinking is not enabled for this model``, and it reports
+    zero thought tokens anyway, so there is nothing there to switch off.
+    """
+    if reasoning_enabled is None:
+        return
+    generation_config["thinkingConfig"] = {"thinkingBudget": -1 if reasoning_enabled else 0}
 
 
 def _parts(body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -310,14 +382,16 @@ class VertexClient(ProviderClient):
         def send() -> httpx.Response:
             return self._get_client().post(url, json=payload, headers=headers, timeout=timeout)
 
-        # A 200 carrying no transcript is not a success, and Gemini returns one in two measured
-        # cases (D41): a spurious `blockReason: SAFETY` on `audio_chat`, which clears on a retry
-        # with the request unchanged, and a recogniser clip past the duration limit that multiple
-        # language codes impose. Neither is visible to `_send_with_retries`, which only ever sees
-        # a 200, so the emptiness is judged here and retried from here.
+        # A 200 carrying no transcript is not a success, and Gemini returns one in several
+        # measured cases: a withheld answer (`finishReason: SAFETY` and friends -- D45), and a
+        # recogniser clip past the duration limit that multiple language codes impose (D41).
+        # Neither is visible to `_send_with_retries`, which only ever sees a 200, so the
+        # emptiness is judged here and retried from here.
         #
-        # An empty `audio_chat` answer with no block reason is left alone: ASR_PROMPT asks for an
-        # empty string when there is no intelligible speech, so that one is the model obeying.
+        # An empty `audio_chat` answer that finished normally is left alone: ASR_PROMPT asks for
+        # an empty string when there is no intelligible speech, so that one is the model obeying.
+        # `withheld_reason` is what separates obeying from being censored, and before D45 there
+        # was nothing making that distinction -- every blocked clip read as silence.
         response: httpx.Response | None = None
         body: dict[str, Any] = {}
         text, words = "", None
@@ -333,17 +407,23 @@ class VertexClient(ProviderClient):
             else:
                 text, words = parse_generate_content(body), None
 
-            block_reason = (body.get("promptFeedback") or {}).get("blockReason")
-            if text.strip() or (not wants_words and not block_reason):
+            withheld = withheld_reason(body)
+            if text.strip() and not withheld:
+                break
+            if not withheld and not wants_words:
                 break
 
-            last_error = f"HTTP 200 with an empty transcript (blockReason={block_reason!r})"
+            last_error = (
+                f"HTTP 200 with an empty transcript ({withheld or 'no reason given'})"
+                if not text.strip()
+                else f"HTTP 200 with a withheld transcript ({withheld})"
+            )
             logger.warning(
                 "vertex_empty_transcript",
                 route=route,
                 model=model_id,
                 attempt=attempt + 1,
-                reason=block_reason,
+                reason=withheld,
             )
             response = None
 
@@ -392,6 +472,166 @@ class VertexClient(ProviderClient):
             estimated_cost_usd=cost,
             raw=body,
         )
+
+    def complete(
+        self,
+        route: str,
+        messages: list[dict[str, Any]],
+        *,
+        dry_run: bool | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        timeout_seconds: float | None = None,
+    ) -> LlmResult:
+        """Run a text-only chat completion through a named ``api: chat`` route on Vertex.
+
+        The same shape as :meth:`OpenRouterClient.complete` so a text route can name either
+        provider and nothing above has to care which. ``messages`` is OpenAI-shaped and is mapped
+        onto ``contents`` here; a ``system`` message becomes ``systemInstruction``.
+
+        Vertex is a viable home for text inference again (D45). D41 moved the script rewrite to
+        OpenRouter partly because Vertex answered Flash with a spurious ``blockReason: SAFETY``;
+        replaying that route's real prompts -- 34 of them, four safety configurations, 136 calls --
+        produced no block of any kind.
+
+        Raises:
+            LlmDisabledError: Inference is disabled in configuration.
+            LlmRouteNotConfigured: The route does not exist.
+            LlmRequestFailed: No API key, the request failed, or the answer was withheld.
+        """
+        if not self.config.enabled:
+            raise LlmDisabledError(
+                "LLM inference is disabled (config/llm_routes.yaml: enabled: false)."
+            )
+        route_config = self.config.routes.get(route)
+        if route_config is None:
+            raise LlmRouteNotConfigured(f"no route named {route!r} in llm_routes.yaml")
+
+        model_id = route_config.model
+        system_text = "\n\n".join(
+            str(m.get("content") or "") for m in messages if m.get("role") == "system"
+        )
+        contents = [
+            {
+                "role": "model" if m.get("role") == "assistant" else "user",
+                "parts": [{"text": str(m.get("content") or "")}],
+            }
+            for m in messages
+            if m.get("role") != "system"
+        ]
+
+        generation_config: dict[str, Any] = {
+            "maxOutputTokens": (
+                max_tokens or route_config.max_tokens or self.config.default_max_tokens
+            )
+        }
+        effective_temp = temperature if temperature is not None else route_config.temperature
+        if effective_temp is not None:
+            generation_config["temperature"] = effective_temp
+        apply_thinking(generation_config, route_config.reasoning_enabled)
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": generation_config,
+            "safetySettings": SAFETY_SETTINGS,
+        }
+        if system_text:
+            payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+
+        request_hash = self._hash(payload)
+        summary = " | ".join(f"{m.get('role')}: {m.get('content')}" for m in messages)[
+            :INPUT_SUMMARY_LIMIT
+        ]
+        effective_dry_run = self.config.dry_run if dry_run is None else dry_run
+
+        if effective_dry_run:
+            self._log(
+                route=route,
+                model=model_id,
+                request_hash=request_hash,
+                input_summary=summary,
+                status="dry_run",
+            )
+            logger.info("llm_dry_run", route=route, model=model_id)
+            return LlmResult(route=route, model=model_id, text="", dry_run=True)
+
+        if not self.api_key:
+            self._fail(
+                route,
+                model_id,
+                request_hash,
+                summary,
+                f"no Vertex API key: set {PRIMARY_API_KEY_ENV} in .env or environment",
+            )
+
+        timeout = (
+            timeout_seconds or route_config.timeout_seconds or self.config.default_timeout_seconds
+        )
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
+        url = self._model_url(model_id)
+        response, last_error, latency_ms = self._send_with_retries(
+            lambda: self._get_client().post(url, json=payload, headers=headers, timeout=timeout)
+        )
+        if response is None:
+            self._log(
+                route=route,
+                model=model_id,
+                request_hash=request_hash,
+                input_summary=summary,
+                status="failed",
+                latency_ms=latency_ms,
+                error=last_error,
+            )
+            logger.info("vertex_request_failed", route=route, error=last_error)
+            raise LlmRequestFailed(f"route {route!r} failed: {last_error}")
+
+        body = response.json()
+        # A withheld answer is a failure here, not an empty completion. Text callers parse what
+        # comes back, and handing them "" for a block would surface as "unparseable response"
+        # somewhere far away from the cause -- which is exactly how D44 wasted an afternoon.
+        withheld = withheld_reason(body)
+        if withheld:
+            self._log(
+                route=route,
+                model=model_id,
+                request_hash=request_hash,
+                input_summary=summary,
+                status="failed",
+                output=body,
+                latency_ms=latency_ms,
+                error=withheld,
+            )
+            logger.warning("vertex_completion_withheld", route=route, reason=withheld)
+            raise LlmRequestFailed(f"route {route!r} returned no answer ({withheld})")
+
+        usage = body.get("usageMetadata") or {}
+        prompt_tokens = usage.get("promptTokenCount")
+        completion_tokens = usage.get("candidatesTokenCount")
+        result = LlmResult(
+            route=route,
+            model=body.get("modelVersion", model_id),
+            text=parse_generate_content(body),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            estimated_cost_usd=calculate_vertex_cost(
+                model_id, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+            ),
+            latency_ms=latency_ms,
+            raw=body,
+        )
+        self._log(
+            route=route,
+            model=result.model,
+            request_hash=request_hash,
+            input_summary=summary,
+            status="succeeded",
+            output=body,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            cost=result.estimated_cost_usd,
+            latency_ms=latency_ms,
+        )
+        return result
 
     def _fail(
         self, route: str, model: str, request_hash: str, summary: str, message: str
@@ -483,6 +723,12 @@ class VertexClient(ProviderClient):
             hint = f"Primary language code: {target_lang}."
             text = f"{text}\n\n{hint}".strip() if text else hint
 
+        generation_config: dict[str, Any] = {
+            "temperature": route_config.temperature or 0.0,
+            "responseModalities": ["TEXT"],
+        }
+        apply_thinking(generation_config, route_config.reasoning_enabled)
+
         payload: dict[str, Any] = {
             "contents": [
                 {
@@ -490,10 +736,7 @@ class VertexClient(ProviderClient):
                     "parts": [{"inlineData": {"mimeType": AUDIO_MIME_TYPE, "data": audio_b64}}],
                 }
             ],
-            "generationConfig": {
-                "temperature": route_config.temperature or 0.0,
-                "responseModalities": ["TEXT"],
-            },
+            "generationConfig": generation_config,
             "safetySettings": SAFETY_SETTINGS,
         }
         if text:

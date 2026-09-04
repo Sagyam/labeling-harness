@@ -29,6 +29,7 @@ from app.llm.vertex import (
     VertexClient,
     parse_generate_content,
     parse_transcription,
+    withheld_reason,
 )
 
 TRANSCRIBE_ROUTE = "asr_gemini_composite"
@@ -461,3 +462,192 @@ def test_exhausted_retries_fail_with_logged_row(db_session: Session, clip: Path)
 
     with pytest.raises(LlmRequestFailed, match="Vertex transcription failed"):
         make_client(db_session, handler).transcribe(clip, route=TRANSCRIBE_ROUTE)
+
+
+# --- withheld answers: the field a Gemini block actually arrives in (D45) --------------------
+
+
+def _blocked_body(finish: str = "SAFETY", category: str = "HARM_CATEGORY_DANGEROUS_CONTENT"):
+    """A real Vertex block, shaped as Gemini 3.8 Flash returns it.
+
+    Captured live: no ``promptFeedback`` key at all, a ``finishReason`` on the candidate, and a
+    ``content`` carrying a role and no parts. The harness watched ``promptFeedback`` for months
+    and this shape sailed straight past it.
+    """
+    return {
+        "candidates": [
+            {
+                "content": {"role": "model"},
+                "finishReason": finish,
+                "safetyRatings": [
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "probability": "NEGLIGIBLE"},
+                    {"category": category, "probability": "LOW", "blocked": True},
+                ],
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 668, "candidatesTokenCount": 97},
+    }
+
+
+def test_a_normal_finish_is_not_read_as_withheld() -> None:
+    assert withheld_reason(_generate_content_body("नमस्ते")) is None
+    assert withheld_reason({"candidates": [{"finishReason": "STOP", "content": {}}]}) is None
+
+
+def test_a_candidate_side_block_is_detected_and_names_the_category() -> None:
+    reason = withheld_reason(_blocked_body())
+    assert reason is not None
+    assert "finishReason=SAFETY" in reason
+    assert "HARM_CATEGORY_DANGEROUS_CONTENT" in reason
+
+
+def test_a_prompt_side_block_is_detected_too() -> None:
+    body = {"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}, "candidates": []}
+    assert withheld_reason(body) == "promptFeedback.blockReason=PROHIBITED_CONTENT"
+
+
+@pytest.mark.parametrize(
+    "finish", ["PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "MAX_TOKENS"]
+)
+def test_every_withholding_finish_reason_is_caught_not_just_safety(finish: str) -> None:
+    """`OFF` cannot switch off the built-in filters, so they must be caught whatever D39 sends."""
+    assert withheld_reason(_blocked_body(finish=finish)) is not None
+
+
+@pytest.mark.db
+def test_a_blocked_clip_fails_instead_of_becoming_an_empty_hypothesis(
+    db_session: Session, clip: Path
+) -> None:
+    """The bug D45 exists to fix.
+
+    `audio_chat` may legitimately answer with an empty string -- ASR_PROMPT asks for one over
+    silence -- so an empty answer used to be accepted unconditionally. A safety block produces the
+    same empty text, and so became a silent empty hypothesis in the corpus, logged as succeeded.
+    """
+    calls: list[httpx.Request] = []
+    client = make_client(db_session, _ok(_blocked_body(), calls))
+    with pytest.raises(LlmRequestFailed, match="finishReason=SAFETY"):
+        client.transcribe(clip, route=FLASH_ROUTE)
+    assert len(calls) == 3, "a withheld answer is retried before it is given up on"
+
+
+@pytest.mark.db
+def test_an_empty_answer_that_finished_normally_is_still_accepted(
+    db_session: Session, clip: Path
+) -> None:
+    """Silence is not a block. ASR_PROMPT asks for an empty string when nothing was said."""
+    body = {"candidates": [{"content": {"role": "model", "parts": []}, "finishReason": "STOP"}]}
+    result = make_client(db_session, _ok(body)).transcribe(clip, route=FLASH_ROUTE)
+    assert result.text == ""
+
+
+# --- the thinking switch ---------------------------------------------------------------------
+
+
+def _with_thinking_off(route_name: str) -> LlmRoutes:
+    """A routing table with one route's thinking switched off. ``LlmRoute`` is frozen."""
+    config = routes()
+    config.routes[route_name] = config.routes[route_name].model_copy(
+        update={"reasoning_enabled": False}
+    )
+    return config
+
+
+@pytest.mark.db
+def test_an_audio_chat_route_can_turn_thinking_off(db_session: Session, clip: Path) -> None:
+    """Measured at 895 thought tokens against 88 tokens of transcript before this (D45)."""
+    seen: list[httpx.Request] = []
+    config = _with_thinking_off(FLASH_ROUTE)
+    make_client(db_session, _ok(_generate_content_body("ok"), seen), config=config).transcribe(
+        clip, route=FLASH_ROUTE
+    )
+    body = json.loads(seen[0].content)
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+@pytest.mark.db
+def test_thinking_is_left_alone_when_the_route_says_nothing(
+    db_session: Session, clip: Path
+) -> None:
+    seen: list[httpx.Request] = []
+    make_client(db_session, _ok(_generate_content_body("ok"), seen)).transcribe(
+        clip, route=FLASH_ROUTE
+    )
+    assert "thinkingConfig" not in json.loads(seen[0].content)["generationConfig"]
+
+
+@pytest.mark.db
+def test_the_recogniser_is_never_sent_a_thinking_config(db_session: Session, clip: Path) -> None:
+    """Vertex answers one with `400 Thinking is not enabled for this model`, and the recogniser
+    reports zero thought tokens anyway -- there is nothing there to switch off."""
+    seen: list[httpx.Request] = []
+    config = _with_thinking_off(TRANSCRIBE_ROUTE)
+    make_client(
+        db_session, _ok(_transcription_body(_segment("नमस्ते", "spk:0", [])), seen), config=config
+    ).transcribe(clip, route=TRANSCRIBE_ROUTE)
+    assert "thinkingConfig" not in json.loads(seen[0].content)["generationConfig"]
+
+
+# --- text completions on Vertex (D45) --------------------------------------------------------
+
+
+def _text_routes(**overrides) -> LlmRoutes:
+    config = routes()
+    config.routes["script_restore"] = LlmRoute(
+        provider="vertex",
+        api="chat",
+        model="gemini-3.8-flash",
+        temperature=0.0,
+        max_tokens=4096,
+        **overrides,
+    )
+    return config
+
+
+@pytest.mark.db
+def test_a_text_route_completes_through_vertex(db_session: Session) -> None:
+    seen: list[httpx.Request] = []
+    client = make_client(
+        db_session, _ok(_generate_content_body('["a"]'), seen), config=_text_routes()
+    )
+    result = client.complete("script_restore", [{"role": "user", "content": "hi"}])
+    assert result.text == '["a"]'
+    body = json.loads(seen[0].content)
+    assert body["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
+    assert body["generationConfig"]["maxOutputTokens"] == 4096
+    assert str(seen[0].url) == f"{MODELS}/gemini-3.8-flash:generateContent"
+
+
+@pytest.mark.db
+def test_a_system_message_becomes_a_system_instruction(db_session: Session) -> None:
+    seen: list[httpx.Request] = []
+    make_client(
+        db_session, _ok(_generate_content_body("ok"), seen), config=_text_routes()
+    ).complete(
+        "script_restore",
+        [{"role": "system", "content": "be terse"}, {"role": "user", "content": "hi"}],
+    )
+    body = json.loads(seen[0].content)
+    assert body["systemInstruction"] == {"parts": [{"text": "be terse"}]}
+    assert body["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
+
+
+@pytest.mark.db
+def test_a_withheld_completion_raises_rather_than_returning_empty_text(db_session: Session) -> None:
+    """A text caller parses what it gets back; handing it "" for a block surfaces the failure
+    somewhere far away from the cause, which is exactly how D44 went wrong."""
+    client = make_client(db_session, _ok(_blocked_body()), config=_text_routes())
+    with pytest.raises(LlmRequestFailed, match="finishReason=SAFETY"):
+        client.complete("script_restore", [{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.db
+def test_a_text_route_can_turn_thinking_off(db_session: Session) -> None:
+    seen: list[httpx.Request] = []
+    make_client(
+        db_session,
+        _ok(_generate_content_body("ok"), seen),
+        config=_text_routes(reasoning_enabled=False),
+    ).complete("script_restore", [{"role": "user", "content": "hi"}])
+    gen = json.loads(seen[0].content)["generationConfig"]
+    assert gen["thinkingConfig"] == {"thinkingBudget": 0}

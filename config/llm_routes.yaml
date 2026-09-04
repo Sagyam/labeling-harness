@@ -43,8 +43,8 @@ routes:
     language: ne
 
   # Gemini Composite (D41): Gemini 3.5 Transcribe on Vertex hears the clip, and Gemini 3.8 Flash
-  # on OpenRouter puts the result back into mixed script. Presented as one system, and named so
-  # that the seam is visible -- the paper discloses the two-model pipeline.
+  # puts the result back into mixed script. Presented as one system, and named so that the seam
+  # is visible -- the paper discloses the two-model pipeline.
   #
   # The recogniser is the second transcriber here that returns word spans of its own, and the only
   # one reporting which speaker said each word. It writes English phonetically in Devanagari and
@@ -93,15 +93,26 @@ routes:
     model: gemini-3.8-flash
     language: ne
     forced_align: true
+    # Thinking OFF here too (D45). Measured over 35 clips of 20s: a mean 895 thought tokens
+    # against 88 tokens of transcript -- 91% of billed output, ~170k thought tokens per hour of
+    # audio -- and `thinkingBudget: 0` takes that to zero with the transcript unchanged. Unlike
+    # `script_restore` this route has no `max_tokens`, so nothing was making the spend visible.
+    reasoning_enabled: false
 
-  # Text-only, no audio: the second half of gemini-composite. It runs on OpenRouter because that
-  # is where text inference belongs here, and because Vertex answers Flash with a spurious
-  # `blockReason: SAFETY` often enough to matter (D41). Not an `asr*` route, so it never becomes
-  # an ASR system of its own.
+  # Text-only, no audio: the second half of gemini-composite. Not an `asr*` route, so it never
+  # becomes an ASR system of its own.
+  #
+  # On Vertex since D45, where the audio already goes. D41 put it on OpenRouter partly because
+  # Vertex was answering Flash with a spurious `blockReason: SAFETY`; replaying this route's real
+  # prompts -- all 34 from the failed ingest, across four safety configurations, 136 calls --
+  # produced no block of any kind, and the rewrites came back correctly aligned. Switch
+  # `provider` back to `openrouter` and change `model` to `google/gemini-3.8-flash` if that ever
+  # stops being true: OpenRouter is the one that reports the model's reasoning text, which is how
+  # D44 was diagnosed.
   script_restore:
-    provider: openrouter
+    provider: vertex
     api: chat
-    model: google/gemini-3.8-flash
+    model: gemini-3.8-flash
     temperature: 0.0
     max_tokens: 4096
     # Thinking OFF, and this is load-bearing (D44). Transliterating a token list is a lookup, not

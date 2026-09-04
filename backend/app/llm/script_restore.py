@@ -27,8 +27,9 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import LlmRoutes
-from app.llm.base import LlmRequestFailed
+from app.llm.base import LlmRequestFailed, LlmRouteNotConfigured
 from app.llm.openrouter import OpenRouterClient
+from app.llm.vertex import VertexClient
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -55,6 +56,27 @@ INSTRUCTION = (
     "3. If you are not confident a token is English, leave it in Devanagari unchanged.\n\n"
     "Return ONLY a JSON array of strings, with no commentary and no code fence."
 )
+
+
+def _client_for(
+    session: Session,
+    route: str,
+    *,
+    config: LlmRoutes,
+    client: httpx.Client | None,
+) -> OpenRouterClient | VertexClient:
+    """The provider the rewrite route names, as a client with a ``complete`` of the same shape.
+
+    Both providers can serve this step and the choice is a route setting, not a code path (D45).
+    OpenRouter reports the model's reasoning text, which is how D44's rule-2 violation was caught;
+    Vertex reports only a thought-token count, but it is where the audio already goes.
+    """
+    route_config = config.routes.get(route)
+    if route_config is None:
+        raise LlmRouteNotConfigured(f"no route named {route!r} in llm_routes.yaml")
+    if route_config.provider == "vertex":
+        return VertexClient(session, config=config, client=client)
+    return OpenRouterClient(session, config=config, client=client)
 
 
 def _is_devanagari(token: str) -> bool:
@@ -120,7 +142,7 @@ def restore_script(
 
     payload = json.dumps(tokens, ensure_ascii=False)
     prompt = f"{INSTRUCTION}\n\nThere are exactly {len(tokens)} tokens.\n\nTOKENS:\n{payload}"
-    llm = OpenRouterClient(session, config=config, client=client)
+    llm = _client_for(session, route, config=config, client=client)
 
     last_error = "no attempt was made"
     for attempt in range(MAX_ALIGNMENT_ATTEMPTS):
