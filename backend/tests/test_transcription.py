@@ -83,11 +83,6 @@ def recorder(monkeypatch):
                     "usage": {"prompt_tokens": 88, "completion_tokens": 4, "cost": 3.3e-05},
                 },
             )
-        if "generativelanguage.googleapis.com" in str(request.url):
-            return httpx.Response(
-                200,
-                json={"candidates": [{"content": {"parts": [{"text": "गुगल भन्छ"}]}}]},
-            )
         if "interactions:create" in str(request.url):
             return httpx.Response(
                 200,
@@ -131,7 +126,6 @@ def recorder(monkeypatch):
     monkeypatch.setattr("app.llm.base.ProviderClient._get_client", lambda self: mock)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setattr("app.llm.vertex.VertexClient._bearer_token", lambda self: "test-token")
     return seen
 
@@ -196,38 +190,6 @@ def test_a_transcription_route_reaches_the_transcription_endpoint(
     result = transcribe(db_session, clip, route="asr_custom_endpoint", config=test_routes)
     assert str(recorder[-1].url) == "https://openrouter.ai/api/v1/audio/transcriptions"
     assert result.text == "विस्पर भन्छ"
-
-
-def test_a_google_route_reaches_ai_studio_generate_content(
-    db_session: Session, clip, recorder
-) -> None:
-    """AI Studio's generateContent, not the Live API's /interactions (D31).
-
-    The route also carries the transcript prompt, which the google branch used to drop.
-    """
-    test_routes = routes(
-        routes={
-            **routes().routes,
-            "asr_google": LlmRoute(
-                provider="google",
-                api="audio_chat",
-                system_id="gemini-3.8-flash",
-                model="gemini-3.8-flash",
-                language="ne",
-            ),
-        }
-    )
-    result = transcribe(db_session, clip, route="asr_google", config=test_routes)
-
-    url = str(recorder[-1].url)
-    assert "generativelanguage.googleapis.com" in url
-    assert url.endswith("/models/gemini-3.8-flash:generateContent")
-    assert result.text == "गुगल भन्छ"
-    # generateContent returns text; word spans come from the forced aligner (D32).
-    assert result.words is None
-
-    sent = json.loads(recorder[-1].content)["contents"][0]["parts"]
-    assert ASR_PROMPT in sent[0]["text"]
 
 
 def test_the_policy_prompt_states_both_scripts() -> None:

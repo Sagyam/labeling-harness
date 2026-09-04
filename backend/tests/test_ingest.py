@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
+from app.llm.vertex import VertexClient
 from app.models import AnnotationTask, Episode, LlmRequest, Segment
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.ingest import (
@@ -122,11 +122,11 @@ def test_openrouter_transcribe_is_logged_to_llm_requests(
     assert req.status == "dry_run"
 
 
-def test_google_transcribe_is_logged_to_llm_requests(db_session: Session, tmp_path: Path) -> None:
+def test_vertex_transcribe_is_logged_to_llm_requests(db_session: Session, tmp_path: Path) -> None:
     audio_path = tmp_path / "test.flac"
     sf.write(str(audio_path), np.zeros(16000), 16000, format="FLAC")
 
-    client = GoogleClient(db_session)
+    client = VertexClient(db_session)
     result = client.transcribe(audio_path, route="asr_gemini_flash", dry_run=True)
 
     assert result.text

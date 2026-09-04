@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg viewBox="0 0 560 656" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ingest-pipeline-title ingest-pipeline-desc">
       <title id="ingest-pipeline-title">Ingestion pipeline</title>
-      <desc id="ingest-pipeline-desc">An episode arrives either as a browser upload or as a YouTube URL fetched server-side, then passes through four stages — loudness normalization to 16 kHz mono FLAC, Silero VAD segmentation into speech turns, transcription of every clip by every configured cloud ASR route, and analysis of cross-system disagreement — before segments, hypotheses, scores and queue tasks are written in a single import pass. Transcription calls three external services: ElevenLabs Scribe v2, Microsoft MAI-Transcribe 2 via OpenRouter, and Google Gemini 3.8 Flash. Gemini returns text only; its word timestamps are measured afterwards by a local CTC forced aligner.</desc>
+      <desc id="ingest-pipeline-desc">An episode arrives either as a browser upload or as a YouTube URL fetched server-side, then passes through four stages — loudness normalization to 16 kHz mono FLAC, Silero VAD segmentation into speech turns, transcription of every clip by every configured cloud ASR route, and analysis of cross-system disagreement — before segments, hypotheses, scores and queue tasks are written in a single import pass. Transcription calls three external services: ElevenLabs Scribe v2, Microsoft MAI-Transcribe 2 via OpenRouter, and Google Gemini 3.8 Flash on Vertex AI. Gemini returns text only; its word timestamps are measured afterwards by a local CTC forced aligner.</desc>
       <defs>
         <style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,400&amp;display=swap');</style>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
@@ -105,7 +105,7 @@
       <rect x="316" y="402" width="188" height="44" rx="6" fill="#ffffff"/>
       <rect x="316" y="402" width="188" height="44" rx="6" fill="rgba(27,36,48,0.03)" stroke="rgba(27,36,48,0.30)" stroke-width="1"/>
       <text x="410" y="422" fill="#1b2430" font-size="15" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">Gemini 3.8 Flash</text>
-      <text x="410" y="438" fill="#55606e" font-size="11" font-family="'IBM Plex Mono', monospace" text-anchor="middle">Google AI Studio · verbatim</text>
+      <text x="410" y="438" fill="#55606e" font-size="11" font-family="'IBM Plex Mono', monospace" text-anchor="middle">Vertex AI · verbatim</text>
 
       <!-- ============ ANNOTATION CALLOUT ============ -->
       <circle cx="410" cy="466" r="2" fill="#1b2430"/>

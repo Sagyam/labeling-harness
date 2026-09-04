@@ -477,3 +477,32 @@ A GCP budget alert is the owner's job and lives outside this repository.
 **Reversal:** restore the sentence to `AGENTS.md` and drop every postpaid route. Nothing in the
 code enforced the rule — no test asserted it and no client checked it — so the reversal is
 documentation plus a routing table, which is exactly why it was worth so little.
+
+## D35 — Google models are served from Vertex AI; the AI Studio client is removed
+`app/llm/google.py` and `provider: google` are deleted. `app/llm/vertex.py` and
+`provider: vertex` replace them, and `asr_gemini_flash` now calls `gemini-3.8-flash` at
+`publishers/google/models/{model}:generateContent` on `{location}-aiplatform.googleapis.com`
+rather than at `generativelanguage.googleapis.com`. The model, the `audio_chat` route shape, the
+`system_id` and the forced-alignment arrangement of D31 and D32 are all unchanged — only the
+transport is different, so hypotheses already recorded under `gemini-3.8-flash` stay comparable
+with the ones recorded after it.
+
+**Why:** AI Studio's quotas were a running tax on this project. D29 hit the Live API's 100
+requests a day and D30 built VAD macro-windowing and timestamp demultiplexing to survive it; D31
+abandoned that model and endpoint entirely. Vertex AI is the same models on project-scoped quota
+that can be raised, and it is where the transcription models live. The prepaid rule that had kept
+it out is gone (D34).
+
+Authentication changes shape with the transport: Application Default Credentials, not an API key.
+`google-auth` is added for exactly that — the credential lookup and the token refresh — and the
+requests themselves stay plain `httpx` like every other client here. `GOOGLE_API_KEY` is no longer
+read by anything.
+
+Everything D30 left behind is also removed. The windowing and demultiplexing went with D31; what
+remained was `max_retries: 4` and `retry_backoff_seconds: 2.0` in `config/llm_routes.yaml`, raised
+to absorb 429s, and those are back at 3 and 0.5. The `Retry-After` handling in
+`app/llm/base.py` stays: honouring a header the server sent is not a way round a rate limit, it is
+the documented way to obey one, and it is provider-agnostic.
+
+**Reversal:** the AI Studio client is at `f607de2:backend/app/llm/google.py` and needs
+`GOOGLE_API_KEY` back in the environment. Its quota problem comes back with it.

@@ -48,7 +48,12 @@ services:
       HARNESS_STORAGE__MINIO__SECRET_KEY: ${HARNESS_STORAGE__MINIO__SECRET_KEY:-minioadmin}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       ELEVEN_LABS_API_KEY: ${ELEVEN_LABS_API_KEY:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # Vertex AI authenticates with a service account file, not a key. The host path in
+      # GOOGLE_APPLICATION_CREDENTIALS is mounted below; the container sees a fixed path, and
+      # only when the variable is set.
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:+/run/secrets/gcp-sa.json}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-global}
       HARNESS_API__AUTH_TOKEN: ${HARNESS_API__AUTH_TOKEN:-}
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
@@ -56,6 +61,8 @@ services:
       - ./config:/app/config:ro
       - ./data:/app/data
       - ./exports:/app/exports
+      # /dev/null when unset, so the stack still comes up without Google credentials.
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/run/secrets/gcp-sa.json:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 from app.config import LlmRoute, LlmRoutes
 from app.llm.base import AsrResult, LlmRouteNotConfigured
 from app.llm.elevenlabs import ElevenLabsClient
-from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
 from app.llm.vertex import VertexClient
 
@@ -117,13 +116,6 @@ def transcribe(
             audio_path,
             route=route,
             keyterms=list(DEFAULT_KEYTERMS),
-            dry_run=dry_run,
-        )
-    if route_config.provider == "google":
-        return GoogleClient(session, config=routes, client=client).transcribe(
-            audio_path,
-            route=route,
-            prompt=prompt,
             dry_run=dry_run,
         )
     if route_config.provider == "vertex":

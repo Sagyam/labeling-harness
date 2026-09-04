@@ -158,7 +158,7 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert mai.language == "ne"
 
     gemini = routes["asr_gemini_flash"]
-    assert (gemini.provider, gemini.api) == ("google", "audio_chat"), (
+    assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (
         "a general model asked to transcribe, not a dedicated recogniser -- name it so"
     )
     assert gemini.model == "gemini-3.8-flash"

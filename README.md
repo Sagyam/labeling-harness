@@ -57,7 +57,7 @@ check.
 
 Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,
 Microsoft MAI-Transcribe 2, and Google Gemini 3.8 Flash — so one clip is three calls, billed
-against your ElevenLabs, OpenRouter and Google accounts. Every attempt is written to
+against your ElevenLabs, OpenRouter and Google Cloud accounts. Every attempt is written to
 `llm_requests`, which is the only record of what an ingest spent, so watch that table (or a
 provider-side budget alert) rather than expecting the harness to stop you. Each model hears only
 the audio; none is shown another's transcript, so where they disagree is a measurement rather
@@ -132,7 +132,8 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_API__AUTH_TOKEN` | Optional static bearer token; empty disables auth |
 | `OPENROUTER_API_KEY` | OpenRouter key; carries the MAI-Transcribe 2 transcriber |
 | `ELEVEN_LABS_API_KEY` | ElevenLabs key for Scribe v2; scope it to speech-to-text only |
-| `GOOGLE_API_KEY` | Google AI Studio key for Gemini 3.8 Flash |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Service account JSON for Vertex AI (`roles/aiplatform.user`); blank uses `gcloud` ADC |
+| `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | GCP project billed for Vertex AI, and the region serving it |
 
 `ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines
 to serve anonymously. It is a path in YAML because it is not itself a secret; the file it names is,

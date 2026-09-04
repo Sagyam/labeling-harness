@@ -287,7 +287,7 @@ class LlmRoute(BaseModel):
 
     model_config = _STRICT
 
-    provider: Literal["openrouter", "elevenlabs", "google", "vertex"] = "openrouter"
+    provider: Literal["openrouter", "elevenlabs", "vertex"] = "openrouter"
     api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
     #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
@@ -311,8 +311,6 @@ class LlmRoute(BaseModel):
     def _check_provider_api(self) -> LlmRoute:
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
-        if self.provider == "google" and self.api not in ("transcription", "audio_chat"):
-            raise ValueError("the google provider only offers api: transcription or audio_chat")
         if self.provider == "vertex" and self.api not in ("transcription", "audio_chat"):
             raise ValueError("the vertex provider only offers api: transcription or audio_chat")
         return self
@@ -332,7 +330,6 @@ class LlmRoutes(BaseModel):
     enabled: bool = False
     base_url: str = "https://openrouter.ai/api/v1"
     elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
-    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     #: GCP project billed for Vertex AI calls, and the region serving them. Left blank here so
     #: the committed file names no project; ``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION``
     #: fill them in. ``global`` is a location like any other and has its own unprefixed host.
