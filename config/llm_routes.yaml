@@ -41,6 +41,16 @@ routes:
     model: microsoft/mai-transcribe-2
     language: ne
 
+  # !! CURRENTLY FAILS EVERY CALL -- and takes the episode with it. This project is not
+  # !! allowlisted for the Interactions API: interactions:create answers
+  # !! `400 RESOURCE_PROJECT_INVALID` for every model, including a nonsense one, in every
+  # !! location. A route that raises aborts the segment and stage 3 fails the job, so an ingest
+  # !! will die on its first segment *after* paying for the other three routes.
+  # !!
+  # !! Comment this block out to ingest, or get the project allowlisted (post the project id on
+  # !! discuss.ai.google.dev; `gen-lang-client-*` projects are the usual case). To re-check
+  # !! access, run one clip through this route -- a 200 means it landed. See D36.
+  #
   # Gemini 3.5 Transcribe on Vertex AI, via interactions:create with a transcriptionConfig
   # (D36). A dedicated recogniser: it is the second transcriber here that returns word spans of
   # its own, and the only one that reports which speaker said each word.

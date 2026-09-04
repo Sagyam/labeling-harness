@@ -546,3 +546,28 @@ aligner fills spans that are missing, it never overwrites spans a model measured
 immutable, and `scripts/purge_asr_system.py` removes them if they are not wanted. The column would
 outlive the route and should — it costs a nullable string and it is what any future diarizing
 transcriber writes to.
+
+### Status: configured, and not yet reachable
+
+The route is written and tested but **this project cannot call it.** `interactions:create` answers
+`400 RESOURCE_PROJECT_INVALID` — measured against the live API, and the diagnosis is not a guess:
+
+- The same error comes back for a **deliberately nonsense model name**, so it is not the model id,
+  and not `gemini-3.5-transcribe-preview` either.
+- The same error comes back from `global`, `us-central1`, `us-east4`, `europe-west4` and
+  `asia-southeast1`, with the project **id** and with the project **number**.
+- `generateContent` against `gemini-3.8-flash` on the same project, same credentials, same
+  location returns `200` and a transcript. Auth, billing, the quota project and the Vertex path
+  are all fine.
+- `aiplatform.googleapis.com` *is* "Agent Platform API" and is enabled. There is no second API to
+  turn on; `gcloud services list --available` offers nothing else that would gate this.
+
+So the Interactions surface is allowlist-gated, and the fix is access rather than code. The route
+is deliberately left configured while that is chased — which means **ingestion is broken until it
+lands**, because a raising route aborts the segment and stage 3 fails the job. Comment the block
+out in `config/llm_routes.yaml` to ingest in the meantime.
+
+The alternative considered and not taken: making ingestion skip a failing route and continue on
+the hypotheses that succeeded. That is a genuine robustness improvement against any provider
+outage, but it silently changes the disagreement denominator per clip, so it is its own decision
+rather than a bug fix smuggled in here.
