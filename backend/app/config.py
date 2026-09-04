@@ -277,7 +277,8 @@ class LlmRoute(BaseModel):
     shape, because a transcription endpoint and a chat endpoint that happens to accept audio are
     not interchangeable:
 
-    * ``transcription`` -- a dedicated speech-to-text endpoint taking a multipart upload.
+    * ``transcription`` -- a dedicated speech-to-text endpoint. The model is a speech
+      recogniser, and it is the only shape that can return word timings of its own.
     * ``audio_chat`` -- chat completions with the clip attached as an ``input_audio`` part. The
       model is a general LLM being asked to transcribe, so it obeys a prompt but may also
       editorialise or hallucinate over silence.
@@ -286,7 +287,7 @@ class LlmRoute(BaseModel):
 
     model_config = _STRICT
 
-    provider: Literal["openrouter", "elevenlabs", "google"] = "openrouter"
+    provider: Literal["openrouter", "elevenlabs", "google", "vertex"] = "openrouter"
     api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
     #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
@@ -295,6 +296,10 @@ class LlmRoute(BaseModel):
     system_id: str | None = None
     #: ISO language hint passed to the provider, where the provider takes one.
     language: str | None = None
+    #: BCP-47 codes for a provider that accepts several at once. A code-switched clip is not
+    #: one language with loanwords in it, so a transcriber that can be told about both is told
+    #: about both. Where this is empty, ``language`` is used as the single hint.
+    language_codes: list[str] = Field(default_factory=list)
     timeout_seconds: float | None = None
     max_tokens: int | None = None
     temperature: float | None = None
@@ -308,6 +313,8 @@ class LlmRoute(BaseModel):
             raise ValueError("the elevenlabs provider only offers api: transcription")
         if self.provider == "google" and self.api not in ("transcription", "audio_chat"):
             raise ValueError("the google provider only offers api: transcription or audio_chat")
+        if self.provider == "vertex" and self.api not in ("transcription", "audio_chat"):
+            raise ValueError("the vertex provider only offers api: transcription or audio_chat")
         return self
 
 
@@ -326,6 +333,11 @@ class LlmRoutes(BaseModel):
     base_url: str = "https://openrouter.ai/api/v1"
     elevenlabs_base_url: str = "https://api.elevenlabs.io/v1"
     google_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    #: GCP project billed for Vertex AI calls, and the region serving them. Left blank here so
+    #: the committed file names no project; ``GOOGLE_CLOUD_PROJECT`` and ``GOOGLE_CLOUD_LOCATION``
+    #: fill them in. ``global`` is a location like any other and has its own unprefixed host.
+    vertex_project: str = ""
+    vertex_location: str = ""
     default_timeout_seconds: float = 30.0
     default_max_tokens: int = 1024
     max_retries: int = 3

@@ -2,7 +2,8 @@
 
 The ingestion pipeline should not know which vendor is behind a route. It asks for a route name
 and gets an :class:`AsrResult`; this module decides whether that means OpenRouter's transcription
-endpoint, an OpenRouter chat model with the clip attached, or ElevenLabs Scribe.
+endpoint, an OpenRouter chat model with the clip attached, ElevenLabs Scribe, or a Gemini model on
+Vertex AI.
 
 The transcript policy lives here too. The corpus is code-switched, and the rule is that a word is
 written in the script of the language it belongs to, so every model that can be told anything is
@@ -25,15 +26,26 @@ from app.llm.base import AsrResult, LlmRouteNotConfigured
 from app.llm.elevenlabs import ElevenLabsClient
 from app.llm.google import GoogleClient
 from app.llm.openrouter import OpenRouterClient
+from app.llm.vertex import VertexClient
 
-#: Sent with every ASR request that accepts a prompt. Two jobs: state the transcript policy, and
-#: stop a chat model from answering in prose or narrating what it heard.
-ASR_PROMPT = (
+#: The transcript policy itself, and the whole of what a dedicated speech recogniser is told.
+#: The rule that matters most is the one a multilingual model gets wrong by default: it will
+#: happily render a Nepali word in Latin or an English word in Devanagari, and either destroys
+#: the code-switch measurement the corpus exists to make.
+SCRIPT_POLICY = (
     "This is a Nepali-English code-switched conversation: the speakers mix both languages "
-    "freely, often within a single sentence. Transcribe exactly what is said, and write every "
-    "word in the script its own language uses -- Nepali words in Devanagari, English words in "
-    "Latin. Do not translate between the two languages, and do not transliterate a word out of "
-    "its own script. For example: आजको meeting मा हामीले नयाँ data हेर्यौं। "
+    "freely, often within a single sentence. Transcribe verbatim -- exactly what is said, "
+    "including false starts, repetitions and filler words. Do not clean up the speech.\n\n"
+    "DO NOT TRANSLITERATE. Write every word in the script its own language uses: Nepali words "
+    "in Devanagari, English words in Latin. Never write a Nepali word in Latin letters, never "
+    "write an English word in Devanagari, and never translate between the two languages. "
+    "For example: आजको meeting मा हामीले नयाँ data हेर्यौं।"
+)
+
+#: Sent with every ASR request to a model that is not a dedicated recogniser. The policy, plus
+#: what stops a chat model answering in prose or narrating what it heard.
+ASR_PROMPT = (
+    f"{SCRIPT_POLICY}\n\n"
     "Reply with the transcript and nothing else: no preamble, no translation, no commentary, no "
     "quotation marks. If there is no intelligible speech, reply with an empty string."
 )
@@ -112,6 +124,18 @@ def transcribe(
             audio_path,
             route=route,
             prompt=prompt,
+            dry_run=dry_run,
+        )
+    if route_config.provider == "vertex":
+        # A dedicated recogniser gets the policy without the chat-model scaffolding: telling a
+        # speech model to skip the preamble it was never going to write is noise in a system
+        # instruction, and the key terms it does accept are the ones Scribe gets.
+        dedicated = route_config.api == "transcription"
+        return VertexClient(session, config=routes, client=client).transcribe(
+            audio_path,
+            route=route,
+            prompt=SCRIPT_POLICY if dedicated and prompt else prompt,
+            custom_vocabulary=list(DEFAULT_KEYTERMS) if dedicated else None,
             dry_run=dry_run,
         )
     return OpenRouterClient(session, config=routes, client=client).transcribe(

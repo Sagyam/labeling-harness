@@ -19,6 +19,8 @@ from app.config import LlmRoute, LlmRoutes
 from app.llm.base import LlmRouteNotConfigured
 from app.llm.transcription import (
     ASR_PROMPT,
+    DEFAULT_KEYTERMS,
+    SCRIPT_POLICY,
     asr_route_names,
     system_id_for,
     transcribe,
@@ -86,6 +88,40 @@ def recorder(monkeypatch):
                 200,
                 json={"candidates": [{"content": {"parts": [{"text": "गुगल भन्छ"}]}}]},
             )
+        if "interactions:create" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "steps": [
+                        {
+                            "modelOutput": {
+                                "content": [
+                                    {
+                                        "text": {
+                                            "text": "भर्टेक्स भन्छ",
+                                            "annotations": [
+                                                {
+                                                    "wordInfo": {
+                                                        "text": "भर्टेक्स",
+                                                        "startOffset": "0s",
+                                                        "endOffset": "0.5s",
+                                                        "speaker": "spk_1",
+                                                    }
+                                                }
+                                            ],
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+        if "aiplatform.googleapis.com" in str(request.url):
+            return httpx.Response(
+                200,
+                json={"candidates": [{"content": {"parts": [{"text": "फ्ल्यास भन्छ"}]}}]},
+            )
         return httpx.Response(
             200,
             json={"text": "विस्पर भन्छ", "usage": {"seconds": 2, "cost": 0.00005}},
@@ -96,6 +132,7 @@ def recorder(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr("app.llm.vertex.VertexClient._bearer_token", lambda self: "test-token")
     return seen
 
 
@@ -301,3 +338,85 @@ def test_transcribe_accepts_and_uses_custom_http_client(
     )
     assert result.text == "सफलता"
     assert len(calls) == 1
+
+
+# --- Vertex AI dispatch ---------------------------------------------------------------------
+
+
+def _vertex_routes(**route_kwargs) -> LlmRoutes:
+    """The base table plus one Vertex route of the requested shape."""
+    return routes(
+        vertex_project="test-project",
+        vertex_location="global",
+        routes={**routes().routes, "asr_vertex": LlmRoute(provider="vertex", **route_kwargs)},
+    )
+
+
+def test_a_vertex_transcription_route_reaches_interactions_create(
+    db_session: Session, clip, recorder
+) -> None:
+    """The dedicated recogniser: word spans and speaker labels come back with the text."""
+    config = _vertex_routes(
+        api="transcription",
+        model="gemini-3.5-transcribe",
+        system_id="gemini-3.5-transcribe",
+        language_codes=["ne-NP", "en-US"],
+    )
+    result = transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    assert str(recorder[-1].url).endswith("/locations/global/interactions:create")
+    assert result.text == "भर्टेक्स भन्छ"
+    assert result.words == [{"word": "भर्टेक्स", "start": 0.0, "end": 0.5, "speaker": "spk_1"}]
+
+
+def test_a_vertex_audio_chat_route_reaches_generate_content(
+    db_session: Session, clip, recorder
+) -> None:
+    config = _vertex_routes(api="audio_chat", model="gemini-3.8-flash", language="ne")
+    result = transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    url = str(recorder[-1].url)
+    assert url.endswith("/publishers/google/models/gemini-3.8-flash:generateContent")
+    assert result.text == "फ्ल्यास भन्छ"
+    # generateContent returns text; word spans come from the forced aligner (D32).
+    assert result.words is None
+
+
+def test_a_dedicated_recogniser_gets_the_policy_without_the_chat_scaffolding(
+    db_session: Session, clip, recorder
+) -> None:
+    """Telling a speech model not to write a preamble is noise in a system instruction."""
+    config = _vertex_routes(api="transcription", model="gemini-3.5-transcribe")
+    transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    sent = json.loads(recorder[-1].content)["interaction"]
+    assert sent["systemInstruction"] == SCRIPT_POLICY
+    assert "nothing else" not in sent["systemInstruction"]
+
+
+def test_a_vertex_chat_model_gets_the_whole_prompt(db_session: Session, clip, recorder) -> None:
+    config = _vertex_routes(api="audio_chat", model="gemini-3.8-flash")
+    transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    parts = json.loads(recorder[-1].content)["contents"][0]["parts"]
+    assert ASR_PROMPT in parts[0]["text"]
+
+
+def test_a_dedicated_recogniser_gets_the_same_key_terms_scribe_does(
+    db_session: Session, clip, recorder
+) -> None:
+    config = _vertex_routes(api="transcription", model="gemini-3.5-transcribe")
+    transcribe(db_session, clip, route="asr_vertex", config=config)
+
+    sent = json.loads(recorder[-1].content)["interaction"]
+    vocabulary = sent["modelInteraction"]["generationConfig"]["transcriptionConfig"][
+        "customVocabulary"
+    ]
+    assert vocabulary == list(DEFAULT_KEYTERMS)
+
+
+def test_the_policy_forbids_transliteration_in_both_directions() -> None:
+    """The one rule a multilingual model gets wrong by default, in the shared policy."""
+    assert "DO NOT TRANSLITERATE" in SCRIPT_POLICY
+    assert "verbatim" in SCRIPT_POLICY
+    assert SCRIPT_POLICY in ASR_PROMPT
