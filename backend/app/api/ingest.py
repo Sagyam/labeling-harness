@@ -297,6 +297,13 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
             {"timestamp": entry.timestamp, "level": entry.level, "message": entry.message}
             for entry in job.logs
         ],
+        # Segments dropped mid-run (D46). Present on a running job too, so a page reopened
+        # halfway through shows what has already been lost rather than only at the end.
+        "discarded_segments": [record.as_dict() for record in job.discarded],
+        "discarded_by_system": job.discard_summary(),
+        # Present once the run has finished. A page that reattaches to a job it was not watching
+        # gets the outcome from here rather than from an event it missed.
+        "summary": job.summary,
     }
 
 
@@ -323,6 +330,9 @@ async def stream_job_events(job_id: str) -> StreamingResponse:
                     "message": log.message,
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
+
+            for record in job.discarded:
+                yield f"data: {json.dumps({'type': 'discard', 'segment': record.as_dict()})}\n\n"
 
             prog_payload = {
                 "type": "progress",

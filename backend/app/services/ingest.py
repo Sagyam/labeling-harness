@@ -6,12 +6,19 @@ Coordinates the 5-stage ingestion pipeline:
 3. Cloud ASR inference across every configured `asr*` route (logged to llm_requests)
 4. Orthography-aware token tagging, CMI, and rule flags
 5. Manifest generation and direct database import + queue building
+
+A segment that cannot be transcribed by every configured system is discarded and the run carries
+on (D46). Stage 3 is where all the money is: it dispatches every `asr*` route at every clip, so
+one refused clip near the end of a two-hour episode used to throw away hours of paid inference
+that had already succeeded. Only an episode with nothing left fails outright. What was dropped,
+and which system dropped it, rides in the completion summary.
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import datetime as dt
 import json
 import shutil
@@ -104,6 +111,38 @@ class IngestLog:
 
 
 @dataclass
+class DiscardedSegment:
+    """One segment dropped from the run, and who dropped it.
+
+    A discard is not an error the annotator can act on -- the clip is gone and its cost is spent.
+    It is a fact about the corpus, so it is carried all the way to the ingest summary with the
+    system that caused it named (D46).
+    """
+
+    segment_id: str
+    start_time: float
+    end_time: float
+    #: ``asr`` when a transcriber failed, ``analysis`` when the segment was lost after every
+    #: transcript was in hand.
+    stage: str
+    #: One entry per system that failed on this clip: ``{"route", "system_id", "error"}``.
+    failures: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def systems(self) -> list[str]:
+        return [f["system_id"] for f in self.failures]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "segment_id": self.segment_id,
+            "start_time": round(self.start_time, 2),
+            "end_time": round(self.end_time, 2),
+            "stage": self.stage,
+            "failures": self.failures,
+        }
+
+
+@dataclass
 class IngestJob:
     job_id: str
     episode_id: str
@@ -123,6 +162,11 @@ class IngestJob:
     error: str | None = None
     created_at: float = field(default_factory=time.time)
     logs: list[IngestLog] = field(default_factory=list)
+    #: Segments dropped mid-run rather than failing the episode (D46).
+    discarded: list[DiscardedSegment] = field(default_factory=list)
+    #: What the run produced, once it has. Kept so a page that reattaches to an already-finished
+    #: job can show the outcome without having been connected when the event went out.
+    summary: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     #: Each SSE subscriber registers its queue together with the loop that queue belongs to; the
     #: pipeline runs on a worker thread and must hand work back across that boundary.
@@ -156,10 +200,35 @@ class IngestJob:
             }
         )
 
+    def discard(self, record: DiscardedSegment) -> None:
+        """Drop one segment from the run and say who cost it.
+
+        Thread-safety: called from the segment worker pool, so it appends under the caller's own
+        progress lock. The list is only read after that pool has joined.
+        """
+        self.discarded.append(record)
+        who = ", ".join(record.systems) or record.stage
+        detail = "; ".join(f"{f['system_id']}: {f['error']}" for f in record.failures)
+        self.log(
+            f"Discarded {record.segment_id} "
+            f"({record.start_time:.1f}s-{record.end_time:.1f}s) -- {who} failed. {detail}",
+            "warn",
+        )
+        self._emit({"type": "discard", "segment": record.as_dict()})
+
+    def discard_summary(self) -> dict[str, int]:
+        """How many segments each system cost, most expensive first."""
+        counts: dict[str, int] = {}
+        for record in self.discarded:
+            for system in record.systems or [record.stage]:
+                counts[system] = counts.get(system, 0) + 1
+        return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
     def complete(self, summary: dict[str, Any]) -> None:
         self.status = "completed"
         self.stage = "complete"
         self.progress = 100.0
+        self.summary = summary
         self.log("Ingestion pipeline finished successfully.", "success")
         self._emit({"type": "complete", "summary": summary, "episode_id": self.episode_id})
 
@@ -530,9 +599,17 @@ def _run_stages(
             # Persistent HTTP client for connection pooling across all concurrent requests
             with httpx.Client(timeout=routes.default_timeout_seconds) as http_client:
 
-                def _process_segment(seg_idx: int, seg: Any) -> dict[str, Any]:
+                def _bump_progress() -> None:
+                    """Advance the bar by one segment, however that segment ended."""
+                    nonlocal completed_count
+                    completed_count += 1
+                    step_progress = 40.0 + (35.0 * completed_count / len(segments))
+                    job.set_progress("transcribing", step_progress, active_segments=completed_count)
+
+                def _process_segment(seg_idx: int, seg: Any) -> dict[str, Any] | None:
                     # Rec 1: Concurrent model dispatch per segment across every ASR route
                     clip_results: dict[str, AsrResult] = {}
+                    route_failures: list[dict[str, str]] = []
                     with concurrent.futures.ThreadPoolExecutor(
                         max_workers=max(1, len(asr_routes))
                     ) as route_pool:
@@ -550,7 +627,41 @@ def _run_stages(
                         }
                         for f in concurrent.futures.as_completed(future_to_route):
                             r_name = future_to_route[f]
-                            clip_results[r_name] = f.result()
+                            try:
+                                clip_results[r_name] = f.result()
+                            except Exception as exc:  # recorded, then the segment is discarded
+                                route_failures.append(
+                                    {
+                                        "route": r_name,
+                                        "system_id": system_id_for(
+                                            r_name, routes.routes.get(r_name)
+                                        ),
+                                        "error": f"{type(exc).__name__}: {exc}",
+                                    }
+                                )
+
+                    # One clip short of a full set is discarded, not patched (D46). Every system
+                    # must speak for every segment: `word_disagreement_rate` is a mean over the
+                    # pairs present and carries 0.40 of the priority score, so a segment scored
+                    # from three systems where its neighbours used four is not a cheaper segment,
+                    # it is a differently-measured one -- and nothing downstream would ever say so.
+                    if route_failures:
+                        with progress_lock:
+                            job.discard(
+                                DiscardedSegment(
+                                    segment_id=seg.segment_id,
+                                    start_time=seg.start_time,
+                                    end_time=seg.end_time,
+                                    stage="asr",
+                                    failures=route_failures,
+                                )
+                            )
+                            _bump_progress()
+                        # The clip is dead: nothing will reference it, and leaving it in the work
+                        # directory would put it in the manifest's clip upload by accident.
+                        with contextlib.suppress(OSError):
+                            Path(seg.clip_path).unlink()
+                        return None
 
                     # Combine results in configured hypothesis order (asr_routes order)
                     results: list[AsrResult] = [clip_results[r_name] for r_name in asr_routes]
@@ -622,12 +733,7 @@ def _run_stages(
 
                     # Progress & logging under lock
                     with progress_lock:
-                        nonlocal completed_count
-                        completed_count += 1
-                        step_progress = 40.0 + (35.0 * completed_count / len(segments))
-                        job.set_progress(
-                            "transcribing", step_progress, active_segments=completed_count
-                        )
+                        _bump_progress()
 
                         if completed_count % 5 == 0 or completed_count == len(segments):
                             snippet = primary_hyp["text"][:30]
@@ -670,10 +776,48 @@ def _run_stages(
                     }
                     for future in concurrent.futures.as_completed(future_to_idx):
                         seg_idx = future_to_idx[future]
-                        rec = future.result()
-                        records_by_idx[seg_idx] = rec
+                        try:
+                            records_by_idx[seg_idx] = future.result()
+                        except Exception as exc:  # costs one segment, never the episode
+                            # Everything after the transcripts -- alignment, analysis, the
+                            # per-segment commit. Same rule as an ASR failure: the run is worth
+                            # more than the segment, and the summary says what was lost.
+                            seg = segments[seg_idx]
+                            with progress_lock:
+                                job.discard(
+                                    DiscardedSegment(
+                                        segment_id=seg.segment_id,
+                                        start_time=seg.start_time,
+                                        end_time=seg.end_time,
+                                        stage="analysis",
+                                        failures=[
+                                            {
+                                                "route": "-",
+                                                "system_id": "analysis",
+                                                "error": f"{type(exc).__name__}: {exc}",
+                                            }
+                                        ],
+                                    )
+                                )
+                                _bump_progress()
 
             segment_records = [r for r in records_by_idx if r is not None]
+
+        if job.discarded:
+            by_system = job.discard_summary()
+            blame = ", ".join(f"{system} ({count})" for system, count in by_system.items())
+            job.log(
+                f"{len(job.discarded)} of {len(segments)} segments discarded "
+                f"({len(job.discarded) / len(segments):.0%}) -- {blame}",
+                "warn",
+            )
+        if not segment_records:
+            job.fail(
+                f"Stage 3/4 ASR Inference / Analysis failed: all {len(segments)} segments were "
+                f"discarded ({', '.join(f'{k} ({v})' for k, v in job.discard_summary().items())})"
+            )
+            return
+
         job.set_progress("analyzing", 80.0)
         job.log("Stage 4/5: Orthography analysis, CMI and rule flags completed")
     except Exception as exc:
@@ -737,6 +881,11 @@ def _run_stages(
                 "episode_id": job.episode_id,
                 "duration_seconds": round(duration, 1),
                 "segments": len(segment_records),
+                "segments_detected": len(segments),
+                "segments_discarded": len(job.discarded),
+                # Which system cost what, so a bad run points at a vendor rather than at luck.
+                "discarded_by_system": job.discard_summary(),
+                "discarded_segments": [d.as_dict() for d in job.discarded],
                 "tasks_created": queue_report.tasks_created,
                 "review_tasks": queue_report.review_tasks,
             }

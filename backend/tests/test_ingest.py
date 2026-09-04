@@ -13,6 +13,7 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.llm.base import LlmRequestFailed
 from app.llm.openrouter import OpenRouterClient
 from app.llm.vertex import VertexClient
 from app.models import AnnotationTask, Episode, LlmRequest, Segment
@@ -891,7 +892,12 @@ def test_concurrent_transcription_preserves_chronological_and_hypothesis_order(
 def test_concurrent_transcription_fails_job_cleanly_on_asr_error(
     db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch
 ) -> None:
-    """When a concurrent ASR worker raises, the stage fails cleanly with job.fail."""
+    """When every concurrent ASR worker raises, the job still ends cleanly through job.fail.
+
+    Since D46 a raising worker discards its segment rather than the episode, so this only fails
+    because the clip is the whole episode. The error names the systems that cost the run; the
+    exception text itself lives on the discard record.
+    """
     raw_audio = make_test_audio(tmp_path / "fail_audio.wav", duration_seconds=4.0)
     work_dir = tmp_path / "work_fail"
 
@@ -918,4 +924,135 @@ def test_concurrent_transcription_fails_job_cleanly_on_asr_error(
 
     assert job.status == "failed"
     assert job.stage == "failed"
-    assert "ASR upstream service unavailable" in str(job.error)
+    assert "all 1 segments were discarded" in str(job.error)
+    assert "gemini-3.8-flash" in str(job.error)
+    assert len(job.discarded) == 1
+    assert "ASR upstream service unavailable" in job.discarded[0].failures[0]["error"]
+
+
+# --- D46: a refused clip costs the segment, never the episode ----------------------------
+
+
+def _pipeline_job(tmp_path: Path, name: str, *, seconds: float = 45.0) -> IngestJob:
+    """A job whose audio is long enough to cut into several segments.
+
+    45 s against ``MAX_SEG_SECONDS = 20`` gives three, which is the minimum that can show a run
+    surviving a discard -- with one segment there is nothing left to keep.
+    """
+    return IngestJob(
+        job_id=f"discard-{name}",
+        episode_id=f"web_{name}",
+        show_id="podcast",
+        title=f"Discard Test {name}",
+        audio_path=make_test_audio(tmp_path / f"{name}_raw.wav", duration_seconds=seconds),
+        work_dir=tmp_path / f"work_{name}",
+    )
+
+
+def _failing_transcribe(should_fail, *, route_to_fail: str = "asr_gemini_flash"):
+    """Wrap the real ``transcribe`` so one route raises on the clips ``should_fail`` picks."""
+    from app.services import ingest as ingest_module
+
+    real = ingest_module.transcribe
+
+    def fake(session, audio_path, *, route, **kwargs):
+        if route == route_to_fail and should_fail(Path(audio_path).name):
+            raise LlmRequestFailed(f"Vertex transcription failed: finishReason=SAFETY ({route})")
+        return real(session, audio_path, route=route, **kwargs)
+
+    return fake
+
+
+def test_a_refused_clip_is_discarded_and_the_episode_still_lands(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point of D46.
+
+    Stage 3 dispatches every ASR route at every clip, so one refusal near the end of a long
+    episode used to throw away every paid transcript that had already succeeded.
+    """
+    job = _pipeline_job(tmp_path, "kept")
+    monkeypatch.setattr(
+        "app.services.ingest.transcribe",
+        _failing_transcribe(lambda name: name.endswith("_00000.flac")),
+    )
+
+    run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
+
+    assert job.status == "completed", job.error
+    assert len(job.discarded) == 1
+    dropped = job.discarded[0]
+    assert dropped.stage == "asr"
+    assert dropped.systems == ["gemini-3.8-flash"], "the summary must name who cost the segment"
+    assert "SAFETY" in dropped.failures[0]["error"]
+
+    ep = db_session.scalar(sa.select(Episode).where(Episode.external_id == job.episode_id))
+    assert ep is not None
+    kept = db_session.scalars(sa.select(Segment).where(Segment.episode_id == ep.id)).all()
+    assert kept, "the segments that transcribed cleanly are still imported"
+    assert dropped.segment_id not in {s.external_id for s in kept}
+
+
+def test_a_discarded_segment_is_reported_with_its_blame_in_the_summary(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _pipeline_job(tmp_path, "summary")
+    monkeypatch.setattr(
+        "app.services.ingest.transcribe",
+        _failing_transcribe(lambda name: name.endswith("_00000.flac")),
+    )
+    run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
+
+    assert job.discard_summary() == {"gemini-3.8-flash": 1}
+    assert any(
+        "discarded" in log_item.message and log_item.level == "warn" for log_item in job.logs
+    )
+    completion = [log_item for log_item in job.logs if "finished successfully" in log_item.message]
+    assert completion, "a run with discards still completes"
+
+
+def test_an_episode_where_every_segment_is_refused_fails_loudly(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing survived, so there is no episode to import -- and no pretending otherwise."""
+    job = _pipeline_job(tmp_path, "allgone", seconds=6.0)
+    monkeypatch.setattr("app.services.ingest.transcribe", _failing_transcribe(lambda name: True))
+    run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
+
+    assert job.status == "failed"
+    assert "all" in (job.error or "") and "discarded" in (job.error or "")
+    assert "gemini-3.8-flash" in (job.error or ""), "the error names the system that cost the run"
+
+
+def test_the_progress_bar_still_reaches_every_segment_when_some_are_discarded(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A discard bumps the same counter a success does, or the bar stalls short of the end."""
+    job = _pipeline_job(tmp_path, "progress")
+    monkeypatch.setattr(
+        "app.services.ingest.transcribe",
+        _failing_transcribe(lambda name: name.endswith("_00000.flac")),
+    )
+    run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
+
+    assert job.status == "completed", job.error
+    assert job.active_segments == job.total_segments
+
+
+def test_a_discard_is_emitted_to_subscribers_as_it_happens(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page shows losses while the run is going, not only in the final summary."""
+    job = _pipeline_job(tmp_path, "sse")
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        "app.services.ingest.transcribe",
+        _failing_transcribe(lambda name: name.endswith("_00000.flac")),
+    )
+    monkeypatch.setattr(job, "_emit", lambda event: seen.append(event))
+
+    run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
+
+    discards = [e for e in seen if e.get("type") == "discard"]
+    assert len(discards) == 1
+    assert discards[0]["segment"]["failures"][0]["system_id"] == "gemini-3.8-flash"
