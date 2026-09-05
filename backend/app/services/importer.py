@@ -454,6 +454,7 @@ def import_manifest(
                 lid=record.get("lid"),
                 pipeline_status="imported",
                 import_run_id=run.id,
+                vad_spans_jsonb=record.get("vad_spans") or None,
             )
             session.add(segment)
             session.flush()
@@ -468,10 +469,19 @@ def import_manifest(
                 duration_seconds=segment.duration_seconds,
                 hypotheses=[
                     FlagHypothesis(
-                        text=str(h.get("text") or ""), no_speech_prob=h.get("no_speech_prob")
+                        text=str(h.get("text") or ""),
+                        no_speech_prob=h.get("no_speech_prob"),
+                        word_spans=[
+                            (float(w["start"]), float(w["end"]))
+                            for w in (h.get("words") or [])
+                            if w.get("start") is not None and w.get("end") is not None
+                        ]
+                        or None,
                     )
                     for h in record["hypotheses"]
                 ],
+                vad_spans=[(float(a), float(b)) for a, b in (record.get("vad_spans") or [])]
+                or None,
                 settings=settings,
             )
             session.add(

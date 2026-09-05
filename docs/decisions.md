@@ -1326,3 +1326,36 @@ deliberately does not sum to 1.
 **Reversal:** restore the old weights in `config/settings.yaml` and `QueueWeights`, and read the
 legacy components back out of `reason_jsonb`. Nothing stored changes shape, and re-running the
 queue builder rescores every active task, so it is a config edit plus one command.
+
+## D55 — The VAD's speech spans are stored, so silence can be told from a dropped phrase
+
+`segments.vad_spans_jsonb` holds the speech regions the VAD found inside each clip, clip-relative
+like word timings (D26). The `missed_speech` flag fires when more than 25% of that speech has no
+word from *any* system over it.
+
+**Why it has to be stored rather than derived.** Every other timing in the schema comes from a
+transcriber. So "no system wrote anything between 11.2 s and 18 s" is ambiguous from the database
+alone: either nobody heard the speech, or there was none. The VAD is the only independent
+statement about where speech is, and it already ran — it is what cut the clip — so this is an
+intersection of turns already computed, not a second detection pass.
+
+**Why any system counts as covering.** One system hearing a stretch proves the audio was
+transcribable there, so it is not a hole in the corpus; it is a disagreement, which
+`seed_outvoted` already measures. `missed_speech` is for the region every system skipped. That is
+the D50 truncation failure, which was found by hand over one episode and would now raise a flag.
+
+**Why 25%.** The VAD pads turns by 150 ms and word spans cover neither breath nor hesitation, so a
+small uncovered remainder is normal. The threshold is deliberately generous: a false flag costs an
+annotator a look at a fine segment, and this is the one flag no transcript can corroborate.
+
+**Nullable, and it must stay that way.** Segments imported before this migration have no spans,
+and inventing them would make every one either perfect or defective. No spans means the flag
+cannot fire, which is the honest reading of an unasked question.
+
+**On the flag vocabulary.** `ALL_FLAGS` goes from seven names to eight, so `rule_flag_score`'s
+denominator changes. That term carries 0.15 and was identically zero on every labelled segment
+(D54), so the effect on ranking is negligible — but it is a change to a stored number, not just
+to a new column.
+
+**Reversal:** drop the column, drop `missed_speech` from `ALL_FLAGS`, and stop passing `vad_spans`
+at import. The migration has a working `downgrade`, verified up, down and up again.

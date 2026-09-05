@@ -298,6 +298,35 @@ def _find_best_cut_point(
     return round(best_frame / sample_rate, 3)
 
 
+def speech_spans_within(
+    turns: list[SpeechTurn], start: float, end: float
+) -> list[tuple[float, float]]:
+    """The speech inside one clip, in clip-relative seconds.
+
+    The VAD already ran over the whole episode to find these turns, so a clip's speech is an
+    intersection rather than a second detection pass. Reporting it clip-relative matches how word
+    spans are stored (D26), which is the only way the two can be compared without carrying an
+    offset around.
+
+    Args:
+        turns: Episode-relative speech turns from :meth:`SileroVAD.detect_turns`.
+        start: Clip start, episode-relative.
+        end: Clip end, episode-relative.
+
+    Returns:
+        ``(start, end)`` pairs relative to the clip, in order. Empty when the clip holds no
+        detected speech -- which is a real answer for a clip cut from padding, not a failure.
+    """
+    spans: list[tuple[float, float]] = []
+    for turn in sorted(turns, key=lambda t: t.start):
+        lo = max(turn.start, start)
+        hi = min(turn.end, end)
+        if hi <= lo:
+            continue
+        spans.append((round(lo - start, 3), round(hi - start, 3)))
+    return spans
+
+
 def segment_audio_to_slices(
     turns: list[SpeechTurn],
     total_duration: float,

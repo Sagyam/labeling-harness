@@ -10,6 +10,7 @@ import soundfile as sf
 
 from app.config import load_settings
 from app.services.audio import ClipFormatError, compute_peaks, probe, validate_clip
+from app.services.silero_vad import SpeechTurn, speech_spans_within
 
 
 def write_audio(
@@ -112,3 +113,35 @@ def test_peaks_of_silence_are_flat(tmp_path: Path) -> None:
     peaks = compute_peaks(path, buckets=10)
     assert peaks["min"] == [0.0] * 10
     assert peaks["max"] == [0.0] * 10
+
+
+# --- clip-relative speech spans ------------------------------------------------------------
+
+
+def test_speech_spans_are_reported_relative_to_the_clip() -> None:
+    """Clip-relative by construction, like word spans (D26), so the two can be compared."""
+    turns = [SpeechTurn(10.0, 12.0)]
+    assert speech_spans_within(turns, 9.0, 14.0) == [(1.0, 3.0)]
+
+
+def test_a_turn_is_clipped_to_the_segment_it_overlaps() -> None:
+    turns = [SpeechTurn(0.0, 30.0)]
+    assert speech_spans_within(turns, 5.0, 8.0) == [(0.0, 3.0)]
+
+
+def test_turns_outside_the_segment_are_dropped() -> None:
+    turns = [SpeechTurn(0.0, 1.0), SpeechTurn(50.0, 51.0)]
+    assert speech_spans_within(turns, 10.0, 20.0) == []
+
+
+def test_a_turn_touching_only_the_boundary_is_not_speech_in_this_clip() -> None:
+    assert speech_spans_within([SpeechTurn(0.0, 5.0)], 5.0, 10.0) == []
+
+
+def test_several_turns_inside_one_clip_are_all_reported_in_order() -> None:
+    turns = [SpeechTurn(1.0, 2.0), SpeechTurn(3.0, 4.0)]
+    assert speech_spans_within(turns, 0.0, 5.0) == [(1.0, 2.0), (3.0, 4.0)]
+
+
+def test_no_turns_means_no_speech_spans() -> None:
+    assert speech_spans_within([], 0.0, 5.0) == []

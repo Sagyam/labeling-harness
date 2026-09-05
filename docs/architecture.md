@@ -59,7 +59,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 |---|---|
 | `import_runs` | One row per import invocation, with counts and status |
 | `episodes` | Episode metadata plus the **frozen** train/val/test split |
-| `segments` | Time span, clip and peaks object keys, `pipeline_status` |
+| `segments` | Time span, clip and peaks object keys, `pipeline_status`, VAD speech spans |
 | `asr_systems` | One row per upstream ASR system |
 | `asr_hypotheses` | Immutable imported transcripts, one per (segment, system) |
 | `hypothesis_words` | Optional word-level timings, languages and scripts; times are **clip-relative** (D26) |
@@ -99,7 +99,7 @@ one episode share speaker, recording conditions and topic, so a segment-level sp
 
 ## Priority formula
 
-![Priority score composition: word disagreement 0.40 and rule flags 0.15 are computed over every hypothesis; low confidence 0.25 and code-switch density 0.20 read a single hypothesis; the four weights sum to 1.0](diagrams/priority-scoring.svg)
+![Priority score composition: seed outvoted 0.60 and rule flags 0.15 are computed over every hypothesis; low confidence 0.25 reads the seed alone; the three weights sum to 1.0](diagrams/priority-scoring.svg)
 
 ```text
 priority_score =
@@ -135,10 +135,17 @@ why a segment surfaced.
 ### Rule flags (computed at import)
 
 `empty_transcript`, `repeated_ngram` (hallucination pattern), `high_no_speech_prob`,
-`too_short` (< 1 s), `too_long` (> 30 s), `implausible_speaking_rate`, `script_conflict`.
+`too_short` (< 1 s), `too_long` (> 30 s), `implausible_speaking_rate`, `script_conflict`,
+`missed_speech`.
 
-These seven are the whole vocabulary and the denominator of `rule_flag_score`, so a flag name from
-outside the list is stored on the segment but contributes nothing to the score. The importer
+These eight are the whole vocabulary and the denominator of `rule_flag_score`, so a flag name from
+outside the list is stored on the segment but contributes nothing to the score.
+
+`missed_speech` fires when more than 25% of a clip's VAD-detected speech has no word from *any*
+system over it (D55). It is the one flag that does not read a transcript: `segments.vad_spans_jsonb`
+is the only timing in the schema that a transcriber did not produce, so it is what separates "no
+system wrote anything here" from "there was nothing to write". It cannot fire on a segment with no
+stored spans, or on one where no system reported word timings. The importer
 computes them itself, over every hypothesis of the segment, and unions the result with whatever
 `flags` the manifest carried: `flags_jsonb = sorted(received | computed)`. That is the one place
 the harness does not simply store what it receives.

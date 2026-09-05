@@ -6,7 +6,7 @@ Four figures, each in three forms. The `.html` is the source; `.svg` and `.pdf` 
 | Figure | Type | Shows |
 |---|---|---|
 | `ingest-pipeline` | Architecture | Upload or YouTube URL through the five ingestion stages to the built queue |
-| `priority-scoring` | Sankey | How the four weighted signals compose `priority_score` |
+| `priority-scoring` | Sankey | How the three weighted signals compose `priority_score` |
 | `annotation-lifecycle` | State machine | A task from `pending` to `done`, and the four dispositions |
 | `data-model` | ER | The six core tables and their cardinality |
 

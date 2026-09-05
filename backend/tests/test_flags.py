@@ -114,3 +114,71 @@ def test_rule_flag_score_ignores_unknown_flags() -> None:
     """Imported flags from upstream must not inflate the score past 1.0."""
     assert rule_flag_score(["something_upstream_invented"]) == 0.0
     assert rule_flag_score([*ALL_FLAGS, "extra"]) == 1.0
+
+
+# --- speech no system transcribed ----------------------------------------------------------
+
+
+SETTINGS = load_settings()
+
+
+def hyp_with_words(*spans: tuple[float, float]) -> FlagHypothesis:
+    return FlagHypothesis(text="x " * len(spans), word_spans=list(spans))
+
+
+def test_speech_every_system_covered_raises_nothing() -> None:
+    flags = compute_flags(
+        duration_seconds=5.0,
+        hypotheses=[hyp_with_words((0.0, 2.0), (2.0, 4.0))],
+        vad_spans=[(0.0, 4.0)],
+        settings=SETTINGS,
+    )
+    assert "missed_speech" not in flags
+
+
+def test_speech_no_system_transcribed_is_flagged() -> None:
+    """The truncation failure D50 found by hand: a system stops before the audio does."""
+    flags = compute_flags(
+        duration_seconds=20.0,
+        hypotheses=[hyp_with_words((0.0, 5.0))],
+        vad_spans=[(0.0, 18.0)],
+        settings=SETTINGS,
+    )
+    assert "missed_speech" in flags
+
+
+def test_a_word_from_any_system_covers_the_speech() -> None:
+    """One system hearing it means the audio was transcribable; that is not a missed region."""
+    flags = compute_flags(
+        duration_seconds=20.0,
+        hypotheses=[hyp_with_words((0.0, 5.0)), hyp_with_words((0.0, 17.9))],
+        vad_spans=[(0.0, 18.0)],
+        settings=SETTINGS,
+    )
+    assert "missed_speech" not in flags
+
+
+def test_without_vad_spans_the_flag_cannot_fire() -> None:
+    """Segments imported before the spans existed must not all look defective."""
+    flags = compute_flags(
+        duration_seconds=20.0,
+        hypotheses=[hyp_with_words((0.0, 1.0))],
+        vad_spans=None,
+        settings=SETTINGS,
+    )
+    assert "missed_speech" not in flags
+
+
+def test_without_word_spans_the_flag_cannot_fire() -> None:
+    """No timings is not evidence of missed speech; it is absence of evidence."""
+    flags = compute_flags(
+        duration_seconds=20.0,
+        hypotheses=[FlagHypothesis(text="something was said")],
+        vad_spans=[(0.0, 18.0)],
+        settings=SETTINGS,
+    )
+    assert "missed_speech" not in flags
+
+
+def test_missed_speech_is_part_of_the_flag_vocabulary() -> None:
+    assert "missed_speech" in ALL_FLAGS

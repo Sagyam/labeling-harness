@@ -97,6 +97,11 @@ class Segment(Base):
 
     p_en: Mapped[float | None] = mapped_column(Float)
     lid: Mapped[str | None] = mapped_column(String(16))
+    #: Clip-relative speech regions from the VAD that cut this clip, as ``[[start, end], ...]``.
+    #: The only timing in the schema that does not come from a transcriber, which is what lets
+    #: "no system wrote anything here" be told apart from "there was nothing to write" (D55).
+    #: Null for anything imported before the spans were recorded.
+    vad_spans_jsonb: Mapped[list[list[float]] | None] = mapped_column(JsonB)
 
     pipeline_status: Mapped[str] = mapped_column(String(16), nullable=False, default="imported")
     import_run_id: Mapped[int | None] = mapped_column(

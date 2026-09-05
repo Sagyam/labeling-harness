@@ -53,6 +53,7 @@ from app.services.silero_vad import (
     SileroVAD,
     extract_clips,
     segment_audio_to_slices,
+    speech_spans_within,
 )
 from app.services.youtube import YouTubeError, download_audio
 from app.storage import build_storage
@@ -751,6 +752,7 @@ def _run_stages(
                         "end_time": seg.end_time,
                         "clip_path": seg.clip_rel_path,
                         "clip_checksum": seg.clip_checksum,
+                        "vad_spans": speech_spans_within(turns, seg.start_time, seg.end_time),
                         "hypotheses": hypotheses,
                         "scores": {
                             "cmi": analysis.cmi,
