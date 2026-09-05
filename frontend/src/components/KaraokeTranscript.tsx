@@ -8,12 +8,12 @@ interface KaraokeTranscriptProps {
   words: HypothesisWord[]
   /** The element actually playing; read directly so the highlight runs at frame rate. */
   audioRef: React.RefObject<HTMLAudioElement | null>
-  /** Whether playback is running, so the loop can idle when it is not. */
-  isPlaying: boolean
   /** Seek here when a word is clicked. */
   onSeekWord: (time: number) => void
   /** Words other systems disputed, by word position. Underlined whether lit or not. */
   contestedPositions?: ReadonlySet<number>
+  /** Called instead of seeking when a disputed word is clicked. */
+  onPickContested?: (position: number, anchor: HTMLElement) => void
   className?: string
 }
 
@@ -21,42 +21,49 @@ interface KaraokeTranscriptProps {
 const ACTIVE_SCALE = 0.19
 /** Fraction of a word's span spent growing to full size; the rest holds. */
 const GROW_FRACTION = 0.4
+/** How long a word takes to settle back once its successor has started, in ms. */
+const RELEASE_MS = 190
 
 const easeOutCubic = (t: number) => 1 - (1 - t) ** 3
 
 /**
  * The seed transcript, with the word being spoken growing and lit as the clip plays.
  *
- * Styling is written straight onto the spans from a requestAnimationFrame loop rather than
- * through React state: at 60 fps a state update per frame would re-render the whole editor,
- * and the only thing that actually changes is a transform and a colour on at most two spans.
- * `timeupdate` alone is far too coarse to drive this -- it fires about four times a second,
- * which reads as a stutter rather than a glide.
+ * Both halves of the animation are driven from one requestAnimationFrame loop, and neither is
+ * a CSS transition. The rise is locked to the audio -- a word's size is a function of how far
+ * into its own span the playhead is -- because anything time-based there shows up as the
+ * highlight lagging the sound. The fall is time-based instead, decaying over RELEASE_MS once
+ * the next word starts, because a trailing animation cannot be late by definition. Putting a
+ * CSS transition on `transform` as well would interpolate towards a target that moves every
+ * frame, which is what made the bloom arrive ~150 ms late. Colour is the exception: it flips
+ * discretely, so CSS may transition it.
  */
 export function KaraokeTranscript({
   words,
   audioRef,
-  isPlaying,
   onSeekWord,
   contestedPositions,
+  onPickContested,
   className,
 }: KaraokeTranscriptProps) {
   const spanRefs = useRef<(HTMLSpanElement | null)[]>([])
   const frameRef = useRef<number | null>(null)
   const activeRef = useRef<number>(-1)
+  /** Index to current size, 0-1, for every word still settling. Usually one or two entries. */
+  const heatRef = useRef<Map<number, number>>(new Map())
+  const lastTickRef = useRef<number>(0)
 
   // Words the transcriber placed on the clock. One without both boundaries cannot be lit, but
   // it must still be rendered: dropping it would show the annotator a transcript missing words
-  // the hypothesis actually contains. Memoized because `paint` and the frame loop below hang
-  // off its identity -- rebuilt every render, the loop would be town down four times a second.
+  // the hypothesis actually contains. Memoized so `paint` keeps its identity across renders.
   const timed = useMemo(
     () => words.map((w) => w.start_time !== null && w.end_time !== null),
     [words],
   )
 
   const paint = useCallback(
-    (time: number) => {
-      // The last word that has *started*, not the word whose span contains `time`. Almost every
+    (time: number, elapsedMs: number) => {
+      // The last word to have *started*, not the word whose span contains `time`. Almost every
       // pair of words has a gap between them -- around 60 ms, on all three transcribers -- and
       // going dark in each one makes the line flicker and read as lagging. Holding the word
       // until its successor begins moves the highlight exactly on word onsets.
@@ -66,53 +73,53 @@ export function KaraokeTranscript({
         if ((words[i].start_time as number) <= time) next = i
       }
 
+      const heat = heatRef.current
+
+      if (next >= 0) {
+        const start = words[next].start_time as number
+        const end = words[next].end_time as number
+        const progress = Math.min(1, Math.max(0, (time - start) / Math.max(end - start, 1e-3)))
+        heat.set(next, easeOutCubic(Math.min(1, progress / GROW_FRACTION)))
+      }
+
       if (activeRef.current !== next) {
         const previous = spanRefs.current[activeRef.current]
-        if (previous) {
-          previous.style.transform = ''
-          previous.dataset.state = 'sung'
-        }
+        if (previous) previous.dataset.state = 'sung'
         activeRef.current = next
       }
-      if (next < 0) return
 
-      const word = words[next]
-      const span = spanRefs.current[next]
-      if (!span) return
-
-      const start = word.start_time as number
-      const end = word.end_time as number
-      const progress = Math.min(1, Math.max(0, (time - start) / Math.max(end - start, 1e-3)))
-      const grow = easeOutCubic(Math.min(1, progress / GROW_FRACTION))
-
-      span.dataset.state = 'active'
-      // Written every frame, so nothing may interpolate it in CSS as well -- see the class list.
-      span.style.transform = `scale(${(1 + ACTIVE_SCALE * grow).toFixed(4)})`
+      for (const [index, value] of heat) {
+        const span = spanRefs.current[index]
+        if (index !== next) {
+          const faded = value - elapsedMs / RELEASE_MS
+          if (faded <= 0.001) {
+            heat.delete(index)
+            if (span) span.style.transform = ''
+            continue
+          }
+          heat.set(index, faded)
+          if (span) span.style.transform = `scale(${(1 + ACTIVE_SCALE * faded).toFixed(4)})`
+          continue
+        }
+        if (span) {
+          span.dataset.state = 'active'
+          span.style.transform = `scale(${(1 + ACTIVE_SCALE * value).toFixed(4)})`
+        }
+      }
     },
     [words, timed],
   )
 
   useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
-
-    // Paused is not idle: the annotator scrubs the waveform, clicks a word, nudges by two
-    // seconds. Those arrive as events rather than frames, so the highlight follows them here
-    // instead of burning a rAF loop on a clip nobody is playing.
-    if (!isPlaying) {
-      paint(audio.currentTime)
-      const onSeek = () => paint(audio.currentTime)
-      audio.addEventListener('seeked', onSeek)
-      audio.addEventListener('timeupdate', onSeek)
-      return () => {
-        audio.removeEventListener('seeked', onSeek)
-        audio.removeEventListener('timeupdate', onSeek)
-      }
-    }
-
-    const tick = () => {
+    // The loop runs whether or not the clip is playing. Paused is not idle -- the annotator
+    // scrubs, clicks a word, nudges by two seconds, and a word released just before the pause
+    // still has to finish settling. With at most a couple of warm spans the frame costs
+    // nothing, and browsers stop rAF entirely when the tab is hidden.
+    const tick = (now: number) => {
       const element = audioRef.current
-      if (element) paint(element.currentTime)
+      const elapsed = lastTickRef.current ? Math.min(now - lastTickRef.current, 100) : 16
+      lastTickRef.current = now
+      if (element) paint(element.currentTime, elapsed)
       frameRef.current = requestAnimationFrame(tick)
     }
     frameRef.current = requestAnimationFrame(tick)
@@ -120,12 +127,14 @@ export function KaraokeTranscript({
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
       frameRef.current = null
+      lastTickRef.current = 0
     }
-  }, [isPlaying, paint, audioRef])
+  }, [paint, audioRef])
 
   // A new task brings a new word list; clear the highlight so it cannot survive the swap.
   useEffect(() => {
     activeRef.current = -1
+    heatRef.current.clear()
     spanRefs.current.forEach((span) => {
       if (!span) return
       span.style.transform = ''
@@ -142,47 +151,53 @@ export function KaraokeTranscript({
         className,
       )}
     >
-      {words.map((word, index) => (
-        <span
-          key={`${word.position}-${index}`}
-          ref={(el) => {
-            spanRefs.current[index] = el
-          }}
-          role={timed[index] ? 'button' : undefined}
-          tabIndex={timed[index] ? 0 : undefined}
-          onClick={() => timed[index] && onSeekWord(word.start_time as number)}
-          onKeyDown={(e) => {
-            if (timed[index] && (e.key === 'Enter' || e.key === ' ')) {
-              e.preventDefault()
-              onSeekWord(word.start_time as number)
+      {words.map((word, index) => {
+        const isContested = contestedPositions?.has(word.position) ?? false
+        const activate = (anchor: HTMLElement) => {
+          if (isContested && onPickContested) onPickContested(word.position, anchor)
+          else if (timed[index]) onSeekWord(word.start_time as number)
+        }
+        return (
+          <span
+            key={`${word.position}-${index}`}
+            ref={(el) => {
+              spanRefs.current[index] = el
+            }}
+            role={timed[index] || isContested ? 'button' : undefined}
+            tabIndex={timed[index] || isContested ? 0 : undefined}
+            onClick={(e) => activate(e.currentTarget)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                activate(e.currentTarget)
+              }
+            }}
+            title={
+              timed[index]
+                ? `${(word.start_time as number).toFixed(2)}s - ${(word.end_time as number).toFixed(2)}s${
+                    isContested ? ' - the other systems heard this differently' : ''
+                  }`
+                : 'no timing reported'
             }
-          }}
-          title={
-            timed[index]
-              ? `${(word.start_time as number).toFixed(2)}s - ${(word.end_time as number).toFixed(2)}s`
-              : 'no timing reported'
-          }
-          data-contested={contestedPositions?.has(word.position) ? '' : undefined}
-          className={cn(
-            'inline-block origin-bottom text-muted-foreground',
-            // Colour only. `transform` is driven per frame from the rAF loop, and a CSS
-            // transition over it would interpolate towards a target that moves every 16 ms --
-            // the bloom then lands ~150 ms late and lingers as long after the word ends, which
-            // at three words a second reads as the highlight running half a word behind.
-            'transition-[color,opacity] duration-100 ease-out',
-            timed[index] && 'cursor-pointer hover:text-foreground',
-            // Words already sung stay readable; the active one is the only lit word.
-            'data-[state=sung]:text-foreground/70',
-            'data-[state=active]:font-semibold data-[state=active]:text-info',
-            // A disputed word keeps its underline whether or not it is lit.
-            'data-[contested]:underline data-[contested]:decoration-warning',
-            'data-[contested]:decoration-wavy data-[contested]:underline-offset-4',
-            !timed[index] && 'opacity-40',
-          )}
-        >
-          {word.word}
-        </span>
-      ))}
+            data-contested={isContested ? '' : undefined}
+            className={cn(
+              'inline-block origin-bottom text-muted-foreground',
+              // Colour only; `transform` is written every frame from the loop above.
+              'transition-[color,opacity] duration-100 ease-out',
+              (timed[index] || isContested) && 'cursor-pointer hover:text-foreground',
+              // Words already sung stay readable; the active one is the only lit word.
+              'data-[state=sung]:text-foreground/70',
+              'data-[state=active]:font-semibold data-[state=active]:text-info',
+              // A disputed word keeps its underline whether or not it is lit.
+              'data-[contested]:underline data-[contested]:decoration-warning',
+              'data-[contested]:decoration-wavy data-[contested]:underline-offset-4',
+              !timed[index] && 'opacity-40',
+            )}
+          >
+            {word.word}
+          </span>
+        )
+      })}
     </div>
   )
 }

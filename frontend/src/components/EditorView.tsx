@@ -349,7 +349,6 @@ export function EditorView({
               <KaraokeTranscript
                 words={seedWords}
                 audioRef={audioRef}
-                isPlaying={isPlaying}
                 onSeekWord={(time) => seek(time, true)}
               />
             </div>
