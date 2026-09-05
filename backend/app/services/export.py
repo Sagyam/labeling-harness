@@ -7,6 +7,12 @@ Four export kinds, each writing a manifest alongside the data:
 3. ``analytics`` -- everything labeled, including word-level fields where they were imported.
 4. ``error_mining`` -- ``uncertain`` and ``unusable_audio``, for pipeline debugging.
 
+Every export that has an object store to read from also writes out the **whole audio** of each
+episode it drew rows from, under ``episodes/``. That is what makes a serious diarizer possible:
+speaker identity is not something the ingest pipeline guesses at any more (D58), so pyannote 3.1
+or its successor runs here instead, against a recording rather than a bag of clips, with no time
+budget and no need to re-ingest anything when a better model appears (D62).
+
 Exports are deterministic: the same inputs and filters produce byte-identical output, so two exports
 of "the same" dataset really are the same dataset. ``disposition`` and ``seed_system_id`` are
 retained in every record because they are what make the dataset defensible to a reviewer.
@@ -35,6 +41,7 @@ from app.models import (
     SegmentLabel,
 )
 from app.services.stats import latest_labels_subquery
+from app.storage.base import ObjectStorage
 from app.utils.hashing import sha256_file
 from app.utils.logging import get_logger
 
@@ -194,6 +201,55 @@ def _record(
     return record
 
 
+def _write_episode_audio(
+    output_dir: Path,
+    keys_by_episode: dict[str, str],
+    storage: ObjectStorage | None,
+) -> list[dict[str, Any]]:
+    """Copy each episode's whole recording into ``episodes/`` beside the exported rows.
+
+    This is what a post-export diarizer runs on (D58): a recording, not the clips cut out of it.
+    Written here rather than referenced by object key so an export directory is self-contained --
+    it can be moved to a machine with no access to this deployment's object store at all.
+
+    A missing or unreadable object is a warning, never a failure. The metadata export is complete
+    and correct without the audio; refusing to write it because one episode predates the column
+    would be a poor trade.
+
+    Args:
+        output_dir: The export directory.
+        keys_by_episode: ``{episode external id: object key}``, for episodes with audio.
+        storage: Object store to read from, or None to skip audio entirely.
+
+    Returns:
+        One manifest file entry per recording written, sorted by name so the manifest stays
+        deterministic.
+    """
+    if storage is None or not keys_by_episode:
+        return []
+
+    audio_dir = output_dir / "episodes"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[dict[str, Any]] = []
+    for external_id, key in sorted(keys_by_episode.items()):
+        destination = audio_dir / f"{external_id}.flac"
+        try:
+            destination.write_bytes(storage.get_bytes(key))
+        except Exception as exc:
+            logger.warning("episode_audio_missing", episode=external_id, key=key, error=str(exc))
+            destination.unlink(missing_ok=True)
+            continue
+        written.append(
+            {
+                "name": f"episodes/{destination.name}",
+                "sha256": sha256_file(destination).removeprefix("sha256:"),
+                "bytes": destination.stat().st_size,
+            }
+        )
+    return written
+
+
 def export_dataset(
     session: Session,
     *,
@@ -202,6 +258,7 @@ def export_dataset(
     label_version: str | None = None,
     episode: str | None = None,
     settings: Settings | None = None,
+    storage: ObjectStorage | None = None,
 ) -> ExportResult:
     """Write one export kind to disk.
 
@@ -212,6 +269,8 @@ def export_dataset(
         label_version: Which label version to export. Defaults to the configured one.
         episode: Restrict to a single episode external id.
         settings: Configuration override.
+        storage: Object store to copy episode audio out of. Omitted means no audio is written --
+            the metadata export is still complete and correct, it just cannot be diarized.
 
     Returns:
         Where the files landed and how many rows they hold.
@@ -234,6 +293,10 @@ def export_dataset(
 
     records: list[dict[str, Any]] = []
     import_run_ids: set[int] = set()
+    #: Episodes the exported rows came from, so their audio can be written out beside the data.
+    #: Keyed by external id, which is also the filename, so a duplicate is a no-op rather than a
+    #: second copy of the same recording.
+    episode_audio: dict[str, str] = {}
 
     if version is not None:
         current = latest_labels_subquery()
@@ -286,10 +349,14 @@ def export_dataset(
             )
             if segment.import_run_id:
                 import_run_ids.add(segment.import_run_id)
+            if segment.episode.audio_object_key:
+                episode_audio[segment.episode.external_id] = segment.episode.audio_object_key
 
     with data_path.open("w", encoding="utf-8", newline="\n") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+    audio_files = _write_episode_audio(output_dir, episode_audio, storage)
 
     counts_by_split: dict[str, int] = {}
     for record in records:
@@ -316,7 +383,8 @@ def export_dataset(
                 "name": data_path.name,
                 "sha256": sha256_file(data_path).removeprefix("sha256:"),
                 "bytes": data_path.stat().st_size,
-            }
+            },
+            *audio_files,
         ],
         "exported_at": dt.datetime.now(dt.UTC).isoformat(),
         "git_commit": git_commit(),

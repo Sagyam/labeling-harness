@@ -17,6 +17,7 @@ from app.services.importer import import_manifest
 from app.services.labeling import Decision, record_decision
 from app.services.queue_builder import build_queue
 from app.storage.local import LocalFilesystemStorage
+from app.utils.hashing import sha256_file
 
 pytestmark = pytest.mark.db
 
@@ -313,3 +314,72 @@ def test_export_of_an_empty_database_is_valid(
     result = export_dataset(db_session, kind="training", output_root=tmp_path / "out")
     assert result.row_count == 0
     assert json.loads(result.manifest_path.read_text())["row_count"] == 0
+
+
+# --- episode audio, for a post-export diarizer (D62) --------------------------------------
+
+
+def test_the_whole_episode_audio_is_written_beside_the_rows(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """A diarizer needs the recording, not the clips cut out of it (D58)."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    result = export_dataset(
+        db_session, kind="training", output_root=tmp_path / "out", storage=storage
+    )
+
+    audio_dir = result.output_dir / "episodes"
+    written = sorted(p.name for p in audio_dir.glob("*.flac"))
+    assert written, "no episode audio was exported"
+
+    exported_episodes = {r["episode_id"] for r in read_jsonl(result.data_path)}
+    assert {name.removesuffix(".flac") for name in written} <= exported_episodes
+    assert all((audio_dir / name).stat().st_size > 0 for name in written)
+
+
+def test_exported_audio_is_listed_in_the_manifest_with_a_digest(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """An export directory that does not account for its own bytes is not reproducible."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    result = export_dataset(
+        db_session, kind="training", output_root=tmp_path / "out", storage=storage
+    )
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+    audio_entries = [f for f in manifest["files"] if f["name"].startswith("episodes/")]
+    assert audio_entries
+    for entry in audio_entries:
+        path = result.output_dir / entry["name"]
+        assert path.is_file()
+        assert entry["bytes"] == path.stat().st_size
+        assert entry["sha256"] == sha256_file(path).removeprefix("sha256:")
+
+
+def test_an_export_without_a_store_still_produces_a_complete_dataset(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """No object store means no audio -- never a failed export."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    result = export_dataset(db_session, kind="training", output_root=tmp_path / "out")
+
+    assert read_jsonl(result.data_path)
+    assert not (result.output_dir / "episodes").exists()
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert [f["name"] for f in manifest["files"]] == ["training.jsonl"]
+
+
+def test_a_missing_audio_object_is_a_warning_not_a_failed_export(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """An episode whose audio predates the column must not take the whole export down."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    for episode in db_session.scalars(sa.select(Episode)):
+        episode.audio_object_key = "episodes/gone/audio.flac"
+    db_session.flush()
+
+    result = export_dataset(
+        db_session, kind="training", output_root=tmp_path / "out", storage=storage
+    )
+    assert read_jsonl(result.data_path)
+    assert not list((result.output_dir / "episodes").glob("*.flac"))

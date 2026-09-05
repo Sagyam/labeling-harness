@@ -68,6 +68,7 @@ class ImportReport:
     words_inserted: int = 0
     clips_uploaded: int = 0
     clips_replaced: int = 0
+    episode_audio_uploaded: bool = False
     peaks_written: int = 0
     peaks_reused: int = 0
     systems_created: int = 0
@@ -89,6 +90,8 @@ class ImportReport:
             f"{self.hypotheses_skipped} unchanged",
             f"  words             {self.words_inserted} inserted",
             f"  clips             {self.clips_uploaded} uploaded, {self.clips_replaced} replaced",
+            "  episode audio     "
+            + ("uploaded" if self.episode_audio_uploaded else "not shipped by the manifest"),
             f"  peaks             {self.peaks_written} computed, {self.peaks_reused} reused",
             f"  asr systems       {self.systems_created} created",
         ]
@@ -109,6 +112,11 @@ class _SegmentPlan:
     clip_changed: bool
     supplied_peaks: Path | None
     missing_system_ids: list[str]
+
+
+def episode_audio_object_key(episode_id: str) -> str:
+    """Where the whole episode's audio lives, beside the clips cut out of it."""
+    return f"episodes/{episode_id}/audio.flac"
 
 
 def clip_object_key(episode_id: str, segment_id: str) -> str:
@@ -241,7 +249,11 @@ def _upsert_systems(
 
 
 def _upsert_episode(
-    session: Session, manifest: Manifest, settings: Settings, report: ImportReport
+    session: Session,
+    manifest: Manifest,
+    settings: Settings,
+    report: ImportReport,
+    storage: ObjectStorage,
 ) -> Episode:
     """Fetch or create the episode. The split is assigned once and never recomputed."""
     external_id = manifest.episode_id
@@ -256,11 +268,22 @@ def _upsert_episode(
         "duration_seconds",
         "pipeline_version",
         "pipeline_commit",
+        "audio_path",
     }
     # The one choke point both the ingest form and an upstream `episode.json` pass through, so
     # it is where the speaker allowlist is enforced rather than at either caller (D56).
     extra = strip_speaker_pii({k: v for k, v in manifest.episode.items() if k not in known})
     published_at = manifest.episode.get("published_at")
+
+    # The whole recording, kept so a real diarizer can be run over it after the export (D62).
+    # Uploaded before the row is written: a key in the database that points at nothing is worse
+    # than a null, because every consumer would have to handle both anyway.
+    audio_key: str | None = None
+    audio_source = manifest.episode_audio_path()
+    if audio_source is not None:
+        audio_key = episode_audio_object_key(external_id)
+        storage.put_file(audio_key, audio_source, content_type="audio/flac")
+        report.episode_audio_uploaded = True
 
     if episode is None:
         episode = Episode(
@@ -271,6 +294,7 @@ def _upsert_episode(
             published_at=dt.date.fromisoformat(published_at) if published_at else None,
             source_audio_checksum=manifest.episode.get("source_audio_checksum"),
             duration_seconds=manifest.episode.get("duration_seconds"),
+            audio_object_key=audio_key,
             split=report.split,
             split_seed=settings.importer.split_seed,
             split_assigned_at=dt.datetime.now(dt.UTC),
@@ -279,6 +303,9 @@ def _upsert_episode(
         session.add(episode)
         session.flush()
         report.episode_created = True
+    elif audio_key is not None:
+        # A re-import that now ships the audio backfills it; one that does not keeps what is there.
+        episode.audio_object_key = audio_key
     return episode
 
 
@@ -432,7 +459,7 @@ def import_manifest(
     session.flush()
     report.import_run_id = run.id
 
-    episode = _upsert_episode(session, manifest, settings, report)
+    episode = _upsert_episode(session, manifest, settings, report, storage)
     systems = _upsert_systems(session, manifest, report)
 
     for plan in plans:

@@ -43,6 +43,18 @@ class Manifest:
         """Absolute path to a segment's clip."""
         return self.root / str(segment["clip_path"])
 
+    def episode_audio_path(self) -> Path | None:
+        """Absolute path to the whole episode's audio, when the manifest ships it.
+
+        Optional on purpose: an upstream pipeline that only exports clips stays valid, and the
+        episode simply has no audio to diarize later (D62).
+        """
+        declared = self.episode.get("audio_path")
+        if not declared:
+            return None
+        candidate = self.root / str(declared)
+        return candidate if candidate.is_file() else None
+
     def peaks_path(self, segment: dict[str, Any]) -> Path | None:
         """Absolute path to a segment's precomputed peaks, if the pipeline supplied them."""
         explicit = segment.get("peaks_path")

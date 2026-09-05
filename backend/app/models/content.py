@@ -53,6 +53,10 @@ class Episode(Base):
     published_at: Mapped[dt.date | None] = mapped_column(Date)
     source_audio_checksum: Mapped[str | None] = mapped_column(String(128))
     duration_seconds: Mapped[float | None] = mapped_column(Float)
+    #: The whole episode's normalised 16 kHz mono FLAC, kept beside the clips it was cut into so
+    #: a real diarizer can be run over it after the export (D58, D62). Null for anything imported
+    #: before episode audio was retained, and for a manifest that does not ship it.
+    audio_object_key: Mapped[str | None] = mapped_column(Text)
 
     #: Assigned once at import from hash(external_id, split_seed); never recomputed.
     split: Mapped[str] = mapped_column(String(16), nullable=False, default="unassigned")

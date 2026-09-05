@@ -93,6 +93,12 @@ export function Header({
       <div className="flex h-14 items-center justify-between gap-4 px-4 sm:px-6">
         {/* Left: Brand Identity */}
         <div className="flex items-center gap-3 shrink-0">
+          <img
+            src="/favicon.svg"
+            alt="Nepanglish Logo"
+            className="size-6 shrink-0 rounded-md select-none"
+          />
+
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="relative flex size-2.5 items-center justify-center">

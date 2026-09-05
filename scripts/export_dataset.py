@@ -16,6 +16,7 @@ from pathlib import Path
 from _bootstrap import bootstrap
 from app.db.session import session_scope
 from app.services.export import EXPORT_KINDS, ExportError, export_dataset
+from app.storage import build_storage
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = bootstrap()
+    storage = build_storage(settings)
 
     kinds = sorted(EXPORT_KINDS) if args.kind == "all" else [args.kind]
     try:
@@ -39,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
                     label_version=args.label_version,
                     episode=args.episode,
                     settings=settings,
+                    storage=storage,
                 )
                 print(result.render())
     except ExportError as exc:

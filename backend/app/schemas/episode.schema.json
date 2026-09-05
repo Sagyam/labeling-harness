@@ -16,6 +16,10 @@
     "pipeline_version": {"type": ["string", "null"], "maxLength": 64},
     "pipeline_commit": {"type": ["string", "null"], "maxLength": 64},
     "topic": {"type": ["string", "null"], "maxLength": 64},
+    "audio_path": {
+      "description": "The whole episode's audio, relative to the manifest root. Optional: a pipeline that exports only clips stays valid, and the episode then has nothing for a post-export diarizer to run on (D62).",
+      "type": ["string", "null"]
+    },
     "speakers": {
       "description": "Per-speaker facts, keyed by the segment-level speaker_id. Fields outside `role` and `gender` are dropped at import rather than rejected (D56).",
       "type": "object",

@@ -80,6 +80,7 @@ def build_export_fixture(
     sample_rate: int = 16000,
     channels: int = 1,
     empty_hypothesis_segments: Sequence[int] = (),
+    with_episode_audio: bool = True,
 ) -> Path:
     """Write a synthetic export directory and return its path.
 
@@ -99,6 +100,9 @@ def build_export_fixture(
         sample_rate: Clip sample rate; anything but 16000 must be rejected at import.
         channels: Clip channel count; anything but 1 must be rejected at import.
         empty_hypothesis_segments: Indices that get zero hypotheses, for the error queue.
+        with_episode_audio: Also write the whole episode's audio and point `audio_path` at it, as
+            the real pipeline does. Off exercises a manifest from an upstream that ships only
+            clips, which stays valid and simply has nothing to diarize later (D62).
 
     Returns:
         The export directory path.
@@ -185,6 +189,18 @@ def build_export_fixture(
 
         records.append(record)
 
+    episode_audio_relative: str | None = None
+    if with_episode_audio:
+        episode_audio_relative = "audio/episode.flac"
+        _write_clip(
+            root / episode_audio_relative,
+            seconds=min(round(cursor, 3), 30.0),
+            rng=_clip_rng(seed, f"{episode_id}:episode"),
+            sample_rate=sample_rate,
+            clip_format=clip_format.upper(),
+            channels=channels,
+        )
+
     episode = {
         "episode_id": episode_id,
         "show_id": episode_id.split("_")[0],
@@ -196,6 +212,8 @@ def build_export_fixture(
         "pipeline_version": "fixture-v1",
         "pipeline_commit": "0000000",
     }
+    if episode_audio_relative:
+        episode["audio_path"] = episode_audio_relative
     (root / "episode.json").write_text(json.dumps(episode, indent=2), encoding="utf-8")
     (root / "segments.jsonl").write_text(
         "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",

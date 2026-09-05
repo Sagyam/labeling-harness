@@ -901,6 +901,10 @@ def _run_stages(
             "source_audio_checksum": source_checksum,
             "pipeline_version": "web_v1",
             "pipeline_commit": "web",
+            # The whole normalised recording, not just the clips cut from it. Kept so a serious
+            # diarizer can be run over the episode after the export, which is where speaker
+            # identity now belongs (D58, D62).
+            "audio_path": norm_flac.name,
             **job_meta,
         }
 

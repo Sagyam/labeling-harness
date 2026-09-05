@@ -10,10 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_config, get_session, require_auth
+from app.api.deps import get_config, get_object_storage, get_session, require_auth
 from app.api.schemas import ExportHistoryItem, ExportIn, ExportOut, ExportOutItem
 from app.config import Settings
 from app.services.export import EXPORT_KINDS, ExportError, export_dataset
+from app.storage.base import ObjectStorage
 
 router = APIRouter(tags=["export"], dependencies=[Depends(require_auth)])
 
@@ -23,6 +24,7 @@ def run_export(
     body: ExportIn,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_config),
+    storage: ObjectStorage = Depends(get_object_storage),
 ) -> ExportOut:
     """Generate reproducible JSONL and manifest export files for one or all kinds."""
     if body.kind != "all" and body.kind not in EXPORT_KINDS:
@@ -45,6 +47,7 @@ def run_export(
                 label_version=body.label_version,
                 episode=body.episode,
                 settings=settings,
+                storage=storage,
             )
         except ExportError as exc:
             raise HTTPException(
