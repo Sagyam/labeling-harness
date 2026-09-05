@@ -122,6 +122,27 @@ def test_next_task_returns_the_top_priority_task(client: TestClient, imported_ep
         assert "confidence" in w
 
 
+def test_next_task_reports_where_the_systems_contradicted_the_seed(
+    client: TestClient, imported_episode: str
+) -> None:
+    """Disputes are computed per request against this task's seed, not stored per segment."""
+    task = client.get("/tasks/next").json()
+    assert "disputes" in task
+    seed_words = {
+        w["position"]
+        for h in task["segment"]["hypotheses"]
+        if h["id"] == task["seed_hypothesis_id"]
+        for w in h["words"]
+    }
+    for dispute in task["disputes"]:
+        # Every dispute anchors to a real seed word, so the editor can always swap it.
+        assert dispute["seed_position"] in seed_words
+        assert dispute["end_time"] >= dispute["start_time"]
+        # And offers at least one alternative, from a system that is not the seed.
+        assert dispute["alternatives"]
+        assert all(a["system_id"] != task["seed_system_id"] for a in dispute["alternatives"])
+
+
 def test_next_task_marks_the_task_in_progress(
     client: TestClient, db_session: Session, imported_episode: str
 ) -> None:

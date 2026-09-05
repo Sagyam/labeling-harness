@@ -139,6 +139,20 @@ export interface QueueRow {
   peaks_url: string
 }
 
+export interface DisputeAlternative {
+  system_id: string
+  word: string
+}
+
+/** A seed word every other system that spoke at that moment contradicted. */
+export interface Dispute {
+  seed_position: number
+  seed_word: string
+  start_time: number
+  end_time: number
+  alternatives: DisputeAlternative[]
+}
+
 export interface Task {
   id: number
   segment_id: number
@@ -150,6 +164,7 @@ export interface Task {
   seed_system_id: string | null
   served_at: string
   segment: Segment
+  disputes?: Dispute[]
 }
 
 export interface PeaksPayload {

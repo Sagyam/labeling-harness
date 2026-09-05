@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   RiArrowLeftLine,
   RiDeleteBin6Line,
@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 
 import { Chip } from '@/components/Chip'
 import { DiffViewer } from '@/components/DiffViewer'
+import { DisputePopover } from '@/components/DisputePopover'
 import { HypothesesList } from '@/components/HypothesesList'
 import { KaraokeTranscript } from '@/components/KaraokeTranscript'
 import { TranslitEditor } from '@/components/TranslitEditor'
@@ -32,7 +33,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, resolveUrl } from '@/services/api'
 import { cn } from '@/lib/utils'
-import type { PeaksPayload, Task } from '@/types'
+import type { Dispute, PeaksPayload, Task } from '@/types'
 
 interface EditorViewProps {
   task: Task
@@ -63,6 +64,11 @@ export function EditorView({
   // The karaoke line follows the hypothesis the annotator is editing, so the words lighting up
   // are the words in the box -- not another system's.
   const seedWords = seedHypothesis?.words ?? segment.hypotheses[0]?.words ?? []
+  const disputes = task.disputes ?? []
+  const contestedPositions = useMemo(
+    () => new Set(disputes.map((d) => d.seed_position)),
+    [disputes],
+  )
 
   const [text, setText] = useState<string>(seedText)
   const [peaks, setPeaks] = useState<PeaksPayload | null>(null)
@@ -74,6 +80,10 @@ export function EditorView({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [isPopupOpen, setIsPopupOpen] = useState<boolean>(false)
   const [isDeleteOpen, setIsDeleteOpen] = useState<boolean>(false)
+  const [openDispute, setOpenDispute] = useState<{ dispute: Dispute; anchor: HTMLElement } | null>(
+    null,
+  )
+  const momentTimerRef = useRef<number | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -85,6 +95,11 @@ export function EditorView({
     openedAtRef.current = Date.now()
     setCurrentTime(0)
     setIsPlaying(false)
+    setOpenDispute(null)
+    if (momentTimerRef.current !== null) {
+      window.clearTimeout(momentTimerRef.current)
+      momentTimerRef.current = null
+    }
 
     if (audioRef.current) {
       audioRef.current.pause()
@@ -164,6 +179,68 @@ export function EditorView({
 
   const seekDelta = (delta: number) => {
     if (audioRef.current) seek(audioRef.current.currentTime + delta)
+  }
+
+  /** Play only the disputed moment, padded so the word does not start or end clipped.
+   *
+   * Stopped on a timer rather than from `timeupdate`, which fires about four times a second --
+   * a quarter-second overshoot on a word that lasts a third of one would play most of the next.
+   */
+  const playMoment = (start: number, end: number) => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (momentTimerRef.current !== null) window.clearTimeout(momentTimerRef.current)
+    const from = Math.max(0, start - 0.05)
+    const to = end + 0.05
+    seek(from, true)
+    momentTimerRef.current = window.setTimeout(
+      () => {
+        audio.pause()
+        momentTimerRef.current = null
+      },
+      ((to - from) / Number(playbackRate)) * 1000,
+    )
+  }
+
+  /**
+   * Swap one disputed word in the transcript.
+   *
+   * The seed's words concatenate back to its text (exactly so for Scribe, on every hypothesis
+   * measured), so the nth whitespace-separated token is the nth word. That stops being true once
+   * the annotator edits, so the token at that index is checked against the word we expected and
+   * we look either side before giving up -- silently rewriting the wrong word would be much worse
+   * than declining to.
+   */
+  const replaceDisputedWord = (dispute: Dispute, replacement: string) => {
+    const matches = [...text.matchAll(/\S+/g)]
+    // `\p{M}` is not optional. Devanagari vowel signs are combining marks, so a class of only
+    // letters and numbers treats the `ो` of `भयो` as trailing punctuation, strips it, and leaves
+    // it stranded after the replacement. `analysis.py` carries the same warning about `\w`.
+    const EDGE = /^[^\p{L}\p{N}\p{M}]*|[^\p{L}\p{N}\p{M}]*$/gu
+    const strip = (s: string) => s.replace(EDGE, '')
+    const wanted = strip(dispute.seed_word)
+    const candidates = [
+      dispute.seed_position,
+      ...[1, 2, 3].flatMap((d) => [dispute.seed_position - d, dispute.seed_position + d]),
+    ]
+    const index = candidates.find(
+      (i) => i >= 0 && i < matches.length && strip(matches[i][0]) === wanted,
+    )
+    if (index === undefined) {
+      toast.error(`Could not find "${dispute.seed_word}" in the transcript — edit it by hand.`)
+      return
+    }
+    const match = matches[index]
+    const at = match.index ?? 0
+    // Keep whatever punctuation was attached to the token -- a trailing danda, an opening quote
+    // -- and swap only the word between them. Sliced by position rather than by searching for
+    // the old word inside the token, which would match the wrong place in a repeated string.
+    const token = match[0]
+    const lead = token.slice(0, token.length - token.replace(/^[^\p{L}\p{N}\p{M}]*/u, '').length)
+    const trail = token.slice(token.replace(/[^\p{L}\p{N}\p{M}]*$/u, '').length)
+    const swapped = `${lead}${replacement}${trail}`
+    setText(`${text.slice(0, at)}${swapped}${text.slice(at + match[0].length)}`)
+    toast.success(`Replaced with "${replacement}"`)
   }
 
   const getDurationMs = () => Math.max(0, Date.now() - openedAtRef.current)
@@ -350,6 +427,11 @@ export function EditorView({
                 words={seedWords}
                 audioRef={audioRef}
                 onSeekWord={(time) => seek(time, true)}
+                contestedPositions={contestedPositions}
+                onPickContested={(position, anchor) => {
+                  const dispute = disputes.find((d) => d.seed_position === position)
+                  if (dispute) setOpenDispute({ dispute, anchor })
+                }}
               />
             </div>
           )}
@@ -466,6 +548,19 @@ export function EditorView({
           </Button>
         </div>
       </div>
+
+      {openDispute && (
+        <DisputePopover
+          dispute={openDispute.dispute}
+          anchor={openDispute.anchor}
+          onPlayMoment={playMoment}
+          onReplace={(replacement) => {
+            replaceDisputedWord(openDispute.dispute, replacement)
+            setOpenDispute(null)
+          }}
+          onClose={() => setOpenDispute(null)}
+        />
+      )}
 
       <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <AlertDialogContent>

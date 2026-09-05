@@ -14,6 +14,8 @@ from app.api.schemas import (
     BulkAcceptIn,
     BulkAcceptOut,
     DecisionOut,
+    DisputeAlternativeOut,
+    DisputeOut,
     FlagIn,
     LabelIn,
     SkipIn,
@@ -23,6 +25,12 @@ from app.api.serializers import serialize_segment
 from app.config import Settings
 from app.models import AnnotationTask, AsrHypothesis, Episode, Segment
 from app.models.enums import ACTIVE_TASK_STATUSES
+from app.services.consensus import (
+    ConsensusHypothesis,
+    ConsensusWord,
+    build_slots,
+    seed_disputes,
+)
 from app.services.labeling import Decision, LabelingError, record_decision, record_skip
 
 router = APIRouter(tags=["tasks"], dependencies=[Depends(require_auth)])
@@ -49,6 +57,43 @@ def _load_task(session: Session, task_id: int) -> AnnotationTask:
     return task
 
 
+def _disputes_for(task: AnnotationTask) -> list[DisputeOut]:
+    """Where the other systems contradicted the hypothesis this task will show.
+
+    Computed here rather than stored: it is a pure function of `hypothesis_words`, which is
+    immutable once imported, and it depends on the *seed*, which is chosen per task. Persisting
+    it would mean writing a per-seed answer at ingest, before the seed exists.
+    """
+    seed = task.seed_hypothesis
+    if seed is None:
+        return []
+    hypotheses = [
+        ConsensusHypothesis(
+            system_id=h.system.system_id,
+            words=[
+                ConsensusWord(
+                    position=w.position, word=w.word_raw, start=w.start_time, end=w.end_time
+                )
+                for w in h.words
+            ],
+        )
+        for h in task.segment.hypotheses
+    ]
+    disputes = seed_disputes(build_slots(hypotheses), seed_system_id=seed.system.system_id)
+    return [
+        DisputeOut(
+            seed_position=d.seed_position,
+            seed_word=d.seed_word,
+            start_time=d.start,
+            end_time=d.end,
+            alternatives=[
+                DisputeAlternativeOut(system_id=a.system_id, word=a.word) for a in d.alternatives
+            ],
+        )
+        for d in disputes
+    ]
+
+
 def _serialize_task(session: Session, task: AnnotationTask) -> TaskOut:
     seed = task.seed_hypothesis
     return TaskOut(
@@ -62,6 +107,7 @@ def _serialize_task(session: Session, task: AnnotationTask) -> TaskOut:
         seed_system_id=seed.system.system_id if seed else None,
         served_at=dt.datetime.now(dt.UTC),
         segment=serialize_segment(session, task.segment),
+        disputes=_disputes_for(task),
     )
 
 

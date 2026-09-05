@@ -1229,3 +1229,39 @@ if the storage matters more than the option.
 
 **Reversal:** set `diarize: true`. Nothing downstream changed — null already meant "not diarized",
 which is what every other system has always reported.
+
+## D53 — Cross-system disagreement is measured on the clock, and shown to the annotator
+
+`app/services/consensus.py` groups every system's word spans for a segment into **slots** — one
+stretch of time that one or more systems put a word in — and reports the seed words that every
+other system present contradicted. `/tasks/*` returns those as `disputes`, and the editor
+underlines them, offers what the others heard, and swaps one in a click.
+
+**Why time rather than strings.** The existing `word_disagreement_rate` compares token sequences
+with `difflib`, which has to *infer* which word corresponds to which. That inference fails on
+exactly the segments worth reviewing: a repeated word matches the wrong occurrence, and a
+re-ordering scores as two errors. Every system heard the same audio, so their spans are
+observations of one timeline and the correspondence is a fact rather than a guess. Spans are
+clip-relative by construction (D26), so no offset arithmetic is involved.
+
+**Outvoted, not merely disputed.** A slot counts against the seed only when *every* other system
+present disagrees. With three systems, one dissenter against one supporter is weak evidence and
+underlining it would mark most of the transcript. Measured over the pilot episode the strict rule
+underlines a median of 4 words per segment (13.5% of them), which is dense enough to be worth
+looking at and sparse enough to read.
+
+**Computed, not stored.** It is a pure function of `hypothesis_words`, which is immutable once
+imported, so the answer cannot go stale; and it depends on the *seed*, which is chosen per task at
+queue build, so there is no per-segment answer to persist at ingest. No migration, no re-ingest,
+and the disagreement rule can be changed without touching the schema.
+
+**Why not fuse the hypotheses instead.** A ROVER-style composite that votes per slot was measured
+against the 22 human transcripts available and came out worse than every one of its inputs (0.254
+mean WER against Scribe's 0.151, Flash's 0.161 and MAI's 0.205), because 44% of slots do not hold
+all three systems and the vote degenerates there. It would also manufacture a transcript no model
+produced, with no `asr_hypotheses` row to point `segment_labels.seed_hypothesis_id` at. Handing
+the annotator the alternatives keeps the 2:1 signal and leaves the decision — and the provenance —
+with a human.
+
+**Reversal:** delete the service and the `disputes` field. Nothing else reads it, no data is
+written by it, and no stored column changes.

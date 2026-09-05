@@ -99,6 +99,23 @@ class QueueRowOut(BaseModel):
     peaks_url: str | None = None
 
 
+class DisputeAlternativeOut(BaseModel):
+    """What one other system heard at a disputed moment."""
+
+    system_id: str
+    word: str
+
+
+class DisputeOut(BaseModel):
+    """A seed word every other system that spoke at that moment contradicted."""
+
+    seed_position: int
+    seed_word: str
+    start_time: float
+    end_time: float
+    alternatives: list[DisputeAlternativeOut]
+
+
 class TaskOut(BaseModel):
     """A task with its full segment payload, for the editor."""
 
@@ -112,6 +129,9 @@ class TaskOut(BaseModel):
     seed_system_id: str | None = None
     served_at: dt.datetime
     segment: SegmentOut
+    #: Computed per request from the stored word spans, against this task's seed. Empty when the
+    #: seed has no word timings, which is the honest answer rather than a claim of agreement.
+    disputes: list[DisputeOut] = Field(default_factory=list)
 
 
 class DecisionIn(BaseModel):
