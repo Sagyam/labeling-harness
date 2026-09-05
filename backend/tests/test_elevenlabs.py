@@ -118,20 +118,22 @@ def test_the_request_targets_scribe_with_the_key_and_the_language(
     assert b"word" in body  # timestamps_granularity
 
 
-def test_keyterms_are_sent_because_scribe_takes_no_prompt(db_session: Session, clip) -> None:
-    """Scribe has no free-text prompt. Key terms are the only lexical steering it accepts."""
+def test_no_keyterms_are_sent(db_session: Session, clip) -> None:
+    """Key terms are not sent at all, and there is no parameter left to send them with (D48).
+
+    They were Scribe's only lexical steering and they did not survive measurement: over 23 clips
+    the episode's own vocabulary raised script violations rather than lowering them, cost the
+    route its best agreement with the other systems, and on one clip romanized a whole English
+    sentence. They also carry a $0.05/hr surcharge.
+    """
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["body"] = bytes(request.content)
         return httpx.Response(200, json=transcription())
 
-    make_client(db_session, handler).transcribe(
-        clip, route="asr_scribe_v2", keyterms=["meeting", "podcast"]
-    )
-    assert b"keyterms[0]" in seen["body"]
-    assert b"meeting" in seen["body"]
-    assert b"podcast" in seen["body"]
+    make_client(db_session, handler).transcribe(clip, route="asr_scribe_v2")
+    assert b"keyterms" not in seen["body"]
 
 
 # --- the response --------------------------------------------------------------------------

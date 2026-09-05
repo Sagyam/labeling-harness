@@ -177,8 +177,8 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 
 | Route | Provider | API shape | Returns | Steered by |
 |---|---|---|---|---|
-| `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne`, key terms |
-| `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne`, the full policy prompt |
+| `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne` — nothing else (D48) |
+| `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne` — nothing else (D48) |
 | `asr_gemini_composite` | Vertex AI (audio) + OpenRouter (script restore) | `POST …/gemini-3.5-transcribe-preview:generateContent`, then a chat rewrite | text, word spans, speaker per segment | `language_codes: [ne-NP]` only; no prompt reaches the recogniser |
 | `asr_gemini_flash` | Vertex AI (direct) | `POST …/gemini-3.8-flash:generateContent` | text only | the full policy prompt as `systemInstruction`, `language: ne` |
 
@@ -191,6 +191,11 @@ Scribe is first because it is the only configured transcriber reporting per-word
 so it remains the source of the `low_confidence` term. Reordering the routes moves the CMI
 measurement to a different model, and it also moves `low_confidence`, because a hypothesis with
 no `avg_logprob` never wins the train/val "highest confidence" comparison.
+
+Only `asr_gemini_flash` is actually steerable. It is the one route whose model reads the clip as a
+chat model and takes the policy as a `systemInstruction`; the other three are dedicated
+recognisers, and none of them can be told anything in prose (D48). Two of the four therefore write
+English in Devanagari by default, and only the composite has a repair step for it.
 
 Ingestion routes each clip across all four systems, producing a four-way disagreement signal for
 queue prioritisation. Each hears only the audio -- no system is ever shown another's transcript,

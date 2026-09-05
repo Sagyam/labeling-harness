@@ -988,3 +988,59 @@ stream is opened; a live job opens one, and closes it on the terminal event. Rea
 double-mount was hiding inside the same bug.
 
 **Reversal:** the component is self-contained; nothing else reads `ACTIVE_JOB_KEY`.
+
+## D48 — Three of the four transcribers cannot be steered, so they are no longer sent steering
+
+`asr_scribe_v2` sends no key terms and `asr_mai_transcribe_2` sends no prompt. Both are now
+steered by their language code alone, which is the whole of what a dedicated recogniser will
+accept. `ASR_PROMPT` still goes to `audio_chat` routes, which is the only shape that reads it.
+
+**Why:** the assumption was that only Gemini 3.5 Transcribe was unsteerable (D39), and that the
+other two were being told the transcript policy in the ways they accept. Measured over one
+code-switched episode — 23 clips, a TV review in Nepali-English — neither is true.
+
+**MAI ignores the prompt entirely.** OpenRouter does not list `prompt` among the model's
+supported parameters (`max_tokens`, `temperature`, `top_p`, `max_completion_tokens`). Four clips
+were run through six arms, including a repeat of the control to establish that the model is
+deterministic at all. The control, the real `ASR_PROMPT`, and an extreme "write every English word
+in Latin, never Devanagari" prompt returned **byte-identical** transcripts on 4/4 clips — as did
+dropping `language` altogether, so `language: ne` is also inert and the model auto-detects. The
+one input that changes the output is `language: en`, which changes it on 4/4 clips and romanizes
+the Nepali half (`तपाईंको living room` → `tapayko living room`). It stays `ne`.
+
+**Scribe's key terms are worse than nothing.** Three arms over all 23 clips: no key terms, the
+committed generic list, and an oracle list of 36 terms taken from the episode's own vocabulary —
+the list the chicken-and-egg problem says you cannot have. The oracle list *raised*
+English-written-in-Devanagari events from 19 to 23 and posted the worst agreement with the other
+three systems (0.807 against 0.821 for no key terms). The effect is real but strictly local:
+listed proper nouns bind (`एन्ड्रोइड टिभी` → `Android TV`), and everything else is unprotected —
+on one clip the oracle list romanized a whole English sentence, `You can get better deals on this
+TV` → `यू क्यान गेट बेटर डिल्स अन दिस टिभी`, a 30-point drop in Latin ratio.
+
+**Scribe is also not deterministic**, which is why the arms are reported against a noise floor:
+re-running yesterday's exact configuration reproduced it byte-for-byte on only 2 of 23 clips, mean
+|ΔLatin%| 1.7. The key-term effects (1.2–3.3) sit inside that band. Only the one 30-point
+regression is clearly outside it.
+
+**Consequences.** Scribe drops to the $0.22/hr base rate; the $0.05/hr key-term surcharge is never
+incurred, and `calculate_elevenlabs_cost` no longer takes a `has_keyterms` argument. MAI stops
+paying for prompt tokens that were discarded. Neither transcript changes in any way the harness
+can measure, so no hypothesis already imported is invalidated.
+
+**What this does not fix.** Two of the four systems still write English in Devanagari and now
+provably cannot be told not to. The composite has a repair step for it; Scribe has nothing, and
+that is a property of the vendor rather than of the configuration. Script correctness is a
+post-hoc repair problem or a model-choice problem, not a prompting problem.
+
+**Not done: seeding key terms from another system's output.** It would have coupled two
+hypotheses that are supposed to be independent measurements, and the coupling would be tightest at
+the code-switch points the corpus exists to measure. A term hallucinated by one system and primed
+into another reads as consensus, which *lowers* `word_disagreement_rate` and so hides the segment
+from the review queue. Episode metadata is a clean source — this episode's YouTube tags do carry
+`Hisense 65Q6Q QLED TV`, `Samsung`, `LG` — but it names the proper nouns Scribe already gets right
+and none of the loanwords it fails on (`bleed`, `support`, `sound`, `ethernet`, `boost`). Moot
+either way now that the lever is known not to work.
+
+**Reversal:** cheap and local. Restore the `keyterms` parameter on `ElevenLabsClient.transcribe`
+and the `DEFAULT_KEYTERMS` tuple, and drop the `dedicated` guard in `transcription.transcribe` so
+the prompt reaches the transcription endpoint again. The measurements above are the reason not to.

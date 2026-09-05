@@ -6,8 +6,10 @@ probabilities (decision D21). Every call still lands in ``llm_requests``, so the
 trail has no gap in it.
 
 Scribe has no free-text prompt parameter -- unlike a chat model, it cannot be told in prose that
-the audio is code-switched. The levers it does offer are ``language_code`` and ``keyterms``, and
-both are set from the route configuration.
+the audio is code-switched. It offered two levers and now uses one: ``language_code``, from the
+route configuration. ``keyterms`` was measured and dropped (D48) -- it raised script violations
+rather than lowering them, cost the route its best agreement with the other systems, and carries
+a $0.05/hr surcharge. What remains is the language code.
 """
 
 from __future__ import annotations
@@ -60,7 +62,6 @@ class ElevenLabsClient(ProviderClient):
         audio_path: Path | str,
         *,
         route: str,
-        keyterms: list[str] | None = None,
         language: str | None = None,
         dry_run: bool | None = None,
         timeout_seconds: float | None = None,
@@ -70,7 +71,6 @@ class ElevenLabsClient(ProviderClient):
         Args:
             audio_path: The clip to transcribe.
             route: Route name from ``config/llm_routes.yaml``.
-            keyterms: Terms to bias recognition towards. Scribe's only lexical steering.
             language: ISO language hint, overriding the route's.
             dry_run: Override the configured dry-run mode for this call.
             timeout_seconds: Override the route's timeout.
@@ -134,7 +134,7 @@ class ElevenLabsClient(ProviderClient):
         )
         url = f"{self.config.elevenlabs_base_url.rstrip('/')}/speech-to-text"
         headers = {"xi-api-key": self.api_key}
-        form = self._form_fields(route_config, language=language, keyterms=keyterms)
+        form = self._form_fields(route_config, language=language)
 
         def send() -> httpx.Response:
             with open(audio_file, "rb") as handle:
@@ -165,7 +165,7 @@ class ElevenLabsClient(ProviderClient):
         duration = get_audio_duration(audio_file)
         if duration is None and words:
             duration = max((w.get("end") or 0.0 for w in words), default=None)
-        cost = calculate_elevenlabs_cost(duration or 0.0, has_keyterms=bool(keyterms))
+        cost = calculate_elevenlabs_cost(duration or 0.0)
         result = AsrResult(
             route=route,
             model=model_id,
@@ -195,7 +195,6 @@ class ElevenLabsClient(ProviderClient):
         route_config: LlmRoute,
         *,
         language: str | None,
-        keyterms: list[str] | None,
     ) -> dict[str, Any]:
         """Build the multipart fields for one Scribe request."""
         form: dict[str, Any] = {
@@ -210,8 +209,6 @@ class ElevenLabsClient(ProviderClient):
             form["language_code"] = hint
         if route_config.temperature is not None:
             form["temperature"] = str(route_config.temperature)
-        for index, term in enumerate(keyterms or []):
-            form[f"keyterms[{index}]"] = term
         return form
 
 

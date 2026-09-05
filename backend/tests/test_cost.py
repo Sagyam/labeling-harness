@@ -23,18 +23,13 @@ from app.llm.cost import (
 )
 
 
-def test_elevenlabs_scribe_v2_pricing_with_and_without_keyterms() -> None:
+def test_elevenlabs_scribe_v2_is_billed_at_the_base_rate() -> None:
+    """The harness stopped sending key terms (D48), so the $0.05/hr surcharge is never incurred."""
     # 3600 seconds = 1 hour
-    cost_with_keyterms = calculate_elevenlabs_cost(3600.0, has_keyterms=True)
-    assert cost_with_keyterms == Decimal("0.270000")
+    assert calculate_elevenlabs_cost(3600.0) == Decimal("0.220000")
 
-    cost_base_only = calculate_elevenlabs_cost(3600.0, has_keyterms=False)
-    assert cost_base_only == Decimal("0.220000")
-
-    # 10 second clip
-    cost_10s = calculate_elevenlabs_cost(10.0, has_keyterms=True)
-    # 10 * 0.27 / 3600 = 0.00075
-    assert cost_10s == Decimal("0.000750")
+    # 10 second clip: 10 * 0.22 / 3600
+    assert calculate_elevenlabs_cost(10.0) == Decimal("0.000611")
 
 
 def test_openrouter_mai_transcribe_2_pricing() -> None:

@@ -24,7 +24,10 @@ routes:
   # `low_confidence` term of the priority score has no other source.
   #
   # Scribe takes no free-text prompt, so the transcript policy cannot be stated to it in prose.
-  # `language: ne` and the key terms in app/llm/transcription.py are the whole of its steering.
+  # `language: ne` is now the whole of its steering: key terms were the other lever and they were
+  # measured away in D48. Given this episode's own vocabulary as an oracle list, Scribe raised its
+  # script violations (19 -> 23 over 23 clips), posted its worst agreement with the other three
+  # systems, and on one clip romanized an entire English sentence. They also cost $0.05/hr.
   asr_scribe_v2:
     provider: elevenlabs
     api: transcription
@@ -35,6 +38,12 @@ routes:
   # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
   # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash
   # as the secondary disagreement signal (decision D28).
+  #
+  # It is sent no prompt, and this is measured rather than assumed (D48). OpenRouter does not
+  # list `prompt` among the model's supported parameters, and the live model answered the policy
+  # prompt, an extreme "Latin script only" prompt and no prompt at all with byte-identical
+  # transcripts on every clip tried -- as did dropping `language` entirely. `language: en` is the
+  # only input that changes the output, and it romanizes the Nepali half, so it stays `ne`.
   asr_mai_transcribe_2:
     provider: openrouter
     api: transcription

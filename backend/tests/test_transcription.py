@@ -227,9 +227,18 @@ def test_the_policy_prompt_is_sent_to_the_audio_chat_model(
     assert b"input_audio" in body
 
 
-def test_the_policy_prompt_is_sent_to_the_transcription_endpoint(
+def test_a_dedicated_recogniser_is_sent_no_prompt_only_its_language(
     db_session: Session, clip, recorder
 ) -> None:
+    """A speech recogniser on the transcription endpoint cannot read prose, so none is sent.
+
+    OpenRouter's `/audio/transcriptions` takes a `prompt`, but for a dedicated recogniser it is
+    decoder context rather than an instruction, and MAI-Transcribe-2 does not list it as a
+    supported parameter at all. Measured against the live model: the policy prompt, an extreme
+    "Latin script only" prompt and no prompt produced byte-identical transcripts on every clip
+    tried, and so did dropping the language hint (D48). Sending it bought nothing and cost
+    tokens, so the route is steered by its language code alone.
+    """
     test_routes = routes(
         routes={
             **routes().routes,
@@ -244,18 +253,18 @@ def test_the_policy_prompt_is_sent_to_the_transcription_endpoint(
     )
     transcribe(db_session, clip, route="asr_custom_endpoint", config=test_routes)
     body = bytes(recorder[-1].content)
-    assert b"Devanagari" in body
-    assert b"ne" in body  # the route's language hint
+    assert b"Devanagari" not in body, "a dedicated recogniser cannot follow prose"
+    assert b"ne" in body  # the route's language hint is the whole of its steering
 
 
-def test_scribe_is_steered_by_language_and_keyterms_instead_of_a_prompt(
+def test_scribe_is_steered_by_its_language_code_and_nothing_else(
     db_session: Session, clip, recorder
 ) -> None:
-    """Scribe has no prompt parameter, so the policy has to be expressed the ways it accepts."""
+    """Scribe takes no prompt, and its key terms were measured to be worse than nothing (D48)."""
     transcribe(db_session, clip, route="asr_scribe_v2", config=routes())
     body = bytes(recorder[-1].content)
     assert b"language_code" in body
-    assert b"keyterms[0]" in body
+    assert b"keyterms" not in body, "key terms cost $0.05/hr and did not survive measurement"
     assert b"Devanagari" not in body, "Scribe has no prompt field to send the policy to"
 
 

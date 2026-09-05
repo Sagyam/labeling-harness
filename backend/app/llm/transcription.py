@@ -7,10 +7,14 @@ Vertex AI.
 
 The transcript policy lives here too. The corpus is code-switched, and the rule is that a word is
 written in the script of the language it belongs to, so every model that can be told anything is
-told both that the mixing is expected and which script each half takes. Scribe takes no prose
-instruction at all, which is why it is given a language code and key terms instead. Gemini 3.5
-Transcribe takes neither -- prose is refused and key terms cost it its speaker labels -- so it has
-no lever at all, and renders English words in Devanagari (D39).
+told both that the mixing is expected and which script each half takes.
+
+That set is smaller than it looks. Only a general chat model reading the clip -- `audio_chat` --
+actually follows the policy. Every dedicated speech recogniser configured here ignores it, each
+in its own way: Scribe has no prompt field, MAI-Transcribe-2 accepts a `prompt` and discards it,
+and Gemini 3.5 Transcribe refuses prose outright. So a `transcription` route is sent its language
+code and nothing else, and the two that write English in Devanagari are corrected afterwards --
+by the script-restore step, or not at all (D48).
 """
 
 from __future__ import annotations
@@ -34,10 +38,10 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-#: The transcript policy itself, and the whole of what a dedicated speech recogniser is told.
-#: The rule that matters most is the one a multilingual model gets wrong by default: it will
-#: happily render a Nepali word in Latin or an English word in Devanagari, and either destroys
-#: the code-switch measurement the corpus exists to make.
+#: The transcript policy itself. The rule that matters most is the one a multilingual model gets
+#: wrong by default: it will happily render a Nepali word in Latin or an English word in
+#: Devanagari, and either destroys the code-switch measurement the corpus exists to make.
+#: Only a chat model reading the audio can be held to it; see the module docstring.
 SCRIPT_POLICY = (
     "This is a Nepali-English code-switched conversation: the speakers mix both languages "
     "freely, often within a single sentence. Transcribe verbatim -- exactly what is said, "
@@ -54,21 +58,6 @@ ASR_PROMPT = (
     f"{SCRIPT_POLICY}\n\n"
     "Reply with the transcript and nothing else: no preamble, no translation, no commentary, no "
     "quotation marks. If there is no intelligible speech, reply with an empty string."
-)
-
-#: Terms biasing Scribe towards the English half of the vocabulary. Scribe has no prompt, so this
-#: and the language code are the only steering it accepts.
-DEFAULT_KEYTERMS = (
-    "meeting",
-    "podcast",
-    "episode",
-    "data",
-    "team",
-    "project",
-    "schedule",
-    "update",
-    "software",
-    "technology",
 )
 
 
@@ -182,20 +171,24 @@ def transcribe(
     if route_config is None:
         raise LlmRouteNotConfigured(f"no route named {route!r} in llm_routes.yaml")
 
+    # A route on the transcription endpoint drives a dedicated recogniser, and not one of them
+    # can be told anything in prose -- so none is sent one. Measured, not assumed: MAI answered
+    # byte-identically to the policy prompt, to an extreme "Latin script only" prompt and to no
+    # prompt at all, on every clip tried; Scribe has no prompt field; Vertex 400s on one (D48).
+    dedicated = route_config.api == "transcription"
+
     if route_config.provider == "elevenlabs":
         return ElevenLabsClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
-            keyterms=list(DEFAULT_KEYTERMS),
             dry_run=dry_run,
         )
     if route_config.provider == "vertex":
-        # The dedicated recogniser takes no steering at all. Vertex answers a systemInstruction
-        # with 400 "The input system_instruction is not supported.", a text part in `contents` is
-        # accepted but ignored, and custom vocabulary is accepted and then silently costs the
-        # route its speaker labels (D39). So it gets the audio, the language codes and nothing
-        # else -- and, having no way to be told otherwise, writes English in Devanagari.
-        dedicated = route_config.api == "transcription"
+        # Vertex answers a systemInstruction with 400 "The input system_instruction is not
+        # supported.", a text part in `contents` is accepted but ignored, and custom vocabulary
+        # is accepted and then silently costs the route its speaker labels (D39). So it gets the
+        # audio, the language codes and nothing else -- and, having no way to be told otherwise,
+        # writes English in Devanagari.
         result = VertexClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
@@ -215,6 +208,6 @@ def transcribe(
     return OpenRouterClient(session, config=routes, client=client).transcribe(
         audio_path,
         route=route,
-        prompt=prompt,
+        prompt=None if dedicated else prompt,
         dry_run=dry_run,
     )

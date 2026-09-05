@@ -1,7 +1,8 @@
 """Pricing models and cost calculation for external AI providers.
 
 Tracks cost across the 3 AI vendors used by the harness:
-1. ElevenLabs: Scribe v2 billed per audio hour ($0.22/hr base + $0.05/hr keyterm prompting).
+1. ElevenLabs: Scribe v2 billed per audio hour ($0.22/hr; the +$0.05/hr keyterm tier is not
+   used -- the harness stopped sending key terms in D48).
 2. OpenRouter: Microsoft MAI-Transcribe-2 billed per audio hour ($0.10/hr) or from usage.cost.
 3. Google Cloud Vertex AI:
    - Gemini 3.8 Flash: $0.75 / 1M prompt tokens, $3.75 / 1M completion tokens.
@@ -46,8 +47,8 @@ MODEL_PRICING_CATALOG: list[dict[str, Any]] = [
         "model": "scribe_v2",
         "pricing_unit": "audio_hour",
         "base_rate_usd": 0.22,
-        "keyterm_rate_usd": 0.05,
-        "effective_rate_display": "$0.27 / hr ($0.22 base + $0.05 keyterm prompting)",
+        "keyterm_rate_usd": 0.0,
+        "effective_rate_display": "$0.22 / hr of audio (no keyterm prompting, D48)",
         "description": "Multilingual Scribe v2 with word-level timestamps & log probabilities.",
     },
     {
@@ -101,18 +102,17 @@ def get_audio_duration(audio_file: Path | str) -> float | None:
         return None
 
 
-def calculate_elevenlabs_cost(duration_seconds: float, has_keyterms: bool = True) -> Decimal:
+def calculate_elevenlabs_cost(duration_seconds: float) -> Decimal:
     """Calculate ElevenLabs Scribe transcription cost based on audio duration.
+
+    Billed at the base rate: the harness sends no key terms, so the surcharge tier that
+    ``ELEVENLABS_KEYTERM_PER_HOUR`` records is never incurred (D48).
 
     Args:
         duration_seconds: Duration of the audio clip in seconds.
-        has_keyterms: Whether keyterms were sent (adds $0.05/hr).
     """
-    rate_per_hour = ELEVENLABS_BASE_PER_HOUR + (
-        ELEVENLABS_KEYTERM_PER_HOUR if has_keyterms else Decimal("0.0")
-    )
     seconds_dec = Decimal(str(max(0.0, duration_seconds)))
-    cost = (seconds_dec / Decimal("3600")) * rate_per_hour
+    cost = (seconds_dec / Decimal("3600")) * ELEVENLABS_BASE_PER_HOUR
     return _quantize_usd(cost)
 
 
@@ -247,7 +247,7 @@ def estimate_request_cost(
 
     if vendor == "ElevenLabs":
         dur = duration_seconds if duration_seconds is not None else 5.0
-        return calculate_elevenlabs_cost(dur, has_keyterms=True)
+        return calculate_elevenlabs_cost(dur)
     if vendor == "OpenRouter":
         if duration_seconds is not None and "mai" in model_str:
             calculated = calculate_openrouter_cost(model_str, duration_seconds=duration_seconds)
