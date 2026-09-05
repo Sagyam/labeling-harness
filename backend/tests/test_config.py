@@ -246,23 +246,29 @@ def test_only_the_transcriber_without_timestamps_asks_for_forced_alignment() -> 
     assert aligned == {"asr_gemini_flash"}
 
 
-def test_nothing_is_held_out_of_the_disagreement_score_any_more() -> None:
-    """The composite restores script, so its disagreement is recognition again, not orthography.
+def test_the_composite_is_held_out_of_the_disagreement_score() -> None:
+    """It is held out for what it omits, not for how it spells (D50).
 
     D40 held the raw recogniser out because it wrote English in Devanagari and so disagreed with
-    every other system on every English token for free. D41's restore step removes that artefact,
-    which puts all four systems back in the comparison.
+    every other system on every English token for free; D41's restore step fixed that and put all
+    four systems back in. The restore step still works -- token counts match on every clip -- so
+    D41's reasoning stands. The hold-out returns for a different defect entirely: the recogniser
+    upstream of the restore step deterministically omits speech, and what it omits is 71-75%
+    Latin against 32-34% for what it keeps.
     """
     routes = load_llm_routes().routes
-    assert {name for name, route in routes.items() if route.exclude_from_disagreement} == set()
+    assert {name for name, route in routes.items() if route.exclude_from_disagreement} == {
+        "asr_gemini_composite"
+    }
 
 
-def test_only_the_dedicated_recogniser_is_asked_for_speaker_labels() -> None:
-    """Diarization comes with `api: transcription` on Vertex, and nothing else offers it."""
+def test_both_diarizing_routes_are_asked_for_speaker_labels() -> None:
+    """Two systems report speakers and no more can (D49): MAI returns no field, Flash no timings."""
     routes = load_llm_routes().routes
-    diarizing = {
+    vertex_diarizing = {
         name
         for name, route in routes.items()
         if route.provider == "vertex" and route.api == "transcription"
     }
-    assert diarizing == {"asr_gemini_composite"}
+    assert vertex_diarizing == {"asr_gemini_composite"}
+    assert {name for name, route in routes.items() if route.diarize} == {"asr_scribe_v2"}

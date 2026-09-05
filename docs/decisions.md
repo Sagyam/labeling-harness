@@ -1082,3 +1082,58 @@ audio, and no such episode has been ingested.
 
 **Reversal:** one line in `config/llm_routes.yaml`. The column already existed and null already
 meant "not diarized", so no schema change and nothing already imported is affected.
+
+## D50 — The composite is held out of the disagreement scores again, for a different defect
+
+`asr_gemini_composite` carries `exclude_from_disagreement: true`. Its hypothesis is still
+requested, stored, exported and shown; it does not enter `word_disagreement_rate` or
+`cer_between_hypotheses`.
+
+**This is not D40 returning.** D40 held the raw recogniser out because it wrote English in
+Devanagari, so it disagreed with every other system on every English token without anything having
+been misheard. D41 fixed that cause with the restore step and put all four systems back in the
+comparison. **The restore step still works** — recogniser token count equals restored token count
+on all 23 clips of the pilot episode, and the composite is not collapsed onto the model that does
+the restoring (composite-vs-flash disagreement 0.273, mid-pack among the six pairs; the most
+similar pair is mai-vs-flash at 0.211). D41's reasoning stands and is not superseded.
+
+**The defect is upstream of the restore step.** Gemini 3.5 Transcribe omits speech it heard. On
+8 of 23 clips it returns a transcript more than 10% shorter than the median of the other three —
+worst cases −42% (seg 16), −35% (seg 20), −27% (seg 30). The omission is in the recogniser, not
+the rewrite: seg 16's raw `text_devanagari` is already 36 tokens where the other systems have ~62.
+
+**And the omission is not random.** Aligned against each of the other three systems in turn, the
+tokens the composite lacks are 71–75% Latin, where the tokens it keeps are 32–34% Latin
+(Flash 74.8%, Scribe 71.1%, MAI 75.2% — kept 32.7/32.5/34.3%). It is dropping the English-dominant
+stretches: seg 16 loses `you will definitely appreciate this` and `But then this one is very close`
+while keeping the Nepali between them. Of the 123 tokens missing against Flash, ~80 are absent by
+raw token count and the remainder may be alignment artefacts, so the direction is firm and the
+magnitude is approximate.
+
+**It is deterministic, so it is not a retry problem.** Three repeats of the bare recogniser per
+clip returned identical token counts every time — 36/36/36 and 35/35/35 on the truncated clips,
+66/66/66 and 60/60/60 on clean ones. Not duration-driven (mean 19.44 s truncated against 19.08 s
+not). The only remaining lever is `language_codes`, which D41 locked to `ne-NP` because two or more
+codes blank long clips outright.
+
+**Why that justifies a hold-out.** `word_disagreement_rate` carries 0.40 of the priority score. A
+system that deletes English manufactures disagreement precisely where the corpus is most
+interesting — the same class of bias D40 objected to, arriving by a different route.
+Spearman(`code_switch_density`, `word_disagreement_rate`) over the pilot episode is **−0.616** with
+this system held out and **−0.229** with it counted: held out, the measure carries a clean signal
+(code-switch-dense segments are ones the systems agree on, English being acoustically distinct),
+and counting the composite cancels half of it.
+
+**Why keep the hypothesis.** It is one of only two systems that report speaker labels (D49), and
+MAI cannot supply a third. Its self-reported spans are no longer a trustworthy timing reference —
+see the triangulation in D48's follow-up — but the transcript remains a parallel resource and the
+diarization is half the only cross-check there is.
+
+**Evidence is one episode.** 23 clips, one presenter, consumer-tech Nepali, which is unusually
+loanword-dense and therefore the condition most likely to expose an English-dropping failure. The
+hold-out is cheap and reversible, so it is applied now rather than after replication; replicating
+the drop rate across speakers and domains is still outstanding.
+
+**Reversal:** drop the flag. Already-imported scores are unaffected until something recomputes
+them — `purge.py` is the only path that does, and it reads the same hold-out set, so the two
+computation sites cannot disagree.

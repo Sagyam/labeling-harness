@@ -159,7 +159,8 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   empty with no `blockReason`: `ASR_PROMPT` asks for that when there is no intelligible speech.
 - The raw Devanagari lives in the hypothesis's `metadata_jsonb` as `text_devanagari`. It is
   provenance: keep it out of `text_raw`, the disagreement comparison, the analysis and the queue.
-- Nothing is held out of the disagreement scores today, but the mechanism stays: both computation
+- `asr_gemini_composite` is held out of the disagreement scores (D50) -- for the speech its
+  recogniser omits, not for its orthography, which the restore step does fix. Both computation
   sites -- `ingest.py` and `purge.py` -- read the hold-out from `disagreement_excluded_system_ids()`.
   Naming a system in either place independently silently desynchronises the two.
 - Every Vertex transcription request turns safety filtering **off** (`OFF`). This is not

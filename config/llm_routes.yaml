@@ -89,6 +89,16 @@ routes:
     # about the corpus and wrong about what the API can do.
     language_codes:
       - ne-NP
+    # Held out of the disagreement scores (D50), and not for the reason D40 held it out. The
+    # restore step works -- recogniser and restored token counts match on all 23 clips -- so
+    # D41's "orthography is fixed, rejoin the comparison" still stands. The defect is upstream of
+    # it: the recogniser deterministically omits speech (8/23 clips >10% short, worst -42%), and
+    # what it omits is 71-75% Latin against 32-34% for what it keeps. That manufactures
+    # disagreement exactly where the corpus is most interesting. Spearman(code_switch_density,
+    # word_disagreement_rate) is -0.616 with this system held out and -0.229 with it counted.
+    # The hypothesis is still requested, stored, exported and shown -- it is the second source of
+    # speaker labels (D49); only the comparison drops it.
+    exclude_from_disagreement: true
 
   # Gemini 3.8 Flash on Vertex AI, on the generateContent endpoint with the clip inlined
   # (VERTEX_API_KEY). `audio_chat` is the honest name for it: a general model being asked to
