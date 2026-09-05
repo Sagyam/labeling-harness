@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
+  RiAddLine,
   RiArrowDownSLine,
   RiArrowRightSLine,
   RiCheckLine,
@@ -57,6 +58,33 @@ const PROBE_DEBOUNCE_MS = 500
 
 /** The show id a form starts on, before a probe offers the channel name instead. */
 const DEFAULT_SHOW_ID = 'nepanglish'
+
+/** How many speakers one episode may declare. Beyond four, a form is the wrong instrument. */
+const MAX_SPEAKERS = 4
+
+type SpeakerDraft = { gender: string; ageBracket: string }
+
+const emptySpeaker = (): SpeakerDraft => ({ gender: '', ageBracket: '' })
+
+const GENDER_OPTIONS = [
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+  { value: 'non_binary', label: 'Non-binary' },
+  { value: 'other', label: 'Other' },
+]
+
+/**
+ * Twenty-year buckets, matching `ALLOWED_VALUES` in the backend's `speaker_meta.py`. Coarse on
+ * purpose: this is a guess from having watched the episode, and a bucket you can place a stranger
+ * in confidently beats a finer one you cannot (D58).
+ */
+const AGE_BRACKET_OPTIONS = [
+  { value: 'under_20', label: 'Under 20' },
+  { value: '20_39', label: '20-39' },
+  { value: '40_59', label: '40-59' },
+  { value: '60_79', label: '60-79' },
+  { value: '80_plus', label: '80+' },
+]
 
 /**
  * Where the running job's id is parked.
@@ -192,17 +220,35 @@ export function IngestView({ onComplete }: IngestViewProps) {
   const [showSociolinguistics, setShowSociolinguistics] = useState<boolean>(false)
   const [genre, setGenre] = useState<string>('podcast')
   const [topic, setTopic] = useState<string>('')
-  const [spk0Gender, setSpk0Gender] = useState<string>('')
-  const [spk1Gender, setSpk1Gender] = useState<string>('')
+  const [speakers, setSpeakers] = useState<SpeakerDraft[]>(() => [emptySpeaker()])
 
-  // Role and gender only. Speaker name and dialect were both removed on purpose (D56): a name is
-  // identity whether or not its owner is famous, and a dialect nobody can label consistently is
-  // worse than a blank, because it would be stratified on. The backend drops both anyway.
+  const addSpeaker = () =>
+    setSpeakers((current) =>
+      current.length >= MAX_SPEAKERS ? current : [...current, emptySpeaker()],
+    )
+
+  const removeSpeaker = (index: number) =>
+    setSpeakers((current) =>
+      current.length <= 1 ? current : current.filter((_, i) => i !== index),
+    )
+
+  const updateSpeaker = (index: number, patch: Partial<SpeakerDraft>) =>
+    setSpeakers((current) => current.map((s, i) => (i === index ? { ...s, ...patch } : s)))
+
+  // Gender, age bracket and a role derived from position -- nothing else. Name and dialect were
+  // removed as PII and as an unlabelable guess (D56), and neither gender nor age is inferred from
+  // the audio because both were measured and neither works on Nepali (D58). The backend drops any
+  // field or value outside its allowlist regardless of what is sent.
   const buildSpeakersJson = () => {
-    const speakers: Record<string, any> = {}
-    if (spk0Gender) speakers['spk0'] = { role: 'host', gender: spk0Gender }
-    if (spk1Gender) speakers['spk1'] = { role: 'guest', gender: spk1Gender }
-    return Object.keys(speakers).length > 0 ? JSON.stringify(speakers) : ''
+    const payload: Record<string, any> = {}
+    speakers.forEach((speaker, index) => {
+      const fields: Record<string, string> = { role: index === 0 ? 'host' : 'guest' }
+      if (speaker.gender) fields.gender = speaker.gender
+      if (speaker.ageBracket) fields.age_bracket = speaker.ageBracket
+      // Role alone says nothing a speaker id does not; only send a speaker who was described.
+      if (speaker.gender || speaker.ageBracket) payload[`spk${index}`] = fields
+    })
+    return Object.keys(payload).length > 0 ? JSON.stringify(payload) : ''
   }
 
   // Execution state. `jobId` is seeded from storage so a reload rejoins a running pipeline.
@@ -503,8 +549,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
     setEpisodeId('')
     setGenre('podcast')
     setTopic('')
-    setSpk0Gender('')
-    setSpk1Gender('')
+    setSpeakers([emptySpeaker()])
     setShowSociolinguistics(false)
     setLogs([])
     setDiscarded([])
@@ -794,42 +839,75 @@ export function IngestView({ onComplete }: IngestViewProps) {
                       </Field>
                     </div>
 
-                    {/* Per-speaker fields are role and gender only. Name and dialect were
-                        removed in D56 -- the first is PII, the second is a label nobody can
-                        apply consistently -- and the backend drops both if they arrive. */}
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div className="rounded border bg-muted/20 p-2.5">
-                        <div className="mb-2 text-xs font-medium text-foreground">
-                          Speaker 0 (Host / Primary)
-                        </div>
-                        <select
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          value={spk0Gender}
-                          onChange={(e) => setSpk0Gender(e.target.value)}
+                    {/* One to four speakers. Gender and age bracket only: name and dialect
+                        were removed as PII and as an unlabelable guess (D56), and neither is
+                        inferred from audio because both were measured and neither works on
+                        Nepali (D58). Speaker order is the role -- the first is the host. */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">
+                          Speakers ({speakers.length} of {MAX_SPEAKERS})
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          disabled={speakers.length >= MAX_SPEAKERS}
+                          onClick={addSpeaker}
                         >
-                          <option value="">Gender (optional)</option>
-                          <option value="male">Male</option>
-                          <option value="female">Female</option>
-                          <option value="non_binary">Non-binary</option>
-                          <option value="other">Other</option>
-                        </select>
+                          <RiAddLine className="size-3.5" />
+                          Add speaker
+                        </Button>
                       </div>
-                      <div className="rounded border bg-muted/20 p-2.5">
-                        <div className="mb-2 text-xs font-medium text-foreground">
-                          Speaker 1 (Guest / Secondary)
+
+                      {speakers.map((speaker, index) => (
+                        <div key={index} className="rounded border bg-muted/20 p-2.5">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium text-foreground">
+                              Speaker {index} ({index === 0 ? 'Host' : 'Guest'})
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="xs"
+                              className="text-muted-foreground hover:text-destructive"
+                              disabled={speakers.length <= 1}
+                              onClick={() => removeSpeaker(index)}
+                              aria-label={`Remove speaker ${index}`}
+                            >
+                              <RiDeleteBin6Line className="size-3.5" />
+                            </Button>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <select
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                              value={speaker.gender}
+                              onChange={(e) => updateSpeaker(index, { gender: e.target.value })}
+                            >
+                              <option value="">Gender (optional)</option>
+                              {GENDER_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                              value={speaker.ageBracket}
+                              onChange={(e) =>
+                                updateSpeaker(index, { ageBracket: e.target.value })
+                              }
+                            >
+                              <option value="">Age bracket (optional)</option>
+                              {AGE_BRACKET_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
-                        <select
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                          value={spk1Gender}
-                          onChange={(e) => setSpk1Gender(e.target.value)}
-                        >
-                          <option value="">Gender (optional)</option>
-                          <option value="male">Male</option>
-                          <option value="female">Female</option>
-                          <option value="non_binary">Non-binary</option>
-                          <option value="other">Other</option>
-                        </select>
-                      </div>
+                      ))}
                     </div>
                   </div>
                 )}

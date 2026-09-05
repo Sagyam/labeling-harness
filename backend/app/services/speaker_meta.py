@@ -25,12 +25,37 @@ from collections.abc import Mapping
 from typing import Any
 
 #: The only per-speaker facts the corpus stores. ``role`` is about the recording, not the person;
-#: ``gender`` is a coarse voice-type variable that a code-switching study genuinely stratifies on.
-ALLOWED_SPEAKER_FIELDS = frozenset({"role", "gender"})
+#: ``gender`` and ``age_bracket`` are coarse variables a code-switching study genuinely stratifies
+#: on, and both are typed by a human because neither can be inferred from the audio (D58).
+ALLOWED_SPEAKER_FIELDS = frozenset({"role", "gender", "age_bracket"})
+
+#: Closed vocabularies, for the same reason the topic taxonomy is closed (D57): a stratification
+#: variable spelled three different ways is three variables. A value outside these is dropped
+#: exactly like an unknown field -- the form only ever sends these, so anything else came from an
+#: upstream manifest that means something this corpus does not record.
+ALLOWED_VALUES: dict[str, frozenset[str]] = {
+    "gender": frozenset({"male", "female", "non_binary", "other"}),
+    #: Twenty-year buckets. Deliberately coarse: the owner is guessing from having watched the
+    #: episode, and a bucket someone can place a stranger in confidently is worth more than a
+    #: finer one they cannot (D58).
+    "age_bracket": frozenset({"under_20", "20_39", "40_59", "60_79", "80_plus"}),
+}
+
+
+def _keeps(field: str, value: Any) -> bool:
+    """Whether one speaker field survives: on the allowlist, and a value the corpus knows."""
+    if field not in ALLOWED_SPEAKER_FIELDS:
+        return False
+    vocabulary = ALLOWED_VALUES.get(field)
+    return vocabulary is None or value in vocabulary
 
 
 def strip_speaker_pii(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     """Return ``metadata`` with its ``speakers`` block reduced to :data:`ALLOWED_SPEAKER_FIELDS`.
+
+    Values are checked as well as field names: a field in :data:`ALLOWED_VALUES` keeps only the
+    values listed there. ``role`` is free text, because it describes the recording rather than
+    grouping the corpus.
 
     Never raises. A malformed ``speakers`` value -- a string, a list, a speaker that is not an
     object -- is dropped rather than rejected: a bad metadata field must not fail an ingest that
@@ -53,7 +78,7 @@ def strip_speaker_pii(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
             str(speaker_id): allowed
             for speaker_id, fields in speakers.items()
             if isinstance(fields, Mapping)
-            and (allowed := {k: v for k, v in fields.items() if k in ALLOWED_SPEAKER_FIELDS})
+            and (allowed := {k: v for k, v in fields.items() if _keeps(k, v)})
         }
         if kept:
             cleaned["speakers"] = kept

@@ -21,13 +21,15 @@
       "type": ["string", "null"]
     },
     "speakers": {
-      "description": "Per-speaker facts, keyed by the segment-level speaker_id. Fields outside `role` and `gender` are dropped at import rather than rejected (D56).",
+      "description": "Per-speaker facts, one to four speakers, keyed by speaker id. Both the field names and the closed-vocabulary values are enforced at import: anything else is dropped rather than rejected, names and dialects included (D56, D58).",
       "type": "object",
+      "maxProperties": 4,
       "additionalProperties": {
         "type": "object",
         "properties": {
           "role": {"type": "string", "maxLength": 32},
-          "gender": {"type": "string", "maxLength": 32}
+          "gender": {"enum": ["male", "female", "non_binary", "other"]},
+          "age_bracket": {"enum": ["under_20", "20_39", "40_59", "60_79", "80_plus"]}
         }
       }
     }
