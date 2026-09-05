@@ -268,12 +268,18 @@ export function IngestView({ onComplete }: IngestViewProps) {
 
   const logContainerRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  //: The title the last probe filled in. A title still equal to it was not typed by hand, so a
-  //: new URL may replace it; anything else is the annotator's and is left alone.
-  const probedTitleRef = useRef<string>('')
-  //: The same trick for the show id, which a probe fills in from the channel name. The starting
-  //: default counts as unclaimed too, so the first probe may replace it.
-  const probedShowIdRef = useRef<string>(DEFAULT_SHOW_ID)
+  //: Whether the annotator typed the title themselves. A field they own is never overwritten by
+  //: a probe; one still holding what a previous probe wrote may be replaced when the URL changes.
+  //:
+  //: A boolean rather than a copy of the last probed value, because the comparison used to happen
+  //: *inside* a `setState` updater that also mutated the ref -- and React invokes updaters twice
+  //: under StrictMode, so the second pass saw the mutated ref, took the "annotator owns this"
+  //: branch and threw the new value away. The title survived only because its initial value was
+  //: empty; the show id never updated at all, and a second probe left a stale title beside a
+  //: freshly slugified episode id. Updaters must stay pure: the ownership flag lives out here and
+  //: nothing in the probe handler reads or writes state through a closure over it.
+  const titleIsAnnotatorsRef = useRef<boolean>(false)
+  const showIdIsAnnotatorsRef = useRef<boolean>(false)
 
   const rememberJob = (id: string | null) => {
     setJobId(id)
@@ -286,8 +292,16 @@ export function IngestView({ onComplete }: IngestViewProps) {
   }
 
   const handleTitleChange = (val: string) => {
+    // Clearing the field hands it back: an empty title is not something worth protecting from a
+    // probe that knows the real one.
+    titleIsAnnotatorsRef.current = val.trim() !== ''
     setEpisodeTitle(val)
     if (!isManualEpisodeId) setEpisodeId(slugify(val))
+  }
+
+  const handleShowIdChange = (val: string) => {
+    showIdIsAnnotatorsRef.current = val.trim() !== ''
+    setShowId(val)
   }
 
   const handleFileSelected = (file: File) => {
@@ -301,6 +315,9 @@ export function IngestView({ onComplete }: IngestViewProps) {
     setSelectedFile(file)
     if (!episodeTitle) {
       const baseName = file.name.replace(/\.[^/.]+$/, '')
+      // The annotator's, not a probe's: they chose this file. Switching to the YouTube tab
+      // afterwards must not silently rename their episode.
+      titleIsAnnotatorsRef.current = true
       setEpisodeTitle(baseName)
       if (!isManualEpisodeId) setEpisodeId(slugify(baseName))
     }
@@ -400,22 +417,16 @@ export function IngestView({ onComplete }: IngestViewProps) {
           if (cancelled) return
           setProbe(info)
           setProbeError(null)
-          // Only claim the title if it is still the one a previous probe wrote.
-          setEpisodeTitle((current) => {
-            if (current && current !== probedTitleRef.current) return current
-            probedTitleRef.current = info.title
+          // Fill in what the annotator has not claimed. Plain assignments, never a functional
+          // updater: see `titleIsAnnotatorsRef` for what went wrong when this made its decision
+          // inside one.
+          if (!titleIsAnnotatorsRef.current) {
+            setEpisodeTitle(info.title)
             if (!isManualEpisodeId) setEpisodeId(slugify(info.title))
-            return info.title
-          })
-          // A show is a channel, so the channel name is the show id worth defaulting to. Same
-          // rule as the title: a value the annotator typed wins over anything a probe learned.
-          if (info.uploader) {
-            const suggested = slugify(info.uploader)
-            setShowId((current) => {
-              if (current && current !== probedShowIdRef.current) return current
-              probedShowIdRef.current = suggested
-              return suggested
-            })
+          }
+          // A show is a channel, so the channel name is the show id worth defaulting to.
+          if (info.uploader && !showIdIsAnnotatorsRef.current) {
+            setShowId(slugify(info.uploader))
           }
         })
         .catch((err: any) => {
@@ -542,9 +553,9 @@ export function IngestView({ onComplete }: IngestViewProps) {
     setProbe(null)
     setProbeError(null)
     setIsProbing(false)
-    probedTitleRef.current = ''
+    titleIsAnnotatorsRef.current = false
     setShowId(DEFAULT_SHOW_ID)
-    probedShowIdRef.current = DEFAULT_SHOW_ID
+    showIdIsAnnotatorsRef.current = false
     setEpisodeTitle('')
     setEpisodeId('')
     setGenre('podcast')
@@ -768,7 +779,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
                     id="show-id"
                     placeholder="podcast"
                     value={showId}
-                    onChange={(e) => setShowId(e.target.value)}
+                    onChange={(e) => handleShowIdChange(e.target.value)}
                   />
                 </Field>
 
