@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_config, get_object_storage, get_session_factory, require_auth
 from app.config import Settings
 from app.services.ingest import manager, run_pipeline
+from app.services.speaker_meta import strip_speaker_pii
 from app.services.youtube import (
     InvalidYouTubeUrl,
     VideoInfo,
@@ -45,6 +46,25 @@ def _slugify(text: str) -> str:
     clean = re.sub(r"[^\w\s-]", "", text).strip().lower()
     slug = re.sub(r"[-\s]+", "_", clean)
     return slug[:50] or f"ep_{int(time.time())}"
+
+
+def _episode_metadata(genre: str, topic: str, speakers_json: str) -> dict[str, Any]:
+    """Build the episode's free-form metadata from the form's optional fields.
+
+    The speaker block is run through the allowlist here as well as at the importer. The importer
+    is the guarantee; this is so a name pasted into `speakers_json` by a hand-rolled client is
+    dropped before it is written to the job's `episode.json` on disk (D56).
+    """
+    metadata: dict[str, Any] = {}
+    if genre.strip():
+        metadata["genre"] = genre.strip()
+    if topic.strip():
+        metadata["topic"] = topic.strip()
+    if speakers_json.strip():
+        # A malformed speaker block loses the metadata, never the ingest.
+        with contextlib.suppress(Exception):
+            metadata["speakers"] = json.loads(speakers_json)
+    return strip_speaker_pii(metadata)
 
 
 class YouTubeProbeIn(BaseModel):
@@ -159,14 +179,7 @@ async def start_youtube_ingestion(
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    metadata: dict[str, Any] = {}
-    if body.genre.strip():
-        metadata["genre"] = body.genre.strip()
-    if body.topic.strip():
-        metadata["topic"] = body.topic.strip()
-    if body.speakers_json.strip():
-        with contextlib.suppress(Exception):
-            metadata["speakers"] = json.loads(body.speakers_json)
+    metadata = _episode_metadata(body.genre, body.topic, body.speakers_json)
 
     job = manager.create_job(
         episode_id=final_episode_id,
@@ -240,14 +253,7 @@ async def start_ingestion(
     with open(dest_audio_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    metadata: dict[str, Any] = {}
-    if genre.strip():
-        metadata["genre"] = genre.strip()
-    if topic.strip():
-        metadata["topic"] = topic.strip()
-    if speakers_json.strip():
-        with contextlib.suppress(Exception):
-            metadata["speakers"] = json.loads(speakers_json)
+    metadata = _episode_metadata(genre, topic, speakers_json)
 
     job = manager.create_job(
         episode_id=final_episode_id,

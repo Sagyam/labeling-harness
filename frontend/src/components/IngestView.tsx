@@ -55,6 +55,7 @@ type SourceTab = 'file' | 'youtube'
 /** How long to sit on a keystroke before asking the backend what the URL points at. */
 const PROBE_DEBOUNCE_MS = 500
 
+
 /**
  * Where the running job's id is parked.
  *
@@ -189,31 +190,16 @@ export function IngestView({ onComplete }: IngestViewProps) {
   const [showSociolinguistics, setShowSociolinguistics] = useState<boolean>(false)
   const [genre, setGenre] = useState<string>('podcast')
   const [topic, setTopic] = useState<string>('')
-  const [spk0Name, setSpk0Name] = useState<string>('')
   const [spk0Gender, setSpk0Gender] = useState<string>('')
-  const [spk0Origin, setSpk0Origin] = useState<string>('')
-  const [spk1Name, setSpk1Name] = useState<string>('')
   const [spk1Gender, setSpk1Gender] = useState<string>('')
-  const [spk1Origin, setSpk1Origin] = useState<string>('')
 
+  // Role and gender only. Speaker name and dialect were both removed on purpose (D56): a name is
+  // identity whether or not its owner is famous, and a dialect nobody can label consistently is
+  // worse than a blank, because it would be stratified on. The backend drops both anyway.
   const buildSpeakersJson = () => {
     const speakers: Record<string, any> = {}
-    if (spk0Name.trim() || spk0Gender || spk0Origin.trim()) {
-      speakers['spk0'] = {
-        name: spk0Name.trim() || 'Host',
-        role: 'host',
-        gender: spk0Gender || undefined,
-        origin: spk0Origin.trim() || undefined,
-      }
-    }
-    if (spk1Name.trim() || spk1Gender || spk1Origin.trim()) {
-      speakers['spk1'] = {
-        name: spk1Name.trim() || 'Guest',
-        role: 'guest',
-        gender: spk1Gender || undefined,
-        origin: spk1Origin.trim() || undefined,
-      }
-    }
+    if (spk0Gender) speakers['spk0'] = { role: 'host', gender: spk0Gender }
+    if (spk1Gender) speakers['spk1'] = { role: 'guest', gender: spk1Gender }
     return Object.keys(speakers).length > 0 ? JSON.stringify(speakers) : ''
   }
 
@@ -500,12 +486,8 @@ export function IngestView({ onComplete }: IngestViewProps) {
     setEpisodeId('')
     setGenre('podcast')
     setTopic('')
-    setSpk0Name('')
     setSpk0Gender('')
-    setSpk0Origin('')
-    setSpk1Name('')
     setSpk1Gender('')
-    setSpk1Origin('')
     setShowSociolinguistics(false)
     setLogs([])
     setDiscarded([])
@@ -795,17 +777,14 @@ export function IngestView({ onComplete }: IngestViewProps) {
                       </Field>
                     </div>
 
-                    {/* Speaker 0 (Host) */}
-                    <div className="rounded border bg-muted/20 p-2.5">
-                      <div className="mb-2 text-xs font-medium text-foreground">
-                        Speaker 0 (Host / Primary)
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        <Input
-                          placeholder="Name (e.g. Sushant)"
-                          value={spk0Name}
-                          onChange={(e) => setSpk0Name(e.target.value)}
-                        />
+                    {/* Per-speaker fields are role and gender only. Name and dialect were
+                        removed in D56 -- the first is PII, the second is a label nobody can
+                        apply consistently -- and the backend drops both if they arrive. */}
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded border bg-muted/20 p-2.5">
+                        <div className="mb-2 text-xs font-medium text-foreground">
+                          Speaker 0 (Host / Primary)
+                        </div>
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                           value={spk0Gender}
@@ -817,25 +796,11 @@ export function IngestView({ onComplete }: IngestViewProps) {
                           <option value="non_binary">Non-binary</option>
                           <option value="other">Other</option>
                         </select>
-                        <Input
-                          placeholder="Dialect / Origin (e.g. Kathmandu)"
-                          value={spk0Origin}
-                          onChange={(e) => setSpk0Origin(e.target.value)}
-                        />
                       </div>
-                    </div>
-
-                    {/* Speaker 1 (Guest) */}
-                    <div className="rounded border bg-muted/20 p-2.5">
-                      <div className="mb-2 text-xs font-medium text-foreground">
-                        Speaker 1 (Guest / Secondary)
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-3">
-                        <Input
-                          placeholder="Name (e.g. Kusang)"
-                          value={spk1Name}
-                          onChange={(e) => setSpk1Name(e.target.value)}
-                        />
+                      <div className="rounded border bg-muted/20 p-2.5">
+                        <div className="mb-2 text-xs font-medium text-foreground">
+                          Speaker 1 (Guest / Secondary)
+                        </div>
                         <select
                           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                           value={spk1Gender}
@@ -847,11 +812,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
                           <option value="non_binary">Non-binary</option>
                           <option value="other">Other</option>
                         </select>
-                        <Input
-                          placeholder="Dialect / Origin (e.g. Kathmandu)"
-                          value={spk1Origin}
-                          onChange={(e) => setSpk1Origin(e.target.value)}
-                        />
                       </div>
                     </div>
                   </div>

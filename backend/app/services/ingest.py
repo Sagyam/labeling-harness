@@ -55,6 +55,7 @@ from app.services.silero_vad import (
     segment_audio_to_slices,
     speech_spans_within,
 )
+from app.services.speaker_meta import strip_speaker_pii
 from app.services.youtube import YouTubeError, download_audio
 from app.storage import build_storage
 from app.storage.base import ObjectStorage
@@ -831,6 +832,8 @@ def _run_stages(
         job.set_progress("importing", 85.0)
         job.log("Stage 5/5: Generating manifest and importing directly into database...")
 
+        job_meta = strip_speaker_pii(job.metadata)
+
         episode_meta = {
             "episode_id": job.episode_id,
             "show_id": job.show_id,
@@ -841,7 +844,7 @@ def _run_stages(
             "source_audio_checksum": source_checksum,
             "pipeline_version": "web_v1",
             "pipeline_commit": "web",
-            **(job.metadata or {}),
+            **job_meta,
         }
 
         # Write episode.json

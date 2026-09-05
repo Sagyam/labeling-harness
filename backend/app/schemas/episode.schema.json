@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://labeling-harness.local/schemas/episode.schema.json",
   "title": "Episode manifest",
-  "description": "episode.json emitted by the upstream GPU pipeline. Unknown properties are kept and stored in episodes.metadata_jsonb.",
+  "description": "episode.json emitted by the upstream GPU pipeline. Unknown properties are kept and stored in episodes.metadata_jsonb -- except inside `speakers`, where the importer keeps only the fields in app/services/speaker_meta.py's allowlist and drops the rest, names and dialects included (D56).",
   "type": "object",
   "required": ["episode_id"],
   "properties": {
@@ -14,7 +14,18 @@
     "source_audio_checksum": {"type": ["string", "null"]},
     "duration_seconds": {"type": ["number", "null"], "minimum": 0},
     "pipeline_version": {"type": ["string", "null"], "maxLength": 64},
-    "pipeline_commit": {"type": ["string", "null"], "maxLength": 64}
+    "pipeline_commit": {"type": ["string", "null"], "maxLength": 64},
+    "speakers": {
+      "description": "Per-speaker facts, keyed by the segment-level speaker_id. Fields outside `role` and `gender` are dropped at import rather than rejected (D56).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "role": {"type": "string", "maxLength": 32},
+          "gender": {"type": "string", "maxLength": 32}
+        }
+      }
+    }
   },
   "additionalProperties": true
 }

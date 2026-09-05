@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models import Episode
-from app.services.ingest import IngestJob, run_pipeline
+from app.services.ingest import IngestJob, manager, run_pipeline
 from app.services.youtube import (
     InvalidYouTubeUrl,
     VideoInfo,
@@ -602,3 +602,27 @@ def test_a_traversing_episode_id_cannot_escape_the_work_root_on_the_url_path(
     assert response.status_code == 202
     assert ".." not in response.json()["episode_id"]
     assert not (settings.ingest.work_root.parent / "etc").exists()
+
+
+@pytest.mark.db
+def test_a_speaker_name_posted_to_the_endpoint_never_reaches_the_job(
+    client: TestClient, probed
+) -> None:
+    """The importer is the guarantee; PII should not reach the job's episode.json either (D56)."""
+    probed(video())
+
+    response = client.post(
+        "/ingest/youtube",
+        json={
+            "url": f"https://youtu.be/{VIDEO_ID}",
+            "topic": "tech_gadgets",
+            "speakers_json": json.dumps(
+                {"spk0": {"name": "Sushant", "role": "host", "origin": "Kathmandu"}}
+            ),
+        },
+    )
+
+    assert response.status_code == 202
+    job = manager.get_job(response.json()["job_id"])
+    assert job is not None
+    assert job.metadata == {"topic": "tech_gadgets", "speakers": {"spk0": {"role": "host"}}}

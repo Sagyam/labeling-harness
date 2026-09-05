@@ -1359,3 +1359,47 @@ to a new column.
 
 **Reversal:** drop the column, drop `missed_speech` from `ALL_FLAGS`, and stop passing `vad_spans`
 at import. The migration has a working `downgrade`, verified up, down and up again.
+
+## D56 — Speaker name and dialect leave the schema; a speaker allowlist replaces them
+
+The ingest form collected a name, a gender and a `Dialect / Origin` string per speaker, and all
+three went into `episodes.metadata_jsonb->'speakers'` and out through the analytics export. Name
+and dialect are gone. What a speaker block may now contain is an allowlist — `role` and `gender` —
+enforced in `app/services/speaker_meta.py`.
+
+**Why the name goes.** It is identity, and being a public figure does not make it less so. The
+corpus already holds this person's voice, their words and a timestamped clip of both; a name is
+the join key that turns a research corpus into a dossier about a named individual who never
+agreed to be in one. There is no analysis in this project that needs it: everything the harness
+computes keys off `speaker_id`, which is episode-local and says nothing about who the speaker is.
+
+**Why the dialect goes, which is the less obvious half.** The owner cannot label Nepali dialect
+reliably, and neither can anyone else working on this corpus casually. That does not make the
+column merely empty, it makes it *wrong*: a stratification variable is not a note, it is a
+grouping that every result computed over it inherits. A dialect field would be filled in with a
+guess for the episodes someone felt confident about and left blank for the rest, and the resulting
+comparison — "code-switching by dialect" — would be a report on the labeller's confidence rather
+than on Nepali. No column is a truthful account of what is known here. A wrong one is not.
+
+**Why an allowlist and not a blocklist, and why at the importer.** Episode metadata arrives from
+two directions: this repository's ingest form, and an upstream `episode.json` written by a
+pipeline that is not in this repository. `episode.schema.json` keeps unknown properties on purpose
+so a new upstream field is never silently lost — right for provenance, wrong for people, because
+it means any key the upstream pipeline invents lands in the database and in every export. A
+blocklist would have to be extended every time the upstream form gains a field; an allowlist
+defaults to dropping. `_upsert_episode` is the one choke point both directions pass through, so
+that is where it runs. The API applies it too, so a name never even reaches the job's
+`episode.json` on disk, but the importer is the guarantee.
+
+**Gender stays, as a hand-entered field.** It is a coarse variable a code-switching study
+genuinely stratifies on, and it is two values on a form rather than a claim about anyone's
+identity beyond what the annotator chose to record. Whether to *infer* it acoustically is a
+separate question and is not settled here.
+
+**Rows already written.** Migration `9b1c0d4e2a71` rewrites every stored speaker block down to the
+same allowlist. Its `downgrade` is a no-op and says so: deleting the names is the point of the
+revision, the data is kept nowhere to restore them from, and the column shape never changed, so
+the previous revision's schema is still correct after downgrading.
+
+**Reversal:** delete `speaker_meta.py` and stop calling it. The fields would then be storable
+again — but the names already deleted are gone, and that is intentional.

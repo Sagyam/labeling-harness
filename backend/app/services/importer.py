@@ -35,6 +35,7 @@ from app.models import (
 from app.services.audio import ClipFormatError, compute_peaks, validate_clip
 from app.services.flags import FlagHypothesis, compute_flags
 from app.services.manifest import Manifest, ManifestError, read_manifest
+from app.services.speaker_meta import strip_speaker_pii
 from app.services.splits import assign_split
 from app.storage.base import ObjectStorage
 from app.utils.hashing import checksums_match, sha256_file
@@ -256,7 +257,9 @@ def _upsert_episode(
         "pipeline_version",
         "pipeline_commit",
     }
-    extra = {k: v for k, v in manifest.episode.items() if k not in known}
+    # The one choke point both the ingest form and an upstream `episode.json` pass through, so
+    # it is where the speaker allowlist is enforced rather than at either caller (D56).
+    extra = strip_speaker_pii({k: v for k, v in manifest.episode.items() if k not in known})
     published_at = manifest.episode.get("published_at")
 
     if episode is None:

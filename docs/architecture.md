@@ -288,7 +288,7 @@ Four export kinds, each writing `manifest.json` next to the data:
 
 1. **training** — `train` + `val` splits, approved labels only.
 2. **gold** — `test` split only, retaining `seed_system_id` per segment.
-3. **analytics** — includes word-level fields where hypothesis words were imported, episode metadata (speaker demographics and topic), and automatically generates `timestamp_verification_report.json`. That report compares two independent timing sources — Scribe's own word spans against the forced aligner's spans over Gemini's transcript — on the tokens both agree were said, reporting agreement tolerances (<= 25 ms, <= 50 ms, <= 100 ms) and flagging divergence (> 200 ms) for human review (D33).
+3. **analytics** — includes word-level fields where hypothesis words were imported, episode metadata (speaker role and gender, and the episode topic — never a name or a dialect, D56), and automatically generates `timestamp_verification_report.json`. That report compares two independent timing sources — Scribe's own word spans against the forced aligner's spans over Gemini's transcript — on the tokens both agree were said, reporting agreement tolerances (<= 25 ms, <= 50 ms, <= 100 ms) and flagging divergence (> 200 ms) for human review (D33).
 4. **error_mining** — `uncertain` and `unusable_audio` dispositions, for pipeline debugging.
 
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
