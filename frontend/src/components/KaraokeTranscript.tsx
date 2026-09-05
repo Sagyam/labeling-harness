@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { cn } from '@/lib/utils'
 import type { HypothesisWord } from '@/types'
@@ -47,31 +47,33 @@ export function KaraokeTranscript({
 
   // Words the transcriber placed on the clock. One without both boundaries cannot be lit, but
   // it must still be rendered: dropping it would show the annotator a transcript missing words
-  // the hypothesis actually contains.
-  const timed = words.map((w) => w.start_time !== null && w.end_time !== null)
+  // the hypothesis actually contains. Memoized because `paint` and the frame loop below hang
+  // off its identity -- rebuilt every render, the loop would be town down four times a second.
+  const timed = useMemo(
+    () => words.map((w) => w.start_time !== null && w.end_time !== null),
+    [words],
+  )
 
   const paint = useCallback(
     (time: number) => {
+      // The last word that has *started*, not the word whose span contains `time`. Almost every
+      // pair of words has a gap between them -- around 60 ms, on all three transcribers -- and
+      // going dark in each one makes the line flicker and read as lagging. Holding the word
+      // until its successor begins moves the highlight exactly on word onsets.
       let next = -1
       for (let i = 0; i < words.length; i += 1) {
-        const word = words[i]
         if (!timed[i]) continue
-        if (time >= (word.start_time as number) && time < (word.end_time as number)) {
-          next = i
-          break
-        }
+        if ((words[i].start_time as number) <= time) next = i
       }
 
-      // Retire the word that just finished. Only ever touches the spans that changed.
-      if (activeRef.current !== next && activeRef.current >= 0) {
+      if (activeRef.current !== next) {
         const previous = spanRefs.current[activeRef.current]
         if (previous) {
           previous.style.transform = ''
-          const end = words[activeRef.current].end_time as number
-          previous.dataset.state = time >= end ? 'sung' : ''
+          previous.dataset.state = 'sung'
         }
+        activeRef.current = next
       }
-      activeRef.current = next
       if (next < 0) return
 
       const word = words[next]
@@ -84,6 +86,7 @@ export function KaraokeTranscript({
       const grow = easeOutCubic(Math.min(1, progress / GROW_FRACTION))
 
       span.dataset.state = 'active'
+      // Written every frame, so nothing may interpolate it in CSS as well -- see the class list.
       span.style.transform = `scale(${(1 + ACTIVE_SCALE * grow).toFixed(4)})`
     },
     [words, timed],
@@ -162,7 +165,11 @@ export function KaraokeTranscript({
           data-contested={contestedPositions?.has(word.position) ? '' : undefined}
           className={cn(
             'inline-block origin-bottom text-muted-foreground',
-            'transition-[transform,color,opacity] duration-150 ease-out',
+            // Colour only. `transform` is driven per frame from the rAF loop, and a CSS
+            // transition over it would interpolate towards a target that moves every 16 ms --
+            // the bloom then lands ~150 ms late and lingers as long after the word ends, which
+            // at three words a second reads as the highlight running half a word behind.
+            'transition-[color,opacity] duration-100 ease-out',
             timed[index] && 'cursor-pointer hover:text-foreground',
             // Words already sung stay readable; the active one is the only lit word.
             'data-[state=sung]:text-foreground/70',
