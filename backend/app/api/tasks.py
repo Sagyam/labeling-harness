@@ -184,6 +184,7 @@ def _decide(
         segment_id=task.segment_id,
         label_id=label.id,
         disposition=label.disposition,
+        verification_tier=label.verification_tier,
         task_status=task.status,
         duration_ms=event_duration,
     )
@@ -208,6 +209,7 @@ def accept_task(
             notes=body.notes,
             opened_at=body.opened_at,
             duration_ms=body.duration_ms,
+            verification_tier=body.verification_tier,
         ),
         settings,
     )
@@ -233,6 +235,7 @@ def label_task(
             notes=body.notes,
             opened_at=body.opened_at,
             duration_ms=body.duration_ms,
+            verification_tier=body.verification_tier,
         ),
         settings,
     )
@@ -257,6 +260,7 @@ def flag_task(
             notes=body.notes,
             opened_at=body.opened_at,
             duration_ms=body.duration_ms,
+            verification_tier=body.verification_tier,
         ),
         settings,
     )
@@ -313,6 +317,7 @@ def bulk_accept(
                     notes=body.notes,
                     opened_at=body.opened_at,
                     duration_ms=body.duration_ms,
+                    verification_tier=body.verification_tier,
                 ),
                 settings,
             )

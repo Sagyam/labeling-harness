@@ -14,8 +14,14 @@ or its successor runs here instead, against a recording rather than a bag of cli
 budget and no need to re-ingest anything when a better model appears (D62).
 
 Exports are deterministic: the same inputs and filters produce byte-identical output, so two exports
-of "the same" dataset really are the same dataset. ``disposition`` and ``seed_system_id`` are
-retained in every record because they are what make the dataset defensible to a reviewer.
+of "the same" dataset really are the same dataset. ``disposition``, ``verification_tier``, ``pot``
+and ``seed_system_id`` are retained in every record because they are what make the dataset
+defensible to a reviewer.
+
+``verification_tier`` is the one a consumer must not ignore (D63). A ``verified`` row was played
+and read; a ``screened`` row was accepted on the cross-ASR disagreement signal without anyone
+listening. Both are legitimate ways to build a corpus and they are not the same claim, so the
+manifest reports the mix per split and the ``gold`` export refuses to write a screened row at all.
 """
 
 from __future__ import annotations
@@ -50,6 +56,10 @@ logger = get_logger(__name__)
 
 class ExportError(RuntimeError):
     """The export could not be produced."""
+
+
+class GoldPurityError(ExportError):
+    """A gold-pot row is not what the gold pot promises."""
 
 
 @dataclass(frozen=True)
@@ -170,6 +180,11 @@ def _record(
         "end_time": segment.end_time,
         "text": label.final_text,
         "disposition": label.disposition,
+        #: Whether a human actually listened to this clip, or waved it through on the cross-ASR
+        #: disagreement signal. Carried on every row of every kind, because a consumer that cannot
+        #: tell the two apart is reading a claim the corpus never made (D63).
+        "verification_tier": label.verification_tier,
+        "pot": segment.episode.pot,
         "seed_system_id": seed_system_id,
         "label_version": version.name,
         "policy_version": version.policy_version,
@@ -352,6 +367,20 @@ def export_dataset(
             if segment.episode.audio_object_key:
                 episode_audio[segment.episode.external_id] = segment.episode.audio_object_key
 
+    # The gold pot's whole value is that every row in it was checked by a human. `record_decision`
+    # refuses to write a screened gold label in the first place, so reaching here means something
+    # got in another way -- a direct insert, or a segment whose episode moved pots after labelling.
+    # Refusing the export is the only response that cannot end with a screened row being cited as
+    # a benchmark result (D63).
+    if kind == "gold":
+        screened = [r["segment_id"] for r in records if r["verification_tier"] != "verified"]
+        if screened:
+            raise GoldPurityError(
+                f"{len(screened)} gold row(s) are not verified, first {screened[0]!r};"
+                " the gold export is a claim that every row was listened to, so it will not"
+                " be written until these are re-verified or their episodes leave the gold pot"
+            )
+
     with data_path.open("w", encoding="utf-8", newline="\n") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
@@ -359,8 +388,14 @@ def export_dataset(
     audio_files = _write_episode_audio(output_dir, episode_audio, storage)
 
     counts_by_split: dict[str, int] = {}
+    #: ``{split: {tier: rows}}``. Reported rather than summarised to a single number because the
+    #: interesting question is not "how much was screened" but "was the *test* split screened".
+    tiers_by_split: dict[str, dict[str, int]] = {}
     for record in records:
         counts_by_split[record["split"]] = counts_by_split.get(record["split"], 0) + 1
+        tiers = tiers_by_split.setdefault(record["split"], {})
+        tier = record["verification_tier"]
+        tiers[tier] = tiers.get(tier, 0) + 1
 
     runs = (
         session.scalars(sa.select(ImportRun).where(ImportRun.id.in_(import_run_ids))).all()
@@ -378,6 +413,9 @@ def export_dataset(
         },
         "row_count": len(records),
         "row_counts_by_split": dict(sorted(counts_by_split.items())),
+        "verification_tiers_by_split": {
+            split: dict(sorted(tiers.items())) for split, tiers in sorted(tiers_by_split.items())
+        },
         "files": [
             {
                 "name": data_path.name,

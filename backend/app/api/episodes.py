@@ -87,6 +87,7 @@ def list_episodes(session: Session = Depends(get_session)) -> list[EpisodeSummar
                 show_id=ep.show_id,
                 duration_seconds=ep.duration_seconds,
                 split=ep.split,
+                pot=ep.pot,
                 segment_count=stats.total_segments if stats else 0,
                 labeled_count=stats.labeled_segments if stats else 0,
                 pending_count=stats.pending_segments if stats else 0,

@@ -19,7 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { resolveUrl } from '@/services/api'
 import { cn } from '@/lib/utils'
-import type { QueueRow } from '@/types'
+import type { QueueRow, VerificationTier } from '@/types'
 
 const QUEUES = ['review', 'audit', 'error'] as const
 
@@ -35,25 +35,31 @@ interface TriageViewProps {
   selectedIds: Set<number>
   onToggleSelect: (taskId: number) => void
   onSelectAll: (all: boolean) => void
-  onAcceptRow: (taskId: number, durationMs: number) => Promise<void>
+  onAcceptRow: (
+    taskId: number,
+    durationMs: number,
+    tier?: VerificationTier,
+  ) => Promise<void>
   onOpenEditor: (taskId: number) => void
   onFlagRow: (
     taskId: number,
     disposition: 'unusable_audio' | 'uncertain',
     durationMs: number,
   ) => Promise<void>
-  onBulkAccept: (taskIds: number[]) => Promise<void>
+  onBulkAccept: (taskIds: number[], tier?: VerificationTier) => Promise<void>
 }
 
 const SHORTCUTS: Array<[string, string]> = [
   ['j / k', 'Navigate'],
   ['Space', 'Play'],
-  ['Enter', 'Accept'],
+  ['Enter', 'Accept (heard)'],
+  ['s', 'Screen (unheard)'],
   ['e', 'Editor'],
   ['f', 'Unusable'],
   ['u', 'Uncertain'],
   ['x', 'Select'],
   ['⇧ Enter', 'Bulk accept'],
+  ['⇧ S', 'Bulk screen'],
 ]
 
 function priorityClass(score: number) {
@@ -138,7 +144,7 @@ export function TriageView({
         return
       }
 
-      // Shift+Enter: Bulk accept selected rows
+      // Shift+Enter: Bulk accept selected rows, as verified
       if (e.shiftKey && e.key === 'Enter') {
         e.preventDefault()
         if (selectedIds.size > 0) {
@@ -149,10 +155,42 @@ export function TriageView({
         return
       }
 
+      // Shift+S: Bulk screen -- accept on the disagreement signal without listening. Gold rows are
+      // dropped from the batch rather than failing it, because one gold row must not block the
+      // rest and screening it is refused by the server anyway.
+      if (e.shiftKey && (e.key === 'S' || e.key === 's')) {
+        e.preventDefault()
+        const candidates = (
+          selectedIds.size > 0
+            ? rows.filter((r) => selectedIds.has(r.task_id))
+            : focusedRow
+              ? [focusedRow]
+              : []
+        ).filter((r) => r.pot !== 'gold')
+        if (candidates.length > 0) {
+          onBulkAccept(
+            candidates.map((r) => r.task_id),
+            'screened',
+          )
+        }
+        return
+      }
+
       // Enter: Accept focused row unchanged
       if (!e.shiftKey && !e.ctrlKey && e.key === 'Enter') {
         e.preventDefault()
         if (focusedRow) onAcceptRow(focusedRow.task_id, getFocusedDurationMs())
+        return
+      }
+
+      // s: Screen the focused row -- accepted on the disagreement signal, not by ear. Refused on
+      // a gold row here as well as at the server, so the keystroke does not produce an error toast
+      // for something that is simply not offered.
+      if (!e.shiftKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        if (focusedRow && focusedRow.pot !== 'gold') {
+          onAcceptRow(focusedRow.task_id, getFocusedDurationMs(), 'screened')
+        }
         return
       }
 
@@ -364,7 +402,19 @@ export function TriageView({
                     </TableCell>
 
                     <TableCell className="max-w-52 truncate font-mono text-xs text-muted-foreground">
-                      <span title={row.segment_external_id}>{row.segment_external_id}</span>
+                      <div className="flex items-center gap-1.5">
+                        {row.pot === 'gold' && (
+                          <Chip
+                            className="bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                            title="Gold pot — this clip has to be listened to; screening is refused"
+                          >
+                            gold
+                          </Chip>
+                        )}
+                        <span className="truncate" title={row.segment_external_id}>
+                          {row.segment_external_id}
+                        </span>
+                      </div>
                     </TableCell>
 
                     <TableCell className="max-w-0 truncate font-devanagari">

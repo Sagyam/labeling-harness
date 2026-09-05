@@ -21,6 +21,8 @@ from app.models import (
     SegmentScore,
 )
 from app.models.enums import PIPELINE_STATUSES, SPLITS
+from app.services.gamify import collect_gamify
+from app.services.pots import pot_status
 from app.services.stats import collect_stats, latest_labels_subquery
 
 
@@ -99,6 +101,37 @@ def collect_report(session: Session) -> dict[str, Any]:
             "hours": round(float(seconds) / 3600, 3),
         }
 
+    # Pots, coverage and the progress panel. `pot_status` reads; it never assigns, so opening the
+    # dashboard cannot move an episode between pots as a side effect of being looked at (D63).
+    pots = pot_status(session)
+    progress = collect_gamify(
+        session,
+        pot_hours={
+            "gold": pots.gold_hours,
+            "train": pots.train_hours,
+            "val": pots.val_hours,
+        },
+        gold_coverage_complete=pots.coverage_complete,
+    )
+
+    # How much of the corpus was actually listened to, against how much was screened through on the
+    # disagreement signal. Reported next to the pots rather than buried, because it is the figure
+    # that qualifies every other one on the page (D63).
+    verification = {"verified": 0, "screened": 0}
+    verification_hours = {"verified": 0.0, "screened": 0.0}
+    for tier, count, seconds in session.execute(
+        sa.select(
+            current.c.verification_tier,
+            sa.func.count(),
+            sa.func.coalesce(sa.func.sum(Segment.duration_seconds), 0.0),
+        )
+        .select_from(current)
+        .join(Segment, Segment.id == current.c.segment_id)
+        .group_by(current.c.verification_tier)
+    ):
+        verification[tier] = count
+        verification_hours[tier] = round(float(seconds) / 3600, 3)
+
     hypotheses_total = session.scalar(sa.select(sa.func.count()).select_from(AsrHypothesis)) or 0
     hypotheses_with_words = (
         session.scalar(
@@ -148,6 +181,43 @@ def collect_report(session: Session) -> dict[str, Any]:
             "mean_cer_between_hypotheses": _round(score_means[3]),
         },
         "split_balance": split_balance,
+        "pots": {
+            "gold_target_hours": pots.gold_target_hours,
+            "gold_effective_target_hours": pots.gold_effective_target_hours,
+            "gold_capped_by_corpus_size": pots.gold_capped_by_corpus_size,
+            "train_target_hours": pots.train_target_hours,
+            "buckets": pots.buckets,
+            "gold_coverage": pots.gold_coverage,
+            "corpus_coverage": pots.corpus_coverage,
+            "gold_coverage_gaps": pots.gold_coverage_gaps,
+            "coverage_complete": pots.coverage_complete,
+        },
+        "verification": {
+            **verification,
+            "hours": verification_hours,
+            "total": verification["verified"] + verification["screened"],
+        },
+        "progress": {
+            "level": progress.level,
+            "level_minutes": progress.level_minutes,
+            "minutes_into_level": progress.minutes_into_level,
+            "minutes_per_level": progress.minutes_per_level,
+            "level_fraction": progress.level_fraction,
+            "verified_minutes": progress.verified_minutes,
+            "screened_minutes": progress.screened_minutes,
+            "current_streak_days": progress.current_streak_days,
+            "longest_streak_days": progress.longest_streak_days,
+            "streak_active_today": progress.streak_active_today,
+            "today_segments": progress.today_segments,
+            "daily_goal_segments": progress.daily_goal_segments,
+            "daily_goal_fraction": progress.daily_goal_fraction,
+            "best_day_segments": progress.best_day_segments,
+            "best_day": progress.best_day,
+            "active_days": progress.active_days,
+            "activity": progress.activity,
+            "achievements": progress.achievements,
+            "unlocked_count": progress.unlocked_count,
+        },
         "word_timestamp_coverage": {
             "hypotheses_total": hypotheses_total,
             "hypotheses_with_words": hypotheses_with_words,
@@ -210,6 +280,30 @@ def render_text(report: dict[str, Any]) -> str:
         "",
         "SCORES (means over imported segments)",
         *(f"  {name:<22}  {_fmt(value)}" for name, value in report["scores"].items()),
+        "",
+        "POTS",
+        f"  gold                    {report['pots']['buckets']['gold']['hours']} h"
+        f" / {report['pots']['gold_target_hours']} h target",
+        f"  train                   {report['pots']['buckets']['train']['hours']} h",
+        f"  val                     {report['pots']['buckets']['val']['hours']} h",
+        f"  unassigned              {report['pots']['buckets']['unassigned']['hours']} h",
+        *(
+            [
+                "  gold coverage gaps      "
+                + "; ".join(
+                    f"{key}: {', '.join(values)}"
+                    for key, values in sorted(report["pots"]["gold_coverage_gaps"].items())
+                )
+            ]
+            if report["pots"]["gold_coverage_gaps"]
+            else ["  gold coverage           complete"]
+        ),
+        "",
+        "VERIFICATION",
+        f"  verified                {report['verification']['verified']}"
+        f" ({report['verification']['hours']['verified']} h)",
+        f"  screened                {report['verification']['screened']}"
+        f" ({report['verification']['hours']['screened']} h)",
         "",
         "SPLIT BALANCE",
         *(
@@ -285,6 +379,59 @@ def render_html(report: dict[str, Any]) -> str:
                     ("Backlog", report["queue"]["backlog"]),
                     *[(f"Queue {k}", v) for k, v in report["queue"]["by_queue"].items()],
                     ("Projected hours to finish", report["queue"]["projected_hours_to_finish"]),
+                ]
+            ),
+        ),
+        (
+            "Pots",
+            table(
+                [
+                    (
+                        "Gold",
+                        f"{report['pots']['buckets']['gold']['hours']} h of"
+                        f" {report['pots']['gold_target_hours']} h target,"
+                        f" {report['pots']['buckets']['gold']['episodes']} episodes",
+                    ),
+                    (
+                        "Train",
+                        f"{report['pots']['buckets']['train']['hours']} h,"
+                        f" {report['pots']['buckets']['train']['episodes']} episodes",
+                    ),
+                    (
+                        "Val",
+                        f"{report['pots']['buckets']['val']['hours']} h,"
+                        f" {report['pots']['buckets']['val']['episodes']} episodes",
+                    ),
+                    (
+                        "Unassigned",
+                        f"{report['pots']['buckets']['unassigned']['hours']} h,"
+                        f" {report['pots']['buckets']['unassigned']['episodes']} episodes",
+                    ),
+                    (
+                        "Gold coverage gaps",
+                        "; ".join(
+                            f"{key}: {', '.join(values)}"
+                            for key, values in sorted(report["pots"]["gold_coverage_gaps"].items())
+                        )
+                        or "none",
+                    ),
+                ]
+            ),
+        ),
+        (
+            "Verification",
+            table(
+                [
+                    (
+                        "Verified",
+                        f"{report['verification']['verified']}"
+                        f" ({report['verification']['hours']['verified']} h)",
+                    ),
+                    (
+                        "Screened",
+                        f"{report['verification']['screened']}"
+                        f" ({report['verification']['hours']['screened']} h)",
+                    ),
                 ]
             ),
         ),

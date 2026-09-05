@@ -23,7 +23,7 @@ from app.models import (
     Segment,
     SegmentLabel,
 )
-from app.models.enums import APPROVED_DISPOSITIONS
+from app.models.enums import APPROVED_DISPOSITIONS, VERIFICATION_TIERS
 
 
 class LabelingError(RuntimeError):
@@ -42,6 +42,10 @@ class Decision:
     opened_at: dt.datetime | None = None
     submitted_at: dt.datetime | None = None
     duration_ms: int | None = None
+    #: ``verified`` (clip played, transcript read) or ``screened`` (waved through on the
+    #: disagreement signal without listening). Defaults to ``verified``, so a caller that does not
+    #: know about tiers cannot silently downgrade the corpus's claim about itself (D63).
+    verification_tier: str = "verified"
 
 
 #: Which event action each disposition records.
@@ -110,6 +114,22 @@ def record_decision(
         raise LabelingError(f"task {task.id} is already {task.status}")
     if decision.disposition not in _ACTION_FOR_DISPOSITION:
         raise LabelingError(f"unknown disposition {decision.disposition!r}")
+    if decision.verification_tier not in VERIFICATION_TIERS:
+        raise LabelingError(f"unknown verification tier {decision.verification_tier!r}")
+
+    # The gold pot's entire value is that every row in it was actually checked. One screened row
+    # would make the benchmark's claim false, and nothing downstream could tell which row it was,
+    # so this is refused at the write rather than reported at export (D63).
+    segment = session.get(Segment, task.segment_id)
+    if (
+        decision.verification_tier == "screened"
+        and segment is not None
+        and segment.episode.pot == "gold"
+    ):
+        raise LabelingError(
+            f"segment {segment.external_id} is in the gold pot, which only accepts"
+            " verified labels; listen to the clip or move on"
+        )
 
     version = get_or_create_label_version(session, decision.label_version, settings)
     annotator = decision.annotator or settings.labels.default_annotator
@@ -129,6 +149,7 @@ def record_decision(
         label_version_id=version.id,
         final_text=final_text,
         disposition=decision.disposition,
+        verification_tier=decision.verification_tier,
         seed_hypothesis_id=task.seed_hypothesis_id,
         annotator=annotator,
         notes=decision.notes,
@@ -149,7 +170,6 @@ def record_decision(
     )
 
     task.status = "done"
-    segment = session.get(Segment, task.segment_id)
     if segment is not None:
         segment.pipeline_status = (
             "labeled" if decision.disposition in APPROVED_DISPOSITIONS else "excluded"

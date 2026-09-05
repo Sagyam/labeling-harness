@@ -27,6 +27,8 @@ import {
   ExportHistoryItem,
   CostReportResponse,
   CostRequestsResponse,
+  PotPanel,
+  PotAssignReport,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -278,6 +280,17 @@ export const api = {
   },
 
   getReport: (): Promise<AnalyticsReport> => request<AnalyticsReport>('/stats/report'),
+
+  getPots: (): Promise<PotPanel> => request<PotPanel>('/pots'),
+
+  assignPots: (
+    body: { gold_hours_target?: number; allow_promote_from_train?: boolean; dry_run?: boolean } = {}
+  ): Promise<PotAssignReport> => {
+    return request<PotAssignReport>('/pots/assign', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  },
 
   runExport: (body: {
     kind: string

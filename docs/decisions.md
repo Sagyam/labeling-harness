@@ -1491,3 +1491,86 @@ no time budget and be re-run when it improves. That is what D62 exports the epis
 **Reversal:** none needed — the inference code is gone rather than switched off. The form fields
 are ordinary metadata and the allowlist in `speaker_meta.py` is what governs them.
 
+
+## D63 — Two pots, filled to a duration; the tier records how hard a label was looked at
+
+Supersedes D5. `episodes.pot` (`gold` / `train` / `unassigned`) replaces the hashed split as the
+thing the corpus is organised by, and `segment_labels.verification_tier` (`verified` / `screened`)
+records how much attention each decision actually got. `episodes.split` survives as a derived
+label, tied to the pot by a CHECK: gold is always `test`, train is always `train` or `val`.
+
+**D5's rule was right and its reason was wrong.** D5 forbade segment-level splits because "segments
+from one episode share speaker, room and topic". The room half is already dead — D25's two-pass
+loudnorm and D39's libsoxr resample to 16 kHz mono destroy most of what distinguishes one
+professionally-produced podcast mic from another, so the pipeline had closed that leak before the
+split ever ran. What actually justifies the rule is two things D5 barely mentions:
+
+1. **Adjacency.** VAD cuts are contiguous and D25 *pads* speech at the edges, so consecutive clips
+   share audio samples. Shuffling at clip level puts two halves of one sentence in train and test.
+2. **Lexical clustering.** Within an episode the same names, jargon and rare words recur, and for a
+   code-switching corpus the English switch points cluster by topic, so clip-level shuffling
+   inflates every CMI number the corpus exists to report.
+
+And D5 does not achieve what it claims. "Segments from one episode share speaker" — so do segments
+from *every episode of the same show*. A host appearing across forty episodes is in the test set
+however the episodes are sliced. The grouping key was never the episode; it is the show. Episode
+granularity is kept because it is the unit ingestion produces, and the coverage-first selection
+below is what actually spreads the benchmark across shows.
+
+**A ratio cannot express what anyone wants from a corpus.** `assign_split()` hashed the episode id
+into train/val/test by ratio. Three problems, in the order they hurt:
+
+- The ratio was over episode **count**, not duration, and episodes run from minutes to the
+  four-hour ingest ceiling. "Five hours of benchmark audio" was not expressible.
+- A hash only hits its ratios in the limit. At the 30–60 episodes this corpus is heading for,
+  `test: 0.1` is a coin flip that lands anywhere from two episodes to nine.
+- Nothing stratified. A hash can hand back an all-one-show test set and no part of the system
+  would object.
+
+So `assign_pots` fills gold to an **hours** target, greedily, **coverage first**: of the episodes
+that still fit, take the one adding the most unseen show / gender / age bracket / topic. Duration
+alone would take the longest episodes, which is the fastest route to five hours and the most likely
+route to five hours of one show.
+
+**Three rules, each guarding a number that would otherwise look fine and be wrong.**
+
+1. **The pot is assigned before any clip is seen.** Ingestion calls `assign_pots` between import and
+   queue build. A pot chosen per clip *while looking at it* correlates with how hard the clip turned
+   out to be — route the hard ones to gold and the benchmark reads pessimistic, route the quick ones
+   and it reads optimistic — and nothing recorded afterwards can separate the two. Assigning ahead
+   of time makes the routing independent of content by construction.
+2. **Whole episodes.** The surviving half of D5, for the two reasons above.
+3. **Gold is one-directional.** An episode never leaves gold, and by default never enters it from
+   train: a recording that was trained on and later promoted to the benchmark turns it into a
+   memorization test, silently. `allow_promote_from_train` exists for the window before anything has
+   trained and names itself at every call site. The consequence is real and intended — once
+   everything is placed, raising the gold target does nothing until new episodes arrive.
+
+**The tier is the corpus's claim about itself.** The train pot is meant to be screened: accepted on
+cross-ASR disagreement without listening, which is the only way 50 hours is affordable. But a
+screened row written as `accepted_unchanged` by `annotator: owner` asserts a human verified it. That
+is false, and it costs twice — a reviewer asking about the verification protocol gets a wrong
+answer, and the disagreement gate can never be measured, because its decision was overwritten by a
+confirmation nobody made. So the tier is a column, every export row carries it, and the manifest
+reports the mix per split. The 5% audit sample (`queue.audit_sample_rate`) becomes an instrument:
+re-verify a sample of screened clips and the gate's error rate falls out.
+
+Screening a gold segment is refused at `record_decision` with a 409, and the `gold` export refuses
+to write at all if a screened row reaches it — belt and braces, because the failure is silent and
+the artefact outlives the session that made it.
+
+**Deletion is not offered.** Bad audio is flagged `unusable_audio`, as before. Deleting would lose
+"what fraction of real Nepanglish podcast audio is untranscribable", which is a publishable number,
+and — worse — a delete key used casually in the train pot and carefully in gold is a biased filter
+applied to one distribution and not the other, with nothing recording that it happened.
+
+**Milestones** (`app/services/gamify.py`) are derived on read from existing tables and stored
+nowhere. Two choices about what they reward: levels are measured in **audio cleared, not clips
+decided**, so screening a thousand two-second clips does not outrank verifying an hour of hard ones;
+and a verified second counts double a screened one, so the scoreboard does not pull against the
+corpus's own quality claim.
+
+**Reversal:** the migration has a working `downgrade`, and it backfilled rather than reassigned —
+existing episodes took their pot from the split they already had, so nothing moved. Reversing now is
+cheap because no real corpus is committed to a split yet; after a gold pot has been annotated and
+exported, treat the pot assignment as permanent for the same reason D5 said to.

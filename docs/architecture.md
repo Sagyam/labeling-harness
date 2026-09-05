@@ -89,13 +89,32 @@ Exactly three status fields, each with one owner:
 
 No fourth status, and no boolean that duplicates one. `segment_labels` rows are append-only.
 
-### Frozen splits
+### Two pots
 
-Split assignment happens once, at episode import, hashed from `(episode_id, split_seed)` and stored
-in `episodes.split`. It is never recomputed. Without a stored split the train/test division would be
-recalculated at every export, so adding episodes would silently migrate segments across the boundary
-and two exports of "the same" dataset would differ. Splits are at **episode** level: segments from
-one episode share speaker, recording conditions and topic, so a segment-level split leaks.
+`episodes.pot` is `gold`, `train` or `unassigned`, and `episodes.split` is derived from it under a
+CHECK: gold is always `test`, train is always `train` or `val`. The pot is the frozen commitment;
+the split is the label that follows from it.
+
+`assign_pots` (`app/services/pots.py`) fills gold to an **hours** target rather than a ratio —
+`dataset.gold_hours_target` — taking, of the episodes that still fit, the one that adds the most
+unseen show, gender, age bracket or topic. Ingestion calls it between import and queue build, so
+every episode is placed before any of its clips is looked at. Assigning a pot per clip, while
+looking at the clip, would correlate the benchmark with clip difficulty in a way nothing recorded
+afterwards could undo.
+
+Whole episodes only. VAD cuts are contiguous and D25 pads speech at the edges, so consecutive clips
+share audio samples; within an episode the vocabulary and topic are shared too. Gold is
+one-directional: an episode never leaves it, and only enters from train under an explicit opt-in,
+because a recording that was trained on and later promoted to the benchmark turns it into a
+memorization test. Train and val may be redrawn freely — they hold the same standard of data.
+
+### Verification tier
+
+`segment_labels.verification_tier` is `verified` (clip played, transcript read) or `screened`
+(accepted on cross-ASR disagreement without listening). It defaults to `verified` at every layer, so
+a caller that omits it cannot weaken the corpus's claim about itself. Screening a gold segment is
+refused with 409 at `record_decision`, and the `gold` export refuses to write if a screened row
+reaches it anyway. Every export row carries the tier and each manifest reports the mix per split.
 
 ## Priority formula
 
@@ -307,7 +326,7 @@ the same inputs and filters produce byte-identical output.
 | `GET /segments/{id}` | Segment with all hypotheses, scores, flags and current label |
 | `GET /segments/{id}/audio` | Clip stream with HTTP range support (206) |
 | `GET /segments/{id}/peaks` | Precomputed waveform peaks JSON |
-| `POST /tasks/{id}/accept` | `disposition=accepted_unchanged` |
+| `POST /tasks/{id}/accept` | `disposition=accepted_unchanged`; `verification_tier` says whether it was heard |
 | `POST /tasks/{id}/label` | `disposition=edited`, body carries `final_text` |
 | `POST /tasks/{id}/flag` | `unusable_audio` or `uncertain` |
 | `POST /tasks/{id}/skip` | Defer; event only, no label |
@@ -323,7 +342,9 @@ the same inputs and filters produce byte-identical output.
 | `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |
 | `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
-| `GET /stats/report` | Comprehensive analytics, split balance, model agreement, and quality metrics |
+| `GET /stats/report` | Comprehensive analytics: pots, coverage, verification mix, agreement, milestones |
+| `GET /pots` | What each pot holds and what the gold pot does not cover; assigns nothing |
+| `POST /pots/assign` | Place unplaced episodes against an hours target; redraw the train/val line |
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
 | `GET /export/history` | List previous exported dataset artifacts on disk |

@@ -73,9 +73,21 @@ without word spans for that system.
 Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to exercise the
 pipeline without spending anything.
 
+**Two pots.** Every episode is placed in one before a single one of its clips reaches the queue.
+The **gold** pot is the benchmark: every clip is listened to, and an episode never leaves it. The
+**train** pot is everything else, subdivided into train and val, where a clip may be *screened* —
+accepted on cross-ASR disagreement without listening, which is the only way fifty hours is
+affordable. Placement is greedy against an hours target (`dataset.gold_hours_target`), taking the
+episode that adds the most unseen show, gender, age bracket or topic, because a five-hour benchmark
+drawn from one show measures that show. Ingestion assigns pots itself; `scripts/assign_pots.py`
+covers the rest (D63).
+
+Every label records which it was, `verified` or `screened`, and every export row carries it. The
+harness refuses to screen a gold clip, and refuses to write a gold export containing one.
+
 **Triage** is where the time goes. A dense list, highest-priority segment first, with the reason it
 surfaced shown next to it. Most segments are correct, so the dominant motion is listen, `Enter`,
-move on.
+move on — or `s` to screen without listening, where the pot allows it.
 
 **Editor** (`e`) is for the ones that are not: waveform, loopable playback, the transcript, the
 other systems' hypotheses, and a live word diff against what you started from. Under the waveform
@@ -89,6 +101,12 @@ which candidate you picked and ranks it first next time.
 **Episodes** lets you browse what has been ingested and delete an episode or a single segment,
 audio and all.
 
+**Analytics** shows what the dataset actually looks like: each pot against its hours target, how
+much of it was heard rather than screened, and which shows, genders, age brackets and topics the
+benchmark does and does not span. Alongside it is a progress panel — level, streak, daily goal and
+milestones — computed on read from the tables that already exist and stored nowhere. It changes
+nothing about the corpus; it exists because a backlog only ever counts down.
+
 ### Keyboard
 
 | Triage | | Editor | |
@@ -96,11 +114,13 @@ audio and all.
 | `j` / `k` | Move between rows | `Ctrl+Space` | Play / pause |
 | `Space` | Play / pause row | `Ctrl+Enter` | Save and advance |
 | `Enter` | Accept unchanged, advance | `Ctrl+Shift+Enter` | Save and stay |
+| `s` | Screen without listening | | |
 | `e` | Open in editor | `Alt+1…5` | Load hypothesis 1–5 |
 | `f` | Flag unusable audio | `Alt+←` / `Alt+→` | Seek ∓2 s |
 | `u` | Mark uncertain | `Ctrl+L` | Toggle loop |
 | `x` | Toggle row selection | `Ctrl+T` | Toggle transliteration |
 | `Shift+Enter` | Accept selected rows | `Esc` | Back to triage |
+| `Shift+S` | Screen selected rows | | |
 
 In the transliteration popup: `1`–`5` pick a candidate, `Enter` takes the first, `Esc` keeps the
 Latin exactly as typed. `?` opens the full list in the app.
@@ -111,6 +131,7 @@ Run from the repository root with the backend virtualenv:
 
 ```bash
 backend/.venv/bin/python scripts/import_manifest.py  export_show-a_ep012/ [--dry-run]
+backend/.venv/bin/python scripts/assign_pots.py      [--gold-hours 5] [--dry-run]
 backend/.venv/bin/python scripts/build_queue.py      [--episode show-a_ep012]
 backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-version v1
 backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
@@ -119,8 +140,8 @@ backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for develo
 ```
 
 `export_dataset.py` writes four kinds — `training`, `gold`, `analytics`, `error_mining` — each with
-a `manifest.json` recording label version, policy version, filters, row counts, per-file checksums,
-timestamp, git commit and the contributing import runs. The same inputs produce byte-identical
+a `manifest.json` recording label version, policy version, filters, row counts, the verified/screened
+mix per split, per-file checksums, timestamp, git commit and the contributing import runs. The same inputs produce byte-identical
 output. For `analytics`, `timestamp_verification_report.json` is generated automatically.
 
 ## Configuration

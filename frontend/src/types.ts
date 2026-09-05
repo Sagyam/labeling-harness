@@ -85,6 +85,7 @@ export interface Scores {
 export interface Label {
   id: number
   disposition: string
+  verification_tier: VerificationTier
   final_text: string | null
   annotator: string
   label_version: string
@@ -99,6 +100,8 @@ export interface Segment {
   episode_id: number
   episode_external_id: string
   split: 'train' | 'val' | 'test' | string
+  /** Gold clips must be listened to; the editor hides screening for them. */
+  pot: PotName
   speaker_id: string | null
   start_time: number
   end_time: number
@@ -128,6 +131,7 @@ export interface QueueRow {
   episode_external_id: string
   queue: 'review' | 'audit' | 'error' | string
   status: 'pending' | 'in_progress' | 'done' | 'skipped' | string
+  pot: PotName
   priority_score: number
   reason: QueueReason | null
   flags: string[]
@@ -183,6 +187,12 @@ export interface DecisionIn {
   annotator?: string
   label_version?: string
   notes?: string | null
+  /**
+   * How much attention this decision got. Omit it and the server records `verified`, so a caller
+   * that forgets the field cannot weaken what the corpus claims about itself. A `screened`
+   * decision on a gold-pot segment is refused with 409.
+   */
+  verification_tier?: VerificationTier
 }
 
 export interface AcceptIn extends DecisionIn {}
@@ -210,6 +220,7 @@ export interface DecisionOut {
   segment_id: number
   label_id: number | null
   disposition: string | null
+  verification_tier: VerificationTier | null
   task_status: string
   duration_ms: number | null
 }
@@ -317,6 +328,7 @@ export interface EpisodeSummary {
   show_id: string | null
   duration_seconds: number | null
   split: string
+  pot: PotName
   segment_count: number
   labeled_count: number
   pending_count: number
@@ -381,11 +393,123 @@ export interface AnalyticsReport {
     mean_cer_between_hypotheses: number | null
   }
   split_balance: Record<string, { episodes: number; segments: number; hours: number }>
+  pots: PotPanel
+  verification: VerificationPanel
+  progress: ProgressPanel
   word_timestamp_coverage: {
     hypotheses_total: number
     hypotheses_with_words: number
     fraction: number
   }
+}
+
+/** Which pot an episode belongs to. Gold is the benchmark; train holds everything else. */
+export type PotName = 'gold' | 'train' | 'unassigned'
+
+/** The four rows the dashboard shows: the two pots, with the train pot split into train and val. */
+export type BucketName = 'gold' | 'train' | 'val' | 'unassigned'
+
+export interface PotBucket {
+  episodes: number
+  segments: number
+  /** Audio ingested into this bucket. Moves when something is ingested. */
+  hours: number
+  /** Audio in this bucket that carries a current label. Moves when the annotator works. */
+  labeled_hours: number
+}
+
+export interface PotPanel {
+  gold_target_hours: number
+  /**
+   * The target actually being pursued: the configured one, capped at a share of the ingested
+   * corpus so a small corpus is not swallowed whole into the benchmark.
+   */
+  gold_effective_target_hours: number
+  /** True while the corpus is too small to reach the configured target. */
+  gold_capped_by_corpus_size: boolean
+  train_target_hours: number
+  buckets: Record<BucketName, PotBucket>
+  /** `{coverage key: {value: episodes in gold carrying it}}`. */
+  gold_coverage: Record<string, Record<string, number>>
+  corpus_coverage: Record<string, Record<string, number>>
+  /** Values the corpus has that the gold pot does not cover at all. */
+  gold_coverage_gaps: Record<string, string[]>
+  coverage_complete: boolean
+}
+
+/** How much attention a label got: `verified` was listened to, `screened` was not. */
+export type VerificationTier = 'verified' | 'screened'
+
+export interface VerificationPanel {
+  verified: number
+  screened: number
+  total: number
+  hours: Record<VerificationTier, number>
+}
+
+export type MilestoneGroup = 'volume' | 'quality' | 'habit' | 'corpus'
+
+export interface Milestone {
+  id: string
+  name: string
+  description: string
+  progress: number
+  target: number
+  unlocked: boolean
+  group: MilestoneGroup
+}
+
+export interface ProgressPanel {
+  level: number
+  level_minutes: number
+  minutes_into_level: number
+  minutes_per_level: number
+  /** 0-1 through the current level. */
+  level_fraction: number
+  verified_minutes: number
+  screened_minutes: number
+  current_streak_days: number
+  longest_streak_days: number
+  /** Whether today already counts, so the UI can say "keep it" rather than "extend it". */
+  streak_active_today: boolean
+  today_segments: number
+  daily_goal_segments: number
+  daily_goal_fraction: number
+  best_day_segments: number
+  best_day: string | null
+  active_days: number
+  activity: Array<{ day: string; segments: number }>
+  achievements: Milestone[]
+  unlocked_count: number
+}
+
+export interface PotChange {
+  external_id: string
+  from_pot: PotName
+  to_pot: PotName
+  from_split: string
+  to_split: string
+  hours: number
+}
+
+export interface PotAssignReport {
+  gold_hours: number
+  gold_effective_target_hours: number
+  gold_capped_by_corpus_size: boolean
+  train_hours: number
+  val_hours: number
+  unassigned_hours: number
+  gold_target_hours: number
+  train_target_hours: number
+  gold_episodes: number
+  train_episodes: number
+  val_episodes: number
+  unassigned_episodes: number
+  gold_target_met: boolean
+  gold_coverage: Record<string, Record<string, number>>
+  gold_coverage_gaps: Record<string, string[]>
+  dry_run: boolean
+  changes: PotChange[]
 }
 
 export interface ExportOutItem {

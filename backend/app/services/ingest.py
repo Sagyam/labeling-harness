@@ -49,6 +49,7 @@ from app.llm.transcription import (
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.forced_align import ForcedAligner, align_text
 from app.services.importer import import_manifest
+from app.services.pots import assign_pots
 from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
     SileroVAD,
@@ -927,6 +928,17 @@ def _run_stages(
             job.log(
                 f"Database import: {import_report.segments_inserted} segments, "
                 f"{import_report.clips_uploaded} clips uploaded to storage"
+            )
+
+            # The pot is decided here, before the queue exists and so before a single clip has
+            # been looked at. That ordering is the whole point: a pot chosen later, while looking
+            # at clips, would correlate with how hard they turned out to be and quietly bias the
+            # benchmark (D63).
+            pot_report = assign_pots(session, settings=settings)
+            job.log(
+                f"Pots: gold {pot_report.gold_hours:.2f}h / "
+                f"{pot_report.gold_target_hours:.2f}h target, "
+                f"train {pot_report.train_hours:.2f}h, val {pot_report.val_hours:.2f}h"
             )
 
             job.log("Building prioritized annotation queues...")

@@ -400,7 +400,10 @@ def test_segment_detail_lists_every_hypothesis(client: TestClient, imported_epis
     body = client.get(f"/segments/{segment_id}").json()
     assert len(body["hypotheses"]) == 3
     assert body["scores"] is not None
-    assert body["split"] in {"train", "val", "test"}
+    # A manifest import places nothing: the pot is assigned corpus-wide, against a duration
+    # target, by `assign_pots` (D63).
+    assert body["split"] == "unassigned"
+    assert body["pot"] == "unassigned"
 
 
 def test_unknown_segment_is_404(client: TestClient) -> None:

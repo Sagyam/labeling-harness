@@ -36,7 +36,6 @@ from app.services.audio import ClipFormatError, compute_peaks, validate_clip
 from app.services.flags import FlagHypothesis, compute_flags
 from app.services.manifest import Manifest, ManifestError, read_manifest
 from app.services.speaker_meta import strip_speaker_pii
-from app.services.splits import assign_split
 from app.storage.base import ObjectStorage
 from app.utils.hashing import checksums_match, sha256_file
 from app.utils.logging import get_logger
@@ -296,7 +295,7 @@ def _upsert_episode(
             duration_seconds=manifest.episode.get("duration_seconds"),
             audio_object_key=audio_key,
             split=report.split,
-            split_seed=settings.importer.split_seed,
+            split_seed=settings.dataset.pot_seed,
             split_assigned_at=dt.datetime.now(dt.UTC),
             metadata_jsonb=extra or None,
         )
@@ -429,15 +428,11 @@ def import_manifest(
     existing_episode = session.scalar(
         sa.select(Episode).where(Episode.external_id == manifest.episode_id)
     )
-    split = (
-        existing_episode.split
-        if existing_episode is not None
-        else assign_split(
-            manifest.episode_id,
-            seed=settings.importer.split_seed,
-            ratios=settings.importer.split_ratios,
-        )
-    )
+    # A new episode arrives with no pot and no split. Placing it is a separate, corpus-wide
+    # decision made against a duration target by `assign_pots` (D63), not something one import can
+    # answer -- an importer looking only at the episode in front of it cannot know whether the gold
+    # pot still needs five hours or is already full. A re-import keeps whatever it was given.
+    split = existing_episode.split if existing_episode is not None else "unassigned"
 
     plans = _plan(session, manifest, settings, allow_clip_change=allow_clip_change)
 

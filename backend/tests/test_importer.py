@@ -234,40 +234,39 @@ def test_episode_metadata_is_stored(
 # --- frozen splits -----------------------------------------------------------------------
 
 
-def test_split_is_assigned_at_import(
+def test_import_leaves_a_new_episode_unplaced(
     db_session: Session, export_dir: Path, storage, settings: Settings
 ) -> None:
+    """The importer no longer picks a split (D63).
+
+    Which pot an episode belongs in is a corpus-wide decision against a duration target, and an
+    importer looking only at the episode in front of it cannot make it -- it has no idea whether
+    the gold pot still needs five hours or is already full.
+    """
     report = run_import(db_session, export_dir, storage, settings)
     episode = db_session.scalars(sa.select(Episode)).one()
-    assert episode.split in {"train", "val", "test"}
-    assert episode.split == report.split
-    assert episode.split_seed == settings.importer.split_seed
-    assert episode.split_assigned_at is not None
+    assert episode.pot == "unassigned"
+    assert episode.split == "unassigned"
+    assert report.split == "unassigned"
 
 
-def test_split_is_stable_across_reimport(
+def test_import_does_not_disturb_a_pot_already_assigned(
     db_session: Session, export_dir: Path, storage, settings: Settings
 ) -> None:
+    """A re-import keeps the pot the episode was placed in, audio, hypotheses and all."""
+    from app.services.pots import assign_pots
+
     run_import(db_session, export_dir, storage, settings)
+    assign_pots(db_session, settings=settings)
+    db_session.flush()
     episode = db_session.scalars(sa.select(Episode)).one()
-    first_split, assigned_at = episode.split, episode.split_assigned_at
+    first_pot, first_split = episode.pot, episode.split
+    assert first_pot != "unassigned"
 
     run_import(db_session, export_dir, storage, settings)
     db_session.expire_all()
     episode = db_session.scalars(sa.select(Episode)).one()
-    assert episode.split == first_split
-    assert episode.split_assigned_at == assigned_at
-
-
-def test_split_is_deterministic_for_a_given_seed(
-    db_session: Session, export_dir: Path, storage, settings: Settings
-) -> None:
-    from app.services.splits import assign_split
-
-    report = run_import(db_session, export_dir, storage, settings)
-    assert report.split == assign_split(
-        "imp_ep001", seed=settings.importer.split_seed, ratios=settings.importer.split_ratios
-    )
+    assert (episode.pot, episode.split) == (first_pot, first_split)
 
 
 # --- idempotency -------------------------------------------------------------------------

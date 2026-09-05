@@ -98,26 +98,70 @@ class ApiSettings(BaseModel):
 
 
 class ImporterSettings(BaseModel):
-    """Manifest import behaviour, including the frozen-split assignment."""
+    """Manifest import behaviour.
+
+    Splits are not decided here any more. An import leaves a new episode unplaced and
+    ``dataset.gold_hours_target`` drives ``assign_pots``, because which pot an episode belongs in
+    is a corpus-wide question about duration that one import cannot answer (D63).
+    """
 
     model_config = _STRICT
 
-    split_seed: int = 20260101
-    split_ratios: dict[str, float] = Field(
-        default_factory=lambda: {"train": 0.8, "val": 0.1, "test": 0.1}
-    )
     peaks_buckets: int = 1000
     expected_sample_rate: int = 16000
     expected_channels: int = 1
     expected_format: str = "FLAC"
 
-    @model_validator(mode="after")
-    def _check_ratios(self) -> ImporterSettings:
-        if set(self.split_ratios) != {"train", "val", "test"}:
-            raise ValueError("split_ratios must have exactly the keys train, val and test")
-        if abs(sum(self.split_ratios.values()) - 1.0) > 1e-9:
-            raise ValueError("split_ratios must sum to 1.0")
-        return self
+
+class DatasetSettings(BaseModel):
+    """Pot targets: how big each pot should get, and how the train pot subdivides (D63).
+
+    Targets are **durations**, not ratios, because a duration is the thing anyone actually wants
+    from a corpus ("five hours of benchmark audio") and a ratio over episode count cannot express
+    it when episodes run from minutes to four hours.
+    """
+
+    model_config = _STRICT
+
+    #: Hours of audio the gold pot is aiming at. Assignment stops once it is met.
+    gold_hours_target: float = Field(default=5.0, gt=0)
+    #: Hours the train pot is aiming at. Informational -- everything not needed for gold goes to
+    #: train, so this drives the dashboard's progress bar rather than the assigner's decisions.
+    train_hours_target: float = Field(default=50.0, gt=0)
+    #: Ceiling on gold's share of the ingested corpus. Without it a corpus smaller than
+    #: ``gold_hours_target`` is swallowed whole -- every episode locked irreversibly into the
+    #: benchmark, nothing left to train on, and the benchmark's coverage fixed at a point when the
+    #: corpus was too small to know what it should span. The gold pot instead grows with the
+    #: corpus and reaches its target once there is enough audio to spare.
+    gold_max_corpus_fraction: float = Field(default=0.35, gt=0.0, le=1.0)
+    #: Share of the train pot held back as val. Redrawable: train and val hold the same standard
+    #: of data, so moving an episode between them costs nothing (unlike moving one out of gold).
+    val_fraction: float = Field(default=0.1, ge=0.0, lt=1.0)
+    #: Seed for the train/val subdivision and for tie-breaking during gold assignment, so a run is
+    #: reproducible.
+    pot_seed: int = 20260101
+    #: Stratification variables the gold pot tries to cover before duration alone decides. Ordered
+    #: by how much a gap in one would hurt: an all-one-show benchmark is the worst outcome.
+    coverage_keys: list[Literal["show_id", "gender", "age_bracket", "topic"]] = Field(
+        default_factory=lambda: ["show_id", "gender", "age_bracket", "topic"]
+    )
+
+
+class GamifySettings(BaseModel):
+    """Thresholds behind the dashboard's progress display.
+
+    None of this changes what is exported. It exists because the corpus is built by one person over
+    many sessions, and a number that only ever counts up is easier to keep showing up for than a
+    backlog that only ever counts down.
+    """
+
+    model_config = _STRICT
+
+    #: Segments a day that counts as a full day's work; the daily ring fills against it.
+    daily_goal_segments: int = Field(default=200, gt=0)
+    #: Minutes of *corpus* audio cleared per level. Levels are measured in audio, not in clicks,
+    #: so screening a thousand short clips does not outrank verifying an hour of hard ones.
+    minutes_per_level: float = Field(default=30.0, gt=0)
 
 
 class QueueWeights(BaseModel):
@@ -280,6 +324,8 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)
     importer: ImporterSettings = Field(default_factory=ImporterSettings)
+    dataset: DatasetSettings = Field(default_factory=DatasetSettings)
+    gamify: GamifySettings = Field(default_factory=GamifySettings)
     queue: QueueSettings = Field(default_factory=QueueSettings)
     translit: TranslitSettings = Field(default_factory=TranslitSettings)
     labels: LabelSettings = Field(default_factory=LabelSettings)

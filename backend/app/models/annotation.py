@@ -31,6 +31,7 @@ from app.models.enums import (
     EVENT_ACTIONS,
     QUEUE_NAMES,
     TASK_STATUSES,
+    VERIFICATION_TIERS,
     check_in,
 )
 
@@ -105,6 +106,9 @@ class SegmentLabel(Base):
     __tablename__ = "segment_labels"
     __table_args__ = (
         CheckConstraint(check_in("disposition", DISPOSITIONS), name="disposition_allowed"),
+        CheckConstraint(
+            check_in("verification_tier", VERIFICATION_TIERS), name="verification_tier_allowed"
+        ),
         Index("ix_segment_labels_segment_id_label_version_id", "segment_id", "label_version_id"),
         Index("ix_segment_labels_label_version_id", "label_version_id"),
     )
@@ -118,6 +122,13 @@ class SegmentLabel(Base):
     )
     final_text: Mapped[str | None] = mapped_column(Text)
     disposition: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: How much attention this decision got: ``verified`` (played and read) or ``screened``
+    #: (waved through on the disagreement signal). Recording it is what keeps a screened row from
+    #: being read later as a human verification it never was, and what makes the disagreement gate
+    #: measurable against a re-verified sample (D63).
+    verification_tier: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="verified", server_default="verified"
+    )
     #: What the human was shown; nullable because a segment can have no hypothesis at all.
     seed_hypothesis_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("asr_hypotheses.id", ondelete="SET NULL")

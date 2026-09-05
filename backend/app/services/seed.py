@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.models import AsrHypothesis, AsrSystem, Episode, Segment, SegmentScore
 from app.services.corpus import SYSTEMS, perturb, sentence_for
-from app.services.splits import assign_split
+from app.services.pots import assign_pots
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,6 @@ def seed_dev_data(
     """
     settings = settings or get_settings()
     rng = random.Random(seed)
-    now = dt.datetime.now(dt.UTC)
 
     system_rows: list[AsrSystem] = []
     systems_inserted = 0
@@ -74,11 +73,6 @@ def seed_dev_data(
         external_id = f"seed-show_ep{episode_index:03d}"
         episode = session.scalar(sa.select(Episode).where(Episode.external_id == external_id))
         if episode is None:
-            split = assign_split(
-                external_id,
-                seed=settings.importer.split_seed,
-                ratios=settings.importer.split_ratios,
-            )
             episode = Episode(
                 external_id=external_id,
                 show_id="seed-show",
@@ -87,10 +81,23 @@ def seed_dev_data(
                 published_at=dt.date(2026, 1, 1) + dt.timedelta(days=episode_index),
                 source_audio_checksum=f"sha256:{hashlib.sha256(external_id.encode()).hexdigest()}",
                 duration_seconds=float(segments_per_episode * 12),
-                split=split,
-                split_seed=settings.importer.split_seed,
-                split_assigned_at=now,
-                metadata_jsonb={"synthetic": True},
+                # Left unplaced; `assign_pots` below puts every seeded episode in a pot at once,
+                # exactly as ingestion does (D63).
+                split="unassigned",
+                pot="unassigned",
+                metadata_jsonb={
+                    "synthetic": True,
+                    # Enough of a stratification spread that the assigner's coverage-first
+                    # selection has something to do on seeded data.
+                    "topic": ("politics", "technology", "culture")[episode_index % 3],
+                    "speakers": {
+                        "spk:0": {
+                            "role": "host",
+                            "gender": ("male", "female")[episode_index % 2],
+                            "age_bracket": ("20_39", "40_59")[episode_index % 2],
+                        }
+                    },
+                },
             )
             session.add(episode)
             session.flush()
@@ -158,6 +165,10 @@ def seed_dev_data(
                 )
             )
         session.flush()
+
+    # Place every seeded episode in a pot in one pass, the same way ingestion does: the pot is a
+    # corpus-wide decision against a duration target, not something one episode answers (D63).
+    assign_pots(session, settings=settings)
 
     return SeedSummary(
         episodes=episodes_inserted,

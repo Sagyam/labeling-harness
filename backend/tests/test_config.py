@@ -43,10 +43,19 @@ def test_queue_weights_sum_to_one() -> None:
     assert total == pytest.approx(1.0)
 
 
-def test_split_ratios_sum_to_one() -> None:
+def test_dataset_targets_are_durations_not_ratios() -> None:
+    """D63: the corpus is sized in hours, because a ratio cannot say "five hours of benchmark"."""
     settings = load_settings()
-    ratios = settings.importer.split_ratios
-    assert ratios["train"] + ratios["val"] + ratios["test"] == pytest.approx(1.0)
+    assert settings.dataset.gold_hours_target > 0
+    assert settings.dataset.train_hours_target > 0
+    assert 0.0 <= settings.dataset.val_fraction < 1.0
+    assert settings.dataset.coverage_keys
+
+
+def test_the_importer_no_longer_decides_splits() -> None:
+    settings = load_settings()
+    assert not hasattr(settings.importer, "split_ratios")
+    assert not hasattr(settings.importer, "split_seed")
 
 
 def test_env_var_overrides_yaml_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

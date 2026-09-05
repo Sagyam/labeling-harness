@@ -31,20 +31,28 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 3. **Exactly three status fields**, each with one owner: `segments.pipeline_status`,
    `annotation_tasks.status`, `segment_labels.disposition`. Do not add a fourth, and do not add a
    boolean that duplicates one.
-4. **Splits are frozen at import**, per episode, hashed from `(episode_id, split_seed)`. Never
-   recompute them; a recomputed split silently invalidates every earlier benchmark.
-5. **Every inference call is routed and logged.** Inference goes through a named route in
+4. **Two pots, assigned per episode before any of its clips is annotated** (D63). `episodes.pot`
+   is `gold` or `train`; `episodes.split` is derived from it and a CHECK enforces the agreement
+   (gold ⇒ `test`, train ⇒ `train`/`val`). Gold is one-directional — an episode never leaves it,
+   and only enters from train under an explicit opt-in. Never assign a pot per clip, and never
+   while looking at the clip: that correlates the benchmark with clip difficulty and nothing
+   downstream can undo it. Train and val may be redrawn freely.
+5. **A label says how hard it was looked at.** `segment_labels.verification_tier` is `verified`
+   (played and read) or `screened` (accepted on the disagreement signal without listening). It
+   defaults to `verified` everywhere, so no caller can weaken the claim by omission, and a
+   screened decision on a gold segment is refused with 409.
+6. **Every inference call is routed and logged.** Inference goes through a named route in
    `config/llm_routes.yaml` and a client in `app/llm/`, and writes an `llm_requests` row —
    whichever vendor served it, and whether it succeeded, failed or was a dry run. There is no
    longer a prepaid-only rule (D34): a provider is chosen for what it can transcribe, and spend is
    controlled by `dry_run`, `ingest.youtube.max_duration_seconds` and the `llm_requests` audit
    trail rather than by the shape of the vendor's billing.
-6. **Clips are 16 kHz mono FLAC.** Anything else is rejected at import, before any row is written.
-7. **Every decision writes three rows in one transaction**: a label, an `annotation_events` row
+7. **Clips are 16 kHz mono FLAC.** Anything else is rejected at import, before any row is written.
+8. **Every decision writes three rows in one transaction**: a label, an `annotation_events` row
    with the client-reported elapsed time, and an `audit_logs` entry. The one exception is skip,
    which writes an event and an audit entry but no label (decisions D14).
-8. **Configuration in YAML, secrets in the environment.** Nothing secret is committed, ever.
-9. **UTC everywhere**, `timestamptz` in the database.
+9. **Configuration in YAML, secrets in the environment.** Nothing secret is committed, ever.
+10. **UTC everywhere**, `timestamptz` in the database.
 
 ## How to work
 

@@ -34,15 +34,30 @@ api:
   auth_token: ""        # HARNESS_API__AUTH_TOKEN -- when empty, no authentication (local dev)
 
 importer:
-  split_seed: 20260101
-  split_ratios:
-    train: 0.8
-    val: 0.1
-    test: 0.1
   peaks_buckets: 1000
   expected_sample_rate: 16000
   expected_channels: 1
   expected_format: FLAC
+
+# Pot targets (D63). Durations, not ratios: a ratio over episode count cannot express
+# "five hours of benchmark audio" when episodes run from minutes to four hours.
+dataset:
+  gold_hours_target: 5.0         # gold pot stops taking episodes once this is met
+  train_hours_target: 50.0       # informational; drives the dashboard, not the assigner
+  gold_max_corpus_fraction: 0.35 # gold never takes more than this share of the ingested corpus,
+                                 # so a small corpus is not swallowed whole into the benchmark
+  val_fraction: 0.1              # share of the train pot held back as val; redrawable
+  pot_seed: 20260101
+  coverage_keys:                 # what the gold pot tries to cover before duration alone decides
+    - show_id
+    - gender
+    - age_bracket
+    - topic
+
+# Dashboard progress display only. Changes nothing about what is exported.
+gamify:
+  daily_goal_segments: 200
+  minutes_per_level: 30.0        # corpus minutes cleared per level, so audio outranks clicks
 
 queue:
   weights:

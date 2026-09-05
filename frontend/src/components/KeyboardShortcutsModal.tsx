@@ -17,12 +17,14 @@ type Shortcut = [description: string, keys: string[]]
 const TRIAGE: Shortcut[] = [
   ['Move between rows', ['j', 'k']],
   ['Play / pause row audio', ['Space']],
-  ['Accept unchanged & advance', ['Enter']],
+  ['Accept unchanged, verified & advance', ['Enter']],
+  ['Screen — accept without listening', ['s']],
   ['Open in editor', ['e']],
   ['Flag unusable audio', ['f']],
   ['Mark uncertain', ['u']],
   ['Toggle row selection', ['x']],
-  ['Accept selected rows', ['Shift+Enter']],
+  ['Accept selected rows, verified', ['Shift+Enter']],
+  ['Screen selected rows', ['Shift+S']],
 ]
 
 const EDITOR: Shortcut[] = [

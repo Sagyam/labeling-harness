@@ -48,6 +48,7 @@ class LabelOut(BaseModel):
 
     id: int
     disposition: str
+    verification_tier: str = "verified"
     final_text: str | None = None
     annotator: str
     label_version: str
@@ -64,6 +65,9 @@ class SegmentOut(BaseModel):
     episode_id: int
     episode_external_id: str
     split: str
+    #: ``gold``, ``train`` or ``unassigned``. The editor reads this to decide whether screening is
+    #: even offered: a gold clip has to be listened to (D63).
+    pot: str = "unassigned"
     speaker_id: str | None = None
     start_time: float
     end_time: float
@@ -88,6 +92,7 @@ class QueueRowOut(BaseModel):
     episode_external_id: str
     queue: str
     status: str
+    pot: str = "unassigned"
     priority_score: float
     reason: dict[str, Any] | None = None
     flags: list[str] = Field(default_factory=list)
@@ -146,6 +151,12 @@ class DecisionIn(BaseModel):
     annotator: str | None = None
     label_version: str | None = None
     notes: str | None = None
+    #: How much attention this decision got. ``verified`` means the clip was played and the
+    #: transcript read; ``screened`` means it was accepted on the cross-ASR disagreement signal
+    #: without listening. Defaults to ``verified`` so a client that does not send the field cannot
+    #: quietly weaken what the corpus claims about itself. A ``screened`` decision on a gold-pot
+    #: segment is refused with 409 (D63).
+    verification_tier: str = Field(default="verified", pattern="^(verified|screened)$")
 
 
 class AcceptIn(DecisionIn):
@@ -189,6 +200,7 @@ class DecisionOut(BaseModel):
     segment_id: int
     label_id: int | None = None
     disposition: str | None = None
+    verification_tier: str | None = None
     task_status: str
     duration_ms: int | None = None
 
@@ -230,6 +242,7 @@ class EpisodeSummary(BaseModel):
     show_id: str | None = None
     duration_seconds: float | None = None
     split: str = "unassigned"
+    pot: str = "unassigned"
     segment_count: int = 0
     labeled_count: int = 0
     pending_count: int = 0
@@ -401,3 +414,66 @@ class CostRequestsListOut(BaseModel):
 
     total: int
     items: list[LlmRequestItemOut]
+
+
+class PotAssignIn(BaseModel):
+    """Parameters for a pot assignment run."""
+
+    #: Hours the gold pot should hold. Defaults to ``dataset.gold_hours_target``.
+    gold_hours_target: float | None = Field(default=None, gt=0)
+    #: Ceiling on gold's share of the ingested corpus, so a small corpus is not swallowed whole.
+    #: Defaults to ``dataset.gold_max_corpus_fraction``.
+    gold_max_corpus_fraction: float | None = Field(default=None, gt=0, le=1)
+    #: Let an episode already in the train pot move into gold. Leave this off once anything has
+    #: been trained: promoting a recording the model has already seen turns the benchmark into a
+    #: memorization test without changing any number that would reveal it (D63).
+    allow_promote_from_train: bool = False
+    dry_run: bool = False
+
+
+class PotChangeOut(BaseModel):
+    """One episode the assigner moved."""
+
+    external_id: str
+    from_pot: str
+    to_pot: str
+    from_split: str
+    to_split: str
+    hours: float
+
+
+class PotReportOut(BaseModel):
+    """Result of a pot assignment run."""
+
+    gold_hours: float
+    train_hours: float
+    val_hours: float
+    unassigned_hours: float
+    gold_target_hours: float
+    gold_effective_target_hours: float
+    gold_capped_by_corpus_size: bool
+    train_target_hours: float
+    gold_episodes: int
+    train_episodes: int
+    val_episodes: int
+    unassigned_episodes: int
+    gold_target_met: bool
+    gold_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    gold_coverage_gaps: dict[str, list[str]] = Field(default_factory=dict)
+    dry_run: bool = False
+    changes: list[PotChangeOut] = Field(default_factory=list)
+
+
+class PotStatusOut(BaseModel):
+    """What each pot holds right now."""
+
+    gold_target_hours: float
+    gold_effective_target_hours: float
+    gold_capped_by_corpus_size: bool
+    train_target_hours: float
+    #: ``{gold|train|val|unassigned: {episodes, segments, hours, labeled_hours}}``.
+    buckets: dict[str, dict[str, float]] = Field(default_factory=dict)
+    gold_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    corpus_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    gold_coverage_gaps: dict[str, list[str]] = Field(default_factory=dict)
+    coverage_complete: bool = False

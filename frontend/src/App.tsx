@@ -11,7 +11,13 @@ import { IngestView } from '@/components/IngestView'
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
 import { TriageView } from '@/components/TriageView'
 import { api } from '@/services/api'
-import type { HealthResponse, QueueRow, StatsResponse, Task } from '@/types'
+import type {
+  HealthResponse,
+  QueueRow,
+  StatsResponse,
+  Task,
+  VerificationTier,
+} from '@/types'
 
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -150,17 +156,26 @@ export default function App() {
     })
   }
 
-  // Triage: Accept row
-  const handleAcceptRow = async (taskId: number, durationMs: number) => {
+  // Triage: Accept row. `tier` says whether the clip was actually listened to; the server refuses
+  // a screened decision on a gold-pot segment, so the 409 is surfaced rather than swallowed.
+  const handleAcceptRow = async (
+    taskId: number,
+    durationMs: number,
+    tier: VerificationTier = 'verified',
+  ) => {
     const targetRow = queueRows.find((r) => r.task_id === taskId)
     try {
       await api.acceptTask(taskId, {
         duration_ms: durationMs,
         opened_at: new Date(Date.now() - durationMs).toISOString(),
+        verification_tier: tier,
       })
-      toast.success(`Accepted ${targetRow?.segment_external_id || `#${taskId}`}`, {
-        description: `${(durationMs / 1000).toFixed(1)}s`,
-      })
+      toast.success(
+        `${tier === 'screened' ? 'Screened' : 'Verified'} ${
+          targetRow?.segment_external_id || `#${taskId}`
+        }`,
+        { description: `${(durationMs / 1000).toFixed(1)}s` },
+      )
       dropRow(taskId)
       refreshStats()
     } catch (err: any) {
@@ -190,11 +205,16 @@ export default function App() {
   }
 
   // Triage: Bulk accept
-  const handleBulkAccept = async (taskIds: number[]) => {
+  const handleBulkAccept = async (
+    taskIds: number[],
+    tier: VerificationTier = 'verified',
+  ) => {
     if (taskIds.length === 0) return
     try {
-      await api.bulkAccept({ task_ids: taskIds })
-      toast.success(`Bulk accepted ${taskIds.length} segments`)
+      await api.bulkAccept({ task_ids: taskIds, verification_tier: tier })
+      toast.success(
+        `Bulk ${tier === 'screened' ? 'screened' : 'accepted'} ${taskIds.length} segments`,
+      )
       const idSet = new Set(taskIds)
       setQueueRows((prev) => prev.filter((r) => !idSet.has(r.task_id)))
       setSelectedIds(new Set())

@@ -47,6 +47,7 @@ def latest_labels_subquery():
         SegmentLabel.segment_id.label("segment_id"),
         SegmentLabel.label_version_id.label("label_version_id"),
         SegmentLabel.disposition.label("disposition"),
+        SegmentLabel.verification_tier.label("verification_tier"),
         SegmentLabel.final_text.label("final_text"),
         SegmentLabel.created_at.label("created_at"),
         sa.func.row_number()

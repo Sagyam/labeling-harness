@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import {
-  RiBarChartGroupedLine,
   RiCheckboxCircleLine,
   RiErrorWarningLine,
   RiHourglassLine,
@@ -28,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { DatasetPanel } from '@/components/DatasetPanel'
 import { api } from '@/services/api'
 import type { AnalyticsReport } from '@/types'
 
@@ -95,7 +95,6 @@ export function AnalyticsView() {
   const throughput = report.throughput
   const queue = report.queue
   const scores = report.scores
-  const splitBalance = report.split_balance
   const wordCoverage = report.word_timestamp_coverage
 
   const accepted = labels.accepted_unchanged || 0
@@ -216,127 +215,88 @@ export function AnalyticsView() {
         </Card>
       </div>
 
-      {/* SECTION: Labels Disposition & Split Balance */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Disposition Mix */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <RiPieChartLine className="size-4 text-primary" />
-              <CardTitle className="text-sm font-semibold">Annotation Disposition Mix</CardTitle>
-            </div>
-            <CardDescription className="text-xs">
-              Breakdown of decisions made by annotators on the corpus.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Visual Multi-color Progress Bar */}
-            <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                style={{ width: `${acceptedPct}%` }}
-                className="bg-emerald-500"
-                title={`Accepted Unchanged: ${acceptedPct}%`}
-              />
-              <div
-                style={{ width: `${editedPct}%` }}
-                className="bg-blue-500"
-                title={`Edited: ${editedPct}%`}
-              />
-              <div
-                style={{ width: `${unusablePct}%` }}
-                className="bg-rose-500"
-                title={`Unusable Audio: ${unusablePct}%`}
-              />
-              <div
-                style={{ width: `${uncertainPct}%` }}
-                className="bg-amber-500"
-                title={`Uncertain: ${uncertainPct}%`}
-              />
-            </div>
+      {/* SECTION: the two pots, verification mix, coverage, milestones */}
+      <DatasetPanel
+        pots={report.pots}
+        verification={report.verification}
+        progress={report.progress}
+      />
 
-            <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-              <div className="rounded-md border p-2.5 space-y-1">
-                <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
-                  <span className="size-2 rounded-full bg-emerald-500" />
-                  Accepted
-                </div>
-                <div className="font-mono text-lg font-bold">{accepted.toLocaleString()}</div>
-                <div className="text-[10px] text-muted-foreground">{acceptedPct}% of labels</div>
+      {/* Disposition Mix */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <RiPieChartLine className="size-4 text-primary" />
+            <CardTitle className="text-sm font-semibold">Annotation Disposition Mix</CardTitle>
+          </div>
+          <CardDescription className="text-xs">
+            Breakdown of decisions made by annotators on the corpus.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Visual Multi-color Progress Bar */}
+          <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              style={{ width: `${acceptedPct}%` }}
+              className="bg-emerald-500"
+              title={`Accepted Unchanged: ${acceptedPct}%`}
+            />
+            <div
+              style={{ width: `${editedPct}%` }}
+              className="bg-blue-500"
+              title={`Edited: ${editedPct}%`}
+            />
+            <div
+              style={{ width: `${unusablePct}%` }}
+              className="bg-rose-500"
+              title={`Unusable Audio: ${unusablePct}%`}
+            />
+            <div
+              style={{ width: `${uncertainPct}%` }}
+              className="bg-amber-500"
+              title={`Uncertain: ${uncertainPct}%`}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+            <div className="rounded-md border p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                <span className="size-2 rounded-full bg-emerald-500" />
+                Accepted
               </div>
-
-              <div className="rounded-md border p-2.5 space-y-1">
-                <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-medium">
-                  <span className="size-2 rounded-full bg-blue-500" />
-                  Edited
-                </div>
-                <div className="font-mono text-lg font-bold">{edited.toLocaleString()}</div>
-                <div className="text-[10px] text-muted-foreground">{editedPct}% of labels</div>
-              </div>
-
-              <div className="rounded-md border p-2.5 space-y-1">
-                <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
-                  <span className="size-2 rounded-full bg-rose-500" />
-                  Unusable
-                </div>
-                <div className="font-mono text-lg font-bold">{unusable.toLocaleString()}</div>
-                <div className="text-[10px] text-muted-foreground">{unusablePct}% of labels</div>
-              </div>
-
-              <div className="rounded-md border p-2.5 space-y-1">
-                <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
-                  <span className="size-2 rounded-full bg-amber-500" />
-                  Uncertain
-                </div>
-                <div className="font-mono text-lg font-bold">{uncertain.toLocaleString()}</div>
-                <div className="text-[10px] text-muted-foreground">{uncertainPct}% of labels</div>
-              </div>
+              <div className="font-mono text-lg font-bold">{accepted.toLocaleString()}</div>
+              <div className="text-[10px] text-muted-foreground">{acceptedPct}% of labels</div>
             </div>
-          </CardContent>
-        </Card>
 
-        {/* Split Balance */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <RiBarChartGroupedLine className="size-4 text-primary" />
-              <CardTitle className="text-sm font-semibold">Corpus Split Balance</CardTitle>
+            <div className="rounded-md border p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-medium">
+                <span className="size-2 rounded-full bg-blue-500" />
+                Edited
+              </div>
+              <div className="font-mono text-lg font-bold">{edited.toLocaleString()}</div>
+              <div className="text-[10px] text-muted-foreground">{editedPct}% of labels</div>
             </div>
-            <CardDescription className="text-xs">
-              Deterministic episode-hashed distribution frozen at import.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs font-semibold">Split</TableHead>
-                  <TableHead className="text-xs font-semibold text-right">Episodes</TableHead>
-                  <TableHead className="text-xs font-semibold text-right">Segments</TableHead>
-                  <TableHead className="text-xs font-semibold text-right">Audio (hrs)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Object.entries(splitBalance).map(([splitName, entry]) => (
-                  <TableRow key={splitName}>
-                    <TableCell className="font-mono text-xs uppercase font-medium">
-                      {splitName}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs">
-                      {entry.episodes}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs">
-                      {entry.segments.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-xs font-semibold">
-                      {entry.hours.toFixed(2)}h
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
+
+            <div className="rounded-md border p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
+                <span className="size-2 rounded-full bg-rose-500" />
+                Unusable
+              </div>
+              <div className="font-mono text-lg font-bold">{unusable.toLocaleString()}</div>
+              <div className="text-[10px] text-muted-foreground">{unusablePct}% of labels</div>
+            </div>
+
+            <div className="rounded-md border p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
+                <span className="size-2 rounded-full bg-amber-500" />
+                Uncertain
+              </div>
+              <div className="font-mono text-lg font-bold">{uncertain.toLocaleString()}</div>
+              <div className="text-[10px] text-muted-foreground">{uncertainPct}% of labels</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* SECTION: Upstream Model Quality & Agreement */}
       <Card>

@@ -21,6 +21,24 @@ TaskStatus = Literal["pending", "in_progress", "done", "skipped"]
 TASK_STATUSES: Final[tuple[str, ...]] = ("pending", "in_progress", "done", "skipped")
 ACTIVE_TASK_STATUSES: Final[tuple[str, ...]] = ("pending", "in_progress")
 
+#: Which pot an episode belongs to. The pot is the *frozen* commitment -- assigned to a whole
+#: episode before any of its clips is seen, so the routing decision cannot correlate with how hard
+#: a clip turned out to be (D63). ``split`` is derived from it: a gold-pot episode is always
+#: ``test``; a train-pot episode is ``train`` or ``val`` and may be redrawn between the two.
+Pot = Literal["gold", "train", "unassigned"]
+POTS: Final[tuple[str, ...]] = ("gold", "train", "unassigned")
+
+#: How much human attention one label actually got. Both are legitimate ways to build a corpus and
+#: they are not the same claim, so the corpus records which was made rather than presenting a
+#: screened row as if a human had listened to it (D63).
+#:
+#: * ``verified``  -- the clip was played, the transcript read, the decision made against both.
+#: * ``screened``  -- accepted on the disagreement signal without listening.
+#:
+#: Gold-pot segments may only be ``verified``; the API refuses anything else.
+VerificationTier = Literal["verified", "screened"]
+VERIFICATION_TIERS: Final[tuple[str, ...]] = ("verified", "screened")
+
 Disposition = Literal["accepted_unchanged", "edited", "unusable_audio", "uncertain"]
 DISPOSITIONS: Final[tuple[str, ...]] = (
     "accepted_unchanged",

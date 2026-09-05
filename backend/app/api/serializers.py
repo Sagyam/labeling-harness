@@ -64,6 +64,7 @@ def serialize_segment(session: Session, segment: Segment) -> SegmentOut:
         episode_id=segment.episode_id,
         episode_external_id=segment.episode.external_id,
         split=segment.episode.split,
+        pot=segment.episode.pot,
         speaker_id=segment.speaker_id,
         start_time=segment.start_time,
         end_time=segment.end_time,
@@ -91,6 +92,7 @@ def serialize_segment(session: Session, segment: Segment) -> SegmentOut:
             LabelOut(
                 id=label.id,
                 disposition=label.disposition,
+                verification_tier=label.verification_tier,
                 final_text=label.final_text,
                 annotator=label.annotator,
                 label_version=label.label_version.name,
@@ -115,6 +117,7 @@ def serialize_queue_row(task: AnnotationTask) -> QueueRowOut:
         episode_external_id=segment.episode.external_id,
         queue=task.queue,
         status=task.status,
+        pot=segment.episode.pot,
         priority_score=task.priority_score,
         reason=task.reason_jsonb,
         flags=list(segment.scores.flags_jsonb or []) if segment.scores else [],
