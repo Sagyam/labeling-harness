@@ -248,13 +248,13 @@ def test_no_route_is_held_out_of_the_disagreement_score() -> None:
     assert {name for name, route in routes.items() if route.exclude_from_disagreement} == set()
 
 
-def test_scribe_is_the_only_route_asked_for_speaker_labels() -> None:
-    """One diarizing route remains after D51 removed the other (D49 still governs it)."""
+def test_no_route_asks_for_speaker_labels() -> None:
+    """Segment-level diarization is off for every cloud ASR route (D52).
+
+    D49 turned Scribe's on because a second source made a label checkable. D51 removed the other
+    source, and the measurement behind it showed clip-local labels cannot answer the question they
+    were collected for. What remains is storage and a column inviting a join that would be wrong,
+    so nothing is asked for a speaker any more. Speaker identity is a full-episode problem.
+    """
     routes = load_llm_routes().routes
-    vertex_transcription = {
-        name
-        for name, route in routes.items()
-        if route.provider == "vertex" and route.api == "transcription"
-    }
-    assert vertex_transcription == set(), "the only Vertex recogniser route was removed (D51)"
-    assert {name for name, route in routes.items() if route.diarize} == {"asr_scribe_v2"}
+    assert {name for name, route in routes.items() if route.diarize} == set()

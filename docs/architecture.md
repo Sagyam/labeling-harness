@@ -207,12 +207,13 @@ alone, and its word spans are measured afterwards by the local CTC forced aligne
 Flash is the one general-purpose model in the set -- it obeys the policy prompt, and it may
 equally editorialise or hallucinate over silence, which is the price of that opinion.
 
-Only `asr_scribe_v2` diarizes, since D49 and since D51 removed the other route that did. Its
-labels are stored on `hypothesis_words.speaker` and are clip-local: `spk_1` in one hypothesis is
-not `spk_1` in another, and neither is a `segments.speaker_id` from an upstream manifest. What
-they are good for is the comparison inside one clip -- two labels mean a turn boundary the VAD
-segmenter assumed was not there. What they cannot do is measure agreement between systems or
-identify a speaker across an episode; D51 records the measurement that established this.
+No route diarizes (D52). `hypothesis_words.speaker` is null for everything ingested since, and
+the column is retained for a future full-episode diarization stage rather than for any ASR route
+to fill. Labels collected before D52 are clip-local -- `spk_1` in one hypothesis is not `spk_1` in
+another, and neither is a `segments.speaker_id` from an upstream manifest -- so nothing should
+join on them. The measurement behind the reversal is in D51 and D52: on a two-speaker episode, 51
+of 68 clips were single-speaker for both diarizing systems, because the pipeline segments before
+it transcribes.
 
 ### Fetching the audio instead of uploading it
 

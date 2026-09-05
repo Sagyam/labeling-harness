@@ -122,12 +122,13 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.
   Never set that flag on a route that reports its own timings: overwriting them would destroy the
   independent references the D33 boundary report compares.
-- One route diarizes: `asr_scribe_v2`, since D49. Its labels land on `hypothesis_words.speaker`.
-  MAI returns no speaker field even when asked and Flash has no timings to attach one to, and the
-  other diarizing route was removed in D51. The labels are clip-local — `spk:0` in one hypothesis
-  is not `spk:0` in another, and neither is `segments.speaker_id`. Do not join on them across
-  hypotheses, and do not backfill the column for a transcriber that reported nothing: null means
-  "not diarized", which is the honest value for every system that does not report one.
+- **No route diarizes** (D52, reversing D49), so `hypothesis_words.speaker` is null for anything
+  ingested now. Clip-local labels could not answer the question they were collected for: the
+  pipeline segments before it transcribes, so a clip almost always holds one speaker. Do not turn
+  the flag back on expecting speaker identity — `spk:0` in one hypothesis was never `spk:0` in
+  another, and neither is `segments.speaker_id`. Speaker identity needs a full-episode pass before
+  segmentation, joined by time; that is a new stage, not a flag. Rows ingested before D52 still
+  carry labels; do not join on them.
 - Gemini runs on **Vertex AI**, not AI Studio, via `app/llm/vertex.py` (D39). Auth is one API key
   (`VERTEX_API_KEY`, restricted to `aiplatform.googleapis.com`) sent as an `x-goog-api-key`
   header, never a `?key=` query parameter — httpx puts URLs in its error strings and those are

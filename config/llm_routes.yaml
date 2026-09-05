@@ -34,12 +34,14 @@ routes:
     system_id: elevenlabs-scribe-v2
     model: scribe_v2
     language: ne
-    # Scribe diarizes at no extra charge, and it is the only second source of speaker labels the
-    # harness has -- MAI returns no speaker field even when asked, and Flash returns no timings
-    # to hang one on. Two sources is the minimum that lets a label be checked against anything
-    # (D49). The labels are clip-local, so they measure agreement within a clip and are not
-    # speaker identity across an episode; see D49 for what a sociolinguistic read would need.
-    diarize: true
+    # Off since D52, reversing D49. Scribe diarizes at no extra charge and is the only route that
+    # still could, but the labels are clip-local and that is the whole problem: the pipeline
+    # segments before it transcribes, so a clip almost always holds one speaker and the labels
+    # answer nothing. Measured on a two-speaker episode, 51 of 68 clips were single-speaker for
+    # both diarizing systems. What the column bought was storage and an inviting join that would
+    # be wrong -- `spk:0` in one hypothesis is not `spk:0` in another. Speaker identity is a
+    # full-episode problem and belongs to a stage that runs before segmentation, not to a flag.
+    diarize: false
 
   # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
   # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash

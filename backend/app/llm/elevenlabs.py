@@ -5,8 +5,10 @@ and Scribe is the only transcriber the harness has that returns word spans *and*
 probabilities (decision D21). Every call still lands in ``llm_requests``, so the billing audit
 trail has no gap in it.
 
-Scribe also diarizes, and since D49 it is asked to: it is the only second source of speaker labels
-the harness has, and a label no other system can be checked against is not evidence of anything.
+Scribe can diarize, and since D52 it is not asked to. The client still honours ``diarize`` on a
+route, so turning it back on is a config change -- but the labels it returns are clip-local, and
+a clip is one speaker often enough that they answer nothing. Speaker identity is a full-episode
+problem (D52).
 
 Scribe has no free-text prompt parameter -- unlike a chat model, it cannot be told in prose that
 the audio is code-switched. It offered two levers and now uses one: ``language_code``, from the

@@ -1188,3 +1188,44 @@ evaluation ends without needing it.
 
 **Reversal:** restore the two route blocks from git history and re-ingest. Hypotheses already
 purged come back only from the JSONL dump or by re-transcribing, which costs money.
+
+## D52 — No cloud ASR route is asked to diarize, reversing D49
+
+`asr_scribe_v2.diarize` is `false`. No route in the table asks for speaker labels, so
+`hypothesis_words.speaker` is null for everything ingested from here on. The column stays, and the
+ElevenLabs client still honours the flag, so this is one line to reverse.
+
+**D49 turned it on for a reason that no longer holds.** The argument was that two sources make a
+label checkable: Scribe plus the composite, with MAI returning no speaker field and Flash no
+timings to attach one to. D51 removed the composite, which leaves one source — and a label no
+other system can be checked against was exactly what D49 said is not evidence of anything.
+
+**The deeper problem is that clip-local labels cannot answer the question.** Measured on a
+two-speaker podcast, 51 of 68 clips were single-speaker for *both* diarizing systems and agreed
+trivially at 100%; only 17 clips were contested at all. The pipeline segments before it
+transcribes and the VAD cutter runs to `MAX_SEG_SECONDS = 20`, so a clip almost always contains
+one speaker. Ingesting more multi-speaker episodes does not raise that ceiling, because the
+ceiling comes from the ordering of the stages.
+
+**What the labels cost.** Storage on every word row, and a column that invites a join which is
+always wrong: `spk:0` in one hypothesis is not `spk:0` in another, and neither is
+`segments.speaker_id`. A future reader has to know that to avoid the mistake, and the only
+protection was a comment. Removing the data removes the trap.
+
+**Where speaker identity should come from instead.** A full-episode diarization pass that runs
+*before* segmentation, with segments joining to it by time — a new pipeline stage, not a flag, and
+therefore not built here. Source audio is retained, so both ingested episodes can be back-filled
+when it exists. Word times are clip-local, so the join is
+`episode_time = segment.start_time + word.start_time`, and it should be made against Scribe's
+spans rather than any recogniser's self-reported ones: the D48 triangulation put Scribe and
+CTC-aligned Flash within 27 ms of each other and both ~70–77 ms from the recogniser that was
+removed in D51.
+
+**Already-collected labels are left in place.** Turning the flag off stops collection; it does not
+delete the 3,188 word rows already carrying a speaker. They are harmless as long as nothing joins
+on them, and re-collecting them would cost a re-ingest, so deleting is the expensive direction of
+an easily-reversed decision. Clear them with a single `UPDATE hypothesis_words SET speaker = NULL`
+if the storage matters more than the option.
+
+**Reversal:** set `diarize: true`. Nothing downstream changed — null already meant "not diarized",
+which is what every other system has always reported.
