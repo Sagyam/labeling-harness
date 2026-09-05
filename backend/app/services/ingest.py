@@ -36,8 +36,9 @@ import httpx
 import soundfile as sf
 from sqlalchemy.orm import Session
 
-from app.config import Settings, get_settings, load_llm_routes
+from app.config import LlmRoutes, Settings, get_settings, load_llm_routes
 from app.llm.base import AsrResult
+from app.llm.topic import classify_topic, sample_transcript
 from app.llm.transcription import (
     ASR_PROMPT,
     asr_route_names,
@@ -441,6 +442,56 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
     return float(info.duration)
 
 
+def _classify_episode_topic(
+    job: IngestJob,
+    segment_records: list[dict[str, Any]],
+    session_factory: Callable[[], Session],
+    settings: Settings,
+    *,
+    routes: LlmRoutes,
+) -> dict[str, Any]:
+    """Ask a model what this episode is about, when nobody has said.
+
+    Never raises and never fails the ingest. The episode's audio, transcripts and queue are all
+    already produced by this point, and a metadata field is not worth throwing them away for -- a
+    failed classification leaves the topic empty and an annotator can still type one.
+
+    Returns:
+        Metadata to merge into ``episode.json``: the ``topic`` when one was decided, plus
+        provenance saying where it came from. Empty when the topic was already set by hand, no
+        route is configured, or the attempt failed.
+    """
+    route = settings.ingest.topic_route
+    if not route or (job.metadata or {}).get("topic"):
+        return {}
+    if route not in routes.routes:
+        logger.warning("topic_route_not_configured", route=route)
+        return {}
+
+    excerpt = sample_transcript(
+        [record["hypotheses"][0]["text"] for record in segment_records if record["hypotheses"]]
+    )
+    try:
+        with session_factory() as session:
+            topic, meta = classify_topic(
+                session,
+                title=job.title,
+                transcript=excerpt,
+                route=route,
+                config=routes,
+            )
+            session.commit()
+    except Exception as exc:  # see the docstring: a metadata field never fails an ingest
+        logger.warning("topic_classification_failed", route=route, error=str(exc))
+        job.log("Topic classification failed; leaving the episode's topic empty")
+        return {}
+
+    if topic:
+        job.log(f"Topic classified as '{topic}'")
+        return {"topic": topic, **meta}
+    return meta
+
+
 def run_pipeline(
     job: IngestJob,
     session_factory: Callable[[], Session],
@@ -833,6 +884,9 @@ def _run_stages(
         job.log("Stage 5/5: Generating manifest and importing directly into database...")
 
         job_meta = strip_speaker_pii(job.metadata)
+        job_meta.update(
+            _classify_episode_topic(job, segment_records, session_factory, settings, routes=routes)
+        )
 
         episode_meta = {
             "episode_id": job.episode_id,

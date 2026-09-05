@@ -82,3 +82,18 @@ routes:
     # audio -- and `thinkingBudget: 0` takes that to zero with the transcript unchanged. Unlike
     # `script_restore` this route has no `max_tokens`, so nothing was making the spend visible.
     reasoning_enabled: false
+
+  # Topic labelling (D57), not transcription -- the name has no `asr_` prefix, so it never becomes
+  # an ASR system. One text call per episode against an excerpt sampled across the whole of it,
+  # answering with one label from the closed taxonomy in `app/llm/topic.py`.
+  #
+  # Thinking off, and `max_tokens` low, for the same reason as everywhere else (D44, D45): the
+  # answer is a single token from a fixed list, so a reasoning budget buys nothing and a cap makes
+  # a model that starts explaining itself cost a fraction of a cent rather than a page.
+  classify_topic:
+    provider: vertex
+    api: chat
+    model: gemini-3.8-flash
+    max_tokens: 16
+    temperature: 0.0
+    reasoning_enabled: false

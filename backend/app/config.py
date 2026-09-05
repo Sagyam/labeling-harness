@@ -242,6 +242,10 @@ class IngestSettings(BaseModel):
     work_root: Path = Path("./data/ingest_work")
     max_segment_concurrency: int = Field(default=4, ge=1, le=16)
     youtube: YouTubeSettings = Field(default_factory=YouTubeSettings)
+    #: Text route that labels an episode's topic from its transcript (D57). One call per episode,
+    #: only when the form left the topic blank. Empty disables it; a name that is not in
+    #: `llm_routes.yaml` is logged and skipped, because a metadata field never fails an ingest.
+    topic_route: str = "classify_topic"
 
     @field_validator("work_root")
     @classmethod

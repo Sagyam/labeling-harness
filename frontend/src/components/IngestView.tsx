@@ -55,6 +55,8 @@ type SourceTab = 'file' | 'youtube'
 /** How long to sit on a keystroke before asking the backend what the URL points at. */
 const PROBE_DEBOUNCE_MS = 500
 
+/** The show id a form starts on, before a probe offers the channel name instead. */
+const DEFAULT_SHOW_ID = 'nepanglish'
 
 /**
  * Where the running job's id is parked.
@@ -174,7 +176,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
   // Form state
   const [sourceTab, setSourceTab] = useState<SourceTab>('file')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [showId, setShowId] = useState<string>('nepanglish')
+  const [showId, setShowId] = useState<string>(DEFAULT_SHOW_ID)
   const [episodeTitle, setEpisodeTitle] = useState<string>('')
   const [episodeId, setEpisodeId] = useState<string>('')
   const [isManualEpisodeId, setIsManualEpisodeId] = useState<boolean>(false)
@@ -223,6 +225,9 @@ export function IngestView({ onComplete }: IngestViewProps) {
   //: The title the last probe filled in. A title still equal to it was not typed by hand, so a
   //: new URL may replace it; anything else is the annotator's and is left alone.
   const probedTitleRef = useRef<string>('')
+  //: The same trick for the show id, which a probe fills in from the channel name. The starting
+  //: default counts as unclaimed too, so the first probe may replace it.
+  const probedShowIdRef = useRef<string>(DEFAULT_SHOW_ID)
 
   const rememberJob = (id: string | null) => {
     setJobId(id)
@@ -356,6 +361,16 @@ export function IngestView({ onComplete }: IngestViewProps) {
             if (!isManualEpisodeId) setEpisodeId(slugify(info.title))
             return info.title
           })
+          // A show is a channel, so the channel name is the show id worth defaulting to. Same
+          // rule as the title: a value the annotator typed wins over anything a probe learned.
+          if (info.uploader) {
+            const suggested = slugify(info.uploader)
+            setShowId((current) => {
+              if (current && current !== probedShowIdRef.current) return current
+              probedShowIdRef.current = suggested
+              return suggested
+            })
+          }
         })
         .catch((err: any) => {
           if (cancelled) return
@@ -482,6 +497,8 @@ export function IngestView({ onComplete }: IngestViewProps) {
     setProbeError(null)
     setIsProbing(false)
     probedTitleRef.current = ''
+    setShowId(DEFAULT_SHOW_ID)
+    probedShowIdRef.current = DEFAULT_SHOW_ID
     setEpisodeTitle('')
     setEpisodeId('')
     setGenre('podcast')
@@ -770,7 +787,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
                         <FieldLabel htmlFor="topic">Topic / Domain</FieldLabel>
                         <Input
                           id="topic"
-                          placeholder="e.g. tech_gadgets, business, lifestyle"
+                          placeholder="Left blank: classified from the transcript"
                           value={topic}
                           onChange={(e) => setTopic(e.target.value)}
                         />

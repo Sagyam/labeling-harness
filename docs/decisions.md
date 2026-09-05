@@ -1403,3 +1403,44 @@ the previous revision's schema is still correct after downgrading.
 
 **Reversal:** delete `speaker_meta.py` and stop calling it. The fields would then be storable
 again — but the names already deleted are gone, and that is intentional.
+
+## D57 — The episode topic is classified from the transcript, not typed into a box
+
+`ingest.topic_route` names a text route that labels one episode with one topic, from an excerpt of
+what was actually said in it, when the ingest form left the topic blank. The answer must be a
+member of the closed taxonomy in `app/llm/topic.py` or it is discarded.
+
+**Why automate it.** The free-text `Topic / Domain` box was almost always left empty, which is the
+worst outcome available for a stratification variable: a column filled in for the episodes someone
+had energy for cannot be reported on, and its gaps are not random. A label on every episode, from
+one source, applied the same way, is worth more than an occasional hand-written one.
+
+**Why the transcript and not the title.** A YouTube title is marketing, and an uploaded file has
+no title worth the name. The transcript is the only description of the episode the harness holds
+that the episode itself produced. The title is passed as a hint and nothing more.
+
+**Why the excerpt is sampled across the episode.** Nepali podcasts open with greetings, sponsor
+reads and channel promotion, so the first few minutes are systematically the least topical part of
+the recording. A prefix would classify the advertising. `sample_transcript` spreads its picks from
+the first segment to the last within a character budget, and the prompt says the excerpt will read
+disjointedly so the model does not try to make one narrative of it.
+
+**Why a closed taxonomy.** Free text would produce a hundred one-episode categories with no two
+spelled alike, which is the same unusable column by a different route. Sixteen labels, `other`
+included so an off-taxonomy episode is not forced into a wrong one. An answer outside the list is
+treated as no answer: the episode keeps an empty topic that a human can fill in, which is strictly
+better than a category that exists once. It is not retried — a model that answered off-taxonomy at
+temperature 0 will do it again, and a billed retry loop buys nothing.
+
+**Why it cannot fail an ingest.** By the time it runs, the audio, the clips, the transcripts and
+the queue all exist. A metadata field is not worth discarding them for, so every failure — an
+unconfigured route, a provider outage, an unparseable answer — is logged and leaves the topic
+empty. The one call per episode is routed and logged like every other (invariant 5), so what
+topic labelling costs is visible in `llm_requests` beside the transcripts.
+
+**A hand-typed topic always wins.** The classifier only runs when the form's topic is blank, and
+the stored `topic_source` says which of the two produced the value.
+
+**Reversal:** set `ingest.topic_route` to an empty string. Nothing else changes; episodes already
+labelled keep their label and their `topic_source`.
+

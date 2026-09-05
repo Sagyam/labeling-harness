@@ -82,6 +82,9 @@ export:
 ingest:
   work_root: ./data/ingest_work   # scratch space for web uploads; removed when a job finishes
   max_segment_concurrency: 4     # number of segments transcribed concurrently
+  # Text route that labels an episode's topic from its own transcript, once per episode, only
+  # when the form left the topic blank (D57). Empty disables it.
+  topic_route: classify_topic
   youtube:
     format: bestaudio/best        # yt-dlp selector; stage 1 re-encodes, so audio-only is enough
     max_duration_seconds: 14400   # 4 h; a longer video is refused before anything is downloaded
