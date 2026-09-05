@@ -179,7 +179,6 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 |---|---|---|---|---|
 | `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob, speaker per word | `language_code: ne` — nothing else (D48) |
 | `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne` — nothing else (D48) |
-| `asr_gemini_composite` | Vertex AI (audio) + OpenRouter (script restore) | `POST …/gemini-3.5-transcribe-preview:generateContent`, then a chat rewrite | text, word spans, speaker per segment | `language_codes: [ne-NP]` only; no prompt reaches the recogniser |
 | `asr_gemini_flash` | Vertex AI (direct) | `POST …/gemini-3.8-flash:generateContent` | text only | the full policy prompt as `systemInstruction`, `language: ne` |
 
 The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
@@ -193,29 +192,27 @@ measurement to a different model, and it also moves `low_confidence`, because a 
 no `avg_logprob` never wins the train/val "highest confidence" comparison.
 
 Only `asr_gemini_flash` is actually steerable. It is the one route whose model reads the clip as a
-chat model and takes the policy as a `systemInstruction`; the other three are dedicated
-recognisers, and none of them can be told anything in prose (D48). Two of the four therefore write
-English in Devanagari by default, and only the composite has a repair step for it.
+chat model and takes the policy as a `systemInstruction`; the other two are dedicated recognisers,
+and neither can be told anything in prose (D48).
 
-Ingestion routes each clip across all four systems, producing a four-way disagreement signal for
+Ingestion routes each clip across all three systems, producing a three-way disagreement signal for
 queue prioritisation. Each hears only the audio -- no system is ever shown another's transcript,
 which is what keeps their disagreement an independent measurement rather than a correlated one.
-Four systems is four paid calls per clip; the count is the routing table's, so removing a route is
-how you make an ingest cheaper.
+Three systems is three paid calls per clip; the count is the routing table's, so removing a route
+is how you make an ingest cheaper. It was four until D51 removed the composite.
 
-The four do not return the same thing. Scribe reports word spans and per-word log probabilities;
-MAI reports text and word spans; Gemini 3.5 Transcribe reports text, word spans and a speaker
-label per word (D36); Gemini 3.8 Flash reports text alone, and its word spans are measured
-afterwards by the local CTC forced aligner (D31, D32). Flash is the one general-purpose model in
-the set -- it obeys the policy prompt, and it may equally editorialise or hallucinate over
-silence, which is the price of that opinion.
+The three do not return the same thing. Scribe reports word spans, per-word log probabilities and
+a speaker label per word (D49); MAI reports text and word spans; Gemini 3.8 Flash reports text
+alone, and its word spans are measured afterwards by the local CTC forced aligner (D31, D32).
+Flash is the one general-purpose model in the set -- it obeys the policy prompt, and it may
+equally editorialise or hallucinate over silence, which is the price of that opinion.
 
-Only `asr_gemini_composite` diarizes. Its labels are stored on `hypothesis_words.speaker` and
-are clip-local: `spk_1` in one hypothesis is not `spk_1` in another, and neither is a
-`segments.speaker_id` from an upstream manifest. What they are good for is the comparison inside
-one clip -- two labels mean a turn boundary the VAD segmenter assumed was not there. Scribe is
-asked *not* to diarize for the same reason its clips are short: one speaker per clip is the
-assumption, and this is the route that can test it.
+Only `asr_scribe_v2` diarizes, since D49 and since D51 removed the other route that did. Its
+labels are stored on `hypothesis_words.speaker` and are clip-local: `spk_1` in one hypothesis is
+not `spk_1` in another, and neither is a `segments.speaker_id` from an upstream manifest. What
+they are good for is the comparison inside one clip -- two labels mean a turn boundary the VAD
+segmenter assumed was not there. What they cannot do is measure agreement between systems or
+identify a speaker across an episode; D51 records the measurement that established this.
 
 ### Fetching the audio instead of uploading it
 

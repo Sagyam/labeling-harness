@@ -140,7 +140,6 @@ def test_llm_routes_configured_for_cloud_asr() -> None:
     assert routes.asr_route_names() == [
         "asr_scribe_v2",
         "asr_mai_transcribe_2",
-        "asr_gemini_composite",
         "asr_gemini_flash",
     ]
 
@@ -158,20 +157,10 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert mai.system_id == "mai-transcribe-2"
     assert mai.language == "ne"
 
-    transcribe_route = routes["asr_gemini_composite"]
-    assert (transcribe_route.provider, transcribe_route.api) == ("vertex", "transcription")
-    assert transcribe_route.system_id == "gemini-composite"
-    assert transcribe_route.restore_script_route == "script_restore", (
-        "the recogniser writes one script and cannot be told not to; the restore step is the "
-        "other half of this system (D41)"
+    assert "asr_gemini_composite" not in routes, (
+        "the composite recogniser was removed in D51; it deleted the dependent variable"
     )
-    assert transcribe_route.language_codes == ["ne-NP"], (
-        "a second code empties every clip past ~15s -- measured, deterministic (D41)"
-    )
-    assert not transcribe_route.forced_align, "it reports its own spans; the restore keeps them"
-    assert transcribe_route.model == "gemini-3.5-transcribe-preview", (
-        "Vertex suffixes the recogniser `-preview`; the bare id is a 404 there (D39)"
-    )
+    assert "script_restore" not in routes, "the restore step existed only to serve it (D51)"
 
     gemini = routes["asr_gemini_flash"]
     assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (
@@ -246,29 +235,26 @@ def test_only_the_transcriber_without_timestamps_asks_for_forced_alignment() -> 
     assert aligned == {"asr_gemini_flash"}
 
 
-def test_the_composite_is_held_out_of_the_disagreement_score() -> None:
-    """It is held out for what it omits, not for how it spells (D50).
+def test_no_route_is_held_out_of_the_disagreement_score() -> None:
+    """The hold-out set is empty because its only member is gone (D51).
 
-    D40 held the raw recogniser out because it wrote English in Devanagari and so disagreed with
-    every other system on every English token for free; D41's restore step fixed that and put all
-    four systems back in. The restore step still works -- token counts match on every clip -- so
-    D41's reasoning stands. The hold-out returns for a different defect entirely: the recogniser
-    upstream of the restore step deterministically omits speech, and what it omits is 71-75%
-    Latin against 32-34% for what it keeps.
+    D50 held the composite out rather than removing it, because it was one of only two sources of
+    speaker labels. D51 removed the route outright: the diarization argument collapsed once
+    clip-local labels were shown to be unmeasurable, and what remained was the least accurate of
+    the four systems with a bias against the dependent variable. Nothing else has ever needed
+    holding out, so an empty set here is the honest state -- not a forgotten flag.
     """
     routes = load_llm_routes().routes
-    assert {name for name, route in routes.items() if route.exclude_from_disagreement} == {
-        "asr_gemini_composite"
-    }
+    assert {name for name, route in routes.items() if route.exclude_from_disagreement} == set()
 
 
-def test_both_diarizing_routes_are_asked_for_speaker_labels() -> None:
-    """Two systems report speakers and no more can (D49): MAI returns no field, Flash no timings."""
+def test_scribe_is_the_only_route_asked_for_speaker_labels() -> None:
+    """One diarizing route remains after D51 removed the other (D49 still governs it)."""
     routes = load_llm_routes().routes
-    vertex_diarizing = {
+    vertex_transcription = {
         name
         for name, route in routes.items()
         if route.provider == "vertex" and route.api == "transcription"
     }
-    assert vertex_diarizing == {"asr_gemini_composite"}
+    assert vertex_transcription == set(), "the only Vertex recogniser route was removed (D51)"
     assert {name for name, route in routes.items() if route.diarize} == {"asr_scribe_v2"}

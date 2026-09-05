@@ -142,10 +142,11 @@ def test_a_route_can_turn_thinking_off(db_session: Session) -> None:
     assert seen["body"]["reasoning"] == {"enabled": False}
 
 
-def test_the_committed_script_restore_route_does_not_think() -> None:
+def test_the_committed_config_has_no_script_restore_route() -> None:
+    """It existed only as the second half of the composite, which D51 removed."""
     from app.config import load_llm_routes
 
-    assert load_llm_routes().routes["script_restore"].reasoning_enabled is False
+    assert "script_restore" not in load_llm_routes().routes
 
 
 def test_a_missing_api_key_is_refused(db_session: Session) -> None:

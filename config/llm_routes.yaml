@@ -57,49 +57,6 @@ routes:
     model: microsoft/mai-transcribe-2
     language: ne
 
-  # Gemini Composite (D41): Gemini 3.5 Transcribe on Vertex hears the clip, and Gemini 3.8 Flash
-  # puts the result back into mixed script. Presented as one system, and named so that the seam
-  # is visible -- the paper discloses the two-model pipeline.
-  #
-  # The recogniser is the second transcriber here that returns word spans of its own, and the only
-  # one reporting which speaker said each word. It writes English phonetically in Devanagari and
-  # accepts no steering at all to stop it, so the restore step does that afterwards on the token
-  # list, one token in one token out. Spans therefore survive untouched: never set forced_align
-  # here, the timings are the recogniser's own (D33).
-  #
-  # !! The model id carries a `-preview` suffix on Vertex and does NOT on AI Studio. Asking Vertex
-  # !! for the bare `gemini-3.5-transcribe` is a 404 in every region -- that, not an allowlist,
-  # !! is what broke the first Vertex attempt (D35/D36).
-  #
-  # Word timestamps and diarization are plain booleans on audioTranscriptionConfig, and there is
-  # no verbatim/smart switch at all. Custom vocabulary is accepted and then silently suppresses
-  # the speaker labels, so it is never sent (D39).
-  asr_gemini_composite:
-    provider: vertex
-    api: transcription
-    system_id: gemini-composite
-    model: gemini-3.5-transcribe-preview
-    restore_script_route: script_restore
-    # ONE language code, and this is not a preference. Two or more codes make the recogniser
-    # return an empty transcript for any clip past about 15 seconds -- measured, deterministic,
-    # HTTP 200 with no content (D41). The VAD cutter runs to MAX_SEG_SECONDS = 20, so a second
-    # code silently blanks the long end of every episode. `ne-NP` alone is the only setting that
-    # survives 30s, and `en-US` was never buying script correctness anyway: that is what the
-    # restore step is for. This supersedes D36's "send both codes" reasoning, which was right
-    # about the corpus and wrong about what the API can do.
-    language_codes:
-      - ne-NP
-    # Held out of the disagreement scores (D50), and not for the reason D40 held it out. The
-    # restore step works -- recogniser and restored token counts match on all 23 clips -- so
-    # D41's "orthography is fixed, rejoin the comparison" still stands. The defect is upstream of
-    # it: the recogniser deterministically omits speech (8/23 clips >10% short, worst -42%), and
-    # what it omits is 71-75% Latin against 32-34% for what it keeps. That manufactures
-    # disagreement exactly where the corpus is most interesting. Spearman(code_switch_density,
-    # word_disagreement_rate) is -0.616 with this system held out and -0.229 with it counted.
-    # The hypothesis is still requested, stored, exported and shown -- it is the second source of
-    # speaker labels (D49); only the comparison drops it.
-    exclude_from_disagreement: true
-
   # Gemini 3.8 Flash on Vertex AI, on the generateContent endpoint with the clip inlined
   # (VERTEX_API_KEY). `audio_chat` is the honest name for it: a general model being asked to
   # transcribe, which obeys the transcript prompt but may also editorialise or hallucinate over
@@ -122,28 +79,4 @@ routes:
     # against 88 tokens of transcript -- 91% of billed output, ~170k thought tokens per hour of
     # audio -- and `thinkingBudget: 0` takes that to zero with the transcript unchanged. Unlike
     # `script_restore` this route has no `max_tokens`, so nothing was making the spend visible.
-    reasoning_enabled: false
-
-  # Text-only, no audio: the second half of gemini-composite. Not an `asr*` route, so it never
-  # becomes an ASR system of its own.
-  #
-  # On Vertex since D45, where the audio already goes. D41 put it on OpenRouter partly because
-  # Vertex was answering Flash with a spurious `blockReason: SAFETY`; replaying this route's real
-  # prompts -- all 34 from the failed ingest, across four safety configurations, 136 calls --
-  # produced no block of any kind, and the rewrites came back correctly aligned. Switch
-  # `provider` back to `openrouter` and change `model` to `google/gemini-3.8-flash` if that ever
-  # stops being true: OpenRouter is the one that reports the model's reasoning text, which is how
-  # D44 was diagnosed.
-  script_restore:
-    provider: vertex
-    api: chat
-    model: gemini-3.8-flash
-    temperature: 0.0
-    max_tokens: 4096
-    # Thinking OFF, and this is load-bearing (D44). Transliterating a token list is a lookup, not
-    # a problem: left to its default the model spent a mean 2,843 reasoning tokens per segment,
-    # truncated 24 of 51 rewrites at max_tokens mid-array -- which fails the segment, since a
-    # partial array cannot be aligned -- and talked itself out of rule 2 in the process, deciding
-    # to restore "intended" rather than heard orthography. The retries could not save it either:
-    # temperature 0 makes all three attempts the same draw.
     reasoning_enabled: false

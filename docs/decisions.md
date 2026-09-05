@@ -1137,3 +1137,54 @@ the drop rate across speakers and domains is still outstanding.
 **Reversal:** drop the flag. Already-imported scores are unaffected until something recomputes
 them — `purge.py` is the only path that does, and it reads the same hold-out set, so the two
 computation sites cannot disagree.
+
+## D51 — The Gemini composite is removed, not held out
+
+`asr_gemini_composite` and the `script_restore` route it drove are gone from
+`config/llm_routes.yaml`. Three ASR systems remain: Scribe, MAI and Flash. The hold-out set
+`disagreement_excluded_system_ids()` returns is now empty, which is the honest state rather than a
+forgotten flag — nothing else has ever needed holding out.
+
+**D50 held it rather than removed it, and said why:** it was one of only two systems reporting
+speaker labels, so it was "half the only cross-check there is". That argument is gone. Measured on
+a two-speaker episode, 51 of 68 clips are single-speaker for *both* systems and agree trivially at
+100%; the 17 contested clips agree at 94.8%. The headline 98.3% is an artefact of clips where
+there is nothing to disagree about. Clip-local diarization cannot measure speaker agreement,
+because the pipeline segments before it transcribes and a 20-second window of a podcast almost
+always holds one speaker. More two-speaker episodes will not change that — the ceiling comes from
+the segmentation order, not the corpus.
+
+**What was left once that argument fell.** On leave-one-out consensus agreement over 68 clips,
+script-blind: Scribe 0.623, Flash 0.620, MAI 0.610, composite **0.538**. The other three sit
+within 0.013 of each other — noise — and the composite trails them by seven times that spread. It
+was the least accurate of the four, and biased in the one direction that matters here.
+
+**The defect replicated, on a better measure than D50 used.** D50's evidence was the Latin share
+of tokens the composite "dropped" under alignment. On this episode that method reports 702–772
+dropped tokens against an actual shortfall of 221–235, so roughly two-thirds of the "dropped" set
+is lexical disagreement rather than omission — and English is exactly where two systems most often
+disagree on spelling. That statistic is retired. The replacement never aligns anything:
+Spearman(clip Latin share, composite token shortfall) is **+0.670** against Scribe, **+0.612**
+against Flash and **+0.598** against MAI, n=68. Three references with different failure modes
+agree. Clips more than 10% short: 24 of 68, against the pilot's 8 of 23 — 35% both times.
+
+**Why removal rather than a disabled flag.** Leaving the route configured but unused would leave
+`exclude_from_disagreement` as the only thing standing between its hypotheses and the score, and
+AGENTS.md already warns that the two computation sites desynchronise silently when a system is
+named in one place and not the other. A route that must never be used is better deleted than
+remembered.
+
+**The already-collected hypotheses are evidence and are dumped, not discarded.**
+`scripts/purge_asr_system.py` writes every row to JSONL before deleting, and the composite's
+output is the subject of the corpus's headline claim — that a Nepali-configured recogniser deletes
+the English half. The dump is the record that claim rests on.
+
+**`app/llm/script_restore.py` stays** even though nothing routes to it now. Any recogniser that
+transliterates English into Devanagari and cannot be told not to needs exactly this repair, and
+another one is being evaluated. Keeping it is a decision, not an oversight; delete it if that
+evaluation ends without needing it.
+
+**Evidence is two episodes and three speakers.** Both are pilot data.
+
+**Reversal:** restore the two route blocks from git history and re-ingest. Hypotheses already
+purged come back only from the JSONL dump or by re-transcribing, which costs money.

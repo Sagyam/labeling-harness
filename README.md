@@ -55,9 +55,9 @@ guard — `ingest.youtube.max_duration_seconds` in `config/settings.yaml` — be
 source duration. Ingesting a video is on you as far as its licensing goes; the harness does not
 check.
 
-Transcription calls cost money. Four models transcribe every clip — ElevenLabs Scribe v2,
-Microsoft MAI-Transcribe 2, Google Gemini 3.5 Transcribe and Google Gemini 3.8 Flash — so one
-clip is four calls, billed against your ElevenLabs, OpenRouter and Google Cloud accounts. Every attempt is written to
+Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,
+Microsoft MAI-Transcribe 2 and Google Gemini 3.8 Flash — so one clip is three calls, billed
+against your ElevenLabs, OpenRouter and Google Cloud accounts. Every attempt is written to
 `llm_requests`, which is the only record of what an ingest spent, so watch that table (or a
 provider-side budget alert) rather than expecting the harness to stop you. Each model hears only
 the audio; none is shown another's transcript, so where they disagree is a measurement rather

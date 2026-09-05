@@ -209,10 +209,10 @@ def test_the_rescore_holds_out_the_same_systems_the_ingest_does(
     db_session.flush()
 
     table = load_llm_routes()
-    held = table.routes["asr_gemini_composite"].model_copy(
+    held = table.routes["asr_gemini_flash"].model_copy(
         update={"system_id": DOOMED, "exclude_from_disagreement": True}
     )
-    config = table.model_copy(update={"routes": {**table.routes, "asr_gemini_composite": held}})
+    config = table.model_copy(update={"routes": {**table.routes, "asr_gemini_flash": held}})
     purge_asr_system(db_session, system_id=third, dump_dir=tmp_path, rescore=True, config=config)
 
     score = db_session.get(SegmentScore, segment.id)
