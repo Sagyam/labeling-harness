@@ -85,12 +85,6 @@ ingest:
   # Text route that labels an episode's topic from its own transcript, once per episode, only
   # when the form left the topic blank (D57). Empty disables it.
   topic_route: classify_topic
-  # Episode-level speaker diarization, before the audio is cut into clips (D58). Off leaves every
-  # segment on spk0. The threshold is a measured compromise, not a clean separator -- see
-  # backend/app/services/diarize.py.
-  diarize: true
-  diarize_threshold: 0.62
-  max_speakers: 6
   youtube:
     format: bestaudio/best        # yt-dlp selector; stage 1 re-encodes, so audio-only is enough
     max_duration_seconds: 14400   # 4 h; a longer video is refused before anything is downloaded

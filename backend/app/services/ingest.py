@@ -47,7 +47,6 @@ from app.llm.transcription import (
     transcribe,
 )
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
-from app.services.diarize import assign_turn_speakers, diarize_turns
 from app.services.forced_align import ForcedAligner, align_text
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
@@ -58,7 +57,6 @@ from app.services.silero_vad import (
     speech_spans_within,
 )
 from app.services.speaker_meta import strip_speaker_pii
-from app.services.speaker_model import DEFAULT_MODEL_PATH, ensure_speaker_model
 from app.services.youtube import YouTubeError, download_audio
 from app.storage import build_storage
 from app.storage.base import ObjectStorage
@@ -444,53 +442,6 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
     return float(info.duration)
 
 
-def _diarize_episode(
-    job: IngestJob,
-    audio_path: Path,
-    turns: list[Any],
-    segments: list[Any],
-    settings: Settings,
-) -> dict[str, str]:
-    """Decide which speaker each segment belongs to, for the whole episode at once (D58).
-
-    Never raises and never fails the ingest. Diarization is a good guess, not a measurement -- the
-    within-speaker and between-speaker embedding distances overlap -- so every failure path here
-    returns the same thing the pipeline produced before it existed: every segment on ``spk0``.
-
-    Returns:
-        ``{segment_id: speaker_label}``. Empty when diarization was disabled, unavailable or
-        found nothing, which the caller reads as ``spk0`` for everything.
-    """
-    if not settings.ingest.diarize:
-        return {}
-
-    model_path = DEFAULT_MODEL_PATH
-    try:
-        if not ensure_speaker_model(model_path):
-            job.log("Speaker model unavailable; every segment stays on spk0")
-            return {}
-
-        speaker_turns = diarize_turns(
-            audio_path,
-            turns,
-            model_path=model_path,
-            threshold=settings.ingest.diarize_threshold,
-            max_speakers=settings.ingest.max_speakers,
-        )
-        if not speaker_turns:
-            return {}
-
-        labels = assign_turn_speakers([(s.start_time, s.end_time) for s in segments], speaker_turns)
-    except Exception as exc:  # a speaker label is not worth failing an ingest over
-        logger.warning("diarize_failed", error=str(exc))
-        job.log("Diarization failed; every segment stays on spk0")
-        return {}
-
-    found = sorted(set(labels))
-    job.log(f"Diarization found {len(found)} speaker(s): {', '.join(found)}")
-    return dict(zip([s.segment_id for s in segments], labels, strict=True))
-
-
 def _classify_episode_topic(
     job: IngestJob,
     segment_records: list[dict[str, Any]],
@@ -664,11 +615,6 @@ def _run_stages(
         job.total_segments = len(segments)
         job.active_segments = len(segments)
         job.log(f"Extracted {len(segments)} audio clips to disk")
-
-        # Who is speaking, decided once over the whole episode rather than per clip (D58). It runs
-        # here because it needs the turns the VAD just produced and the segments those turns were
-        # cut into, and it must finish before anything is written with a speaker on it.
-        speaker_by_segment = _diarize_episode(job, norm_flac, turns, segments, settings)
         job.set_progress(
             "segmenting", 40.0, total_segments=len(segments), active_segments=len(segments)
         )
@@ -853,7 +799,10 @@ def _run_stages(
                     return {
                         "segment_id": seg.segment_id,
                         "episode_id": job.episode_id,
-                        "speaker_id": speaker_by_segment.get(seg.segment_id, "spk0"),
+                        # One speaker per episode, always. Diarization is a post-export step
+                        # against the full episode audio, not something this pipeline guesses at
+                        # (D58); nothing here is in a position to tell two speakers apart.
+                        "speaker_id": "spk0",
                         "start_time": seg.start_time,
                         "end_time": seg.end_time,
                         "clip_path": seg.clip_rel_path,

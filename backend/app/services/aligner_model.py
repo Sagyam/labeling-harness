@@ -61,34 +61,14 @@ def _digest(path: Path) -> str:
     return sha.hexdigest()
 
 
-def fetch_file(
-    repo: str,
-    revision: str,
-    remote: str,
-    destination: Path,
-    expected_sha: str,
-    *,
-    timeout: float,
-) -> None:
-    """Stream one pinned file into place, atomically, or leave nothing behind.
+def _fetch(remote: str, destination: Path, expected_sha: str, timeout: float) -> None:
+    """Stream one file into place, atomically, or leave nothing behind.
 
     The download lands on a temporary file beside the destination and is renamed only after its
     digest matches, so an interrupted transfer can never be mistaken for a usable model on the
-    next run. Shared with ``speaker_model.py``: every runtime-fetched graph in this project is
-    pinned to a revision and checked against a digest, and that guarantee belongs in one place.
-
-    Args:
-        repo: Hugging Face repository id.
-        revision: A commit, never a branch.
-        remote: Path of the file inside the repository.
-        destination: Where the file belongs locally.
-        expected_sha: SHA-256 the transfer must produce.
-        timeout: Request timeout.
-
-    Raises:
-        ValueError: The transferred file did not match ``expected_sha``.
+    next run.
     """
-    url = f"https://huggingface.co/{repo}/resolve/{revision}/{remote}"
+    url = f"https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REVISION}/{remote}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     handle, temp_name = tempfile.mkstemp(dir=destination.parent, suffix=".part")
     temp_path = Path(temp_name)
@@ -156,9 +136,7 @@ def ensure_aligner_model(
     )
     for destination, remote, expected_sha, _size in missing:
         try:
-            fetch_file(
-                MODEL_REPO, MODEL_REVISION, remote, destination, expected_sha, timeout=timeout
-            )
+            _fetch(remote, destination, expected_sha, timeout)
             logger.info("aligner_download_file_ready", path=str(destination))
         except Exception as exc:
             logger.warning(
