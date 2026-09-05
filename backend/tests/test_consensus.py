@@ -8,11 +8,14 @@ without any of its neighbours moving.
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.consensus import (
     ConsensusHypothesis,
     ConsensusWord,
     build_slots,
     seed_disputes,
+    seed_outvoted_fraction,
 )
 
 
@@ -140,3 +143,29 @@ def test_slots_are_returned_in_time_order() -> None:
     a = hyp("a", ("three", 2.0, 2.5), ("one", 0.0, 0.5), ("two", 1.0, 1.5))
     slots = build_slots([a])
     assert [s.start for s in slots] == sorted(s.start for s in slots)
+
+
+def test_outvoted_fraction_is_zero_when_everyone_agrees() -> None:
+    a = hyp("seed", ("x", 0.0, 1.0))
+    b = hyp("b", ("x", 0.0, 1.0))
+    assert seed_outvoted_fraction(build_slots([a, b]), seed_system_id="seed") == 0.0
+
+
+def test_outvoted_fraction_is_measured_in_time_not_words() -> None:
+    """One long disputed word outweighs several short agreed ones."""
+    seed = hyp("seed", ("a", 0.0, 0.1), ("b", 0.2, 0.3), ("long", 1.0, 2.0))
+    other = hyp("other", ("a", 0.0, 0.1), ("b", 0.2, 0.3), ("different", 1.0, 2.0))
+    fraction = seed_outvoted_fraction(build_slots([seed, other]), seed_system_id="seed")
+    # 1.0 s disputed out of 1.2 s of slot time.
+    assert fraction == pytest.approx(1.0 / 1.2, rel=1e-3)
+
+
+def test_outvoted_fraction_of_a_segment_with_no_slots_is_zero() -> None:
+    assert seed_outvoted_fraction([], seed_system_id="seed") == 0.0
+
+
+def test_outvoted_fraction_ignores_slots_the_seed_never_entered() -> None:
+    """A hole in the seed is not evidence the seed is wrong; it is a different measurement."""
+    seed = hyp("seed", ("kept", 0.0, 1.0))
+    other = hyp("other", ("kept", 0.0, 1.0), ("extra", 2.0, 3.0))
+    assert seed_outvoted_fraction(build_slots([seed, other]), seed_system_id="seed") == 0.0

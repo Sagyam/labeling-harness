@@ -43,10 +43,14 @@ def test_queue_row_carries_everything_triage_needs(
     assert row["audio_url"].endswith("/audio")
     assert row["peaks_url"].endswith("/peaks")
     assert set(row["reason"]["components"]) == {
-        "word_disagreement_rate",
+        "seed_outvoted",
         "low_confidence",
-        "code_switch_density",
         "rule_flag_score",
+    }
+    # The superseded formula rides along unweighted, so the first full run can compare (D54).
+    assert set(row["reason"]["legacy"]["components"]) == {
+        "word_disagreement_rate",
+        "code_switch_density",
     }
 
 

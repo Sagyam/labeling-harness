@@ -125,22 +125,31 @@ class QueueWeights(BaseModel):
 
     model_config = _STRICT
 
-    word_disagreement_rate: float = 0.40
+    #: Share of speech time where every other system contradicts the seed. The dominant term:
+    #: measured against realized annotator edits it is the only signal that clearly works (D54).
+    seed_outvoted: float = 0.60
     low_confidence: float = 0.25
-    code_switch_density: float = 0.20
     rule_flag_score: float = 0.15
 
     @model_validator(mode="after")
     def _check_sum(self) -> QueueWeights:
-        total = (
-            self.word_disagreement_rate
-            + self.low_confidence
-            + self.code_switch_density
-            + self.rule_flag_score
-        )
+        total = self.seed_outvoted + self.low_confidence + self.rule_flag_score
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"queue weights must sum to 1.0, got {total}")
         return self
+
+
+class LegacyQueueWeights(BaseModel):
+    """The superseded terms, kept so the old score can be recorded beside the new one (D54).
+
+    These do not rank anything and deliberately do not sum to 1: they exist to let the first full
+    run adjudicate between the two formulas on more than the 22 labels behind the change.
+    """
+
+    model_config = _STRICT
+
+    word_disagreement_rate: float = 0.40
+    code_switch_density: float = 0.20
 
 
 class QueueSettings(BaseModel):
@@ -149,11 +158,15 @@ class QueueSettings(BaseModel):
     model_config = _STRICT
 
     weights: QueueWeights = Field(default_factory=QueueWeights)
+    legacy_weights: LegacyQueueWeights = Field(default_factory=LegacyQueueWeights)
     audit_sample_rate: float = 0.05
     audit_seed: int = 1234
     min_duration_seconds: float = 1.0
     max_duration_seconds: float = 30.0
-    logprob_floor: float = -2.0
+    #: Where confidence is treated as exhausted. -0.5 rather than -2.0: the only system reporting
+    #: an ``avg_logprob`` spans about -0.68 to -0.004, so the old floor confined the term to the
+    #: bottom third of 0-1 and its 0.25 weight never bought more than about 0.08 (D54).
+    logprob_floor: float = -0.5
     no_speech_prob_threshold: float = 0.6
     max_speaking_rate_wps: float = 6.0
     min_speaking_rate_wps: float = 0.3

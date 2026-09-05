@@ -103,23 +103,31 @@ one episode share speaker, recording conditions and topic, so a segment-level sp
 
 ```text
 priority_score =
-    0.40 * word_disagreement_rate
+    0.60 * seed_outvoted             (share of speech time the other systems contradict)
   + 0.25 * low_confidence            (normalized from avg_logprob)
-  + 0.20 * code_switch_density
   + 0.15 * rule_flag_score
 ```
 
 Every input is normalized to 0–1 and the weights sum to 1, so the score is itself in 0–1. Weights
 live in `config/settings.yaml` under `queue.weights` and are validated to sum to 1.0 at load.
 
-- `word_disagreement_rate` — imported; the mean over every pair of ASR systems. Missing is
-  treated as 0, which is also what a single system scores.
+The question the score answers is *how much of what this annotator is about to be shown is
+probably wrong*, so it is measured against the **seed** — the hypothesis they will actually edit —
+rather than symmetrically across systems. D54 has the measurement.
+
+- `seed_outvoted` — computed at queue build by `app/services/consensus.py`: every system's word
+  spans are placed on the segment's own clock and grouped by overlap into *slots*, and this is the
+  fraction of slot time where **every** other system present disagreed with the seed's token.
+  Unmeasurable (no seed, no word timings) is treated as 0.
 - `low_confidence` — `clamp(avg_logprob / logprob_floor, 0, 1)` over the **seed** hypothesis, where
-  `logprob_floor` defaults to −2.0: an `avg_logprob` of 0 scores 0, the floor and anything below it
+  `logprob_floor` is −0.5: an `avg_logprob` of 0 scores 0, the floor and anything below it
   scores 1. A seed with no `avg_logprob` scores 0, not 1 — an absent confidence signal must not
   push a segment up the queue on its own.
-- `code_switch_density` — imported; missing is treated as 0.
 - `rule_flag_score` — fraction of rule flags raised for the segment (see below).
+
+`word_disagreement_rate` and `code_switch_density` no longer rank anything (D54). Both are still
+computed, stored and exported; the superseded score is written into `reason_jsonb.legacy` beside
+the live one so the first full run can compare the two on its own evidence.
 
 The per-component breakdown is stored in `annotation_tasks.reason_jsonb`, so the UI can always show
 why a segment surfaced.

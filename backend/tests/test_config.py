@@ -36,9 +36,8 @@ def test_loads_repository_default_settings() -> None:
 def test_queue_weights_sum_to_one() -> None:
     settings = load_settings()
     total = (
-        settings.queue.weights.word_disagreement_rate
+        settings.queue.weights.seed_outvoted
         + settings.queue.weights.low_confidence
-        + settings.queue.weights.code_switch_density
         + settings.queue.weights.rule_flag_score
     )
     assert total == pytest.approx(1.0)

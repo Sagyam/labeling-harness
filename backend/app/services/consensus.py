@@ -192,3 +192,21 @@ def seed_disputes(slots: Sequence[Slot], *, seed_system_id: str) -> list[Dispute
             )
         )
     return disputes
+
+
+def seed_outvoted_fraction(slots: Sequence[Slot], *, seed_system_id: str) -> float:
+    """Share of the segment's speech time where the seed stands contradicted, in 0-1.
+
+    This is the priority signal (D54). Time is the denominator rather than a word count because
+    the systems disagree about how many words there are -- that disagreement is part of what is
+    being measured, so it cannot also be the unit of measurement. A single misheard multi-syllable
+    word costs the annotator more than three misheard particles, and measuring in seconds says so.
+
+    Slots the seed never entered are excluded from the numerator by :func:`seed_disputes`: they
+    are holes in the seed rather than evidence it is wrong, and they belong to a coverage measure.
+    """
+    total = sum(slot.end - slot.start for slot in slots)
+    if total <= 0:
+        return 0.0
+    disputed = sum(d.end - d.start for d in seed_disputes(slots, seed_system_id=seed_system_id))
+    return min(1.0, disputed / total)

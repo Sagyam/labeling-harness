@@ -46,15 +46,17 @@ importer:
 
 queue:
   weights:
-    word_disagreement_rate: 0.40
+    seed_outvoted: 0.60          # speech-time share where every other system contradicts the seed
     low_confidence: 0.25
-    code_switch_density: 0.20
     rule_flag_score: 0.15
+  legacy_weights:                # recorded beside the live score for comparison only (D54)
+    word_disagreement_rate: 0.40
+    code_switch_density: 0.20
   audit_sample_rate: 0.05
   audit_seed: 1234
   min_duration_seconds: 1.0
   max_duration_seconds: 30.0
-  logprob_floor: -2.0            # avg_logprob <= floor normalizes to low_confidence = 1.0
+  logprob_floor: -0.5            # avg_logprob <= floor normalizes to low_confidence = 1.0
   no_speech_prob_threshold: 0.6
   max_speaking_rate_wps: 6.0     # words per second above this is implausible
   min_speaking_rate_wps: 0.3

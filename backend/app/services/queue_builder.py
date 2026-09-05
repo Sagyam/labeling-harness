@@ -18,6 +18,12 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import Settings, get_settings
 from app.models import AnnotationTask, AsrHypothesis, Episode, Segment, SegmentScore
 from app.models.enums import ACTIVE_TASK_STATUSES
+from app.services.consensus import (
+    ConsensusHypothesis,
+    ConsensusWord,
+    build_slots,
+    seed_outvoted_fraction,
+)
 from app.services.scoring import ScoreInputs, priority_score
 from app.utils.logging import get_logger
 
@@ -74,19 +80,49 @@ def select_seed_hypothesis(
     )
 
 
+def _seed_outvoted(segment: Segment, seed: AsrHypothesis | None) -> float | None:
+    """How much of this segment's speech time the other systems take away from the seed.
+
+    None when it cannot be measured -- no seed, or no system reported word timings -- which the
+    scorer reads as no signal rather than as agreement.
+    """
+    if seed is None:
+        return None
+    hypotheses = [
+        ConsensusHypothesis(
+            system_id=h.system.system_id,
+            words=[
+                ConsensusWord(
+                    position=w.position, word=w.word_raw, start=w.start_time, end=w.end_time
+                )
+                for w in h.words
+            ],
+        )
+        for h in segment.hypotheses
+    ]
+    slots = build_slots(hypotheses)
+    if not slots:
+        return None
+    return seed_outvoted_fraction(slots, seed_system_id=seed.system.system_id)
+
+
 def _score_for(
+    segment: Segment,
     scores: SegmentScore | None,
     seed: AsrHypothesis | None,
     settings: Settings,
 ) -> tuple[float, dict[str, Any]]:
     result = priority_score(
         ScoreInputs(
-            word_disagreement_rate=scores.word_disagreement_rate if scores else None,
+            seed_outvoted=_seed_outvoted(segment, seed),
             avg_logprob=seed.avg_logprob if seed else None,
-            code_switch_density=scores.code_switch_density if scores else None,
             flags=list(scores.flags_jsonb or []) if scores else [],
         ),
         settings=settings,
+        legacy=ScoreInputs.legacy(
+            word_disagreement_rate=scores.word_disagreement_rate if scores else None,
+            code_switch_density=scores.code_switch_density if scores else None,
+        ),
     )
     return result.score, result.as_reason()
 
@@ -140,7 +176,11 @@ def build_queue(
     query = (
         sa.select(Segment)
         .join(Episode, Episode.id == Segment.episode_id)
-        .options(selectinload(Segment.hypotheses), selectinload(Segment.scores))
+        .options(
+            selectinload(Segment.hypotheses).selectinload(AsrHypothesis.words),
+            selectinload(Segment.hypotheses).selectinload(AsrHypothesis.system),
+            selectinload(Segment.scores),
+        )
         .where(Segment.pipeline_status.in_(("imported", "queued")))
         .order_by(Segment.id)
     )
@@ -168,7 +208,7 @@ def build_queue(
         seed_hypothesis = select_seed_hypothesis(
             segment, list(segment.hypotheses), split=splits.get(segment.episode_id, "unassigned")
         )
-        score, reason = _score_for(segment.scores, seed_hypothesis, settings)
+        score, reason = _score_for(segment, segment.scores, seed_hypothesis, settings)
         planned.append((segment, seed_hypothesis, score, reason))
 
     # Segments with no hypothesis at all go to the error queue and are never candidates for audit.

@@ -85,9 +85,8 @@ def test_every_task_carries_a_priority_and_a_reason(
         assert 0.0 <= task.priority_score <= 1.0
         assert task.reason_jsonb is not None
         assert set(task.reason_jsonb["components"]) == {
-            "word_disagreement_rate",
+            "seed_outvoted",
             "low_confidence",
-            "code_switch_density",
             "rule_flag_score",
         }
         assert task.reason_jsonb["score"] == pytest.approx(task.priority_score)
@@ -96,12 +95,28 @@ def test_every_task_carries_a_priority_and_a_reason(
 def test_top_priority_segments_are_the_disagreeing_ones(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
+    """The queue must lead with the segments whose seed the other systems contradict."""
     import_fixture(db_session, tmp_path, storage, settings, segments=12)
     build_queue(db_session, settings=settings)
     ordered = tasks(db_session)
-    top = [t.reason_jsonb["components"]["word_disagreement_rate"] for t in ordered[:4]]
-    bottom = [t.reason_jsonb["components"]["word_disagreement_rate"] for t in ordered[-4:]]
-    assert sum(top) / 4 > sum(bottom) / 4
+    top = [t.reason_jsonb["components"]["seed_outvoted"] for t in ordered[:4]]
+    bottom = [t.reason_jsonb["components"]["seed_outvoted"] for t in ordered[-4:]]
+    assert sum(top) / 4 >= sum(bottom) / 4
+
+
+def test_the_superseded_score_is_recorded_but_does_not_rank(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """D54 replaced the formula on 22 labels from one episode, so both numbers are kept."""
+    import_fixture(db_session, tmp_path, storage, settings, segments=6)
+    build_queue(db_session, settings=settings)
+    for task in tasks(db_session):
+        legacy = task.reason_jsonb["legacy"]
+        assert set(legacy["components"]) == {"word_disagreement_rate", "code_switch_density"}
+        # Recorded only: the live score is the weighted sum of the live components alone.
+        assert task.priority_score == pytest.approx(
+            sum(task.reason_jsonb["contributions"].values())
+        )
 
 
 def test_every_task_has_a_seed_hypothesis(

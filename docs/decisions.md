@@ -1265,3 +1265,64 @@ with a human.
 
 **Reversal:** delete the service and the `disputes` field. Nothing else reads it, no data is
 written by it, and no stored column changes.
+
+## D54 — The priority score is measured against the seed, on the clock
+
+The queue formula becomes `0.60 * seed_outvoted + 0.25 * low_confidence + 0.15 * rule_flag_score`.
+`word_disagreement_rate` and `code_switch_density` are dropped from ranking. `logprob_floor` moves
+from −2.0 to −0.5.
+
+**The formula it replaces ranked worse than shuffling.** Scored against the 22 labels available,
+using realized WER from seed text to final human text as the target, the old `priority_score`
+reached Spearman **−0.281**, and its top half captured 44.7% of all editing done against a 50%
+baseline. Component by component the reason is unambiguous:
+
+| Component | weight | ρ vs. realized edits | observed range |
+|---|---|---|---|
+| `word_disagreement_rate` | 0.40 | +0.123 | [0.20, 0.46] |
+| `low_confidence` | 0.25 | +0.461 | [0.03, 0.10] |
+| `code_switch_density` | 0.20 | **−0.768** | [0.09, 0.47] |
+| `rule_flag_score` | 0.15 | 0.000 | [0.00, 0.00] |
+
+A weak positive at full weight, a strong positive squashed to nothing, a strong **negative** at
+full weight, and a term that was identically zero on every labelled segment. It summed to a
+ranking that was slightly worse than random.
+
+**Why code-switch density had to go.** It was the strongest signal in the formula and pointed the
+wrong way. English is acoustically distinct, so code-switched speech is what the recognisers
+*agree* on; boosting it spent annotator time on the easy segments. D50 saw the same correlation
+(ρ(csd, wdr) = −0.616) and read it as the disagreement measure working. It was the code-mixing
+term failing. Note this is a claim about *review order only* — code-switching is what the corpus
+is for, it is still measured, stored and exported, and every segment is still labelled.
+
+**Two of the four terms could never reach their stated weight.** `code_switch_density` is
+`cmi/100`, and CMI is `100·(n − majority)/n` where the minority can never exceed half the tokens —
+so it is structurally capped at 0.5 and its 0.20 weight bought at most 0.10. Real data: mean 0.201,
+max exactly 0.500. `rule_flag_score` divides by seven flags, two of which are mutually exclusive.
+`test_scoring.py` now asserts every term can reach its full weight; the old suite missed this
+because it passed `code_switch_density=1.0` directly instead of going through the generator.
+
+**Why the floor moved.** Scribe is the only system reporting an `avg_logprob`, and it spans about
+−0.68 to −0.004. Against a −2.0 floor the term used the bottom third of 0–1, and on labelled data
+only [0.03, 0.10] — so the one component that actually correlated was multiplied by ~0.065. −0.5
+spans the observed range without fitting it exactly.
+
+**What replaces them.** `seed_outvoted` — the share of slot time where every other system
+contradicts the seed. Measured on its own it reached ρ **+0.558** and captured 80.5% of editing in
+its top half (p = 0.006 against 20k random rankings). Through the live code path the assembled
+formula reaches ρ **+0.577** and 77.8%. It is measured in *time* rather than words because the
+systems disagree about how many words there are, so a word count cannot also be the unit.
+
+**Fixing the old formula's bugs was not enough.** Dropping the anti-correlated term and
+recalibrating the floor lifted it to ρ +0.238 / 61.3%, which is still statistically
+indistinguishable from random (p = 0.188). The time-aligned signal is what moved it.
+
+**The evidence is thin and the old score is kept because of it.** 22 labels, one episode, one
+annotator, one seed system. That is enough to choose a direction and not enough to settle
+parameters. The superseded formula is computed and written to `reason_jsonb.legacy` on every task,
+so the first full run adjudicates on its own data. `queue.legacy_weights` exists only for that and
+deliberately does not sum to 1.
+
+**Reversal:** restore the old weights in `config/settings.yaml` and `QueueWeights`, and read the
+legacy components back out of `reason_jsonb`. Nothing stored changes shape, and re-running the
+queue builder rescores every active task, so it is a config edit plus one command.
