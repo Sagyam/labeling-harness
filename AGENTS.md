@@ -122,7 +122,9 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.
   Never set that flag on a route that reports its own timings: overwriting them would destroy the
   independent references the D33 boundary report compares.
-- Only `asr_gemini_composite` diarizes, and its labels land on `hypothesis_words.speaker` (D36).
+- Two routes diarize -- `asr_gemini_composite` and, since D49, `asr_scribe_v2` -- and both land on
+  `hypothesis_words.speaker`. MAI returns no speaker field even when asked and Flash has no
+  timings to attach one to, so two is the ceiling.
   Vertex reports the label per *segment* Part, and the client fans it onto each word of that
   segment. They are clip-local — `spk:0` in one hypothesis is not `spk:0` in another, and neither is
   `segments.speaker_id`. Do not join on them across hypotheses, and do not backfill the column for

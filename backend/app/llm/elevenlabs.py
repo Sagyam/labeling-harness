@@ -5,6 +5,9 @@ and Scribe is the only transcriber the harness has that returns word spans *and*
 probabilities (decision D21). Every call still lands in ``llm_requests``, so the billing audit
 trail has no gap in it.
 
+Scribe also diarizes, and since D49 it is asked to: it is the only second source of speaker labels
+the harness has, and a label no other system can be checked against is not evidence of anything.
+
 Scribe has no free-text prompt parameter -- unlike a chat model, it cannot be told in prose that
 the audio is code-switched. It offered two levers and now uses one: ``language_code``, from the
 route configuration. ``keyterms`` was measured and dropped (D48) -- it raised script violations
@@ -200,8 +203,10 @@ class ElevenLabsClient(ProviderClient):
         form: dict[str, Any] = {
             "model_id": route_config.model,
             "timestamps_granularity": "word",
-            # One speaker per clip by construction, and audio-event tags are not transcript text.
-            "diarize": "false",
+            # Diarization is per route (D49): Scribe is the only second source of speaker labels
+            # the harness has, and one source cannot be checked against anything. Audio-event
+            # tags are not transcript text, so they stay off either way.
+            "diarize": "true" if route_config.diarize else "false",
             "tag_audio_events": "false",
         }
         hint = language if language is not None else route_config.language
@@ -219,7 +224,14 @@ def _parse_words(raw_words: list[dict[str, Any]]) -> list[dict[str, Any]] | None
     entries carry transcript text.
     """
     words = [
-        {"word": w.get("text", ""), "start": w.get("start"), "end": w.get("end")}
+        {
+            "word": w.get("text", ""),
+            "start": w.get("start"),
+            "end": w.get("end"),
+            # Present only when the route asked to diarize. Null means "not diarized", which is
+            # what the importer stores and what every undiarized system reports (D49).
+            "speaker": w.get("speaker_id"),
+        }
         for w in raw_words
         if w.get("type", "word") not in NON_WORD_TYPES
     ]

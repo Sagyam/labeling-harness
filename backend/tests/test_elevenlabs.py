@@ -118,6 +118,83 @@ def test_the_request_targets_scribe_with_the_key_and_the_language(
     assert b"word" in body  # timestamps_granularity
 
 
+def test_diarization_is_off_unless_the_route_asks_for_it(db_session: Session, clip) -> None:
+    """Speaker labels cost nothing extra, but a route that did not ask for them gets none."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = bytes(request.content)
+        return httpx.Response(200, json=transcription())
+
+    make_client(db_session, handler).transcribe(clip, route="asr_scribe_v2")
+    assert b'name="diarize"\r\n\r\nfalse' in seen["body"]
+
+
+def test_a_diarizing_route_asks_for_labels_and_keeps_them(db_session: Session, clip) -> None:
+    """Scribe reports `speaker_id` per word; it lands on the word shape the importer reads.
+
+    Diarization is a second, independent source of speaker labels alongside the composite's
+    recogniser (D49). One source cannot be checked against anything, which is what makes the
+    labels unusable for analysis rather than merely unverified.
+    """
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = bytes(request.content)
+        return httpx.Response(
+            200,
+            json=transcription(
+                words=[
+                    {
+                        "type": "word",
+                        "text": "नमस्ते",
+                        "start": 0.0,
+                        "end": 0.4,
+                        "speaker_id": "speaker_0",
+                    },
+                    {"type": "spacing", "text": " ", "start": 0.4, "end": 0.5},
+                    {
+                        "type": "word",
+                        "text": "hello",
+                        "start": 0.5,
+                        "end": 0.9,
+                        "speaker_id": "speaker_1",
+                    },
+                ]
+            ),
+        )
+
+    diarizing = routes(
+        routes={
+            "asr_scribe_v2": LlmRoute(
+                provider="elevenlabs",
+                api="transcription",
+                model="scribe_v2",
+                language="ne",
+                diarize=True,
+            )
+        }
+    )
+    result = make_client(db_session, handler, config=diarizing).transcribe(
+        clip, route="asr_scribe_v2"
+    )
+    assert b'name="diarize"\r\n\r\ntrue' in seen["body"]
+    assert [w["speaker"] for w in result.words] == ["speaker_0", "speaker_1"]
+
+
+def test_a_word_carries_no_speaker_when_scribe_reported_none(db_session: Session, clip) -> None:
+    """Null means "not diarized", which stays the honest value for an undiarized route."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=transcription(words=[{"type": "word", "text": "नमस्ते", "start": 0.0, "end": 0.4}]),
+        )
+
+    result = make_client(db_session, handler).transcribe(clip, route="asr_scribe_v2")
+    assert result.words[0]["speaker"] is None
+
+
 def test_no_keyterms_are_sent(db_session: Session, clip) -> None:
     """Key terms are not sent at all, and there is no parameter left to send them with (D48).
 
@@ -166,8 +243,8 @@ def test_spacing_and_audio_event_entries_are_not_counted_as_words(
     )
 
     assert result.words == [
-        {"word": "आजको", "start": 0.0, "end": 0.4},
-        {"word": "meeting", "start": 0.45, "end": 0.9},
+        {"word": "आजको", "start": 0.0, "end": 0.4, "speaker": None},
+        {"word": "meeting", "start": 0.45, "end": 0.9, "speaker": None},
     ]
 
 

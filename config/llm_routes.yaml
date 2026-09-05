@@ -34,6 +34,12 @@ routes:
     system_id: elevenlabs-scribe-v2
     model: scribe_v2
     language: ne
+    # Scribe diarizes at no extra charge, and it is the only second source of speaker labels the
+    # harness has -- MAI returns no speaker field even when asked, and Flash returns no timings
+    # to hang one on. Two sources is the minimum that lets a label be checked against anything
+    # (D49). The labels are clip-local, so they measure agreement within a clip and are not
+    # speaker identity across an episode; see D49 for what a sociolinguistic read would need.
+    diarize: true
 
   # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
   # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash

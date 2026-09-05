@@ -1044,3 +1044,41 @@ either way now that the lever is known not to work.
 **Reversal:** cheap and local. Restore the `keyterms` parameter on `ElevenLabsClient.transcribe`
 and the `DEFAULT_KEYTERMS` tuple, and drop the `dedicated` guard in `transcription.transcribe` so
 the prompt reaches the transcription endpoint again. The measurements above are the reason not to.
+
+## D49 — Scribe is asked to diarize, because one source of speaker labels is not evidence
+
+`asr_scribe_v2` sets `diarize: true`. Speaker labels now come from two systems instead of one,
+and `LlmRoute.diarize` is the flag that says which.
+
+**Why:** the composite's recogniser was the only transcriber reporting who said each word (D36),
+and a label no other system can be checked against cannot be validated, only believed. Scribe
+diarizes at no extra charge and its word spans are already the most trustworthy in the table
+(D48), so it is the natural second opinion. Two sources make per-clip speaker agreement a
+measurable quantity; one made it an assertion.
+
+**The other two cannot supply a third.** MAI-Transcribe-2 returns no speaker field at all —
+probed live against `/audio/transcriptions` with `diarize=true` and `response_format=verbose_json`,
+the response carries `text`, `usage`, `language`, `duration`, `segments` and `words`, and neither
+the word entries (`word`, `start`, `end`) nor the segment entries (`id`, `start`, `end`, `text`)
+name a speaker. `asr_gemini_flash` returns no word timings of its own, so there is nothing to hang
+a label on; its spans come from the CTC aligner afterwards, which knows about acoustics and not
+about speakers.
+
+**What these labels are, and what they are not.** They are clip-local. The pipeline cuts on speech
+turns first and transcribes each clip independently, so `speaker_0` in one clip has no relation to
+`speaker_0` in the next, and neither has any relation to `segments.speaker_id`. That supports one
+question — do two systems agree about how many voices are in *this* clip, and where they change —
+and not the question a sociolinguistic read actually asks, which is whether a given speaker's
+code-switching rate differs from another's across a whole episode. Answering that needs *global*
+speaker identity, which this pipeline cannot produce at all: it would take either a diarization
+pass over the full episode before segmentation, with segments joining to it by time, or speaker
+embeddings clustered across clips. Both are a new pipeline stage, not a flag. Nothing here should
+be read as having delivered it.
+
+**Not yet measured.** The one ingested episode is a single-presenter TV review — 1283 words
+labelled `spk:0` against 6 labelled `spk:1` — so it contains no diarization signal to score
+either system on. Agreement between Scribe and the composite is measurable only on multi-speaker
+audio, and no such episode has been ingested.
+
+**Reversal:** one line in `config/llm_routes.yaml`. The column already existed and null already
+meant "not diarized", so no schema change and nothing already imported is affected.

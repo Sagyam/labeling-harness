@@ -177,7 +177,7 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 
 | Route | Provider | API shape | Returns | Steered by |
 |---|---|---|---|---|
-| `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob | `language_code: ne` — nothing else (D48) |
+| `asr_scribe_v2` | ElevenLabs (direct) | `/v1/speech-to-text` | text, word spans, per-word logprob, speaker per word | `language_code: ne` — nothing else (D48) |
 | `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne` — nothing else (D48) |
 | `asr_gemini_composite` | Vertex AI (audio) + OpenRouter (script restore) | `POST …/gemini-3.5-transcribe-preview:generateContent`, then a chat rewrite | text, word spans, speaker per segment | `language_codes: [ne-NP]` only; no prompt reaches the recogniser |
 | `asr_gemini_flash` | Vertex AI (direct) | `POST …/gemini-3.8-flash:generateContent` | text only | the full policy prompt as `systemInstruction`, `language: ne` |

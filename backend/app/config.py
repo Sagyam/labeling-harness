@@ -325,6 +325,12 @@ class LlmRoute(BaseModel):
     #: recogniser measured for it -- this is not forced alignment and must not be confused with
     #: ``forced_align``.
     restore_script_route: str | None = None
+    #: Ask this route's provider for a speaker label per word. Only a transcriber that offers
+    #: diarization honours it; the rest ignore it and their words keep a null speaker, which is
+    #: the honest value for "not diarized". Labels are clip-local -- ``spk:0`` in one clip is
+    #: unrelated to ``spk:0`` in the next -- so they support agreement between systems on one
+    #: clip, not speaker identity across an episode (D49).
+    diarize: bool = False
     #: Keep this route's hypothesis out of the cross-system disagreement scores (D39). For a
     #: transcriber whose disagreement is an artefact of its orthography rather than of what it
     #: heard: `word_disagreement_rate` is a raw token comparison and carries 0.40 of the priority
