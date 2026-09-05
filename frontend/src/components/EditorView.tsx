@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { Chip } from '@/components/Chip'
 import { DiffViewer } from '@/components/DiffViewer'
 import { HypothesesList } from '@/components/HypothesesList'
+import { KaraokeTranscript } from '@/components/KaraokeTranscript'
 import { TranslitEditor } from '@/components/TranslitEditor'
 import { Waveform } from '@/components/Waveform'
 import {
@@ -59,6 +60,9 @@ export function EditorView({
   const segment = task.segment
   const seedHypothesis = segment.hypotheses.find((h) => h.id === task.seed_hypothesis_id)
   const seedText = seedHypothesis?.text || segment.hypotheses[0]?.text || ''
+  // The karaoke line follows the hypothesis the annotator is editing, so the words lighting up
+  // are the words in the box -- not another system's.
+  const seedWords = seedHypothesis?.words ?? segment.hypotheses[0]?.words ?? []
 
   const [text, setText] = useState<string>(seedText)
   const [peaks, setPeaks] = useState<PeaksPayload | null>(null)
@@ -339,6 +343,17 @@ export function EditorView({
         {/* Waveform + transport */}
         <div className="bg-card ring-1 ring-foreground/5">
           <Waveform peaks={peaks} currentTime={currentTime} duration={duration} onSeek={seek} />
+
+          {seedWords.length > 0 && (
+            <div className="border-t">
+              <KaraokeTranscript
+                words={seedWords}
+                audioRef={audioRef}
+                isPlaying={isPlaying}
+                onSeekWord={(time) => seek(time, true)}
+              />
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2">
             <div className="flex items-center gap-3">

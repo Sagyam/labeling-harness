@@ -78,7 +78,9 @@ surfaced shown next to it. Most segments are correct, so the dominant motion is 
 move on.
 
 **Editor** (`e`) is for the ones that are not: waveform, loopable playback, the transcript, the
-other systems' hypotheses, and a live word diff against what you started from. Typing Latin and
+other systems' hypotheses, and a live word diff against what you started from. Under the waveform
+the seed transcript runs as a karaoke line — the word being spoken grows and lights up, and
+clicking any word plays from there. Typing Latin and
 pressing `Space` offers Devanagari candidates; `Esc` keeps what you typed. The harness remembers
 which candidate you picked and ranks it first next time.
 
