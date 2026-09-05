@@ -246,6 +246,13 @@ class IngestSettings(BaseModel):
     #: only when the form left the topic blank. Empty disables it; a name that is not in
     #: `llm_routes.yaml` is logged and skipped, because a metadata field never fails an ingest.
     topic_route: str = "classify_topic"
+    #: Episode-level speaker diarization before segmentation (D58). Off leaves every segment on
+    #: `spk0`, which is what the pipeline did before the stage existed.
+    diarize: bool = True
+    #: Cosine distance at which clustering stops merging turns. Swept against real speech; see
+    #: `app/services/diarize.py` for the measurement behind the default.
+    diarize_threshold: float = Field(default=0.62, ge=0.0, le=2.0)
+    max_speakers: int = Field(default=6, ge=1, le=20)
 
     @field_validator("work_root")
     @classmethod

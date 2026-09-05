@@ -96,6 +96,8 @@ in `episodes.split`. It is never recomputed. Without a stored split the train/te
 recalculated at every export, so adding episodes would silently migrate segments across the boundary
 and two exports of "the same" dataset would differ. Splits are at **episode** level: segments from
 one episode share speaker, recording conditions and topic, so a segment-level split leaks.
+Since D58 `segments.speaker_id` is a real diarization label rather than a constant, so a
+speaker-stratified check of that assumption is now possible.
 
 ## Priority formula
 

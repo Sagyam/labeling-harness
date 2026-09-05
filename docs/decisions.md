@@ -1444,3 +1444,78 @@ the stored `topic_source` says which of the two produced the value.
 **Reversal:** set `ingest.topic_route` to an empty string. Nothing else changes; episodes already
 labelled keep their label and their `topic_source`.
 
+## D58 — Speaker identity is decided once per episode; inferring gender from voice is not
+
+Two halves of one question, answered differently because they were measured.
+
+### Diarization: built
+
+Until now every web-ingested segment was written `speaker_id = "spk0"` regardless of who said it
+(`ingest.py`, hardcoded). D52 named the stage that was missing: speaker identity is a full-episode
+problem belonging before segmentation, not a clip-local label. `app/services/diarize.py` is it. It
+reuses the VAD turns the pipeline already computed — no second speech-detection pass — embeds each
+with WeSpeaker's CAM++ (Apache-2.0, 29 MB, ONNX, so still no torch: D32), and clusters the
+episode's embeddings with average-linkage agglomerative clustering. Segments inherit the speaker of
+the turn they overlap most.
+
+The 80-bin Kaldi filterbank the graph expects is reimplemented in numpy (`app/services/fbank.py`)
+because the reference implementation is `torchaudio.compliance.kaldi` and torch stays out.
+
+**The threshold is measured, and the measurement is not flattering.** On real Nepali and Hindi
+speech (FLEURS), cosine distance between two turns of the *same* speaker averages 0.28 at 4-second
+turns and 0.44 at 2-second turns; between different speakers, 0.66 and 0.75. Those distributions
+**overlap at every turn length tried** — at 4 s the within-speaker 90th percentile is 0.43 against
+a between-speaker 10th percentile of 0.31. No threshold separates them cleanly. Sweeping against
+40 two-speaker episodes built from real recordings: 0.45 → 70%, 0.55 → 83%, 0.62 → 80%, 0.65 →
+90%, 0.75 → 78%. The default is 0.62, on the plateau. Those episodes give the clustering only
+three turns per speaker, which is the pessimistic floor; a real episode offers fifty.
+
+So diarization is a **good guess, not a measurement**, and the code says so: it degrades to
+`spk0`-for-everything on any failure, and it can never fail an ingest. What it buys is that
+`speaker_id` finally means something — a per-speaker field, a speaker-stratified analysis, or a
+check that a split has not put one speaker on both sides all become possible, and none of them
+were before.
+
+### Acoustic gender inference: measured, then rejected
+
+The plan was to infer gender per diarized speaker with `JaesungHuh/voice-gender-classifier` (MIT,
+ECAPA-TDNN, 15.5M params, a 15 MB int8 ONNX build, **98.7% on VoxCeleb1**). Measured through one
+harness, on FLEURS read speech, that model scores:
+
+| Language | n | Accuracy | Male recall | Female recall |
+|---|---:|---:|---|---|
+| English | 50 | 96.0% | 23/25 | 25/25 |
+| Hindi | 100 | 84.0% | 36/50 | 48/50 |
+| **Nepali** | **100** | **65.0%** | **65/100** | *(no female clips in FLEURS ne_np)* |
+
+English reproduces the published figure, which is what rules out a bug in the harness: the same
+code, the same graph, three languages. The degradation is real and it is *systematic* — male
+recall falls 92% → 72% → 65% as the language moves to South Asia while female recall holds, so the
+model calls roughly a third of Nepali male speakers female.
+
+Neither available rescue is enough. Confidence thresholding trades coverage for accuracy and
+plateaus below usefulness: `p ≥ 0.9` answers 44% of speakers at 92%, and at `p ≥ 0.99` accuracy
+*falls* to 85%, so the model is not calibrated at the top end on this domain either. Pooling
+3-second chunks across a speaker — the actual deployment condition — lifts 74% to 82%.
+
+**So it is not built.** At 65-82% this is the D56 failure exactly: a stratification variable that
+is confidently wrong often enough to bias anything computed over it, replacing an annotator's
+two-second dropdown that is right essentially always. The earlier expectation — recorded here
+because it was wrong — was that gender cues, being largely about F0 and vocal-tract length, would
+transfer across languages far better than age cues. They do not transfer nearly well enough.
+
+Gender therefore stays hand-entered (D56), and now has a real `speaker_id` to attach to.
+
+### Age brackets: blocked, not declined
+
+Coarse three-way buckets with abstention were the chosen design. There is **no ONNX speech age
+model**: the credible one is `audeering/wav2vec2-large-robust-*-ft-age-gender`, which is PyTorch
+only, 0.3B parameters, and **CC-BY-NC-SA 4.0** — non-commercial and share-alike, which propagates
+to a corpus built from its output. Using it means either adding torch to a project that excludes
+it on purpose, or exporting it in a throwaway venv the way `scripts/export_aligner_onnx.py`
+already does and vendoring the result, since no pinned public export exists to digest against.
+That is a decision about the corpus's licence, not a implementation detail, so it is left open.
+
+**Reversal:** set `ingest.diarize` to false. Every segment returns to `spk0` and nothing else
+changes; the stage writes no new column.
+

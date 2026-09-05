@@ -24,6 +24,10 @@ docs/diagrams/.fontcache/
 # silero_vad.onnx is committed because it is 2.3 MB; this one cannot be.
 backend/app/services/models/mms_fa.onnx
 backend/app/services/models/mms_fa_vocab.json
+
+# Speaker-embedding model for diarization: 29 MB, downloaded on first ingest, pinned and
+# digest-checked in backend/app/services/speaker_model.py.
+backend/app/services/models/campplus.onnx
 # Same artefact when HARNESS_ALIGNER_MODEL_DIR points at the mounted volume (the container does).
 data/models/
 
