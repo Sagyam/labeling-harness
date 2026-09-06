@@ -255,15 +255,26 @@ export default function App() {
     return { edited: !isUnchanged }
   }
 
-  /** Fetch the next task, falling back to triage when the queue is exhausted. */
-  const advanceToNextTask = async () => {
+  /** Fetch the next task, falling back to triage when the queue is exhausted.
+   *
+   * `finishedTaskId` is the task just decided. The server must never hand it back, and rendering
+   * it again is indistinguishable from a save that did nothing: same clip, same audio, same text.
+   * Bailing out to triage is worse than advancing but far better than stranding the annotator on
+   * a clip they have already finished, which is how they end up labelling it twice.
+   */
+  const advanceToNextTask = async (finishedTaskId?: number) => {
     try {
-      setCurrentTask(
-        await api.getNextTask({
-          queue: activeQueue,
-          episode: episodeFilter || undefined,
-        }),
-      )
+      const next = await api.getNextTask({
+        queue: activeQueue,
+        episode: episodeFilter || undefined,
+      })
+      if (next.id === finishedTaskId) {
+        toast.error('The queue served the clip you just finished — returning to triage')
+        setActiveMode('triage')
+        loadQueue(activeQueue)
+        return
+      }
+      setCurrentTask(next)
     } catch (err: any) {
       if (err.status === 404) {
         toast.info('Queue complete — returning to triage')
@@ -283,7 +294,7 @@ export default function App() {
       const { edited } = await persistDecision(taskId, finalText, durationMs)
       toast.success(edited ? `Saved edits for ${externalId}` : `Accepted ${externalId} unchanged`)
       refreshStats()
-      await advanceToNextTask()
+      await advanceToNextTask(taskId)
     } catch (err: any) {
       toast.error(err.detail || 'Save failed')
       throw err
@@ -317,7 +328,7 @@ export default function App() {
       })
       toast.warning(`Flagged as ${disposition}`)
       refreshStats()
-      await advanceToNextTask()
+      await advanceToNextTask(taskId)
     } catch (err: any) {
       toast.error(err.detail || 'Flag failed')
     }
@@ -332,7 +343,7 @@ export default function App() {
       })
       toast.info('Deferred task')
       refreshStats()
-      await advanceToNextTask()
+      await advanceToNextTask(taskId)
     } catch (err: any) {
       toast.error(err.detail || 'Skip failed')
     }
