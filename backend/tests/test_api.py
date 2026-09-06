@@ -558,3 +558,67 @@ def test_a_segment_without_peaks_advertises_no_peaks_url(
 
     assert client.get(f"/segments/{segment_id}").json()["peaks_url"] is None
     assert client.get("/queue").json()[0]["peaks_url"] is None
+
+
+# --- durability of a decision ------------------------------------------------------------
+
+
+def _client_whose_teardown_rolls_back(db_session: Session, object_storage, settings) -> TestClient:
+    """A client that discards whatever a request leaves uncommitted.
+
+    FastAPI closes a ``yield`` dependency *after* the response has gone out, so a handler that
+    leaves its transaction to teardown has already told the browser "saved" while the row is
+    still invisible to the next request -- and the browser's next request is ``/tasks/next``,
+    which then hands the same clip straight back. Rolling back at teardown stands in for that
+    window: what survives here is what was committed before the client was answered.
+    """
+    from app.api.deps import get_config, get_object_storage, get_session
+    from app.main import create_app
+
+    app = create_app()
+
+    def session_rolled_back_at_teardown():
+        try:
+            yield db_session
+        finally:
+            db_session.rollback()
+
+    app.dependency_overrides[get_session] = session_rolled_back_at_teardown
+    app.dependency_overrides[get_object_storage] = lambda: object_storage
+    app.dependency_overrides[get_config] = lambda: settings
+    return TestClient(app)
+
+
+def test_a_decision_is_committed_before_the_client_is_told_it_saved(
+    db_session: Session, object_storage, settings, imported_episode: str
+) -> None:
+    db_session.commit()  # the imported episode is the starting point, not part of the request
+
+    with _client_whose_teardown_rolls_back(db_session, object_storage, settings) as client:
+        task_id = client.get("/tasks/next").json()["id"]
+        saved = client.post(f"/tasks/{task_id}/accept", json={"duration_ms": 1000})
+        assert saved.status_code == 200
+
+    db_session.expire_all()
+    task = db_session.get(AnnotationTask, task_id)
+    assert task.status == "done"
+    assert (
+        db_session.scalars(
+            sa.select(SegmentLabel).where(SegmentLabel.segment_id == task.segment_id)
+        ).one()
+        is not None
+    )
+
+
+def test_serving_a_task_commits_the_status_it_reports(
+    db_session: Session, object_storage, settings, imported_episode: str
+) -> None:
+    """The client is told the task is in progress, so it has to be in progress by then."""
+    db_session.commit()
+
+    with _client_whose_teardown_rolls_back(db_session, object_storage, settings) as client:
+        served = client.get("/tasks/next").json()
+
+    assert served["status"] == "in_progress"
+    db_session.expire_all()
+    assert db_session.get(AnnotationTask, served["id"]).status == "in_progress"

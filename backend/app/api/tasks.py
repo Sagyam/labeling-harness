@@ -154,7 +154,9 @@ def next_task(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="queue is empty")
     if task.status == "pending":
         task.status = "in_progress"
-        session.flush()
+    # Committed here rather than at teardown, so the status this response reports is the status
+    # the annotator's next request will read. See `_decide` for what the window costs.
+    session.commit()
     return _serialize_task(session, task)
 
 
@@ -169,11 +171,28 @@ def _decide(
     task: AnnotationTask,
     decision: Decision,
     settings: Settings,
+    *,
+    commit: bool = True,
 ) -> DecisionOut:
+    """Record one decision and, by default, commit it before the caller builds a response.
+
+    The commit cannot be left to the session dependency. FastAPI closes a ``yield`` dependency
+    *after* the response has been sent, so a decision that commits at teardown is still invisible
+    when the browser -- which sends ``GET /tasks/next`` the moment the save resolves -- asks for
+    the next clip. That read then finds the task it just finished still active, and because
+    ``/tasks/next`` serves ``in_progress`` first, the annotator is handed the same clip back and
+    the editor appears not to advance. Worse, serving it flips the status to ``in_progress``,
+    which lands after the ``done`` from the save and overwrites it, so the next save writes a
+    second label for a clip already decided.
+
+    ``commit=False`` is for callers batching several decisions into one transaction.
+    """
     try:
         label = record_decision(session, task, decision, settings=settings)
     except LabelingError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if commit:
+        session.commit()
     event_duration = decision.duration_ms
     if event_duration is None and decision.opened_at is not None:
         event_duration = max(
@@ -286,6 +305,7 @@ def skip_task(
         )
     except LabelingError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    session.commit()
     return DecisionOut(
         task_id=task.id,
         segment_id=task.segment_id,
@@ -320,6 +340,10 @@ def bulk_accept(
                     verification_tier=body.verification_tier,
                 ),
                 settings,
+                # All of them or none: one commit for the batch, once every task has been
+                # recorded without raising.
+                commit=False,
             )
         )
+    session.commit()
     return BulkAcceptOut(accepted=accepted, count=len(accepted))
