@@ -421,6 +421,28 @@ def test_audio_without_a_range_returns_the_whole_clip(
     assert response.content[:4] == b"fLaC"
 
 
+def test_audio_serves_a_clip_whose_external_id_is_not_ascii(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    """A Devanagari episode slug must not take the whole episode's audio down.
+
+    Every header goes out latin-1 encoded, so an unescaped non-ASCII filename raises inside the
+    server: a 500 on every clip of that episode, while its JSON and peaks respond 200.
+    """
+    segment_id = queue_rows(client)[0]["segment_id"]
+    segment = db_session.get(Segment, segment_id)
+    segment.external_id = "हिमालयन_जाभाका_00000"
+    db_session.flush()
+
+    response = client.get(f"/segments/{segment_id}/audio")
+    assert response.status_code == 200
+    assert response.content[:4] == b"fLaC"
+    disposition = response.headers["content-disposition"]
+    disposition.encode("latin-1")  # what the ASGI server does; must not raise
+    assert 'filename="00000.flac"' in disposition
+    assert "filename*=UTF-8''" in disposition
+
+
 def test_audio_range_request_returns_206_with_the_right_bytes(
     client: TestClient, imported_episode: str
 ) -> None:

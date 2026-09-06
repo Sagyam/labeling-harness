@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import quote
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
@@ -37,6 +38,24 @@ def _load_segment(session: Session, segment_id: int) -> Segment:
     if segment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="segment not found")
     return segment
+
+
+#: Characters kept in the ASCII ``filename`` fallback. Anything else becomes an underscore.
+_ASCII_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def content_disposition(external_id: str, *, segment_id: int) -> str:
+    """``Content-Disposition`` for a clip download, safe for a non-ASCII external id.
+
+    Header values go out latin-1 encoded, so an episode slug carrying Devanagari raises inside the
+    server and the player gets a 500 instead of audio -- for every clip of that episode, while the
+    JSON and peaks endpoints beside it work fine. RFC 6266 exists for this: send an ASCII
+    ``filename`` that any client can read plus a percent-encoded ``filename*`` that carries the
+    real name, and let the client prefer the second.
+    """
+    fallback = _ASCII_FILENAME.sub("_", external_id).strip("_") or f"segment-{segment_id}"
+    encoded = quote(f"{external_id}.flac", safe="")
+    return f"inline; filename=\"{fallback}.flac\"; filename*=UTF-8''{encoded}"
 
 
 def parse_range(header: str, size: int) -> tuple[int, int]:
@@ -107,7 +126,7 @@ def get_segment_audio(
 
     common = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": f'inline; filename="{segment.external_id}.flac"',
+        "Content-Disposition": content_disposition(segment.external_id, segment_id=segment.id),
         "Cache-Control": "private, max-age=3600",
     }
     if range is None:
