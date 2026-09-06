@@ -137,6 +137,35 @@ def _restore_script(
     )
 
 
+def _maybe_restore(
+    session: Session,
+    result: AsrResult,
+    *,
+    route_config: LlmRoute,
+    routes: LlmRoutes,
+    client: httpx.Client | None,
+    dry_run: bool | None,
+) -> AsrResult:
+    """Apply script restoration if this route asks for it, whichever vendor produced the result.
+
+    Restoration used to hang off the Vertex branch alone, because D41's composite was the only
+    route that needed it. It is a property of the *transcript* rather than of the vendor: any
+    recogniser that spells English phonetically in Devanagari produces text the corpus policy
+    ("English in Latin, Nepali in Devanagari") rejects, and the seed route is where that costs
+    the most, since the seed is what the annotator edits.
+    """
+    if not route_config.restore_script_route:
+        return result
+    return _restore_script(
+        session,
+        result,
+        restore_route=route_config.restore_script_route,
+        routes=routes,
+        client=client,
+        dry_run=dry_run,
+    )
+
+
 def transcribe(
     session: Session,
     audio_path: Path | str,
@@ -178,9 +207,17 @@ def transcribe(
     dedicated = route_config.api == "transcription"
 
     if route_config.provider == "elevenlabs":
-        return ElevenLabsClient(session, config=routes, client=client).transcribe(
+        result = ElevenLabsClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
+            dry_run=dry_run,
+        )
+        return _maybe_restore(
+            session,
+            result,
+            route_config=route_config,
+            routes=routes,
+            client=client,
             dry_run=dry_run,
         )
     if route_config.provider == "vertex":
@@ -195,16 +232,14 @@ def transcribe(
             prompt=None if dedicated else prompt,
             dry_run=dry_run,
         )
-        if route_config.restore_script_route:
-            result = _restore_script(
-                session,
-                result,
-                restore_route=route_config.restore_script_route,
-                routes=routes,
-                client=client,
-                dry_run=dry_run,
-            )
-        return result
+        return _maybe_restore(
+            session,
+            result,
+            route_config=route_config,
+            routes=routes,
+            client=client,
+            dry_run=dry_run,
+        )
     return OpenRouterClient(session, config=routes, client=client).transcribe(
         audio_path,
         route=route,

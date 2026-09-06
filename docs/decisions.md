@@ -1626,3 +1626,65 @@ evaluating against this dataset means applying the same table to the reference s
 
 **Reversal:** delete the `tokens` block and re-export. There is no migration to undo and no label
 to recover, because none was ever overwritten.
+
+## D65 — Script restoration moves to the seed route; screening and gold are made mutually exclusive
+
+Three changes that came out of the first episode's numbers. `asr_scribe_v2` gains
+`restore_script_route: script_restore`, partially reversing D51. `assign_pots` refuses to place a
+screened episode in gold and takes back one already there. The queue tooltip reads the components
+D54 actually computes.
+
+**The seed is where a respelling pays.** Scribe writes English loanwords phonetically in
+Devanagari — `क्याप्टन` for Captain, `टिम` for team, `टनलमा` for tunnel — and the corpus policy is
+English in Latin, Nepali in Devanagari. In the first 340 labels that was corrected by hand 67
+times. It is the same repair `app/llm/script_restore.py` already performs, which D51 kept in the
+tree for exactly this: *"Any recogniser that transliterates English into Devanagari and cannot be
+told not to needs exactly this repair, and another one is being evaluated."* Scribe is that
+recogniser; the evaluation is 67 manual corrections in one episode.
+
+**What D51 removed was the composite, not the repair.** The composite lost to every other system
+on leave-one-out consensus (0.538 against 0.610–0.623) because the *recogniser* deleted English
+before the restore step ever saw it — Spearman +0.670 between a clip's Latin share and its token
+shortfall. Scribe has no such defect: it spells English wrongly rather than dropping it, which is
+what the restore step is for. D51's other reason for deleting rather than disabling was that an
+idle *recogniser* leaves `exclude_from_disagreement` as the only thing between its hypotheses and
+the score. `script_restore` is a chat route with no `asr_` prefix and no `system_id`, so it cannot
+enter the disagreement signal however the flags are set, and a test asserts that rather than the
+route's absence.
+
+**The cost is real and was accepted deliberately.** This is one extra call per clip, and it puts
+text in front of the annotator that no human wrote — the failure mode D64 declined to take for
+orthography. It is taken here because the alternative is measured: 67 corrections at roughly half
+a minute each. `reasoning_enabled: false` and `max_tokens: 2048` are not decoration — D44 found
+47% of restorations truncated mid-array with 96% of the budget spent on thinking. The one-token-in
+one-token-out contract is what keeps every word's span, and a mismatched count is rejected rather
+than patched.
+
+**Screening and gold could both be true, and nothing caught it.** `record_decision` refuses a
+screened decision on a gold segment, and the gold export refuses to write one. Neither fires when
+the order is reversed: screen an episode while it is `unassigned`, which is legal, then run the
+assigner, which places it in gold on the hours target. This repository walked into exactly that —
+562 screened labels in a 3.1 h episode, assigned to gold five minutes after the last of them was
+written. The state is unreachable by any single illegal action and survives every existing check
+until export.
+
+So the assigner now excludes any episode holding a screened label from gold selection, and
+**demotes one already there**. That is a narrow exception to D63's rule 3, and it is worth being
+precise about why it is not a hole in it. Rule 3 stops a recording that has been trained on from
+becoming the benchmark, and stops the benchmark being cherry-picked after the fact. An episode
+that gold's own definition excludes was never validly in the pot; leaving it there does not
+protect a measurement, it invalidates one. The demotion is reported by name — `gold_demoted` on
+the report, printed by the CLI — because quietly shrinking a benchmark is the kind of thing that
+needs saying out loud.
+
+**The tooltip was reporting a formula that no longer exists.** D54 replaced
+`word_disagreement_rate` and `code_switch_density` with `seed_outvoted`, `low_confidence` and
+`rule_flag_score`, moving the old pair under `reason_jsonb.legacy`. The triage table kept reading
+them from `components`, where they are now `undefined`, and a `?? '0'` fallback rendered every row
+as a confident `0.00`. A missing measurement that renders as a real one is worse than a blank, so
+the fallback is now `--` and the tooltip lists the components the score is actually made of.
+
+**Reversal:** drop `restore_script_route` from the Scribe block to stop restoring (already-written
+hypotheses keep their Latin, and `text_devanagari` in `metadata_jsonb` holds what Scribe said).
+The pot guard reverses by deleting `screened_episode_ids` and its two call sites; the episode it
+demoted does not go back on its own.

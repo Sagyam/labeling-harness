@@ -13,7 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
-from app.models import Episode, Segment
+from app.models import Episode, Segment, SegmentLabel
+from app.services.labeling import get_or_create_label_version
 from app.services.pots import PotError, assign_pots, episode_coverage, pot_status
 
 pytestmark = pytest.mark.db
@@ -455,3 +456,162 @@ def test_pot_status_does_not_assign_anything(db_session: Session, settings: Sett
     pot_status(db_session, settings=settings)
     db_session.flush()
     assert db_session.scalar(sa.select(Episode.pot)) == "unassigned"
+
+
+# --- an episode that has already been screened can never become the benchmark (D65) ------
+
+
+def screen_one_segment(session: Session, episode: Episode, settings: Settings) -> None:
+    """Write one screened label against this episode, as bulk triage does."""
+    segment = session.scalars(
+        sa.select(Segment).where(Segment.episode_id == episode.id).limit(1)
+    ).one()
+    version = get_or_create_label_version(session, settings.labels.default_label_version, settings)
+    session.add(
+        SegmentLabel(
+            segment_id=segment.id,
+            label_version_id=version.id,
+            final_text="waved through",
+            disposition="accepted_unchanged",
+            verification_tier="screened",
+            annotator="owner",
+        )
+    )
+    session.flush()
+
+
+def a_corpus_with_room_for_gold(session: Session) -> dict[str, Episode]:
+    """Six shows of an hour each: 6 h ingested, so the 0.35 cap leaves ~2.1 h of gold to fill."""
+    return {
+        name: make_episode(session, name, minutes=60, show_id=f"show-{name[-1]}", topic=name)
+        for name in ("ep_a", "ep_b", "ep_c", "ep_d", "ep_e", "ep_f")
+    }
+
+
+def test_a_screened_episode_is_never_selected_for_gold(
+    db_session: Session, settings: Settings
+) -> None:
+    """The hole this closes: screening is legal while unassigned, and the assigner ran after.
+
+    A gold pot whose rows were waved through is not a benchmark, and `record_decision` cannot
+    catch it -- the decision was already legal when it was made.
+    """
+    episodes = a_corpus_with_room_for_gold(db_session)
+    for episode in episodes.values():
+        screen_one_segment(db_session, episode, settings)
+
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+
+    db_session.expire_all()
+    pots = {name: db_session.get(Episode, ep.id).pot for name, ep in episodes.items()}
+    assert "gold" not in pots.values(), pots
+
+
+def test_a_clean_episode_is_preferred_over_a_screened_one(
+    db_session: Session, settings: Settings
+) -> None:
+    """The guard must not empty the benchmark; it only holds back the screened episodes."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    for name in ("ep_a", "ep_b", "ep_c", "ep_d"):
+        screen_one_segment(db_session, episodes[name], settings)
+
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+
+    db_session.expire_all()
+    gold = {name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"}
+    assert gold, "the guard emptied the gold pot instead of routing around it"
+    assert gold <= {"ep_e", "ep_f"}, gold
+
+
+def test_a_verified_episode_is_still_eligible_for_gold(
+    db_session: Session, settings: Settings
+) -> None:
+    """Verified labels are what gold is made of; only `screened` disqualifies."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    version = get_or_create_label_version(
+        db_session, settings.labels.default_label_version, settings
+    )
+    for episode in episodes.values():
+        segment = db_session.scalars(
+            sa.select(Segment).where(Segment.episode_id == episode.id).limit(1)
+        ).one()
+        db_session.add(
+            SegmentLabel(
+                segment_id=segment.id,
+                label_version_id=version.id,
+                final_text="listened to",
+                disposition="accepted_unchanged",
+                verification_tier="verified",
+                annotator="owner",
+            )
+        )
+    db_session.flush()
+
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+
+    db_session.expire_all()
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    assert gold, "verified labels wrongly disqualified an episode from the benchmark"
+
+
+def test_the_report_names_the_episodes_it_held_back(
+    db_session: Session, settings: Settings
+) -> None:
+    """Silently declining to promote an episode is the kind of thing that needs saying."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    screen_one_segment(db_session, episodes["ep_a"], settings)
+
+    report = assign_pots(db_session, settings=settings, gold_hours_target=5.0, dry_run=True)
+
+    assert "ep_a" in report.gold_ineligible
+    assert "ep_a" in report.render()
+
+
+def test_a_gold_episode_holding_screened_labels_is_demoted(
+    db_session: Session, settings: Settings
+) -> None:
+    """Rule 3's one exception: an episode that was never validly gold in the first place.
+
+    The window is real and this repository walked into it -- an episode was screened while
+    unassigned, then the assigner placed it in gold on the hours target. Rule 3 forbids leaving
+    gold to stop a trained-on episode becoming the benchmark; it was never meant to pin an
+    episode there that the benchmark's own definition excludes.
+    """
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    assert gold, "fixture did not produce a gold pot to demote from"
+    victim = episodes[gold[0]]
+    screen_one_segment(db_session, victim, settings)
+
+    report = assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    assert db_session.get(Episode, victim.id).pot == "train"
+    assert db_session.get(Episode, victim.id).split in {"train", "val"}
+    assert victim.external_id in report.gold_demoted
+    assert victim.external_id in report.render()
+
+
+def test_a_clean_gold_episode_is_never_demoted(db_session: Session, settings: Settings) -> None:
+    """The demotion is narrow: only screened labels move an episode, nothing else."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+    before = {name: db_session.get(Episode, ep.id).pot for name, ep in episodes.items()}
+
+    report = assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    after = {name: db_session.get(Episode, ep.id).pot for name, ep in episodes.items()}
+    assert after == before
+    assert report.gold_demoted == []

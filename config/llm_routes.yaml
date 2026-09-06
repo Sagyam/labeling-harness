@@ -42,6 +42,12 @@ routes:
     # be wrong -- `spk:0` in one hypothesis is not `spk:0` in another. Speaker identity is a
     # full-episode problem and belongs to a stage that runs before segmentation, not to a flag.
     diarize: false
+    # Scribe spells English loanwords phonetically in Devanagari -- क्याप्टन for Captain, टिम for
+    # team -- and the corpus policy is English in Latin, Nepali in Devanagari. In the first
+    # episode that was corrected by hand 67 times, at roughly half a minute each, and this is
+    # the route where fixing it pays: the seed is the text the annotator actually edits. One
+    # restored token per recognised token, so every word keeps the span Scribe measured (D65).
+    restore_script_route: script_restore
 
   # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
   # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash
@@ -81,6 +87,22 @@ routes:
     # against 88 tokens of transcript -- 91% of billed output, ~170k thought tokens per hour of
     # audio -- and `thinkingBudget: 0` takes that to zero with the transcript unchanged. Unlike
     # `script_restore` this route has no `max_tokens`, so nothing was making the spend visible.
+    reasoning_enabled: false
+
+  # Script restoration (D65), not transcription -- no `asr_` prefix, so it never becomes an ASR
+  # system and never appears as a disagreement signal. One chat call per clip whose transcript
+  # contains Devanagari, against the token list rather than the prose, because the contract is one
+  # output token per input token: that is what lets each restored word inherit its own span with
+  # no re-alignment. A response with a different token count is retried and then rejected, never
+  # patched up -- a silently misaligned transcript corrupts every span in the clip.
+  script_restore:
+    provider: openrouter
+    api: chat
+    model: google/gemini-3.8-flash
+    temperature: 0.0
+    # Bounded because the output is a JSON array of tokens, never prose. Thinking off for the
+    # same reason as the ASR routes (D45): there is nothing to reason about in a respelling.
+    max_tokens: 2048
     reasoning_enabled: false
 
   # Topic labelling (D57), not transcription -- the name has no `asr_` prefix, so it never becomes

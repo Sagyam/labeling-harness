@@ -23,6 +23,25 @@ import type { QueueRow, VerificationTier } from '@/types'
 
 const QUEUES = ['review', 'audit', 'error'] as const
 
+//: What the priority score is actually made of since D54. These names must track
+//: `ScoreInputs` in the backend: the pre-D54 formula's `word_disagreement_rate` and
+//: `code_switch_density` still exist in `reason_jsonb`, but under `legacy`, so reading them
+//: from `components` yields undefined for every row.
+const PRIORITY_COMPONENTS: ReadonlyArray<[string, string]> = [
+  ['seed_outvoted', 'seed outvoted'],
+  ['low_confidence', 'low confidence'],
+  ['rule_flag_score', 'rule flags'],
+]
+
+/** Render a score component, distinguishing "measured zero" from "not present".
+ *
+ * A `?? '0'` fallback here is what hid D54's rename: every row reported a confident 0.00 for a
+ * field that had moved, and a real zero looks identical to a missing one.
+ */
+function formatComponent(value: number | undefined): string {
+  return typeof value === 'number' ? value.toFixed(2) : '--'
+}
+
 interface TriageViewProps {
   rows: QueueRow[]
   activeQueue?: string
@@ -375,14 +394,17 @@ export function TriageView({
                         </TooltipTrigger>
                         <TooltipContent className="font-mono text-xs">
                           <div>score: {row.priority_score.toFixed(3)}</div>
-                          <div>
-                            disagreement:{' '}
-                            {row.reason?.components?.word_disagreement_rate?.toFixed(2) ?? '0'}
-                          </div>
-                          <div>
-                            code-switch:{' '}
-                            {row.reason?.components?.code_switch_density?.toFixed(2) ?? '0'}
-                          </div>
+                          {PRIORITY_COMPONENTS.map(([key, label]) => (
+                            <div key={key}>
+                              {label}: {formatComponent(row.reason?.components?.[key])}
+                              {row.reason?.weights?.[key] !== undefined && (
+                                <span className="text-muted-foreground">
+                                  {' '}
+                                  x{row.reason.weights[key]}
+                                </span>
+                              )}
+                            </div>
+                          ))}
                         </TooltipContent>
                       </Tooltip>
                     </TableCell>

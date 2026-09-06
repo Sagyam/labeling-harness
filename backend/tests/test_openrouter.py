@@ -142,11 +142,23 @@ def test_a_route_can_turn_thinking_off(db_session: Session) -> None:
     assert seen["body"]["reasoning"] == {"enabled": False}
 
 
-def test_the_committed_config_has_no_script_restore_route() -> None:
-    """It existed only as the second half of the composite, which D51 removed."""
-    from app.config import load_llm_routes
+def test_the_script_restore_route_never_becomes_an_asr_system() -> None:
+    """D51's real worry, kept as a test now that the route is back (D65).
 
-    assert "script_restore" not in load_llm_routes().routes
+    D51 deleted the route rather than disabling it because a configured-but-unused *recogniser*
+    leaves `exclude_from_disagreement` as the only thing between its hypotheses and the score,
+    and the two computation sites desynchronise silently. That risk is specific to a route that
+    produces hypotheses. This one is a chat route with no `asr_` prefix and no `system_id`, so
+    it cannot enter the disagreement signal however the flags are set -- which is the property
+    worth asserting, rather than the route's absence.
+    """
+    from app.config import load_llm_routes
+    from app.llm.transcription import asr_route_names
+
+    table = load_llm_routes()
+    assert "script_restore" in table.routes
+    assert table.routes["script_restore"].system_id is None
+    assert "script_restore" not in asr_route_names(table)
 
 
 def test_a_missing_api_key_is_refused(db_session: Session) -> None:

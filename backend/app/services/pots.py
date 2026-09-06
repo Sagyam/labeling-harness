@@ -130,6 +130,13 @@ class PotReport:
     gold_target_met: bool = False
     #: True when the corpus is too small to reach the target without swallowing it whole.
     gold_capped_by_corpus_size: bool = False
+    #: Episodes the assigner refused to place in gold because they already hold screened
+    #: labels. Named rather than counted: declining to promote an episode silently is how
+    #: a benchmark ends up smaller than anyone intended, with no record of why.
+    gold_ineligible: list[str] = field(default_factory=list)
+    #: Episodes taken *out* of gold because they hold screened labels -- rule 3's one
+    #: exception, for an episode that was never validly in the benchmark to begin with.
+    gold_demoted: list[str] = field(default_factory=list)
     dry_run: bool = False
 
     def render(self) -> str:
@@ -149,6 +156,14 @@ class PotReport:
             f"  unassigned  {self.unassigned_hours:.2f} h ({self.unassigned_episodes} episodes)",
             f"  changes     {len(self.changes)}",
         ]
+        if self.gold_demoted:
+            lines.append(f"  DEMOTED FROM GOLD ({len(self.gold_demoted)}): holds screened labels")
+            for external_id in self.gold_demoted:
+                lines.append(f"    {external_id}")
+        if self.gold_ineligible:
+            lines.append(f"  held out of gold ({len(self.gold_ineligible)}): already screened")
+            for external_id in self.gold_ineligible:
+                lines.append(f"    {external_id}")
         for change in self.changes:
             lines.append(
                 f"    {change.external_id}  {change.from_pot}/{change.from_split}"
@@ -239,6 +254,23 @@ def _load_candidates(session: Session, *, keys: list[str]) -> list[Candidate]:
             )
         )
     return candidates
+
+
+def screened_episode_ids(session: Session) -> set[int]:
+    """Episodes carrying at least one label that nobody listened to.
+
+    Screening is legal on an unassigned episode and refused on a gold one, which leaves a window:
+    screen an episode first, run the assigner second, and the benchmark quietly acquires rows that
+    were waved through on the disagreement signal. `record_decision` cannot catch that -- the
+    decision was already legal when it was made -- so the assigner has to.
+    """
+    current = latest_labels_subquery()
+    rows = session.execute(
+        sa.select(sa.distinct(Segment.episode_id))
+        .join(current, current.c.segment_id == Segment.id)
+        .where(current.c.verification_tier == "screened")
+    ).all()
+    return {row[0] for row in rows}
 
 
 def _coverage_gain(candidate: Candidate, seen: Mapping[str, set[str]], keys: list[str]) -> int:
@@ -341,7 +373,13 @@ def assign_pots(
     val_fraction = settings.dataset.val_fraction
 
     candidates = _load_candidates(session, keys=keys)
-    already_gold = [c for c in candidates if c.pot == "gold"]
+    screened = screened_episode_ids(session)
+    # Rule 3 keeps episodes in gold so a trained-on recording cannot become the benchmark. It was
+    # never meant to pin an episode there that gold's own definition excludes: a clip nobody
+    # listened to. An episode screened while unassigned and then placed in gold on the hours
+    # target was never validly gold, so it is put back rather than left to fail at export.
+    demoted = [c for c in candidates if c.pot == "gold" and c.episode_id in screened]
+    already_gold = [c for c in candidates if c.pot == "gold" and c.episode_id not in screened]
 
     # Cap the target at a share of what has actually been ingested, so a corpus smaller than the
     # target is not swallowed whole. Episodes already in gold are past this: rule 3 means they
@@ -359,6 +397,11 @@ def assign_pots(
         for c in candidates
         if c.pot == "unassigned" or (allow_promote_from_train and c.pot == "train")
     ]
+    # An episode that has already been screened can never be the benchmark, whatever it would do
+    # for coverage or for the hours target. Undershooting gold is recoverable; a gold pot nobody
+    # listened to is not, and it fails silently at every point except the export.
+    ineligible = [c for c in eligible if c.episode_id in screened]
+    eligible = [c for c in eligible if c.episode_id not in screened]
 
     newly_gold = _select_gold(
         eligible,
@@ -370,6 +413,8 @@ def assign_pots(
     gold_ids = {c.episode_id for c in already_gold} | {c.episode_id for c in newly_gold}
 
     report = PotReport(
+        gold_ineligible=[c.external_id for c in ineligible],
+        gold_demoted=[c.external_id for c in demoted],
         gold_target_hours=target_hours,
         gold_effective_target_hours=round(effective_target, 4),
         train_target_hours=settings.dataset.train_hours_target,

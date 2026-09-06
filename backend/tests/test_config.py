@@ -168,7 +168,10 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert "asr_gemini_composite" not in routes, (
         "the composite recogniser was removed in D51; it deleted the dependent variable"
     )
-    assert "script_restore" not in routes, "the restore step existed only to serve it (D51)"
+    # D51 removed the composite and kept `script_restore.py` for the next recogniser that needed
+    # it. D65 points it at Scribe, which spells English loanwords in Devanagari like every other
+    # route here -- what D51 removed was the composite ASR system, not the repair.
+    assert scribe.restore_script_route == "script_restore"
 
     gemini = routes["asr_gemini_flash"]
     assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (
