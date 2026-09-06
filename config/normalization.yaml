@@ -13,7 +13,7 @@
 # candidates only: that process proposed `जे -> day` from a single mishearing correction, and
 # जे is a common Nepali word. Nothing goes in this file because a script suggested it.
 
-version: norm-v1
+version: norm-v3
 
 tokens:
   # ---------------------------------------------------------------------------------------
@@ -58,6 +58,295 @@ tokens:
   हेरौं: हेरौँ
   गर्यौं: गर्यौँ
 
+  # ---------------------------------------------------------------------------------------
+  # English loanwords spelled phonetically in Devanagari. The corpus policy is English in
+  # Latin, Nepali in Devanagari, and these were left in Devanagari inconsistently rather
+  # than deliberately: कफी kept 18 / converted 11, ट्राफिक 5 / 6, ड्राइभर 9 / 3, रोड 15 / 2.
+  # हेल्मेट (0/9) and फोन (35/0) show the two ends of the same split. The owner's ruling is
+  # that the kept forms were sloppiness, so the Latin form wins everywhere.
+  #
+  # Every inflected form attested in the corpus needs its own rule -- substitution is
+  # whole-token -- and the Devanagari suffix stays attached to the Latin stem, matching the
+  # joined convention the labels already use (governmentकै, vehicleहरू).
+  # ---------------------------------------------------------------------------------------
+  कफी: coffee
+  कफीको: coffeeको
+  कफीमा: coffeeमा
+  फोन: phone
+  फोनमा: phoneमा
+  फोनको: phoneको
+  फोनहरूमा: phoneहरूमा
+  फोनले: phoneले
+  फोनहरूलाई: phoneहरूलाई
+  फोनसँग: phoneसँग
+  फोनहरू: phoneहरू
+  फोनबाट: phoneबाट
+  फोनलाई: phoneलाई
+  रोड: road
+  रोडको: roadको
+  रोडमा: roadमा
+  कम्पनी: company
+  कम्पनीले: companyले
+  कम्पनीको: companyको
+  कम्पनीमा: companyमा
+  कार: car
+  कारको: carको
+  कारहरूको: carहरूको
+  कारमा: carमा
+  फोटो: photo
+  ड्राइभर: driver
+  ड्राइभरले: driverले
+  ड्राइभरलाई: driverलाई
+  सेयर: share
+  ट्राफिक: traffic
+  ट्राफिकले: trafficले
+  ट्राफिकको: trafficको
+  मिटर: meter
+  मिटरको: meterको
+  मिटरमा: meterमा
+  कन्ट्री: country
+  कन्ट्रीहरूलाई: countryहरूलाई
+  मोटरसाइकल: motorcycle
+  मोटरसाइकलको: motorcycleको
+  मोटरसाइकलमा: motorcycleमा
+  बाइक: bike
+  हेल्मेट: helmet
+  इम्पोर्ट: import
+  कलेजमा: collegeमा
+  ड्युटी: duty
+  कारहरू: carहरू
+  डमीहरूमा: dummyहरूमा
+  फर्म: form
+
+  # ---------------------------------------------------------------------------------------
+  # English loanwords and foreign proper nouns, reviewed token by token over all 6,205
+  # distinct Devanagari tokens in the corpus. Foreign place and person names take Latin
+  # (the corpus already did this by hand: रसिया -> Russia, इजरायल -> Israel); Nepali place
+  # and political names stay Devanagari, as does नेपाल itself -- see the list at the bottom.
+  #
+  # Tokens that collide with a native Nepali word are NOT here. They stay in
+  # normalization_candidates.yaml and need a per-occurrence decision: बस is 'bus' but
+  # बसेर/बस्छु/बसेको are the verb 'to sit', भोट is 'vote' but also means Tibet.
+  # ---------------------------------------------------------------------------------------
+  # अमेरिका -> America   (27 occurrences)
+  अमेरिकाको: Americaको
+  अमेरिकामा: Americaमा
+  अमेरिका: America
+  अमेरिकालाई: Americaलाई
+  अमेरिकाले: Americaले
+  अमेरिकासम्म: Americaसम्म
+  # इरान -> Iran   (22 occurrences)
+  इरानको: Iranको
+  इरान: Iran
+  इरानसँग: Iranसँग
+  इरानमा: Iranमा
+  इरानलाई: Iranलाई
+  इरानमै: Iranमै
+  इरानबाट: Iranबाट
+  # युक्रेन -> Ukraine   (16 occurrences)
+  युक्रेन: Ukraine
+  युक्रेनको: Ukraineको
+  युक्रेनले: Ukraineले
+  युक्रेनलाई: Ukraineलाई
+  # आर्मी -> Army   (15 occurrences)   -- आर्मी->Army already done once by hand
+  आर्मी: Army
+  आर्मीको: Armyको
+  आर्मीलाई: Armyलाई
+  आर्मीकै: Armyकै
+  # रसिया -> Russia   (14 occurrences)   -- रसिया->Russia already done by hand
+  रसिया: Russia
+  रसियाको: Russiaको
+  रसियाले: Russiaले
+  रसियामा: Russiaमा
+  रसियालाई: Russiaलाई
+  # डलर -> dollar   (11 occurrences)
+  डलर: dollar
+  डलरको: dollarको
+  डलरलाई: dollarलाई
+  # इजरायल -> Israel   (11 occurrences)   -- इजरायल->Israel already done by hand
+  इजरायललाई: Israelलाई
+  इजरायलको: Israelको
+  इजरायलले: Israelले
+  इजरायलबाट: Israelबाट
+  # ओके -> ok   (9 occurrences)
+  ओके: ok
+  # किलोमिटर -> kilometer   (8 occurrences)
+  किलोमिटर: kilometer
+  किलोमिटरको: kilometerको
+  किलोमिटरले: kilometerले
+  # भिडियो -> video   (8 occurrences)
+  भिडियो: video
+  भिडियोहरू: videoहरू
+  भिडियोमा: videoमा
+  भिडियोमै: videoमै
+  # टिकट -> ticket   (7 occurrences)
+  टिकट: ticket
+  # नम्बर -> number   (7 occurrences)
+  नम्बर: number
+  नम्बरलाई: numberलाई
+  # पुलिस -> police   (7 occurrences)
+  पुलिस: police
+  पुलिसले: policeले
+  पुलिसको: policeको
+  पुलिसहरूको: policeहरूको
+  # चाइना -> China   (7 occurrences)
+  चाइनालाई: Chinaलाई
+  चाइना: China
+  चाइनामा: Chinaमा
+  चाइनाको: Chinaको
+  चाइनाले: Chinaले
+  # हेलिकप्टर -> helicopter   (6 occurrences)
+  हेलिकप्टर: helicopter
+  हेलिकप्टरले: helicopterले
+  हेलिकप्टरमा: helicopterमा
+  # रिपोर्ट -> report   (6 occurrences)
+  रिपोर्टमा: reportमा
+  रिपोर्ट: report
+  रिपोर्टले: reportले
+  # टाइप -> type   (6 occurrences)
+  टाइपको: typeको
+  # टाइम -> time   (6 occurrences)
+  टाइममा: timeमा
+  टाइमदेखि: timeदेखि
+  टाइम: time
+  # जापान -> Japan   (6 occurrences)
+  जापान: Japan
+  जापानको: Japanको
+  जापानमा: Japanमा
+  जापानबाट: Japanबाट
+  # अस्ट्रेलिया -> Australia   (6 occurrences)
+  अस्ट्रेलिया: Australia
+  अस्ट्रेलियामा: Australiaमा
+  अस्ट्रेलियादेखि: Australiaदेखि
+  # मिनेट -> minute   (5 occurrences)
+  मिनेट: minute
+  मिनेटलाई: minuteलाई
+  # हस्पिटल -> hospital   (5 occurrences)
+  हस्पिटल: hospital
+  हस्पिटलमा: hospitalमा
+  # जेल -> jail   (5 occurrences)
+  जेल: jail
+  जेलसम्म: jailसम्म
+  # इन्डिया -> India   (5 occurrences)
+  इन्डियामा: Indiaमा
+  इन्डिया: India
+  इन्डियाको: Indiaको
+  # अफगानिस्तान -> Afghanistan   (5 occurrences)
+  अफगानिस्तान: Afghanistan
+  अफगानिस्तानमा: Afghanistanमा
+  # सिमेन्ट -> cement   (4 occurrences)
+  सिमेन्ट: cement
+  # होटल -> hotel   (4 occurrences)
+  होटल: hotel
+  होटलहरूमा: hotelहरूमा
+  होटलमा: hotelमा
+  # चिली -> Chile   (4 occurrences)
+  चिलीको: Chileको
+  चिली: Chile
+  # ओडेसा -> Odesa   (4 occurrences)
+  ओडेसा: Odesa
+  # ट्रम्प -> Trump   (4 occurrences)
+  ट्रम्पले: Trumpले
+  ट्रम्प: Trump
+  # ग्यास -> gas   (3 occurrences)
+  ग्यास: gas
+  # पार्किङ -> parking   (3 occurrences)
+  पार्किङ: parking
+  # डबल -> double   (3 occurrences)
+  डबल: double
+  # सिम्पल -> simple   (3 occurrences)
+  सिम्पल: simple
+  # सेफ -> safe   (3 occurrences)
+  सेफ: safe
+  # क्याप्टेन -> Captain   (3 occurrences)   -- क्याप्टन->Captain already done by hand
+  क्याप्टेन: Captain
+  क्याप्टेनले: Captainले
+  # टर्की -> Turkey   (3 occurrences)
+  टर्कीको: Turkeyको
+  टर्की: Turkey
+  # सिङ्गापुर -> Singapore   (3 occurrences)
+  सिङ्गापुर: Singapore
+  सिङ्गापुरको: Singaporeको
+  # सोभियत -> Soviet   (3 occurrences)
+  सोभियत: Soviet
+  # पोडकास्ट -> podcast   (2 occurrences)
+  पोडकास्टमा: podcastमा
+  # लोन -> loan   (2 occurrences)
+  लोन: loan
+  # बम -> bomb   (2 occurrences)
+  बम: bomb
+  # सिस्टम -> system   (2 occurrences)
+  सिस्टम: system
+  # स्कुल -> school   (2 occurrences)
+  स्कुल: school
+  # जिप -> jeep   (2 occurrences)
+  जिप: jeep
+  # बुक -> book   (2 occurrences)
+  बुक: book
+  # चेन्ज -> change   (2 occurrences)
+  चेन्ज: change
+  # डिबेट -> debate   (2 occurrences)
+  डिबेट: debate
+  # स्टेसन -> station   (2 occurrences)
+  स्टेसनमा: stationमा
+  # डिजाइन -> design   (2 occurrences)
+  डिजाइनमा: designमा
+  # थ्री -> three   (2 occurrences)
+  थ्री: three
+  # टू -> two   (2 occurrences)
+  टू: two
+  # वाइट -> white   (2 occurrences)
+  वाइट: white
+  # सॉरी -> sorry   (2 occurrences)
+  सॉरी: sorry
+  # मार्केट -> market   (2 occurrences)
+  मार्केट: market
+  मार्केटको: marketको
+  # इजराइल -> Israel   (2 occurrences)
+  इजराइलको: Israelको
+  # जोर्डन -> Jordan   (2 occurrences)
+  जोर्डन: Jordan
+  # फ्रान्स -> France   (2 occurrences)
+  फ्रान्स: France
+  # इराक -> Iraq   (2 occurrences)
+  इराकमा: Iraqमा
+  # हिटलर -> Hitler   (2 occurrences)
+  हिटलरले: Hitlerले
+  # जर्मन -> German   (2 occurrences)
+  जर्मन: German
+  # लोकल -> local   (1 occurrence)
+  लोकल: local
+  # बक्स -> box   (1 occurrence)
+  बक्स: box
+  # सेकेन्ड -> second   (1 occurrence)
+  सेकेन्ड: second
+  # ट्रक -> truck   (1 occurrence)
+  ट्रक: truck
+
+  # हिमालयन -> Himalayan   (16 occurrences)   -- part of a show name?
+  हिमालयन: Himalayan
+  # जेसन -> Jason   (7 occurrences)   -- speaker name -- confirm spelling
+  जेसनले: Jasonले
+  जेसनको: Jasonको
+  # कप -> cup   (6 occurrences)   -- also Nepali कप्नु forms? check
+  कप: cup
+  # जावा -> Java   (4 occurrences)   -- जावा/जाभा both appear
+  जावा: Java
+  जावाको: Javaको
+  # साइकल -> cycle   (3 occurrences)   -- bicycle vs cycle -- your call
+  साइकल: cycle
+  साइकललाई: cycleलाई
+  # चेक -> check   (3 occurrences)   -- could be Czech
+  चेक: check
+  # कोट -> coat   (2 occurrences)   -- could be "court"
+  कोट: coat
+  # मेन -> main   (2 occurrences)   -- short, check each hit
+  मेन: main
+  # साइन -> sign   (2 occurrences)   -- short
+  साइन: sign
+  # जाभा -> Java   (2 occurrences)
+  जाभा: Java
+
 # Variants observed in the corpus that are deliberately NOT normalized. Each needs a decision
 # from someone who speaks the language, and a wrong rule here is unrecoverable once a consumer
 # has the export. Moving one up into `tokens` is a one-line change.
@@ -71,3 +360,5 @@ tokens:
 #   पर्यो। (1) vs पऱ्यो। (3)  -- same
 #   हेर्यौं (1) vs हेऱ्यौँ (1) -- same
 #   लुडो (1) vs लूडो (1)      -- proper noun (the game), no house style established
+#   नेपाल (46) vs nepal (10)   -- ruled: Nepal stays Devanagari, it is not a foreign name
+#   नेपाली (68) vs nepali (4)  -- same ruling

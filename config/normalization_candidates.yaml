@@ -1,0 +1,53 @@
+# Loanword normalization CANDIDATES -- not loaded by anything.
+#
+# Every line below is a proposal, not a rule. `normalization.yaml` says rules are
+# approved, never mined; this file is the mining output, kept separate so it cannot
+# be loaded by accident. To approve a line, move it into `normalization.yaml` under
+# `tokens:` and delete it here. To reject it, delete it here.
+#
+# Derived from all 1995 labels with final_text: every Devanagari token that is an
+# English loanword under the corpus policy (English in Latin, Nepali in Devanagari),
+# with every inflected form actually attested. Counts are occurrences in final_text.
+#
+# Suffixes stay joined to the Latin stem (driverले, phoneमा), matching the convention
+# the labels already use.
+
+# ======================================================================================
+# ======================================================================================
+# TIER C -- DANGEROUS, DO NOT BULK-APPROVE
+#   Each collides with a native Nepali word or is too short to disambiguate.
+#   Approve only per-occurrence, after looking at the clips.
+#   Tiers A and B were approved and moved into normalization.yaml (norm-v3).
+# ======================================================================================
+#  बस -> bus   (43 occurrences)   -- बसेर/बस्छु/बस्ने/बसेको are the VERB "to sit" -- 80+ occurrences
+  बस: bus                               # 24x
+  बसले: busले                           # 6x
+  बसकै: busकै                           # 3x
+  बसमा: busमा                           # 3x
+  बसको: busको                           # 2x
+  बसहरूको: busहरूको                     # 2x
+  बसहरू: busहरू                         # 2x
+  बसलाई: busलाई                         # 1x
+#  नो -> no   (5 occurrences)   -- short fragment
+  नो: no                                # 5x
+#  वे -> way   (3 occurrences)   -- short fragment
+  वे: way                               # 2x
+  वेले: wayले                           # 1x
+#  इन -> in   (3 occurrences)   -- short fragment
+  इन: in                                # 3x
+#  द -> the   (3 occurrences)   -- short fragment
+  द: the                                # 3x
+#  कल -> call   (2 occurrences)   -- कल also Nepali (machine / tomorrow)
+  कल: call                              # 2x
+#  पास -> pass   (2 occurrences)   -- पास also Nepali "near"
+  पास: pass                             # 2x
+#  बल -> ball   (2 occurrences)   -- बल also Nepali "force"
+  बल: ball                              # 2x
+#  भोट -> vote   (2 occurrences)   -- भोट also means Tibet in Nepali
+  भोट: vote                             # 2x
+#  डे -> day   (2 occurrences)   -- the जे->day trap, one clip
+  डे: day                               # 2x
+#  अफ -> of   (2 occurrences)   -- short fragment
+  अफ: of                                # 2x
+#  लो -> low   (2 occurrences)   -- short fragment
+  लो: low                               # 2x
