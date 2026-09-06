@@ -21,6 +21,7 @@ import concurrent.futures
 import contextlib
 import datetime as dt
 import json
+import queue
 import shutil
 import subprocess
 import threading
@@ -158,7 +159,9 @@ class IngestJob:
     work_dir: Path
     #: Canonical URL the audio was fetched from, when the job did not start as an upload.
     source_url: str | None = None
-    status: str = "pending"  # "pending", "processing", "completed", "failed"
+    #: "pending" is also what a job waiting its turn in the run queue reports, which is why
+    #: the queue does not add a status of its own: to a caller, not started is not started.
+    status: str = "pending"  # "pending", "processing", "completed", "failed", "aborted"
     stage: str = "upload"
     progress: float = 0.0
     active_segments: int = 0
@@ -308,12 +311,33 @@ class IngestJob:
                 logger.debug("ingest_listener_dropped", job_id=self.job_id, error=str(exc))
 
 
+@dataclass
+class _QueuedRun:
+    """One submitted job together with the collaborators its pipeline will need."""
+
+    job: IngestJob
+    session_factory: Callable[[], Session]
+    storage: ObjectStorage
+    settings: Settings
+
+
 class IngestionManager:
-    """In-memory manager tracking active and historical ingestion jobs.
+    """In-memory manager tracking active and historical ingestion jobs, and the queue they run in.
 
     History is capped: a job keeps its whole log in memory, so an unbounded registry grows for as
     long as the process lives. Only finished jobs are evicted, oldest first, so a running pipeline
     can never lose the record it is still writing to.
+
+    Submitted jobs run **one at a time**, in submission order, on a single worker thread. The
+    pipeline already parallelises inside an episode -- `max_segment_concurrency` clips are in
+    flight at once in stage 3 -- so running two episodes together does not finish either sooner:
+    it splits the same ffmpeg cores and the same ASR rate limit across both, and doubles the peak
+    disk in the work root. Queueing instead means the machine is loaded the same whether one
+    episode was submitted or twenty.
+
+    The queue lives in this process and nowhere else, which is the same limitation the job log has
+    always had: if the server dies, everything still waiting dies with it and there is no record
+    the work was ever asked for. Persisting it is a separate change.
     """
 
     #: How many finished jobs to keep for the status endpoint to look back at.
@@ -321,6 +345,14 @@ class IngestionManager:
 
     def __init__(self) -> None:
         self._jobs: dict[str, IngestJob] = {}
+        #: Jobs submitted and not yet picked up, with everything the pipeline needs to run them.
+        self._pending: queue.Queue[_QueuedRun] = queue.Queue()
+        #: Ids in queue order, so a waiting job can be told its place without draining the queue.
+        #: Held under ``_lock`` with the running job, because the status endpoint reads both.
+        self._waiting: list[str] = []
+        self._running_id: str | None = None
+        self._lock = threading.Lock()
+        self._worker: threading.Thread | None = None
 
     def create_job(
         self,
@@ -350,6 +382,93 @@ class IngestionManager:
 
     def get_job(self, job_id: str) -> IngestJob | None:
         return self._jobs.get(job_id)
+
+    def submit(
+        self,
+        job: IngestJob,
+        session_factory: Callable[[], Session],
+        storage: ObjectStorage,
+        settings: Settings,
+    ) -> int:
+        """Queue a job to run when the ones before it are done.
+
+        Returns:
+            How many jobs are ahead of this one: 0 means it starts immediately.
+        """
+        with self._lock:
+            self._waiting.append(job.job_id)
+            ahead = len(self._waiting) - 1 + (1 if self._running_id else 0)
+            self._pending.put(_QueuedRun(job, session_factory, storage, settings))
+            self._ensure_worker()
+        if ahead:
+            job.log(f"Queued: {ahead} job(s) ahead of this one.")
+        return ahead
+
+    def queue_position(self, job_id: str) -> int | None:
+        """Places ahead of a job still waiting, or ``None`` once it is running or finished."""
+        with self._lock:
+            if job_id not in self._waiting:
+                return None
+            return self._waiting.index(job_id) + (1 if self._running_id else 0)
+
+    def queue_snapshot(self) -> list[dict[str, Any]]:
+        """The running job and everything behind it, in the order they will run."""
+        with self._lock:
+            ordered = ([self._running_id] if self._running_id else []) + list(self._waiting)
+        rows = []
+        for position, job_id in enumerate(ordered):
+            job = self._jobs.get(job_id)
+            if job is None:  # pragma: no cover - evicted between snapshot and lookup
+                continue
+            rows.append(
+                {
+                    "job_id": job.job_id,
+                    "episode_id": job.episode_id,
+                    "title": job.title,
+                    "status": job.status,
+                    "stage": job.stage,
+                    "progress": job.progress,
+                    "queue_position": position,
+                }
+            )
+        return rows
+
+    def _ensure_worker(self) -> None:
+        """Start the runner thread on first submission. Caller holds ``_lock``."""
+        if self._worker is not None and self._worker.is_alive():
+            return
+        self._worker = threading.Thread(target=self._drain, name="ingest-queue", daemon=True)
+        self._worker.start()
+
+    def _drain(self) -> None:
+        """Run queued jobs one at a time, forever.
+
+        Nothing a pipeline raises may end this loop: a job that dies takes the rest of the queue
+        with it otherwise, and the failure would look exactly like the queue having silently
+        stopped. ``run_pipeline`` already records its own failures on the job, so anything
+        reaching here is a bug in the runner rather than in the run.
+        """
+        while True:
+            item = self._pending.get()
+            with self._lock:
+                if item.job.job_id in self._waiting:
+                    self._waiting.remove(item.job.job_id)
+                self._running_id = item.job.job_id
+            try:
+                # Scrammed before it ever started: honour it here rather than spending a stage
+                # discovering the flag. Nothing ran, so nothing was billed and nothing imported.
+                if item.job.scrammed:
+                    item.job.abort({"segments_detected": 0, "segments_transcribed": 0})
+                else:
+                    run_pipeline(item.job, item.session_factory, item.storage, item.settings)
+            except Exception as exc:  # pragma: no cover - defensive; run_pipeline handles its own
+                logger.exception("ingest_queue_job_crashed", job_id=item.job.job_id)
+                with contextlib.suppress(Exception):
+                    item.job.fail(f"Ingestion crashed: {exc}")
+            finally:
+                with self._lock:
+                    self._running_id = None
+                self._pending.task_done()
 
     def _evict_finished(self) -> None:
         finished = [

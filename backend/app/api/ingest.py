@@ -7,7 +7,6 @@ import contextlib
 import json
 import re
 import shutil
-import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -20,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_config, get_object_storage, get_session_factory, require_auth
 from app.config import Settings
-from app.services.ingest import manager, run_pipeline
+from app.services.ingest import manager
 from app.services.speaker_meta import strip_speaker_pii
 from app.services.youtube import (
     InvalidYouTubeUrl,
@@ -190,19 +189,15 @@ async def start_youtube_ingestion(
         metadata=metadata,
     )
 
-    worker = threading.Thread(
-        target=run_pipeline,
-        args=(job, session_factory, storage, settings),
-        daemon=True,
-    )
-    worker.start()
+    ahead = manager.submit(job, session_factory, storage, settings)
 
     logger.info(
-        "ingest_job_started",
+        "ingest_job_queued",
         job_id=job.job_id,
         episode_id=job.episode_id,
         source="youtube",
         video_id=info.video_id,
+        queued_behind=ahead,
     )
     return {
         "job_id": job.job_id,
@@ -210,6 +205,7 @@ async def start_youtube_ingestion(
         "episode_id": job.episode_id,
         "title": job.title,
         "source_url": job.source_url,
+        "queue_position": ahead,
     }
 
 
@@ -265,19 +261,30 @@ async def start_ingestion(
     )
 
     # Launch background thread
-    worker = threading.Thread(
-        target=run_pipeline,
-        args=(job, session_factory, storage, settings),
-        daemon=True,
-    )
-    worker.start()
+    ahead = manager.submit(job, session_factory, storage, settings)
 
-    logger.info("ingest_job_started", job_id=job.job_id, episode_id=job.episode_id)
+    logger.info(
+        "ingest_job_queued",
+        job_id=job.job_id,
+        episode_id=job.episode_id,
+        queued_behind=ahead,
+    )
     return {
         "job_id": job.job_id,
         "status": job.status,
         "episode_id": job.episode_id,
         "title": job.title,
+        "queue_position": ahead,
+    }
+
+
+@router.get("")
+async def list_queue() -> dict[str, Any]:
+    """The running ingestion and everything waiting behind it, in the order they will run."""
+    rows = manager.queue_snapshot()
+    return {
+        "running": rows[0] if rows and rows[0]["status"] == "processing" else None,
+        "jobs": rows,
     }
 
 
@@ -301,6 +308,8 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
         "episode_id": job.episode_id,
         "show_id": job.show_id,
         "title": job.title,
+        # None once the job is running or finished; a count of jobs ahead while it waits.
+        "queue_position": manager.queue_position(job_id),
         "logs": [
             {"timestamp": entry.timestamp, "level": entry.level, "message": entry.message}
             for entry in job.logs

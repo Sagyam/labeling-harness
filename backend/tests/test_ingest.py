@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import difflib
 import io
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -343,7 +345,7 @@ def test_api_ingest_start_and_status(
 ) -> None:
     wav_path = make_test_audio(tmp_path / "upload.wav", duration_seconds=3.0)
     monkeypatch.setattr(
-        "app.api.ingest.run_pipeline",
+        "app.services.ingest.run_pipeline",
         lambda job, *args: job.set_progress("normalizing", 20.0),
     )
 
@@ -626,7 +628,7 @@ def test_a_traversing_episode_id_cannot_escape_the_work_root(
     """The id names a directory the pipeline later deletes, so it must be sanitised."""
     captured: dict[str, Path] = {}
     monkeypatch.setattr(
-        "app.api.ingest.run_pipeline",
+        "app.services.ingest.run_pipeline",
         lambda job, *args: captured.update(work_dir=job.work_dir),
     )
     wav_path = make_test_audio(tmp_path / "traverse.wav", duration_seconds=3.0)
@@ -638,6 +640,7 @@ def test_a_traversing_episode_id_cannot_escape_the_work_root(
     )
     assert response.status_code == 202
     assert ".." not in response.json()["episode_id"]
+    _drain()
 
     work_root = settings.ingest.work_root.resolve()
     assert work_root in captured["work_dir"].resolve().parents
@@ -1204,3 +1207,145 @@ def test_api_scram_endpoint_halts_a_running_job(client: TestClient, tmp_path: Pa
 
 def test_api_scram_unknown_job_404(client: TestClient) -> None:
     assert client.post("/ingest/nonexistent-id-000/scram").status_code == 404
+
+
+# --- the ingestion queue -----------------------------------------------------------------
+
+
+def _drain(timeout: float = 5.0) -> None:
+    """Block until the queue is empty and nothing is running."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if manager._pending.empty() and manager._running_id is None:
+            return
+        time.sleep(0.01)
+    raise AssertionError("ingestion queue did not drain")
+
+
+def _queued_job(episode_id: str, tmp_path: Path) -> IngestJob:
+    work_dir = tmp_path / episode_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return manager.create_job(
+        episode_id=episode_id,
+        show_id="demo",
+        title=episode_id,
+        work_dir=work_dir,
+        audio_path=work_dir / "source.wav",
+    )
+
+
+def test_queued_jobs_run_one_at_a_time_in_submission_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    """The whole point of the queue: two submissions must not share the machine.
+
+    Overlap is asserted directly rather than through timing -- a concurrency bug that only shows
+    up on a loaded CI box is not a test.
+    """
+    running = 0
+    overlapped = False
+    order: list[str] = []
+    guard = threading.Lock()
+
+    def fake_pipeline(job, *args) -> None:
+        nonlocal running, overlapped
+        with guard:
+            running += 1
+            overlapped = overlapped or running > 1
+            order.append(job.episode_id)
+        time.sleep(0.02)
+        with guard:
+            running -= 1
+        job.status = "completed"
+
+    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+
+    jobs = [_queued_job(f"queued_{n}", tmp_path) for n in range(4)]
+    positions = [manager.submit(job, lambda: None, None, settings) for job in jobs]
+    _drain()
+
+    assert not overlapped
+    assert order == [job.episode_id for job in jobs]
+    # The first submission starts immediately; each later one reports the jobs ahead of it.
+    assert positions[0] == 0
+    assert positions == sorted(positions)
+
+
+def test_a_job_scrammed_while_still_queued_never_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    """AZ-5 on a waiting job must cost nothing, not be discovered a stage into the run."""
+    started: list[str] = []
+    release = threading.Event()
+
+    def fake_pipeline(job, *args) -> None:
+        started.append(job.episode_id)
+        release.wait(timeout=5.0)
+        job.status = "completed"
+
+    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+
+    first = _queued_job("scram_first", tmp_path)
+    second = _queued_job("scram_second", tmp_path)
+    manager.submit(first, lambda: None, None, settings)
+    manager.submit(second, lambda: None, None, settings)
+
+    second.scram("queued and no longer wanted")
+    release.set()
+    _drain()
+
+    assert started == ["scram_first"]
+    assert second.status == "aborted"
+
+
+def test_a_crashing_job_does_not_stop_the_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    """One bad job must not look like the queue silently stopping."""
+
+    def fake_pipeline(job, *args) -> None:
+        if job.episode_id == "crash_me":
+            raise RuntimeError("boom")
+        job.status = "completed"
+
+    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+
+    crasher = _queued_job("crash_me", tmp_path)
+    survivor = _queued_job("crash_survivor", tmp_path)
+    manager.submit(crasher, lambda: None, None, settings)
+    manager.submit(survivor, lambda: None, None, settings)
+    _drain()
+
+    assert crasher.status == "failed"
+    assert survivor.status == "completed"
+
+
+def test_the_queue_endpoint_lists_what_is_waiting(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    release = threading.Event()
+
+    def fake_pipeline(job, *args) -> None:
+        job.status = "processing"
+        release.wait(timeout=5.0)
+        job.status = "completed"
+
+    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+
+    first = _queued_job("listed_first", tmp_path)
+    second = _queued_job("listed_second", tmp_path)
+    manager.submit(first, lambda: None, None, settings)
+    manager.submit(second, lambda: None, None, settings)
+
+    deadline = time.monotonic() + 5.0
+    while manager._running_id != first.job_id and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    body = client.get("/ingest").json()
+    listed = [row["episode_id"] for row in body["jobs"]]
+    assert listed[:2] == ["listed_first", "listed_second"]
+    assert body["running"]["episode_id"] == "listed_first"
+    assert client.get(f"/ingest/{second.job_id}").json()["queue_position"] == 1
+
+    release.set()
+    _drain()

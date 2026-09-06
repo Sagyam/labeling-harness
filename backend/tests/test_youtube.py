@@ -468,8 +468,10 @@ def probed(monkeypatch: pytest.MonkeyPatch):
             return info
 
         monkeypatch.setattr("app.api.ingest.probe", _probe)
+        # The pipeline now runs from the ingestion queue's worker thread, so it is the service
+        # module's name that has to be replaced, not the API module's.
         monkeypatch.setattr(
-            "app.api.ingest.run_pipeline",
+            "app.services.ingest.run_pipeline",
             lambda job, *args: job.set_progress("downloading", 0.0),
         )
 
