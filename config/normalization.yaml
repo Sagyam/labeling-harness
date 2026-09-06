@@ -1,0 +1,73 @@
+# Orthographic normalization applied to label text at export (D64).
+#
+# The database keeps exactly what the annotator typed. This table is applied on the way out, so
+# it is re-runnable over the whole corpus, revisable without a migration, and never silently
+# rewrites history. `version` is stamped into every export manifest: a consumer that wants to
+# evaluate against this corpus must apply the same table to its own references, or spelling
+# disagreement will show up as word error.
+#
+# Rules are whole-token substitutions. A source must be one token -- no spaces, no danda -- and
+# no rule's target may be another rule's source, both of which are enforced at load.
+#
+# EVERY RULE HERE IS HUMAN-APPROVED. Rules mined automatically out of the edit history are
+# candidates only: that process proposed `जे -> day` from a single mishearing correction, and
+# जे is a common Nepali word. Nothing goes in this file because a script suggested it.
+
+version: norm-v1
+
+tokens:
+  # ---------------------------------------------------------------------------------------
+  # The word the corpus was split on: चैँ 115 vs चाहिँ 127 across 340 labels. Not a
+  # transcription error -- चैँ is a legitimate colloquial spelling -- but the corpus has to
+  # pick one, and a coin flip in the training data teaches a model that both are right in
+  # identical contexts.
+  # ---------------------------------------------------------------------------------------
+  चैँ: चाहिँ
+  चैं: चाहिँ
+  चाहीँ: चाहिँ
+  चाहिं: चाहिँ
+
+  # ---------------------------------------------------------------------------------------
+  # ू / ु on the plural suffix हरू. The long form wins everywhere it is contested:
+  # हरू 30 vs हरु 1, उनीहरूको 7 vs उनीहरुको 1, हरूको 5 vs हरुको 1, हरूमा 2 vs हरुमा 1.
+  # हामीहरूको was an exact 5-5 tie and was broken by the owner in favour of the long form,
+  # to agree with the rest of the corpus.
+  # ---------------------------------------------------------------------------------------
+  हरु: हरू
+  हरुको: हरूको
+  हरुमा: हरूमा
+  हरुले: हरूले
+  उनीहरुको: उनीहरूको
+  हामीहरुको: हामीहरूको
+  हामिहरुले: हामीहरूले
+  यिनीहरुले: यिनीहरूले
+
+  # ---------------------------------------------------------------------------------------
+  # ी / ि where the short form holds the majority.
+  # ---------------------------------------------------------------------------------------
+  चीज: चिज
+  चीजहरू: चिजहरू
+  गरीरहेको: गरिरहेको
+  गरीब: गरिब
+
+  # ---------------------------------------------------------------------------------------
+  # ं / ँ on first-person-plural and hortative endings. The chandrabindu form is the majority
+  # in every contested pair: भनौँ 12 vs भनौं 4, हेरौँ 6 vs हेरौं 4.
+  # ---------------------------------------------------------------------------------------
+  भनौं: भनौँ
+  हेरौं: हेरौँ
+  गर्यौं: गर्यौँ
+
+# Variants observed in the corpus that are deliberately NOT normalized. Each needs a decision
+# from someone who speaks the language, and a wrong rule here is unrecoverable once a consumer
+# has the export. Moving one up into `tokens` is a one-line change.
+#
+#   ऊ (15)  vs  उ (4)        -- separate letters, and both are attested pronouns
+#   ऊले (1) vs  उले (1)      -- same question, no majority to appeal to
+#   ई (2)   vs  इ (1)        -- separate letters
+#   बिचमा (1) vs बीचमा (1)   -- both standard, no majority
+#   बिचको (1) vs बीचको (1)   -- same
+#   गर्या (5) vs गऱ्या (2)    -- ऱ (U+0931) is a distinct character, not a diacritic variant
+#   पर्यो। (1) vs पऱ्यो। (3)  -- same
+#   हेर्यौं (1) vs हेऱ्यौँ (1) -- same
+#   लुडो (1) vs लूडो (1)      -- proper noun (the game), no house style established

@@ -10,11 +10,12 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
-from app.models import AnnotationTask, Episode, Segment
+from app.models import AnnotationTask, Episode, Segment, SegmentLabel
 from app.services.export import ExportError, export_dataset
 from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.labeling import Decision, record_decision
+from app.services.normalize import load_ruleset
 from app.services.queue_builder import build_queue
 from app.storage.local import LocalFilesystemStorage
 from app.utils.hashing import sha256_file
@@ -383,3 +384,46 @@ def test_a_missing_audio_object_is_a_warning_not_a_failed_export(
     )
     assert read_jsonl(result.data_path)
     assert not list((result.output_dir / "episodes").glob("*.flac"))
+
+
+# --- orthographic normalization (D64) ----------------------------------------------------
+
+
+def test_export_normalizes_label_text_without_touching_the_database(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """The corpus ships one spelling; the row keeps what the annotator actually typed."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    label = db_session.scalars(
+        sa.select(SegmentLabel).where(SegmentLabel.disposition == "edited")
+    ).first()
+    assert label is not None
+    label.final_text = "यो चैँ हरु हो"
+    db_session.flush()
+
+    result = export_dataset(db_session, kind="analytics", output_root=tmp_path / "out")
+    exported = [r for r in read_jsonl(result.data_path) if "चाहिँ" in (r["text"] or "")]
+    assert exported, "the normalized spelling never reached the export"
+    assert exported[0]["text"] == "यो चाहिँ हरू हो"
+
+    db_session.expire_all()
+    assert db_session.get(SegmentLabel, label.id).final_text == "यो चैँ हरु हो"
+
+
+def test_manifest_records_the_ruleset_version(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """A consumer cannot evaluate against this corpus without knowing which table was applied."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    result = export_dataset(db_session, kind="training", output_root=tmp_path / "out")
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["normalization_version"] == load_ruleset().version
+
+
+def test_normalization_is_idempotent_across_exports(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    first = export_dataset(db_session, kind="analytics", output_root=tmp_path / "a")
+    second = export_dataset(db_session, kind="analytics", output_root=tmp_path / "b")
+    assert first.data_path.read_bytes() == second.data_path.read_bytes()

@@ -1574,3 +1574,55 @@ corpus's own quality claim.
 existing episodes took their pot from the split they already had, so nothing moved. Reversing now is
 cheap because no real corpus is committed to a split yet; after a gold pot has been annotated and
 exported, treat the pot assignment as permanent for the same reason D5 said to.
+
+## D64 — Orthography is normalized at export, not in the database
+
+`config/normalization.yaml` holds a reviewed table of whole-token substitutions, applied by
+`app/services/normalize.py` to `segment_labels.final_text` on the way into an export. The table's
+`version` is written to every manifest as `normalization_version`. The database is not touched.
+
+**The corpus had drifted to a coin flip.** In the first 340 labels, `चैँ` appears 115 times and
+`चाहिँ` 127 — the same word, both spellings, across 70 labels. Neither is a transcription error;
+the owner simply prefers the fuller written form and fixed it on the clip in front of them 35 times
+without going back for the other 115. Twenty-two other clusters had drifted the same way (`हरू`/`हरु`,
+`भनौँ`/`भनौं`, `चिज`/`चीज`), 39 occurrences in total. Left alone this is worse than either spelling
+would have been on its own: a model trained on it learns that the choice is free in identical
+contexts, which is precisely what fixing it by hand was meant to prevent.
+
+**Export, not import.** Normalizing the ASR seed before the annotator sees it would save the
+retyping, and it was rejected for now. It puts text nobody wrote in front of a reader who is
+measurably inclined to accept it — the accept-unchanged rate is 33% and a pre-cleaned seed reads as
+more trustworthy than it is, so the errors it buys are invisible in exactly the place they matter.
+Export-time normalization also re-runs over the whole corpus every time, so a rule added in month
+three applies to episode one; a seed-time rewrite would leave the corpus stratified by when each
+clip happened to be labeled, which is the drift this decision exists to remove.
+
+**The database keeps what was typed.** Nothing rewrites `final_text` — D6 makes labels append-only,
+and a backfill would have to insert new rows rather than update. It is also unnecessary: the table
+is applied on read, so revising a rule is a config edit and a re-export, not a migration, and the
+record of what a human actually wrote survives every revision of house style.
+
+**Rules are approved, never mined.** The table was built from the corpus's own variant clusters, but
+by hand. An automated pass over the edit history proposed `जे → day` — from a single clip where the
+English word "day" had been transcribed as `जे` — and `जे` is a common Nepali word that appears in
+three labels. Mining produces candidates; a rule is a claim about a language and needs someone who
+speaks it. Nine observed clusters are listed in the file as deliberately **not** normalized
+(`ऊ`/`उ` and `ई`/`इ` are separate letters, not diacritic variants; `गर्या`/`गऱ्या` differ by U+0931;
+`बिचमा`/`बीचमा` are both standard with no majority to appeal to). `हामीहरूको`/`हामीहरुको` was an
+exact 5–5 tie, broken toward the long `ू` because every other contested pair in the corpus votes
+that way.
+
+**Two mechanical traps, both tested.** `str.replace` fires inside longer words and would turn
+`चैँको` into `चाहिँको`, so substitution is whole-token. And a Devanagari token class written as the
+obvious `[ऀ-ॿ]` swallows `।` (U+0964 DANDA), which lives inside that block — every rule would then
+silently stop working at the end of a sentence. `WORD_TOKEN_RE` cuts U+0964 and U+0965 out of the
+range. The ruleset is also rejected at load if any rule chains into another (`A → B`, `B → C`),
+because the result would depend on iteration order and would not be idempotent.
+
+**The cost.** This teaches a model one orthography. It will not emit `चैँ` even where a speaker's
+register calls for it, and WER measured against any other Nepali corpus will be inflated by pure
+spelling disagreement. That is why `normalization_version` is in the manifest rather than implied:
+evaluating against this dataset means applying the same table to the reference side.
+
+**Reversal:** delete the `tokens` block and re-export. There is no migration to undo and no label
+to recover, because none was ever overwritten.

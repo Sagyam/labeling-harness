@@ -46,6 +46,7 @@ from app.models import (
     Segment,
     SegmentLabel,
 )
+from app.services.normalize import Ruleset, load_ruleset, normalize_text
 from app.services.stats import latest_labels_subquery
 from app.storage.base import ObjectStorage
 from app.utils.hashing import sha256_file
@@ -171,6 +172,7 @@ def _record(
     version: LabelVersion,
     kind: ExportKind,
     seed_system_id: str | None,
+    ruleset: Ruleset,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "segment_id": segment.external_id,
@@ -178,7 +180,7 @@ def _record(
         "audio_path": f"clips/{segment.external_id}.flac",
         "start_time": segment.start_time,
         "end_time": segment.end_time,
-        "text": label.final_text,
+        "text": normalize_text(label.final_text, ruleset),
         "disposition": label.disposition,
         #: Whether a human actually listened to this clip, or waved it through on the cross-ASR
         #: disagreement signal. Carried on every row of every kind, because a consumer that cannot
@@ -297,6 +299,9 @@ def export_dataset(
     definition = EXPORT_KINDS.get(kind)
     if definition is None:
         raise ExportError(f"unknown export kind {kind!r}; choose one of {sorted(EXPORT_KINDS)}")
+    # Loaded once per export rather than per row, so every record in a file is written through
+    # exactly one table even if the file on disk changes underneath a long export (D64).
+    ruleset = load_ruleset()
 
     version_name = label_version or settings.labels.default_label_version
     version = session.scalar(sa.select(LabelVersion).where(LabelVersion.name == version_name))
@@ -360,6 +365,7 @@ def export_dataset(
                     version,
                     definition,
                     seed_systems.get(label.seed_hypothesis_id),
+                    ruleset,
                 )
             )
             if segment.import_run_id:
@@ -406,6 +412,10 @@ def export_dataset(
         "kind": kind,
         "label_version": version_name,
         "policy_version": version.policy_version if version else settings.labels.policy_version,
+        #: Which orthographic table the `text` field was written through (D64). A consumer
+        #: evaluating against this corpus must apply the same one to its own references, or
+        #: spelling disagreement is counted as word error.
+        "normalization_version": ruleset.version,
         "filters": {
             "splits": list(definition.splits),
             "dispositions": list(definition.dispositions),
