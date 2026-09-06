@@ -95,10 +95,18 @@ routes:
   # output token per input token: that is what lets each restored word inherit its own span with
   # no re-alignment. A response with a different token count is retried and then rejected, never
   # patched up -- a silently misaligned transcript corrupts every span in the clip.
+  #
+  # On Vertex rather than OpenRouter (D66). OpenRouter began answering `reasoning: {enabled:
+  # false}` on this model with `400 Reasoning is mandatory for this endpoint and cannot be
+  # disabled.`, and dropping the field is not an option here: the route's whole output is a
+  # 2048-token JSON array, and an unbounded thinking budget spends it before the array starts --
+  # D44's rule-2 violation exactly. Vertex spells the same switch `thinkingBudget: 0` and still
+  # honours it, so the route moves rather than the policy. `_client_for` already dispatches on
+  # `provider`, which is what made this a config change (D45).
   script_restore:
-    provider: openrouter
+    provider: vertex
     api: chat
-    model: google/gemini-3.8-flash
+    model: gemini-3.8-flash
     temperature: 0.0
     # Bounded because the output is a JSON array of tokens, never prose. Thinking off for the
     # same reason as the ASR routes (D45): there is nothing to reason about in a respelling.

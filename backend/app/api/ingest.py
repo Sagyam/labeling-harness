@@ -296,6 +296,8 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
         "active_segments": job.active_segments,
         "total_segments": job.total_segments,
         "error": job.error,
+        "scrammed": job.scrammed,
+        "scram_reason": job.scram_reason,
         "episode_id": job.episode_id,
         "show_id": job.show_id,
         "title": job.title,
@@ -310,6 +312,42 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
         # Present once the run has finished. A page that reattaches to a job it was not watching
         # gets the outcome from here rather than from an event it missed.
         "summary": job.summary,
+    }
+
+
+@router.post("/{job_id}/scram")
+async def scram_job(job_id: str) -> dict[str, Any]:
+    """AZ-5. Stop a running ingestion at the next checkpoint.
+
+    Named after the reactor scram it behaves like: one control, no arguments, and the only thing
+    it does is stop. It is not a pause and there is no resume -- a scrammed run imports nothing
+    (see :meth:`IngestJob.abort`), because half an episode is a differently-sampled episode, not
+    a cheaper one.
+
+    Returns immediately. The pipeline runs on a worker thread and stops itself at the next
+    checkpoint; the requests it has already put on the wire are left to come back, so that the
+    inference they bill for still reaches ``llm_requests``. Watch the job's SSE stream for the
+    ``scram`` event, then ``aborted``.
+    """
+    job = manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ingestion job not found")
+
+    # Idempotent on purpose: this is the button someone hits twice.
+    halted = job.scram(reason="AZ-5 pressed")
+    return {
+        "job_id": job.job_id,
+        "scrammed": job.scrammed,
+        "status": job.status,
+        "stage": job.stage,
+        "already_stopping": not halted,
+        "detail": (
+            "Halting at the next checkpoint. Nothing will be imported."
+            if halted
+            else "Already halting -- waiting on the requests still in flight."
+            if job.scrammed and job.status == "processing"
+            else f"Job is already {job.status}."
+        ),
     }
 
 
@@ -350,7 +388,7 @@ async def stream_job_events(job_id: str) -> StreamingResponse:
             yield f"data: {json.dumps(prog_payload)}\n\n"
 
             while True:
-                if job.status in ("completed", "failed") and q.empty():
+                if job.status in ("completed", "failed", "aborted") and q.empty():
                     break
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=2.0)

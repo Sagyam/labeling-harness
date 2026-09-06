@@ -5,6 +5,7 @@ import {
   RiArrowRightSLine,
   RiCheckLine,
   RiDeleteBin6Line,
+  RiAlarmWarningLine,
   RiErrorWarningLine,
   RiFileMusicLine,
   RiUploadCloud2Line,
@@ -55,6 +56,16 @@ type SourceTab = 'file' | 'youtube'
 
 /** How long to sit on a keystroke before asking the backend what the URL points at. */
 const PROBE_DEBOUNCE_MS = 500
+
+/**
+ * How long the AZ-5 cover stays open after the first press.
+ *
+ * Long enough to read "Confirm AZ-5" and mean it, short enough that an armed button is never
+ * left sitting on someone else's screen. Four seconds was the first try and it closed under a
+ * deliberate second press during testing, which is exactly the failure a person would hit while
+ * the run they wanted stopped kept going.
+ */
+const SCRAM_ARM_TIMEOUT_MS = 8000
 
 /** The show id a form starts on, before a probe offers the channel name instead. */
 const DEFAULT_SHOW_ID = 'nepanglish'
@@ -262,6 +273,10 @@ export function IngestView({ onComplete }: IngestViewProps) {
   const [jobSource, setJobSource] = useState<SourceTab>('file')
   const [jobStatus, setJobStatus] = useState<IngestJobStatus | null>(null)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
+  //: AZ-5 sits under a cover. The first press arms it, the second fires; it disarms itself
+  //: after a few seconds so a stray click cannot leave a live button behind.
+  const [scramArmed, setScramArmed] = useState<boolean>(false)
+  const [isScramming, setIsScramming] = useState<boolean>(false)
   const [logs, setLogs] = useState<IngestLogEntry[]>([])
   const [discarded, setDiscarded] = useState<DiscardedSegment[]>([])
   const [completedSummary, setCompletedSummary] = useState<Record<string, any> | null>(null)
@@ -486,6 +501,25 @@ export function IngestView({ onComplete }: IngestViewProps) {
         // as an error to retry, so nothing closes this from the other end.
         unsubscribe?.()
         unsubscribe = null
+      } else if (evt.type === 'scram') {
+        // Pressed, not yet stopped: the run halts at its next checkpoint, and the clips already
+        // on the wire still come back. Keep the spinner until `aborted` says it has landed.
+        setJobStatus((prev) => (prev ? { ...prev, scrammed: true, scram_reason: evt.reason } : prev))
+      } else if (evt.type === 'aborted') {
+        setCompletedSummary(evt.summary)
+        // Status only, not stage: the stepper reads `stage` to show which step the run was on
+        // when it stopped, and overwriting it with 'aborted' would blank the whole stepper.
+        setJobStatus((prev) => (prev ? { ...prev, status: 'aborted' } : prev))
+        setIsSubmitting(false)
+        setScramArmed(false)
+        setIsScramming(false)
+        toast.warning('Run scrammed', {
+          description: `Stopped after ${evt.summary.segments_transcribed ?? 0} of ${
+            evt.summary.segments_detected ?? 0
+          } segments. Nothing was imported.`,
+        })
+        unsubscribe?.()
+        unsubscribe = null
       } else if (evt.type === 'error') {
         setJobStatus((prev) =>
           prev ? { ...prev, status: 'failed', stage: 'failed', error: evt.error } : prev,
@@ -508,7 +542,10 @@ export function IngestView({ onComplete }: IngestViewProps) {
         setJobStatus(status)
         setDiscarded(status.discarded_segments || [])
 
-        const finished = status.status === 'completed' || status.status === 'failed'
+        const finished =
+          status.status === 'completed' ||
+          status.status === 'failed' ||
+          status.status === 'aborted'
         setIsSubmitting(!finished)
         if (finished) {
           setLogs(status.logs || [])
@@ -573,6 +610,35 @@ export function IngestView({ onComplete }: IngestViewProps) {
     onComplete(target)
   }
 
+  // The cover closes itself. An armed button left sitting on screen is one someone else walks
+  // past and presses.
+  useEffect(() => {
+    if (!scramArmed) return
+    const timer = window.setTimeout(() => setScramArmed(false), SCRAM_ARM_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [scramArmed])
+
+  const handleScram = async () => {
+    if (!jobId) return
+    if (!scramArmed) {
+      setScramArmed(true)
+      return
+    }
+    setScramArmed(false)
+    setIsScramming(true)
+    try {
+      const result = await api.scramIngest(jobId)
+      // The run stops on its own thread; `aborted` on the stream is what says it has. All this
+      // press can honestly report is that the request landed.
+      toast.warning(result.already_stopping ? 'Already stopping' : 'AZ-5 — halting run', {
+        description: result.detail,
+      })
+    } catch (err) {
+      setIsScramming(false)
+      toast.error(`SCRAM failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const handleCopyLogs = () => {
     const text = logs
       .map((l) => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`)
@@ -584,6 +650,11 @@ export function IngestView({ onComplete }: IngestViewProps) {
   const currentStage = jobStatus?.stage || 'upload'
   const isComplete = jobStatus?.status === 'completed' || currentStage === 'complete'
   const isFailed = jobStatus?.status === 'failed' || currentStage === 'failed'
+  const isAborted = jobStatus?.status === 'aborted' || currentStage === 'aborted'
+  //: Scrammed but not yet stopped: the flag is set and the in-flight clips are still landing.
+  const isHalting = Boolean(jobStatus?.scrammed) && !isAborted
+  //: AZ-5 is only meaningful while there is a reactor running.
+  const canScram = Boolean(jobId) && !isComplete && !isFailed && !isAborted
 
   // A URL job fetches its own audio before stage 1, so its stepper carries one extra step.
   const stages = jobSource === 'youtube' ? [DOWNLOAD_STAGE, ...STAGES] : STAGES
@@ -596,7 +667,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
 
     if (currentIndex === -1) return 'pending'
     if (thisIndex < currentIndex) return 'done'
-    if (thisIndex === currentIndex) return isFailed ? 'failed' : 'active'
+    if (thisIndex === currentIndex) return isFailed || isAborted ? 'failed' : 'active'
     return 'pending'
   }
 
@@ -624,6 +695,27 @@ export function IngestView({ onComplete }: IngestViewProps) {
                   <Spinner className="size-3.5" />
                   Job #{jobId.slice(0, 8)}
                 </span>
+              )}
+              {canScram && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleScram}
+                  disabled={isScramming || isHalting}
+                  aria-label="AZ-5: stop this ingestion run"
+                  title="Stops the run at its next checkpoint. Nothing is imported."
+                  className={cn(
+                    'font-mono',
+                    scramArmed && 'animate-pulse bg-destructive text-white hover:bg-destructive',
+                  )}
+                >
+                  <RiAlarmWarningLine data-icon="inline-start" />
+                  {isHalting
+                    ? 'Halting…'
+                    : scramArmed
+                      ? 'Confirm AZ-5'
+                      : 'AZ-5'}
+                </Button>
               )}
               <Button variant="outline" size="sm" onClick={resetForNextRun}>
                 New ingestion
@@ -992,9 +1084,13 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 <span className="font-heading text-xs font-semibold tracking-widest uppercase">
                   {isComplete
                     ? 'Ingestion complete'
-                    : isFailed
-                      ? 'Pipeline failed'
-                      : `Processing: ${currentStage}`}
+                    : isAborted
+                      ? 'Scrammed — nothing imported'
+                      : isHalting
+                        ? `AZ-5 — halting after ${currentStage}`
+                        : isFailed
+                          ? 'Pipeline failed'
+                          : `Processing: ${currentStage}`}
                 </span>
                 <span className="font-mono text-xs text-muted-foreground tabular-nums">
                   {jobStatus?.active_segments
@@ -1054,6 +1150,21 @@ export function IngestView({ onComplete }: IngestViewProps) {
                     <AlertDescription>
                       {kept} of {detected} segments kept, {completedSummary.tasks_created} tasks
                       queued.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {isAborted && (
+                  <Alert variant="destructive">
+                    <RiAlarmWarningLine />
+                    <AlertTitle>Run scrammed (AZ-5)</AlertTitle>
+                    <AlertDescription>
+                      Stopped during {completedSummary?.stage_reached ?? currentStage} after{' '}
+                      {completedSummary?.segments_transcribed ?? 0} of{' '}
+                      {completedSummary?.segments_detected ?? 0} segments. Nothing was imported and
+                      no queue was built — the inference already paid for is in{' '}
+                      <span className="font-mono">llm_requests</span>. Re-running starts the
+                      episode from the beginning.
                     </AlertDescription>
                   </Alert>
                 )}

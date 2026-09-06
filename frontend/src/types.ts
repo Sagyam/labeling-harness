@@ -259,7 +259,7 @@ export interface DiscardedSegment {
 
 export interface IngestJobStatus {
   job_id: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'aborted'
   stage:
     | 'upload'
     | 'downloading'
@@ -270,10 +270,14 @@ export interface IngestJobStatus {
     | 'importing'
     | 'complete'
     | 'failed'
+    | 'aborted'
   progress: number
   active_segments: number
   total_segments: number
   error: string | null
+  /** True once AZ-5 has been pressed on this run. */
+  scrammed: boolean
+  scram_reason: string | null
   episode_id: string
   show_id: string
   title: string
@@ -283,6 +287,17 @@ export interface IngestJobStatus {
   discarded_by_system: Record<string, number>
   /** What the run produced. Null until it finishes. */
   summary: Record<string, any> | null
+}
+
+/** What the SCRAM endpoint reports back. */
+export interface IngestScramResult {
+  job_id: string
+  scrammed: boolean
+  status: IngestJobStatus['status']
+  stage: IngestJobStatus['stage']
+  /** True when the run was already finishing or finished, so this press changed nothing. */
+  already_stopping: boolean
+  detail: string
 }
 
 export type IngestEvent =
@@ -297,6 +312,10 @@ export type IngestEvent =
   | { type: 'discard'; segment: DiscardedSegment }
   | { type: 'complete'; summary: Record<string, any>; episode_id: string }
   | { type: 'error'; error: string }
+  /** AZ-5 pressed: the run is stopping at its next checkpoint, but has not stopped yet. */
+  | { type: 'scram'; reason: string }
+  /** The scrammed run has stopped. Nothing was imported. */
+  | { type: 'aborted'; summary: Record<string, any>; reason: string | null }
 
 /** Metadata read from a YouTube URL before anything is downloaded. */
 export interface YouTubeProbe {

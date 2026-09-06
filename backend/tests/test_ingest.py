@@ -1056,3 +1056,151 @@ def test_a_discard_is_emitted_to_subscribers_as_it_happens(
     discards = [e for e in seen if e.get("type") == "discard"]
     assert len(discards) == 1
     assert discards[0]["segment"]["failures"][0]["system_id"] == "gemini-3.8-flash"
+
+
+# --- AZ-5: stopping a run in flight -----------------------------------------------------
+
+
+def test_scram_before_inference_imports_nothing(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    """A run scrammed before stage 3 stops there and writes no episode.
+
+    The point of the abort is that it is not a partial success: half an episode is a
+    differently-sampled episode, so nothing reaches the corpus (D46).
+    """
+    raw_audio = make_test_audio(tmp_path / "scram_raw.wav", duration_seconds=6.0)
+    job = IngestJob(
+        job_id="test-scram-001",
+        episode_id="web_scram01",
+        show_id="podcast",
+        title="Scrammed Before Inference",
+        audio_path=raw_audio,
+        work_dir=tmp_path / "work_scram01",
+    )
+    assert job.scram(reason="test") is True
+
+    run_pipeline(
+        job,
+        session_factory=lambda: db_session,
+        storage=object_storage,
+        settings=settings,
+    )
+
+    assert job.status == "aborted"
+    assert job.error is None
+    assert job.summary is not None
+    assert job.summary["imported"] is False
+    assert job.summary["reason"] == "test"
+    assert db_session.scalar(sa.select(Episode).where(Episode.external_id == "web_scram01")) is None
+
+
+def test_scram_mid_run_stops_dispatching_inference(
+    db_session: Session,
+    object_storage,
+    settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once AZ-5 is pressed, no further segment reaches a transcriber.
+
+    This is the whole reason the button exists, so it is asserted on the call count rather than
+    on the job's status alone: a scram that let the queued segments run would still bill for
+    every one of them.
+    """
+    raw_audio = make_test_audio(tmp_path / "scram_mid.wav", duration_seconds=30.0)
+    job = IngestJob(
+        job_id="test-scram-002",
+        episode_id="web_scram02",
+        show_id="podcast",
+        title="Scrammed Mid Run",
+        audio_path=raw_audio,
+        work_dir=tmp_path / "work_scram02",
+    )
+
+    calls: list[str] = []
+    real_transcribe = __import__("app.services.ingest", fromlist=["transcribe"]).transcribe
+
+    def counting_transcribe(session, audio_path, **kwargs):
+        calls.append(str(audio_path))
+        # Press the button on the very first clip: every segment after this one must be untouched.
+        job.scram(reason="test mid-run")
+        return real_transcribe(session, audio_path, **kwargs)
+
+    monkeypatch.setattr("app.services.ingest.transcribe", counting_transcribe)
+    # One segment at a time, so "no clip after the press" is an exact count rather than a count
+    # plus whatever the pool already had in flight.
+    serial_settings = settings.model_copy(
+        update={"ingest": settings.ingest.model_copy(update={"max_segment_concurrency": 1})}
+    )
+
+    run_pipeline(
+        job,
+        session_factory=lambda: db_session,
+        storage=object_storage,
+        settings=serial_settings,
+    )
+
+    assert job.status == "aborted"
+    assert job.total_segments > 1, "need more than one segment for this to prove anything"
+    # One segment's worth of routes, and not a clip more.
+    assert len(set(calls)) == 1
+    assert db_session.scalar(sa.select(Episode).where(Episode.external_id == "web_scram02")) is None
+
+
+def test_scram_is_idempotent_and_reports_who_stopped_it() -> None:
+    """The button someone hits twice reports the second press honestly."""
+    job = IngestJob(
+        job_id="test-scram-003",
+        episode_id="web_scram03",
+        show_id="podcast",
+        title="Double Press",
+        audio_path=None,
+        work_dir=Path("/tmp/nonexistent-scram03"),
+    )
+    assert job.scram() is True
+    assert job.scrammed is True
+    assert job.scram(reason="again") is False
+    assert job.scram_reason == "manual SCRAM"
+
+
+def test_scram_on_a_finished_run_changes_nothing() -> None:
+    job = IngestJob(
+        job_id="test-scram-004",
+        episode_id="web_scram04",
+        show_id="podcast",
+        title="Already Done",
+        audio_path=None,
+        work_dir=Path("/tmp/nonexistent-scram04"),
+    )
+    job.status = "completed"
+    assert job.scram() is False
+    assert job.scrammed is False
+
+
+def test_api_scram_endpoint_halts_a_running_job(client: TestClient, tmp_path: Path) -> None:
+    job = manager.create_job(
+        episode_id="scram_api_ep",
+        show_id="demo",
+        title="SCRAM API",
+        audio_path=tmp_path / "audio.wav",
+        work_dir=tmp_path / "work",
+    )
+    job.status = "processing"
+
+    response = client.post(f"/ingest/{job.job_id}/scram")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scrammed"] is True
+    assert body["already_stopping"] is False
+
+    again = client.post(f"/ingest/{job.job_id}/scram")
+    assert again.status_code == 200
+    assert again.json()["already_stopping"] is True
+
+    status_body = client.get(f"/ingest/{job.job_id}").json()
+    assert status_body["scrammed"] is True
+
+
+def test_api_scram_unknown_job_404(client: TestClient) -> None:
+    assert client.post("/ingest/nonexistent-id-000/scram").status_code == 404

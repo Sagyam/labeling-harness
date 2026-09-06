@@ -177,6 +177,16 @@ class IngestJob:
     listeners: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = field(
         default_factory=list
     )
+    #: Set by :meth:`scram` from the request thread and read by every pipeline worker. An
+    #: :class:`threading.Event` rather than a bool because the readers are the segment pool.
+    _scram: threading.Event = field(default_factory=threading.Event, repr=False)
+    #: Why the run was scrammed, for the abort summary.
+    scram_reason: str | None = None
+
+    @property
+    def scrammed(self) -> bool:
+        """True once someone has hit AZ-5 on this run."""
+        return self._scram.is_set()
 
     def log(self, message: str, level: str = "info") -> None:
         ts = dt.datetime.now(dt.UTC).strftime("%H:%M:%S")
@@ -243,6 +253,46 @@ class IngestJob:
         self.log(f"Pipeline error: {error_message}", "error")
         self._emit({"type": "error", "error": error_message})
 
+    def scram(self, reason: str = "manual SCRAM") -> bool:
+        """Drop the rods: stop this run at the next checkpoint every worker passes.
+
+        Called from the request thread while the pipeline runs on its own. It sets a flag and
+        returns; it does not kill anything. Stage 3 is the only stage that spends money, and it
+        checks the flag before dispatching a segment's routes, so the requests that have not been
+        made yet are the ones this cancels. Calls already in flight are left to return -- at most
+        ``max_segment_concurrency`` segments' worth -- because tearing down the HTTP client under
+        them would lose the ``llm_requests`` rows for inference that was billed anyway.
+
+        Returns:
+            True if this call is what stopped the run; False if it was already stopping or over.
+        """
+        if self.status in ("completed", "failed", "aborted") or self.scrammed:
+            return False
+        self.scram_reason = reason
+        self._scram.set()
+        self.log(f"AZ-5: {reason}. Halting at the next checkpoint.", "warn")
+        self._emit({"type": "scram", "reason": reason})
+        return True
+
+    def abort(self, summary: dict[str, Any]) -> None:
+        """Finish a scrammed run: no import, no queue, and a record of what it had spent.
+
+        Deliberately not ``complete``. Stage 5 imports an episode as a whole, and half of one is
+        not a cheaper episode -- it is a differently-sampled one, which is the same reason a
+        segment short of a full set of hypotheses is discarded rather than patched (D46). The
+        inference already paid for is reported here instead of being quietly written to the
+        corpus.
+        """
+        self.status = "aborted"
+        self.stage = "aborted"
+        self.summary = summary
+        self.log(
+            f"Run aborted by AZ-5 after {summary.get('segments_transcribed', 0)} of "
+            f"{summary.get('segments_detected', 0)} segments. Nothing was imported.",
+            "warn",
+        )
+        self._emit({"type": "aborted", "summary": summary, "reason": self.scram_reason})
+
     def _emit(self, event: dict[str, Any]) -> None:
         """Fan an event out to every SSE subscriber.
 
@@ -302,7 +352,9 @@ class IngestionManager:
         return self._jobs.get(job_id)
 
     def _evict_finished(self) -> None:
-        finished = [j for j in self._jobs.values() if j.status in ("completed", "failed")]
+        finished = [
+            j for j in self._jobs.values() if j.status in ("completed", "failed", "aborted")
+        ]
         finished.sort(key=lambda j: j.created_at)
         for job in finished[: max(0, len(finished) - self.MAX_FINISHED_JOBS)]:
             del self._jobs[job.job_id]
@@ -571,13 +623,40 @@ def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
     return True
 
 
+def _halted(job: IngestJob, *, segments_detected: int = 0, segments_transcribed: int = 0) -> bool:
+    """True when AZ-5 has been hit, having already aborted the run.
+
+    Called at every stage boundary, so a scram stops the pipeline at the next seam rather than
+    wherever the flag happened to be noticed.
+    """
+    if not job.scrammed:
+        return False
+    job.abort(
+        {
+            "episode_id": job.episode_id,
+            "reason": job.scram_reason,
+            "stage_reached": job.stage,
+            "segments_detected": segments_detected,
+            "segments_transcribed": segments_transcribed,
+            "segments_discarded": len(job.discarded),
+            "discarded_by_system": job.discard_summary(),
+            "imported": False,
+        }
+    )
+    return True
+
+
 def _run_stages(
     job: IngestJob,
     session_factory: Callable[[], Session],
     storage: ObjectStorage,
     settings: Settings,
 ) -> None:
-    """The five pipeline stages. Every failure is reported through ``job.fail`` and returns."""
+    """The five pipeline stages. Every failure is reported through ``job.fail`` and returns.
+
+    Between stages, and before each segment's inference, the run checks whether AZ-5 has been
+    hit (:meth:`IngestJob.scram`) and stops there rather than at the end.
+    """
     job.status = "processing"
     job.log(f"Starting ingestion for '{job.title}' ({job.episode_id})")
 
@@ -597,6 +676,9 @@ def _run_stages(
         job.set_progress("normalizing", 20.0)
     except Exception as exc:
         job.fail(f"Stage 1 Audio Normalization failed: {exc}")
+        return
+
+    if _halted(job):
         return
 
     # Stage 2: Silero VAD Segmentation
@@ -621,6 +703,9 @@ def _run_stages(
         )
     except Exception as exc:
         job.fail(f"Stage 2 Silero VAD Segmentation failed: {exc}")
+        return
+
+    if _halted(job, segments_detected=len(segments)):
         return
 
     # Stage 3 & 4: Cloud ASR & Token Analysis
@@ -661,6 +746,13 @@ def _run_stages(
                     job.set_progress("transcribing", step_progress, active_segments=completed_count)
 
                 def _process_segment(seg_idx: int, seg: Any) -> dict[str, Any] | None:
+                    # AZ-5 checkpoint, and the one that matters: every route of every segment is
+                    # dispatched from below this line, so a scram noticed here is inference that
+                    # is never billed. A segment stopped this way is not a discard -- nothing
+                    # failed on it and no system is to blame for it (D46).
+                    if job.scrammed:
+                        return None
+
                     # Rec 1: Concurrent model dispatch per segment across every ASR route
                     clip_results: dict[str, AsrResult] = {}
                     route_failures: list[dict[str, str]] = []
@@ -833,9 +925,17 @@ def _run_stages(
                         for idx, seg in enumerate(segments)
                     }
                     for future in concurrent.futures.as_completed(future_to_idx):
+                        if job.scrammed:
+                            # Belt to the guard's braces: a queued future that is cancelled here
+                            # never enters the worker at all. Cancelling a running or finished
+                            # one is a no-op, so the ones in flight still land below.
+                            for queued in future_to_idx:
+                                queued.cancel()
                         seg_idx = future_to_idx[future]
                         try:
                             records_by_idx[seg_idx] = future.result()
+                        except concurrent.futures.CancelledError:
+                            continue
                         except Exception as exc:  # costs one segment, never the episode
                             # Everything after the transcripts -- alignment, analysis, the
                             # per-segment commit. Same rule as an ASR failure: the run is worth
@@ -861,6 +961,9 @@ def _run_stages(
 
             segment_records = [r for r in records_by_idx if r is not None]
 
+        if _halted(job, segments_detected=len(segments), segments_transcribed=len(segment_records)):
+            return
+
         if job.discarded:
             by_system = job.discard_summary()
             blame = ", ".join(f"{system} ({count})" for system, count in by_system.items())
@@ -880,6 +983,9 @@ def _run_stages(
         job.log("Stage 4/5: Orthography analysis, CMI and rule flags completed")
     except Exception as exc:
         job.fail(f"Stage 3/4 ASR Inference / Analysis failed: {exc}")
+        return
+
+    if _halted(job, segments_detected=len(segments), segments_transcribed=len(segment_records)):
         return
 
     # Stage 5: Manifest Generation, Direct Import & Queue Building

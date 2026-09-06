@@ -1688,3 +1688,49 @@ the fallback is now `--` and the tooltip lists the components the score is actua
 hypotheses keep their Latin, and `text_devanagari` in `metadata_jsonb` holds what Scribe said).
 The pot guard reverses by deleting `screened_episode_ids` and its two call sites; the episode it
 demoted does not go back on its own.
+
+## D66 — Script restoration moves to Vertex, and an ingest gains a stop button
+
+Two changes forced by one outage. `script_restore` moves from OpenRouter to Vertex, and the
+ingest pipeline gains AZ-5: a control that halts a run in flight.
+
+**OpenRouter stopped accepting "do not think" on this model.** D65 turned the restore hook on for
+the seed route, so every clip Scribe transcribes now makes a second call — and every one of them
+came back `400 Reasoning is mandatory for this endpoint and cannot be disabled.` The route sends
+`reasoning: {enabled: false}` because D44 measured what happens without it: 47% of restorations
+truncated mid-array with 96% of a 2048-token budget spent thinking, against an output that is a
+JSON array of tokens and nothing else. Verified live during the outage, the same request without
+the field returns 200 and spends the whole `max_tokens` on reasoning with `content: null` — so
+dropping the flag trades a 400 for D44's failure, not for a fix.
+
+Vertex spells the same switch `thinkingBudget: 0` and still honours it. `_client_for` has
+dispatched on `provider` since D45 precisely so this is a route setting rather than a code path,
+which is why the fix is four lines of YAML. `classify_topic` and `asr_gemini_flash` already run
+the same model there with reasoning off.
+
+**A failing restore failed the whole episode, and it looked like ElevenLabs' fault.** The restore
+runs inside `transcribe` for the primary route, so its `LlmRequestFailed` surfaced as
+`asr_scribe_v2` failing. One route short of a full set discards the segment (D46); every segment
+discarded fails the run. The user-visible symptom was "ElevenLabs is rejecting requests" while
+Scribe answered 200 to all 447 calls it was paid for.
+
+**AZ-5.** There was no way to stop that run. `POST /ingest/{job_id}/scram` sets a flag; the
+pipeline reads it at each stage boundary and, crucially, at the top of `_process_segment` — every
+route of every clip is dispatched below that line, so a scram is inference that is never billed.
+Requests already on the wire are left to return rather than having the client torn down under
+them, because they are billed either way and their `llm_requests` rows are the only record of it.
+
+A scrammed run **imports nothing**. That is deliberate and it is the same argument as D46: half an
+episode is not a cheaper episode, it is a differently-sampled one, and nothing downstream would
+ever say so. The abort summary reports how many segments were transcribed before the stop, so the
+spend is visible rather than silently discarded.
+
+**Known gap, not fixed here.** `_log` flushes; the commit is per segment (D20) and happens only
+after a segment's transcripts are all in hand. When every segment fails, nothing commits and the
+whole run's `llm_requests` rows roll back — which is how 447 paid Scribe calls left no billing
+record at all. The rows survive an abort, because a scram only follows segments that succeeded.
+Fixing it means committing the log row independently of the segment's transaction.
+
+**Reversal:** set `provider: openrouter` and `model: google/gemini-3.8-flash` back on
+`script_restore` if OpenRouter starts honouring the switch again. AZ-5 reverses by deleting the
+endpoint and the `job.scrammed` checks; nothing persists a scram beyond the job's own memory.

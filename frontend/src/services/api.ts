@@ -18,6 +18,7 @@ import {
   TranslitOut,
   IngestEvent,
   IngestJobStatus,
+  IngestScramResult,
   EpisodeSummary,
   EpisodeSegmentSummary,
   YouTubeProbe,
@@ -223,6 +224,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     })
+  },
+
+  /** AZ-5. Stops a running ingestion at its next checkpoint; nothing gets imported. */
+  scramIngest: (jobId: string): Promise<IngestScramResult> => {
+    return request<IngestScramResult>(`/ingest/${jobId}/scram`, { method: 'POST' })
   },
 
   getIngestStatus: (jobId: string): Promise<IngestJobStatus> => {
