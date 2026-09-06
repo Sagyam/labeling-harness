@@ -32,6 +32,7 @@ import { Separator } from '@/components/ui/separator'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, resolveUrl } from '@/services/api'
+import { karaokeWords, stripEdgePunctuation } from '@/lib/karaoke'
 import { cn } from '@/lib/utils'
 import type { Dispute, PeaksPayload, Task } from '@/types'
 
@@ -84,6 +85,14 @@ export function EditorView({
     null,
   )
   const momentTimerRef = useRef<number | null>(null)
+
+  // What the line actually sings: the annotator's current text, on the transcriber's clock. An
+  // edited word keeps the span of the word it replaced and loses its seed position, which is what
+  // drops the dispute underline off a word that has already been decided.
+  const karaoke = useMemo(
+    () => karaokeWords(text, seedWords, segment.hypotheses),
+    [text, seedWords, segment.hypotheses],
+  )
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -213,11 +222,7 @@ export function EditorView({
    */
   const replaceDisputedWord = (dispute: Dispute, replacement: string) => {
     const matches = [...text.matchAll(/\S+/g)]
-    // `\p{M}` is not optional. Devanagari vowel signs are combining marks, so a class of only
-    // letters and numbers treats the `ो` of `भयो` as trailing punctuation, strips it, and leaves
-    // it stranded after the replacement. `analysis.py` carries the same warning about `\w`.
-    const EDGE = /^[^\p{L}\p{N}\p{M}]*|[^\p{L}\p{N}\p{M}]*$/gu
-    const strip = (s: string) => s.replace(EDGE, '')
+    const strip = stripEdgePunctuation
     const wanted = strip(dispute.seed_word)
     const candidates = [
       dispute.seed_position,
@@ -421,10 +426,11 @@ export function EditorView({
         <div className="bg-card ring-1 ring-foreground/5">
           <Waveform peaks={peaks} currentTime={currentTime} duration={duration} onSeek={seek} />
 
-          {seedWords.length > 0 && (
+          {karaoke.length > 0 && (
             <div className="border-t">
               <KaraokeTranscript
-                words={seedWords}
+                words={karaoke}
+                resetKey={task.id}
                 audioRef={audioRef}
                 onSeekWord={(time) => seek(time, true)}
                 contestedPositions={contestedPositions}

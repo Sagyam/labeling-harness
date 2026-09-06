@@ -4,8 +4,14 @@ import { cn } from '@/lib/utils'
 import type { HypothesisWord } from '@/types'
 
 interface KaraokeTranscriptProps {
-  /** Words of the hypothesis being followed, in position order. */
+  /** Words of the transcript being followed, in position order. */
   words: HypothesisWord[]
+  /**
+   * Identity of the clip being transcribed. The highlight is cleared when this changes rather
+   * than when `words` does: the word list is rebuilt on every keystroke while the annotator
+   * edits, and restarting the animation under them each time would make the line stutter.
+   */
+  resetKey: string | number
   /** The element actually playing; read directly so the highlight runs at frame rate. */
   audioRef: React.RefObject<HTMLAudioElement | null>
   /** Seek here when a word is clicked. */
@@ -40,6 +46,7 @@ const easeOutCubic = (t: number) => 1 - (1 - t) ** 3
  */
 export function KaraokeTranscript({
   words,
+  resetKey,
   audioRef,
   onSeekWord,
   contestedPositions,
@@ -131,7 +138,7 @@ export function KaraokeTranscript({
     }
   }, [paint, audioRef])
 
-  // A new task brings a new word list; clear the highlight so it cannot survive the swap.
+  // A new clip brings a new transcript; clear the highlight so it cannot survive the swap.
   useEffect(() => {
     activeRef.current = -1
     heatRef.current.clear()
@@ -140,7 +147,7 @@ export function KaraokeTranscript({
       span.style.transform = ''
       span.dataset.state = ''
     })
-  }, [words])
+  }, [resetKey])
 
   if (words.length === 0) return null
 
