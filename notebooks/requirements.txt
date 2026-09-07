@@ -1,0 +1,20 @@
+# Environment for notebooks/01-EDA.ipynb. Deliberately separate from backend/pyproject.toml:
+# the harness itself must not grow a pandas/matplotlib dependency (D43 keeps the runtime image
+# thin and hash-checked), and nothing here is imported by app code.
+#
+#   uv venv --python 3.13 notebooks/.venv
+#   VIRTUAL_ENV=notebooks/.venv uv pip install -r notebooks/requirements.txt
+#   notebooks/.venv/bin/python -m ipykernel install --user \
+#       --name labeling-harness-eda --display-name "labeling-harness (EDA)"
+#
+# The notebook is written for a multicore CPU: joblib fans every heavy step out over
+# `joblib.cpu_count()` processes, with the numeric libraries pinned to one thread per worker.
+pandas==3.0.5
+numpy==2.5.3
+scipy==1.18.1
+matplotlib==3.11.1
+joblib==1.6.0
+rapidfuzz==3.14.6
+PyYAML==6.0.3
+ipykernel==7.3.0
+jupyterlab==4.6.3
