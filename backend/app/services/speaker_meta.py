@@ -34,7 +34,17 @@ ALLOWED_SPEAKER_FIELDS = frozenset({"role", "gender", "age_bracket"})
 #: exactly like an unknown field -- the form only ever sends these, so anything else came from an
 #: upstream manifest that means something this corpus does not record.
 ALLOWED_VALUES: dict[str, frozenset[str]] = {
-    "gender": frozenset({"male", "female", "non_binary", "other"}),
+    #: Two values, not four. ``non_binary`` and ``other`` were carried for two years of nobody
+    #: being recorded under either, because Nepali-language podcasting has almost no openly LGBT
+    #: creators to find and the owner is not going to guess at a stranger's gender identity from
+    #: having watched an episode. A vocabulary value that is never filled is not neutral: it sits
+    #: in every gap report as a permanently unclosable gap, and the sourcing page ranked those two
+    #: as its top two recommendations, above every gap that could actually be acted on (D70).
+    #:
+    #: This narrows what the corpus *records*, not who it records. A speaker outside these two is
+    #: recorded with the gender field dropped, exactly like any other value the vocabulary does
+    #: not know, and the episode counts as unrecorded on gender rather than as evidence for either.
+    "gender": frozenset({"male", "female"}),
     #: Twenty-year buckets. Deliberately coarse: the owner is guessing from having watched the
     #: episode, and a bucket someone can place a stranger in confidently is worth more than a
     #: finer one they cannot (D58).

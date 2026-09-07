@@ -137,7 +137,7 @@ def test_the_matrix_keeps_its_empty_cells() -> None:
     """A blank square is the finding. Omitting it makes the frontend guess at the vocabulary."""
     matrix = build_speaker_matrix([fact("ep1")])
     assert matrix["female"]["60_79"] == 0.0
-    assert set(matrix) == {"male", "female", "non_binary", "other"}
+    assert set(matrix) == {"male", "female"}
 
 
 def test_an_episode_with_no_recorded_gender_is_unknown_not_evidence() -> None:
@@ -153,7 +153,7 @@ def test_an_episode_with_no_recorded_gender_is_unknown_not_evidence() -> None:
 
 def test_a_closed_vocabulary_reports_what_is_absent() -> None:
     dimension = build_dimension([fact("ep1")], "gender")
-    assert dimension.absent == ["female", "non_binary", "other"]
+    assert dimension.absent == ["female"]
 
 
 def test_an_off_taxonomy_topic_is_dirt_not_a_gap() -> None:
@@ -334,7 +334,7 @@ def test_recommendations_come_back_highest_priority_first() -> None:
 def test_a_complete_corpus_asks_for_nothing_it_already_has() -> None:
     """Every vocabulary value present, no dominance, no gaps: silence on those dimensions."""
     facts = []
-    for gender in ("male", "female", "non_binary", "other"):
+    for gender in ("male", "female"):
         for age in ("under_20", "20_39", "40_59", "60_79", "80_plus"):
             facts.append(
                 fact(

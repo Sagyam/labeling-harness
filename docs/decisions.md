@@ -1897,3 +1897,40 @@ twelve people.
 git. Restoring the scoreboard would mean restoring `gamify.py` from history -- it read only tables
 that still exist, so it would work unchanged. `dataset.min_stratum_hours` is the only configuration
 added and defaults are safe to drop.
+
+## D70 — The gender vocabulary narrows to two values
+
+`ALLOWED_VALUES["gender"]` in `app/services/speaker_meta.py` goes from
+`{male, female, non_binary, other}` to `{male, female}`, and the ingest form, the episode JSON
+schema and the analytics grid follow it. No migration: the vocabulary is an application-level
+allowlist over `episodes.metadata_jsonb`, not a database constraint, and no row has ever carried
+either removed value.
+
+**The reason is that neither was ever fillable.** Nepali-language podcasting has almost no openly
+LGBT creators to source from, and the fields are typed by hand from having watched an episode
+(D58) — so the only way `non_binary` could have been populated was the owner guessing at a
+stranger's gender identity, which is exactly what D56 refused to let this corpus do with dialect
+and for the same reason: a confidently wrong stratification tag is worse than no tag, because it is
+used as a grouping variable and silently biases every result computed over it.
+
+**An unfillable vocabulary value is not neutral, which is what forced the decision now.** D69's
+sourcing page ranks gaps by absence, and absence is exactly what these two are. They came out as
+the **top two recommendations at priority 1.00**, above every gap that could actually be closed —
+telling the owner to go and find non-binary Nepali podcasters ahead of the age brackets, the
+register pole and the show concentration that are all genuinely actionable. A page that ranks
+unclosable work first is worse than no page. Narrowing the vocabulary was the honest fix; special-
+casing two values inside the recommender to suppress them would have hidden the same claim behind
+a filter nobody would find again.
+
+**This narrows what the corpus records, not who it records.** A speaker neither value fits is
+recorded with the gender field dropped — the same path any unknown value takes — and the episode
+is then *unrecorded* on gender rather than counted as evidence for either value. The inventory
+already distinguishes those two states: an unfilled field lands in `unknown_episodes`, reported as
+paperwork, while a thin stratum is reported as a fact about the corpus. What is lost is the
+ability to state the distinction in an export; what is kept is the ability to tell "nobody
+recorded this" from "this does not exist".
+
+**Reversal:** put the two values back in `ALLOWED_VALUES`, the schema enum and `GENDER_OPTIONS`.
+Cheap and total while nothing is stored under them. It stops being cheap the moment a speaker is
+recorded under one and a later narrowing would drop their record on re-import — so if the corpus
+ever does reach such a speaker, widen it first and re-ingest rather than editing the row.

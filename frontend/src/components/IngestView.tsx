@@ -77,11 +77,15 @@ type SpeakerDraft = { gender: string; ageBracket: string }
 
 const emptySpeaker = (): SpeakerDraft => ({ gender: '', ageBracket: '' })
 
+/**
+ * Two values, matching `ALLOWED_VALUES` in the backend's `speaker_meta.py`. Narrowed from four in
+ * D70: nothing was ever recorded under the other two, and an unfillable vocabulary value shows up
+ * in every gap report as a gap that can never be closed. Leave the field blank for a speaker
+ * neither value fits — the backend drops an unknown value anyway, and blank is the honest record.
+ */
 const GENDER_OPTIONS = [
   { value: 'male', label: 'Male' },
   { value: 'female', label: 'Female' },
-  { value: 'non_binary', label: 'Non-binary' },
-  { value: 'other', label: 'Other' },
 ]
 
 /**

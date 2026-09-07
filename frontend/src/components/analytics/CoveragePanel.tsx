@@ -26,7 +26,7 @@ import {
 } from './primitives'
 import type { Dimension, LengthProfile } from '@/types'
 
-const GENDER_ORDER = ['male', 'female', 'non_binary', 'other']
+const GENDER_ORDER = ['male', 'female']
 const AGE_ORDER = ['under_20', '20_39', '40_59', '60_79', '80_plus']
 
 const DIMENSION_TITLE: Record<string, string> = {

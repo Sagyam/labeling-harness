@@ -28,7 +28,7 @@
         "type": "object",
         "properties": {
           "role": {"type": "string", "maxLength": 32},
-          "gender": {"enum": ["male", "female", "non_binary", "other"]},
+          "gender": {"enum": ["male", "female"]},
           "age_bracket": {"enum": ["under_20", "20_39", "40_59", "60_79", "80_plus"]}
         }
       }

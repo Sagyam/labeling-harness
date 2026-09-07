@@ -52,10 +52,19 @@ def test_every_age_bracket_the_form_offers_is_accepted(bracket: str) -> None:
     assert cleaned["speakers"]["spk0"] == {"age_bracket": bracket}
 
 
-@pytest.mark.parametrize("gender", ["male", "female", "non_binary", "other"])
+@pytest.mark.parametrize("gender", ["male", "female"])
 def test_every_gender_the_form_offers_is_accepted(gender: str) -> None:
     cleaned = strip_speaker_pii({"speakers": {"spk0": {"gender": gender}}})
     assert cleaned["speakers"]["spk0"] == {"gender": gender}
+
+
+@pytest.mark.parametrize("gender", ["non_binary", "other"])
+def test_a_gender_the_vocabulary_no_longer_carries_is_dropped(gender: str) -> None:
+    """Narrowed to two in D70. A value outside them is dropped like any other unknown one, and
+    the speaker survives with the rest of their record -- the episode is then *unrecorded* on
+    gender rather than counted as evidence for either value."""
+    cleaned = strip_speaker_pii({"speakers": {"spk0": {"gender": gender, "role": "host"}}})
+    assert cleaned["speakers"]["spk0"] == {"role": "host"}
 
 
 def test_role_is_free_text_because_it_describes_the_recording_not_the_corpus() -> None:
