@@ -1734,3 +1734,57 @@ Fixing it means committing the log row independently of the segment's transactio
 **Reversal:** set `provider: openrouter` and `model: google/gemini-3.8-flash` back on
 `script_restore` if OpenRouter starts honouring the switch again. AZ-5 reverses by deleting the
 endpoint and the `job.scrammed` checks; nothing persists a scram beyond the job's own memory.
+
+## D67 — The queue ranks on whether a clip is wrong, not on how much of it is
+
+`seed_outvoted` weights disagreement by speech time (D54). That answers "how much of this
+transcript is wrong", which is not the quantity that costs the annotator anything. A clip whose
+seed needs one two-word fix scores near zero and still costs a full open-listen-edit-save cycle.
+
+The consequence is measurable on the 1,363 verified labels collected so far. The old score's top
+and bottom deciles work — 60% and 1% edit rates against a 30% base — and deciles 4 through 7, some
+40% of the queue, sit at 24-28%, indistinguishable from the base rate and from each other. That
+band is where the annotator reported the experience as "rubber stamp, rubber stamp, oh a mistake".
+
+Two token-set signals go in beside it, both in `app/services/lexical.py`, both pure functions of
+`text_raw`:
+
+- **`seed_orphan_rate`** — the share of seed tokens that *no* other system produced anywhere in
+  the clip. It is `seed_outvoted` with the clock removed. On its own it scores AUC 0.740 against
+  realized edits, against 0.747 for the entire superseded formula.
+- **`roman_gap`** — Latin-script tokens every other system agreed on and the seed lacks,
+  saturating at four. This is the English-in-Latin policy (D64) as a ranking signal: when the
+  others write `traffic police` and the seed writes `ट्राफिक पुलिस`, the annotator will retype it.
+
+Weights become `0.30 seed_outvoted + 0.30 seed_orphan_rate + 0.20 roman_gap + 0.125
+low_confidence + 0.075 rule_flag_score`. The old three keep their relative proportions — this
+halves the old formula and spends the freed half on the two new terms — so the sum stays 1.0 and
+the score stays in 0-1.
+
+Pooled AUC goes 0.747 → 0.805. Pooling flatters it, so the check that matters is per-episode,
+which removes any credit for merely separating easy episodes from hard ones: +0.108, +0.054 and
++0.115 on the three episodes with enough labels to measure, mean +0.095. Against 650 clips of the
+*pending* queue ranked by hand — different episodes, a different labeller, nothing the weights were
+fitted on — rank agreement goes 0.497 → 0.568.
+
+**Unanimity among the others is required in both terms.** One system disagreeing is ordinary
+recogniser noise; MAI transliterates English into Devanagari wholesale, and counting a lone
+dissent would rank on that habit rather than on the seed's errors.
+
+**`numword_gap` was built and rejected.** Spelled-out numerals where the others use digits is a
+real and frequent edit in the tech episodes, and it scored AUC 0.463 — below chance — because those
+episodes are almost absent from the labelled set (`claude_for_beginners_in_nepal`: 2 labels against
+555 queued). It is left out rather than fitted on four clips. Revisit once those episodes are
+labelled; the same caveat applies in weaker form to the two terms that were kept.
+
+**An LLM pass was measured and rejected for now.** Claude Haiku 4.5 scored 120 of the
+hand-ranked clips blind against the same rubric. Rank agreement was 0.383, and the range collapsed:
+across three independent runs it never once used the top of the scale (maxima 35, 45, 80; means
+32.5, 15.3, 27.7 on comparable data). It scored none of the 30 clips flagged as near-certain errors
+above 60, including three it would have auto-approved. The failures were exactly the semantic ones
+— `Cloud` for `Claude`, `Nahas` for `नयाँ आश`, a polarity inversion — which is the only place a
+model would have earned its cost over the deterministic terms above.
+
+**Reversal:** set the five weights back to `0.60 / 0.25 / 0.15` with the two new ones at zero.
+Nothing is stored — both signals are recomputed from `text_raw` at queue build, so a re-ranking is
+`scripts/build_queue.py`, not a migration.

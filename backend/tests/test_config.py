@@ -37,6 +37,8 @@ def test_queue_weights_sum_to_one() -> None:
     settings = load_settings()
     total = (
         settings.queue.weights.seed_outvoted
+        + settings.queue.weights.seed_orphan_rate
+        + settings.queue.weights.roman_gap
         + settings.queue.weights.low_confidence
         + settings.queue.weights.rule_flag_score
     )

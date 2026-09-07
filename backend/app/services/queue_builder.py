@@ -24,6 +24,7 @@ from app.services.consensus import (
     build_slots,
     seed_outvoted_fraction,
 )
+from app.services.lexical import lexical_signals
 from app.services.scoring import ScoreInputs, priority_score
 from app.utils.logging import get_logger
 
@@ -112,11 +113,17 @@ def _score_for(
     seed: AsrHypothesis | None,
     settings: Settings,
 ) -> tuple[float, dict[str, Any]]:
+    orphan_rate, latin_gap = lexical_signals(
+        seed.text_raw if seed else None,
+        [h.text_raw for h in segment.hypotheses if seed is None or h.id != seed.id],
+    )
     result = priority_score(
         ScoreInputs(
             seed_outvoted=_seed_outvoted(segment, seed),
             avg_logprob=seed.avg_logprob if seed else None,
             flags=list(scores.flags_jsonb or []) if scores else [],
+            seed_orphan_rate=orphan_rate,
+            roman_gap=latin_gap,
         ),
         settings=settings,
         legacy=ScoreInputs.legacy(

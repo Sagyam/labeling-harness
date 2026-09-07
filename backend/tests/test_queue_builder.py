@@ -88,6 +88,8 @@ def test_every_task_carries_a_priority_and_a_reason(
             "seed_outvoted",
             "low_confidence",
             "rule_flag_score",
+            "seed_orphan_rate",
+            "roman_gap",
         }
         assert task.reason_jsonb["score"] == pytest.approx(task.priority_score)
 

@@ -19,6 +19,8 @@ def inputs(**kwargs) -> ScoreInputs:
         "seed_outvoted": 0.0,
         "avg_logprob": 0.0,
         "flags": [],
+        "seed_orphan_rate": 0.0,
+        "roman_gap": 0.0,
     }
     return ScoreInputs(**{**base, **kwargs})
 
@@ -32,7 +34,13 @@ def test_all_maximum_inputs_score_one() -> None:
     from app.services.flags import ALL_FLAGS
 
     result = priority_score(
-        inputs(seed_outvoted=1.0, avg_logprob=-5.0, flags=list(ALL_FLAGS)),
+        inputs(
+            seed_outvoted=1.0,
+            avg_logprob=-5.0,
+            flags=list(ALL_FLAGS),
+            seed_orphan_rate=1.0,
+            roman_gap=1.0,
+        ),
         settings=SETTINGS,
     )
     assert result.score == pytest.approx(1.0)
@@ -69,12 +77,25 @@ def test_every_component_can_reach_its_full_weight() -> None:
     assert priority_score(inputs(flags=list(ALL_FLAGS)), settings=SETTINGS).score == pytest.approx(
         weights.rule_flag_score
     )
+    assert priority_score(inputs(seed_orphan_rate=1.0), settings=SETTINGS).score == pytest.approx(
+        weights.seed_orphan_rate
+    )
+    assert priority_score(inputs(roman_gap=1.0), settings=SETTINGS).score == pytest.approx(
+        weights.roman_gap
+    )
 
 
 def test_missing_inputs_are_zero_not_one() -> None:
     """An absent signal must never push a segment up the queue on its own."""
     result = priority_score(
-        ScoreInputs(seed_outvoted=None, avg_logprob=None, flags=[]), settings=SETTINGS
+        ScoreInputs(
+            seed_outvoted=None,
+            avg_logprob=None,
+            flags=[],
+            seed_orphan_rate=None,
+            roman_gap=None,
+        ),
+        settings=SETTINGS,
     )
     assert result.score == pytest.approx(0.0)
 

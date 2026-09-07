@@ -169,15 +169,29 @@ class QueueWeights(BaseModel):
 
     model_config = _STRICT
 
-    #: Share of speech time where every other system contradicts the seed. The dominant term:
-    #: measured against realized annotator edits it is the only signal that clearly works (D54).
-    seed_outvoted: float = 0.60
-    low_confidence: float = 0.25
-    rule_flag_score: float = 0.15
+    #: Share of speech time where every other system contradicts the seed. Halved from 0.60 by
+    #: D67: it ranks the tails well and cannot separate the middle, because it measures how *much*
+    #: of a clip is wrong when the annotator's cost is driven by *whether* any of it is.
+    seed_outvoted: float = 0.30
+    low_confidence: float = 0.125
+    rule_flag_score: float = 0.075
+    #: ``seed_outvoted`` with the clock removed -- the share of seed tokens no other system has.
+    #: On its own it scores AUC 0.740 against realized edits, against 0.747 for the whole
+    #: superseded formula (D67).
+    seed_orphan_rate: float = 0.30
+    #: Latin-script tokens every other system agreed on and the seed lacks: the English-in-Latin
+    #: policy (D64) as a ranking signal.
+    roman_gap: float = 0.20
 
     @model_validator(mode="after")
     def _check_sum(self) -> QueueWeights:
-        total = self.seed_outvoted + self.low_confidence + self.rule_flag_score
+        total = (
+            self.seed_outvoted
+            + self.low_confidence
+            + self.rule_flag_score
+            + self.seed_orphan_rate
+            + self.roman_gap
+        )
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"queue weights must sum to 1.0, got {total}")
         return self

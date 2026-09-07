@@ -60,10 +60,12 @@ gamify:
   minutes_per_level: 30.0        # corpus minutes cleared per level, so audio outranks clicks
 
 queue:
-  weights:
-    seed_outvoted: 0.60          # speech-time share where every other system contradicts the seed
-    low_confidence: 0.25
-    rule_flag_score: 0.15
+  weights:                       # must sum to 1.0; validated at load
+    seed_outvoted: 0.30          # speech-time share where every other system contradicts the seed
+    seed_orphan_rate: 0.30       # share of seed tokens no other system has, at any time (D67)
+    roman_gap: 0.20              # Latin tokens the others agree on and the seed lacks (D67)
+    low_confidence: 0.125
+    rule_flag_score: 0.075
   legacy_weights:                # recorded beside the live score for comparison only (D54)
     word_disagreement_rate: 0.40
     code_switch_density: 0.20

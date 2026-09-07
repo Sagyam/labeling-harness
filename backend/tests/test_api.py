@@ -46,6 +46,8 @@ def test_queue_row_carries_everything_triage_needs(
         "seed_outvoted",
         "low_confidence",
         "rule_flag_score",
+        "seed_orphan_rate",
+        "roman_gap",
     }
     # The superseded formula rides along unweighted, so the first full run can compare (D54).
     assert set(row["reason"]["legacy"]["components"]) == {
