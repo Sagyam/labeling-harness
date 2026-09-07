@@ -1788,3 +1788,50 @@ model would have earned its cost over the deterministic terms above.
 **Reversal:** set the five weights back to `0.60 / 0.25 / 0.15` with the two new ones at zero.
 Nothing is stored — both signals are recomputed from `text_raw` at queue build, so a re-ranking is
 `scripts/build_queue.py`, not a migration.
+
+## D68 — One episode is demoted out of gold, once, while the benchmark still measures nothing
+
+`ep_602_do_higher_traffic_fines_reduce_ro` moves from the gold pot to train. Gold goes 5.42 h → 3.06 h
+across three episodes; train goes 5.47 h → 7.83 h. This overrides D63 rule 3 and is not a general
+capability — `scripts/demote_from_gold.py` takes one episode by name, refuses a blank reason, and
+writes an `audit_logs` row.
+
+**The reason is composition, not size.** Gold held four episodes and **80% of its audio was one
+show** — 4.31 of 5.42 hours from `sushant_pradhan`, in two long episodes. The coverage-first
+assigner did what it could; it had five shows and two episodes over two hours each to work with, and
+D63's own argument says why that is fatal: *a five-hour benchmark drawn from one show measures that
+show*. The corpus is now pivoting to short YouTube videos across many channels, so the gap between
+what gold spans and what the corpus spans was about to get wider, not narrower.
+
+Shrinking gold was not the goal and is not the benefit. The 2.36 h that moves is a rounding error on
+the training curve — the corpus is heading for ~20 h, not 50 h, and the marginal value of an hour of
+training data at that point is small. What the move buys is a benchmark that is 64% one show instead
+of 80%, and room under `gold_max_corpus_fraction` for the new material to enter gold and pull the
+share down further. Gold regrows from the short videos on the next ingest; no config changes.
+
+**Rule 3 permits this, in the window it already names.** Rule 3 forbids leaving gold to stop two
+specific failures: a recording the model trained on becoming the benchmark, and the benchmark being
+cherry-picked once its numbers are known. Nothing has been trained. No WER has been measured against
+gold. Neither failure is reachable, and this is the last moment that will be true — the first
+fine-tuning run closes the window permanently. D65 already established the shape of the exception,
+for an episode "that gold's own definition excludes": *leaving it there does not protect a
+measurement, it invalidates one.* That argument is about validity, not about screening, and a gold
+pot that is 80% one show fails gold's own coverage-first definition the same way.
+
+**What it costs.** Gold loses the topic `traffic_accidents` entirely — the demoted episode was its
+only carrier, and the demotion names the loss rather than discovering it later. `sushant_pradhan`
+stays represented through `claude_for_beginners_in_nepal`, which is deliberate: he is roughly half
+the training distribution, and a benchmark that cannot measure half of training is worse than an
+unbalanced one. That is why one episode moves and not both.
+
+**Why it is not part of `assign_pots`.** The assigner runs on every ingest. A demotion that can
+happen automatically is exactly the silent benchmark-shrinking rule 3 exists to prevent, and the
+judgement here — that no number has been measured yet — is not one the code can check. So it is a
+separate script, it names D63 in its own docstring, and it says out loud that it stops being safe
+the moment a model is trained.
+
+**Reversal:** `scripts/assign_pots.py --allow-promote-from-train` puts it back, and is correct only
+for as long as this entry's premise holds. After the first training run neither direction is
+reversible: promote and the benchmark becomes a memorization test, demote and the numbers already
+measured stop meaning anything.
+

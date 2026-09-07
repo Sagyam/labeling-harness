@@ -56,7 +56,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.models import Episode, Segment
+from app.models import AuditLog, Episode, Segment
 from app.services.stats import latest_labels_subquery
 from app.utils.logging import get_logger
 
@@ -498,6 +498,188 @@ def assign_pots(
         val_hours=report.val_hours,
         changes=len(report.changes),
         dry_run=dry_run,
+    )
+    return report
+
+
+@dataclass
+class GoldDemotion:
+    """What taking one episode out of the gold pot costs, and what it leaves behind (D68)."""
+
+    external_id: str
+    show_id: str | None = None
+    hours: float = 0.0
+    to_split: str = "train"
+    reason: str = ""
+    gold_hours_before: float = 0.0
+    gold_hours_after: float = 0.0
+    gold_episodes_after: int = 0
+    #: Share of gold coming from the demoted episode's own show, before and after. The number
+    #: that motivated D68, and the one that says whether the demotion achieved anything.
+    show_share_before: float = 0.0
+    show_share_after: float = 0.0
+    #: ``{coverage key: values gold no longer covers at all}``. Empty is the good case.
+    gold_coverage_lost: dict[str, list[str]] = field(default_factory=dict)
+    dry_run: bool = False
+
+    def render(self) -> str:
+        """A short human-readable summary, for the CLI."""
+        lines = [
+            f"{'DRY RUN -- ' if self.dry_run else ''}demote from gold",
+            f"  episode     {self.external_id}  ({self.show_id})  {self.hours:.2f} h",
+            f"  moves       gold/{GOLD_SPLIT} -> train/{self.to_split}",
+            f"  reason      {self.reason}",
+            f"  gold        {self.gold_hours_before:.2f} h -> {self.gold_hours_after:.2f} h"
+            f"  ({self.gold_episodes_after} episodes remain)",
+            f"  {self.show_id} share of gold  "
+            f"{self.show_share_before:.0%} -> {self.show_share_after:.0%}",
+        ]
+        if self.gold_coverage_lost:
+            lines.append("  coverage the benchmark loses entirely")
+            for key, values in sorted(self.gold_coverage_lost.items()):
+                lines.append(f"    {key:<12} {', '.join(values)}")
+        else:
+            lines.append("  coverage lost   none")
+        return "\n".join(lines)
+
+
+def demote_from_gold(
+    session: Session,
+    external_id: str,
+    *,
+    reason: str,
+    settings: Settings | None = None,
+    actor: str = "owner",
+    dry_run: bool = False,
+) -> GoldDemotion:
+    """Move one named episode out of the gold pot and into train (D68).
+
+    This overrides rule 3, and it is only defensible in the window rule 3 itself names: **before
+    anything has been trained on or measured against the benchmark**. Rule 3 exists to stop a
+    recording the model has seen from becoming the benchmark, and to stop the benchmark being
+    cherry-picked once its numbers are known. Neither hazard exists while no number exists. Once
+    one does, this function has no legitimate use, and the audit row it writes is the record of
+    when the window was still open.
+
+    It is deliberately *not* part of :func:`assign_pots`. The assigner runs on every ingest, and a
+    demotion that happens automatically is precisely the silent benchmark-shrinking rule 3 forbids.
+    This takes one episode, by name, with a reason, once.
+
+    The split it lands in is the one :func:`assign_pots` would have given it, so the next assigner
+    run sees nothing to change.
+
+    Args:
+        session: Open session; the caller commits.
+        external_id: The episode to demote. Must currently be in the gold pot.
+        reason: Why the benchmark is shrinking. Recorded on the audit row; a blank one is refused.
+        settings: Configuration override.
+        actor: Recorded on the audit entry.
+        dry_run: Report what would change and write nothing.
+
+    Returns:
+        A :class:`GoldDemotion` describing the move and the coverage gold gives up.
+
+    Raises:
+        PotError: No such episode, the episode is not in gold, or the reason is blank.
+    """
+    settings = settings or get_settings()
+    reason = reason.strip()
+    if not reason:
+        raise PotError("a demotion needs a reason; it is the only record of why gold shrank")
+
+    episode = session.scalars(
+        sa.select(Episode).where(Episode.external_id == external_id)
+    ).one_or_none()
+    if episode is None:
+        raise PotError(f"no episode with external_id {external_id!r}")
+    if episode.pot != "gold":
+        raise PotError(
+            f"{external_id!r} is not in the gold pot (pot={episode.pot!r});"
+            " demotion applies to gold only"
+        )
+
+    keys = list(settings.dataset.coverage_keys)
+    seed = settings.dataset.pot_seed
+    candidates = _load_candidates(session, keys=keys)
+    shows = dict(session.execute(sa.select(Episode.id, Episode.show_id)).all())
+
+    leaving = next(c for c in candidates if c.episode_id == episode.id)
+    gold = [c for c in candidates if c.pot == "gold"]
+    staying = [c for c in gold if c.episode_id != episode.id]
+
+    def hours(subset: list[Candidate], *, same_show_only: bool = False) -> float:
+        return sum(
+            c.hours
+            for c in subset
+            if not same_show_only
+            or (episode.show_id is not None and shows.get(c.episode_id) == episode.show_id)
+        )
+
+    gold_hours_before = hours(gold)
+    gold_hours_after = hours(staying)
+
+    kept = _coverage_counts(staying, keys)
+    lost = {
+        key: sorted(leaving.coverage.get(key, frozenset()) - set(kept[key]))
+        for key in keys
+        if leaving.coverage.get(key, frozenset()) - set(kept[key])
+    }
+
+    unit = _hash_unit(episode.external_id, seed=seed)
+    to_split = "val" if unit < settings.dataset.val_fraction else "train"
+
+    report = GoldDemotion(
+        external_id=episode.external_id,
+        show_id=episode.show_id,
+        hours=round(leaving.hours, 4),
+        to_split=to_split,
+        reason=reason,
+        gold_hours_before=round(gold_hours_before, 4),
+        gold_hours_after=round(gold_hours_after, 4),
+        gold_episodes_after=len(staying),
+        show_share_before=(
+            hours(gold, same_show_only=True) / gold_hours_before if gold_hours_before else 0.0
+        ),
+        show_share_after=(
+            hours(staying, same_show_only=True) / gold_hours_after if gold_hours_after else 0.0
+        ),
+        gold_coverage_lost=lost,
+        dry_run=dry_run,
+    )
+    if dry_run:
+        return report
+
+    now = dt.datetime.now(dt.UTC)
+    episode.pot = "train"
+    episode.split = to_split
+    episode.split_seed = seed
+    episode.split_assigned_at = now
+    episode.pot_assigned_at = now
+    session.add(
+        AuditLog(
+            entity_type="episode",
+            entity_id=episode.external_id,
+            action="demote_from_gold",
+            actor=actor,
+            old_values_jsonb={"pot": "gold", "split": GOLD_SPLIT},
+            new_values_jsonb={
+                "pot": "train",
+                "split": to_split,
+                "reason": reason,
+                "hours": report.hours,
+                "gold_hours_after": report.gold_hours_after,
+                "gold_coverage_lost": lost,
+            },
+        )
+    )
+    session.flush()
+    logger.info(
+        "gold_demoted",
+        external_id=episode.external_id,
+        to_split=to_split,
+        hours=report.hours,
+        gold_hours_after=report.gold_hours_after,
+        reason=reason,
     )
     return report
 

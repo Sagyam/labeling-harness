@@ -13,9 +13,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
-from app.models import Episode, Segment, SegmentLabel
+from app.models import AuditLog, Episode, Segment, SegmentLabel
 from app.services.labeling import get_or_create_label_version
-from app.services.pots import PotError, assign_pots, episode_coverage, pot_status
+from app.services.pots import (
+    PotError,
+    assign_pots,
+    demote_from_gold,
+    episode_coverage,
+    pot_status,
+)
 
 pytestmark = pytest.mark.db
 
@@ -615,3 +621,176 @@ def test_a_clean_gold_episode_is_never_demoted(db_session: Session, settings: Se
     after = {name: db_session.get(Episode, ep.id).pot for name, ep in episodes.items()}
     assert after == before
     assert report.gold_demoted == []
+
+
+# --- the one-off demotion (D68) ----------------------------------------------------------
+
+
+def test_demoting_a_gold_episode_moves_it_to_the_train_pot(
+    db_session: Session, settings: Settings
+) -> None:
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    assert gold, "fixture did not produce a gold pot to demote from"
+    victim = episodes[gold[0]]
+
+    report = demote_from_gold(db_session, victim.external_id, reason="test", settings=settings)
+    db_session.flush()
+    db_session.expire_all()
+
+    episode = db_session.get(Episode, victim.id)
+    assert episode.pot == "train"
+    assert episode.split in {"train", "val"}
+    assert episode.split == report.to_split
+    assert report.gold_hours_after < report.gold_hours_before
+
+
+def test_the_demoted_split_is_the_one_the_assigner_would_have_given(
+    db_session: Session, settings: Settings
+) -> None:
+    """Otherwise the next assign_pots run reports a spurious change and moves it again."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    victim = episodes[gold[0]]
+    demote_from_gold(db_session, victim.external_id, reason="test", settings=settings)
+    db_session.flush()
+    db_session.expire_all()
+    after_demotion = db_session.get(Episode, victim.id).split
+
+    report = assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    assert db_session.get(Episode, victim.id).split == after_demotion
+    assert victim.external_id not in [c.external_id for c in report.changes]
+
+
+def test_a_demoted_episode_does_not_walk_back_into_gold(
+    db_session: Session, settings: Settings
+) -> None:
+    """Rule 3 still holds in the other direction: promotion needs the explicit opt-in."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    victim = episodes[gold[0]]
+    demote_from_gold(db_session, victim.external_id, reason="test", settings=settings)
+    db_session.flush()
+
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    assert db_session.get(Episode, victim.id).pot == "train"
+
+
+def test_demotion_refuses_an_episode_that_is_not_in_gold(
+    db_session: Session, settings: Settings
+) -> None:
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    train = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot != "gold"]
+    assert train
+    with pytest.raises(PotError, match="not in the gold pot"):
+        demote_from_gold(
+            db_session, episodes[train[0]].external_id, reason="test", settings=settings
+        )
+
+
+def test_demotion_refuses_an_unknown_episode(db_session: Session, settings: Settings) -> None:
+    with pytest.raises(PotError, match="no episode"):
+        demote_from_gold(db_session, "nope", reason="test", settings=settings)
+
+
+def test_demotion_refuses_an_empty_reason(db_session: Session, settings: Settings) -> None:
+    """The reason is the whole record of why the benchmark shrank; blank makes the audit row lie."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    with pytest.raises(PotError, match="reason"):
+        demote_from_gold(db_session, episodes[gold[0]].external_id, reason="  ", settings=settings)
+
+
+def test_demotion_writes_an_audit_row_carrying_the_reason(
+    db_session: Session, settings: Settings
+) -> None:
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    victim = episodes[gold[0]]
+    demote_from_gold(
+        db_session, victim.external_id, reason="91% one show", settings=settings, actor="owner"
+    )
+    db_session.flush()
+
+    entry = db_session.scalars(
+        sa.select(AuditLog).where(
+            AuditLog.entity_type == "episode", AuditLog.action == "demote_from_gold"
+        )
+    ).one()
+    assert entry.entity_id == victim.external_id
+    assert entry.actor == "owner"
+    assert entry.old_values_jsonb["pot"] == "gold"
+    assert entry.new_values_jsonb["pot"] == "train"
+    assert entry.new_values_jsonb["reason"] == "91% one show"
+
+
+def test_a_demotion_dry_run_writes_nothing(db_session: Session, settings: Settings) -> None:
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    victim = episodes[gold[0]]
+    report = demote_from_gold(
+        db_session, victim.external_id, reason="test", settings=settings, dry_run=True
+    )
+    db_session.flush()
+    db_session.expire_all()
+
+    assert report.dry_run
+    assert db_session.get(Episode, victim.id).pot == "gold"
+    assert db_session.get(Episode, victim.id).split == "test"
+    assert (
+        db_session.scalars(sa.select(AuditLog).where(AuditLog.action == "demote_from_gold")).all()
+        == []
+    )
+
+
+def test_demotion_names_the_coverage_the_benchmark_loses(
+    db_session: Session, settings: Settings
+) -> None:
+    """Shrinking a benchmark silently is the failure this whole module exists to prevent."""
+    episodes = a_corpus_with_room_for_gold(db_session)
+    assign_pots(db_session, settings=settings, gold_hours_target=5.0)
+    db_session.flush()
+    db_session.expire_all()
+
+    gold = [name for name, ep in episodes.items() if db_session.get(Episode, ep.id).pot == "gold"]
+    victim = episodes[gold[0]]
+    report = demote_from_gold(db_session, victim.external_id, reason="test", settings=settings)
+
+    # Every episode in the fixture carries its own show and topic, so removing one always costs
+    # gold both of them.
+    assert victim.show_id in report.gold_coverage_lost.get("show_id", [])
+    assert victim.external_id in report.render()

@@ -80,7 +80,9 @@ accepted on cross-ASR disagreement without listening, which is the only way fift
 affordable. Placement is greedy against an hours target (`dataset.gold_hours_target`), taking the
 episode that adds the most unseen show, gender, age bracket or topic, because a five-hour benchmark
 drawn from one show measures that show. Ingestion assigns pots itself; `scripts/assign_pots.py`
-covers the rest (D63).
+covers the rest (D63). `scripts/demote_from_gold.py` is the one exception to "never leaves" — one
+episode, by name, with a reason on an audit row, and only while nothing has yet been trained on or
+measured against the benchmark (D68).
 
 Every label records which it was, `verified` or `screened`, and every export row carries it. The
 harness refuses to screen a gold clip, and refuses to write a gold export containing one.
@@ -132,6 +134,7 @@ Run from the repository root with the backend virtualenv:
 ```bash
 backend/.venv/bin/python scripts/import_manifest.py  export_show-a_ep012/ [--dry-run]
 backend/.venv/bin/python scripts/assign_pots.py      [--gold-hours 5] [--dry-run]
+backend/.venv/bin/python scripts/demote_from_gold.py --episode <id> --reason "..." [--dry-run]
 backend/.venv/bin/python scripts/build_queue.py      [--episode show-a_ep012]
 backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-version v1
 backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
