@@ -34,3 +34,6 @@ reports/audio-ab/
 
 # Pre-wipe database and object-storage snapshots
 backups/
+
+# Jupyter autosaves
+.ipynb_checkpoints/
