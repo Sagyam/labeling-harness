@@ -342,7 +342,8 @@ the same inputs and filters produce byte-identical output.
 | `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |
 | `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
-| `GET /stats/report` | Comprehensive analytics: pots, coverage, verification mix, agreement, milestones |
+| `GET /stats/report` | Pipeline status: pots, coverage, verification mix, agreement, accept-rate trend |
+| `GET /stats/inventory` | Corpus inventory: hours by every recorded dimension, gaps, and ranked sourcing recommendations (D69) |
 | `GET /pots` | What each pot holds and what the gold pot does not cover; assigns nothing |
 | `POST /pots/assign` | Place unplaced episodes against an hours target; redraw the train/val line |
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |

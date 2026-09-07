@@ -127,7 +127,12 @@ class DatasetSettings(BaseModel):
     gold_hours_target: float = Field(default=5.0, gt=0)
     #: Hours the train pot is aiming at. Informational -- everything not needed for gold goes to
     #: train, so this drives the dashboard's progress bar rather than the assigner's decisions.
-    train_hours_target: float = Field(default=50.0, gt=0)
+    #: Twenty rather than the original fifty: the from-scratch scaling curve the larger figure came
+    #: from does not apply here. Nepali already has ~160 h public, and adapting a pretrained model
+    #: to a domain saturates roughly an order of magnitude earlier. The corpus is short of
+    #: speakers rather than hours (D69), and no number of extra hours from the same twelve people
+    #: fixes that.
+    train_hours_target: float = Field(default=20.0, gt=0)
     #: Ceiling on gold's share of the ingested corpus. Without it a corpus smaller than
     #: ``gold_hours_target`` is swallowed whole -- every episode locked irreversibly into the
     #: benchmark, nothing left to train on, and the benchmark's coverage fixed at a point when the
@@ -145,23 +150,10 @@ class DatasetSettings(BaseModel):
     coverage_keys: list[Literal["show_id", "gender", "age_bracket", "topic"]] = Field(
         default_factory=lambda: ["show_id", "gender", "age_bracket", "topic"]
     )
-
-
-class GamifySettings(BaseModel):
-    """Thresholds behind the dashboard's progress display.
-
-    None of this changes what is exported. It exists because the corpus is built by one person over
-    many sessions, and a number that only ever counts up is easier to keep showing up for than a
-    backlog that only ever counts down.
-    """
-
-    model_config = _STRICT
-
-    #: Segments a day that counts as a full day's work; the daily ring fills against it.
-    daily_goal_segments: int = Field(default=200, gt=0)
-    #: Minutes of *corpus* audio cleared per level. Levels are measured in audio, not in clicks,
-    #: so screening a thousand short clips does not outrank verifying an hour of hard ones.
-    minutes_per_level: float = Field(default=30.0, gt=0)
+    #: Hours below which the inventory calls a stratum thin and asks for more of it (D69). A
+    #: floor rather than a target share: there is no defensible ideal share for "speech from
+    #: 60-79 year olds", but there is a point below which a stratum supports no claim at all.
+    min_stratum_hours: float = Field(default=1.0, gt=0)
 
 
 class QueueWeights(BaseModel):
@@ -339,7 +331,6 @@ class Settings(BaseSettings):
     api: ApiSettings = Field(default_factory=ApiSettings)
     importer: ImporterSettings = Field(default_factory=ImporterSettings)
     dataset: DatasetSettings = Field(default_factory=DatasetSettings)
-    gamify: GamifySettings = Field(default_factory=GamifySettings)
     queue: QueueSettings = Field(default_factory=QueueSettings)
     translit: TranslitSettings = Field(default_factory=TranslitSettings)
     labels: LabelSettings = Field(default_factory=LabelSettings)

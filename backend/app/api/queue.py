@@ -12,6 +12,7 @@ from app.api.deps import get_session, require_auth
 from app.api.schemas import QueueRowOut
 from app.api.serializers import serialize_queue_row
 from app.models import AnnotationTask, Episode, Segment
+from app.services.inventory import collect_inventory
 from app.services.report import collect_report
 from app.services.stats import collect_stats
 
@@ -60,3 +61,9 @@ def get_stats(session: Session = Depends(get_session)) -> dict[str, Any]:
 def get_report(session: Session = Depends(get_session)) -> dict[str, Any]:
     """Comprehensive status report: corpus, throughput, scores, split balance, and trends."""
     return collect_report(session)
+
+
+@router.get("/stats/inventory")
+def get_inventory(session: Session = Depends(get_session)) -> dict[str, Any]:
+    """What the corpus contains, what it is missing, and what to record next (D69)."""
+    return collect_inventory(session).as_dict()

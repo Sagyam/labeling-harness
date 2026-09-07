@@ -1564,11 +1564,9 @@ the artefact outlives the session that made it.
 and — worse — a delete key used casually in the train pot and carefully in gold is a biased filter
 applied to one distribution and not the other, with nothing recording that it happened.
 
-**Milestones** (`app/services/gamify.py`) are derived on read from existing tables and stored
-nowhere. Two choices about what they reward: levels are measured in **audio cleared, not clips
-decided**, so screening a thousand two-second clips does not outrank verifying an hour of hard ones;
-and a verified second counts double a screened one, so the scoreboard does not pull against the
-corpus's own quality claim.
+**Milestones** were part of this entry and are gone; see D69. `app/services/gamify.py` computed a
+level, a streak, a daily goal and a set of achievements on read. Nothing was stored, so removing it
+was a deletion and not a migration.
 
 **Reversal:** the migration has a working `downgrade`, and it backfilled rather than reassigned —
 existing episodes took their pot from the split they already had, so nothing moved. Reversing now is
@@ -1835,3 +1833,67 @@ for as long as this entry's premise holds. After the first training run neither 
 reversible: promote and the benchmark becomes a memorization test, demote and the numbers already
 measured stop meaning anything.
 
+## D69 — The analytics page answers what to record next, and the scoreboard is deleted
+
+The dashboard's progress display -- levels, streaks, a daily goal, fourteen achievements -- is
+removed: `app/services/gamify.py`, `GamifySettings`, the `gamify` block in `config/settings.yaml`,
+the `progress` key on the status report, and the panel that rendered them. Nothing was stored, so
+this is a deletion rather than a migration; there is no schema change and no downgrade to write.
+
+In its place, `app/services/inventory.py` and `GET /stats/inventory` answer a question the harness
+could not previously answer without SQL: **what is in this corpus, what is missing from it, and
+what should the next recording be?**
+
+**Why the scoreboard went.** It was built on the argument that a backlog only ever counts down, and
+that argument was sound. What made it wrong here is what the corpus turned out to be limited by.
+The corpus is short of *speakers*, not hours -- twelve individuals, ten of them male, two age
+brackets, every show between 13% and 36% English -- so the binding constraint is the composition of
+what gets recorded, and a scoreboard measuring cleared audio rewards the one axis that was already
+sufficient. A page whose most prominent number is the wrong number is worse than one with no
+number, because it is read as advice.
+
+**What replaced it.** Three sections, in the order the question is asked: an inventory cut by every
+variable the corpus records; the gaps in it; and those gaps ranked into a shopping list. The ranking
+is `weight x severity`, where weight is how much a kind of gap matters and severity is 1.0 for
+something absent and `deficit / min_stratum_hours` for something thin. Every row carries the
+measurement that produced it, because a recommendation whose number is not visible is an opinion.
+
+Three measurement decisions carry the module, and each exists because its opposite produces a
+number that looks fine and is false.
+
+* **Hours are attributed per episode to every value the episode carries.** An episode with a male
+  host and a female guest counts its whole duration on both sides. No route diarizes (D52), so
+  per-speaker time does not exist, and splitting an episode's hours evenly between its speakers
+  would invent a precision the schema cannot support. The consequence -- speaker shares that do not
+  sum to 1 -- is stated on the page rather than normalised away.
+* **A stratum is judged by absence, thinness and dominance, never against a target distribution.**
+  There is no defensible ideal share of "hours of speech from 60-79 year olds". There is a point
+  below which a stratum supports no claim at all, and that is `dataset.min_stratum_hours` (1.0 h),
+  the one new setting.
+* **Register variance is measured across shows, not across clips.** Clip-level code-switch density
+  spans nearly the full range inside any single show, so the clip histogram is wide even when every
+  speaker recorded is the same kind of speaker. The spread across show means is the number that
+  says whether the dependent variable has any variance left to explain.
+
+**The speaker count is reported as a floor.** Distinct `(show, role, gender, age)` combinations
+undercount: two guests of one show in the same bracket collapse into one, and there is no way to
+separate them, because no route diarizes and no name is stored (D56). It is rendered as `>= 11`
+rather than `11`. An undercount that says so is usable; one that does not is a lie.
+
+**Off-taxonomy values are reported as dirt, not as gaps.** Six of sixteen episodes carry a topic
+typed as free text into the ingest form -- `phone_review`, `traffic_accidents`, `cooking` -- rather
+than chosen from D57's closed list. Those cannot be stratified on, and until this page they were
+invisible: they looked exactly like a topic that was simply rare.
+
+**`dataset.train_hours_target` drops from 50 h to 20 h in the same change.** It is informational --
+it drives this page's bar and nothing in the assigner -- but a target on the page is read as advice,
+and 50 h was left over from a from-scratch scaling curve that does not apply. Nepali already has
+~160 h public (OpenSLR SLR54) and the work here is domain adaptation onto a pretrained model, which
+saturates roughly an order of magnitude earlier. The figure that matters is not on that axis anyway:
+twelve speakers, ten of them male, is not fixed by any number of additional hours from the same
+twelve people.
+
+**Reversal:** delete the module, the endpoint and the `analytics/` components; the old page is in
+git. Restoring the scoreboard would mean restoring `gamify.py` from history -- it read only tables
+that still exist, so it would work unchanged. `dataset.min_stratum_hours` is the only configuration
+added and defaults are safe to drop.

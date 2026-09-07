@@ -24,6 +24,7 @@ import {
   YouTubeProbe,
   YouTubeIngestIn,
   AnalyticsReport,
+  CorpusInventory,
   ExportResponse,
   ExportHistoryItem,
   CostReportResponse,
@@ -286,6 +287,9 @@ export const api = {
   },
 
   getReport: (): Promise<AnalyticsReport> => request<AnalyticsReport>('/stats/report'),
+
+  /** What the corpus contains, what it is missing, and what to record next (D69). */
+  getInventory: (): Promise<CorpusInventory> => request<CorpusInventory>('/stats/inventory'),
 
   getPots: (): Promise<PotPanel> => request<PotPanel>('/pots'),
 

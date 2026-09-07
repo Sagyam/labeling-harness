@@ -414,7 +414,6 @@ export interface AnalyticsReport {
   split_balance: Record<string, { episodes: number; segments: number; hours: number }>
   pots: PotPanel
   verification: VerificationPanel
-  progress: ProgressPanel
   word_timestamp_coverage: {
     hypotheses_total: number
     hypotheses_with_words: number
@@ -464,42 +463,6 @@ export interface VerificationPanel {
   screened: number
   total: number
   hours: Record<VerificationTier, number>
-}
-
-export type MilestoneGroup = 'volume' | 'quality' | 'habit' | 'corpus'
-
-export interface Milestone {
-  id: string
-  name: string
-  description: string
-  progress: number
-  target: number
-  unlocked: boolean
-  group: MilestoneGroup
-}
-
-export interface ProgressPanel {
-  level: number
-  level_minutes: number
-  minutes_into_level: number
-  minutes_per_level: number
-  /** 0-1 through the current level. */
-  level_fraction: number
-  verified_minutes: number
-  screened_minutes: number
-  current_streak_days: number
-  longest_streak_days: number
-  /** Whether today already counts, so the UI can say "keep it" rather than "extend it". */
-  streak_active_today: boolean
-  today_segments: number
-  daily_goal_segments: number
-  daily_goal_fraction: number
-  best_day_segments: number
-  best_day: string | null
-  active_days: number
-  activity: Array<{ day: string; segments: number }>
-  achievements: Milestone[]
-  unlocked_count: number
 }
 
 export interface PotChange {
@@ -647,3 +610,168 @@ export interface CostRequestsResponse {
 
 
 
+
+// --- Corpus inventory (D69) ---------------------------------------------------------------
+// What the corpus contains, what it is missing, and what to record next. Hours on a speaker
+// dimension are attributed per episode to every value the episode carries, so those shares do
+// not sum to 1: nothing in the schema says which speaker held the microphone for how long.
+
+/** One value of one dimension, with the audio that carries it. */
+export interface DimensionValue {
+  value: string
+  hours: number
+  episodes: number
+  segments: number
+  labeled_hours: number
+  /** Distinct shows carrying it. One show means the value is not independent of that show. */
+  shows: number
+  /** Share of corpus hours. */
+  share: number
+}
+
+export interface Dimension {
+  key: string
+  values: DimensionValue[]
+  /** Vocabulary values with no audio at all. Empty for an open dimension like `show_id`. */
+  absent: string[]
+  /** Values present that the closed vocabulary does not contain — dirt, not a gap. */
+  off_vocabulary: string[]
+  /** Share held by the largest value, over attributed value-hours (these do sum to 1). */
+  top_share: number
+  hhi: number
+  unknown_episodes: number
+  unknown_hours: number
+}
+
+/** One line of the shopping list: what to look for, and the number that says why. */
+export interface Recommendation {
+  kind:
+    | 'gender'
+    | 'age_bracket'
+    | 'register'
+    | 'register_spread'
+    | 'show_concentration'
+    | 'gold_coverage'
+    | 'episode_length'
+    | 'topic'
+  target: string
+  reason: string
+  /** 0-1: weight of the gap kind times how severe this instance of it is. */
+  priority: number
+  hours_present: number
+  hours_needed: number
+}
+
+export interface RegisterBand {
+  name: 'low' | 'mid' | 'high'
+  lower: number
+  upper: number
+  description: string
+  hours: number
+  segments: number
+}
+
+export interface RegisterData {
+  measured_hours: number
+  mean: number | null
+  /** Hours-weighted mean code-switch density per show, ascending. */
+  show_means: Array<{ show_id: string; mean_cmi: number; hours: number }>
+  show_mean_min: number | null
+  show_mean_max: number | null
+  /** Distance between the least and most code-switched show. Null below two shows. */
+  show_mean_spread: number | null
+  histogram: Array<{ lower: number; upper: number; hours: number; segments: number }>
+  bands: RegisterBand[]
+}
+
+export interface LengthProfile {
+  buckets: Array<{ name: string; episodes: number; hours: number }>
+  median_minutes: number | null
+  long_episode_hours: number
+  long_episode_share: number
+}
+
+export interface MetadataCompleteness {
+  field: string
+  filled: number
+  total: number
+  fraction: number
+  missing_hours: number
+  missing_episodes: string[]
+}
+
+export interface InventoryEpisode {
+  external_id: string
+  title: string | null
+  show_id: string | null
+  published_at: string | null
+  pot: PotName
+  split: string
+  hours: number
+  minutes: number
+  segments: number
+  labeled_hours: number
+  verified_hours: number
+  labeled_fraction: number
+  topic: string | null
+  topic_source: string | null
+  topic_in_taxonomy: boolean | null
+  speakers: Array<{ role?: string; gender?: string; age_bracket?: string }>
+  mean_cmi: number | null
+  min_cmi: number | null
+  max_cmi: number | null
+}
+
+export interface InventoryShow {
+  show_id: string
+  episodes: number
+  hours: number
+  segments: number
+  labeled_hours: number
+  verified_hours: number
+  /** Distinct (role, gender, age) combinations — a lower bound on people, never a count. */
+  speaker_profiles: number
+  genders: string[]
+  age_brackets: string[]
+  topics: string[]
+  pots: string[]
+  mean_cmi: number | null
+  min_cmi: number | null
+  max_cmi: number | null
+}
+
+export interface CorpusInventory {
+  generated_at: string
+  totals: {
+    episodes: number
+    segments: number
+    hours: number
+    labeled_hours: number
+    verified_hours: number
+    screened_hours: number
+    labeled_fraction: number
+    verified_fraction: number
+    shows: number
+    /** A floor on the number of individuals, not a count of them. */
+    speaker_profiles: number
+    gender_values: number
+    age_values: number
+    topics_carried: number
+    topics_total: number
+    gold_hours: number
+    gold_target_hours: number
+    train_hours: number
+    train_target_hours: number
+    unassigned_hours: number
+    min_stratum_hours: number
+  }
+  dimensions: Record<string, Dimension>
+  /** `{gender: {age_bracket: hours}}`, every cell present. The empty ones are the point. */
+  speaker_matrix: Record<string, Record<string, number>>
+  register: RegisterData
+  length_profile: LengthProfile
+  metadata_completeness: MetadataCompleteness[]
+  episodes: InventoryEpisode[]
+  shows: InventoryShow[]
+  recommendations: Recommendation[]
+}

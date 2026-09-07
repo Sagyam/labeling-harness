@@ -1,59 +1,50 @@
+/**
+ * The analytics page: what is in the corpus, what is missing, and what to record next (D69).
+ *
+ * The order of the page is an argument. It opens with the ledger — nine numbers that say how big
+ * the corpus is and how many different people are in it — then goes straight to the shopping
+ * list, because that is the only section that ends in an action. Everything below is the evidence
+ * for those rows, arranged so each one can be checked: who is in it, how they speak, what the
+ * pots hold, what the records are missing, and finally the raw episode inventory.
+ *
+ * Pipeline health sits at the bottom. It used to lead the page, and it is real, but it answers
+ * how the work is going rather than whether the corpus is any good.
+ */
+
 import { useEffect, useState } from 'react'
-import {
-  RiCheckboxCircleLine,
-  RiErrorWarningLine,
-  RiHourglassLine,
-  RiLineChartLine,
-  RiMicLine,
-  RiPieChartLine,
-  RiPulseLine,
-  RiRefreshLine,
-  RiSparklingLine,
-  RiTimeLine,
-} from '@remixicon/react'
+import { RiDatabase2Line, RiErrorWarningLine, RiRefreshLine } from '@remixicon/react'
 import { toast } from 'sonner'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { DatasetPanel } from '@/components/DatasetPanel'
+import { CoveragePanel } from '@/components/analytics/CoveragePanel'
+import { EpisodesTable, MetadataPanel, ShowsTable } from '@/components/analytics/InventoryTables'
+import { PipelinePanel } from '@/components/analytics/PipelinePanel'
+import { PotsPanel } from '@/components/analytics/PotsPanel'
+import { RegisterSection } from '@/components/analytics/RegisterPanel'
+import { SourcingPanel } from '@/components/analytics/SourcingPanel'
+import { Stat, hours, percent } from '@/components/analytics/primitives'
 import { api } from '@/services/api'
-import type { AnalyticsReport } from '@/types'
-
-function formatSeconds(sec?: number | null) {
-  if (sec === null || sec === undefined) return '--'
-  return `${sec.toFixed(1)}s`
-}
-
-function formatPercent(fraction?: number | null) {
-  if (fraction === null || fraction === undefined) return '--'
-  return `${(fraction * 100).toFixed(1)}%`
-}
+import type { AnalyticsReport, CorpusInventory } from '@/types'
 
 export function AnalyticsView() {
+  const [inventory, setInventory] = useState<CorpusInventory | null>(null)
   const [report, setReport] = useState<AnalyticsReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const loadReport = async () => {
+  const load = async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await api.getReport()
-      setReport(data)
+      // Two endpoints, one round trip: the inventory answers what the corpus is, the report
+      // answers how the work on it is going, and they are separate services for that reason.
+      const [nextInventory, nextReport] = await Promise.all([api.getInventory(), api.getReport()])
+      setInventory(nextInventory)
+      setReport(nextReport)
     } catch (err: any) {
-      setError(err.message || 'Failed to load analytics report')
+      setError(err.message || 'Failed to load the corpus inventory')
       toast.error('Failed to load analytics')
     } finally {
       setLoading(false)
@@ -61,380 +52,139 @@ export function AnalyticsView() {
   }
 
   useEffect(() => {
-    loadReport()
+    load()
   }, [])
 
-  if (loading && !report) {
+  if (loading && !inventory) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-muted-foreground">
         <Spinner className="size-6 text-primary" />
-        <span>Loading analytics &amp; quality metrics…</span>
+        <span>Reading the corpus…</span>
       </div>
     )
   }
 
-  if (error && !report) {
+  if (error && !inventory) {
     return (
-      <div className="p-6 max-w-2xl mx-auto">
+      <div className="mx-auto max-w-2xl p-6">
         <Alert variant="destructive">
           <RiErrorWarningLine className="size-5" />
-          <AlertTitle>Could not load analytics</AlertTitle>
+          <AlertTitle>Could not load the corpus inventory</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-        <Button onClick={loadReport} className="mt-4 gap-2">
+        <Button onClick={load} className="mt-4 gap-2">
           <RiRefreshLine className="size-4" /> Retry
         </Button>
       </div>
     )
   }
 
-  if (!report) return null
+  if (!inventory) return null
 
-  const corpus = report.corpus
-  const labels = report.labels
-  const throughput = report.throughput
-  const queue = report.queue
-  const scores = report.scores
-  const wordCoverage = report.word_timestamp_coverage
-
-  const accepted = labels.accepted_unchanged || 0
-  const edited = labels.edited || 0
-  const unusable = labels.unusable_audio || 0
-  const uncertain = labels.uncertain || 0
-  const totalLabeled = labels.total || 1
-
-  const acceptedPct = Math.round((accepted / totalLabeled) * 100)
-  const editedPct = Math.round((edited / totalLabeled) * 100)
-  const unusablePct = Math.round((unusable / totalLabeled) * 100)
-  const uncertainPct = Math.round((uncertain / totalLabeled) * 100)
+  const { totals, dimensions, register, length_profile: length } = inventory
+  const genderVocabulary = totals.gender_values + (dimensions.gender?.absent.length ?? 0)
+  const ageVocabulary = totals.age_values + (dimensions.age_bracket?.absent.length ?? 0)
 
   return (
-    <div className="scrollbar-thin flex-1 overflow-y-auto bg-background p-6 space-y-6">
-      {/* Header & Title */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <RiLineChartLine className="size-6 text-primary" />
-            <h1 className="font-heading text-xl font-bold tracking-tight">Analytics &amp; Statistics</h1>
-            <Badge variant="secondary" className="font-mono text-xs">
-              Live
-            </Badge>
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Corpus size, annotation throughput velocity, model agreement, and pipeline health.
+    <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto bg-background p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+        <div className="flex items-center gap-2">
+          <RiDatabase2Line className="size-5 text-primary" />
+          <h1 className="font-heading text-lg font-bold tracking-tight">Corpus</h1>
+          <p className="text-xs text-muted-foreground">
+            what is in it, what is missing, and what to record next
           </p>
         </div>
-
         <div className="flex items-center gap-3">
           <span className="font-mono text-[11px] text-muted-foreground">
-            Updated: {new Date(report.generated_at).toLocaleTimeString()}
+            {new Date(inventory.generated_at).toLocaleTimeString()}
           </span>
-          <Button variant="outline" size="sm" onClick={loadReport} className="h-8 gap-1.5">
+          <Button variant="outline" size="sm" onClick={load} className="h-8 gap-1.5">
             <RiRefreshLine className="size-3.5" />
             Refresh
           </Button>
         </div>
       </div>
 
-      {/* TOP KPI HERO CARDS */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Audio Hours */}
-        <Card className="bg-card/50">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Corpus Audio
-            </CardTitle>
-            <RiMicLine className="size-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">{corpus.audio_hours.toFixed(1)} hrs</div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {corpus.segments.toLocaleString()} segments across {corpus.episodes} episodes
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Accept Rate */}
-        <Card className="bg-card/50">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Accept Rate
-            </CardTitle>
-            <RiCheckboxCircleLine className="size-4 text-emerald-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-              {formatPercent(report.accept_rate)}
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {labels.total.toLocaleString()} total human annotations submitted
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Throughput */}
-        <Card className="bg-card/50">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Velocity
-            </CardTitle>
-            <RiPulseLine className="size-4 text-warning" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">
-              {formatSeconds(throughput.median_seconds_per_segment)}
-              <span className="text-xs font-normal text-muted-foreground ml-1">/ seg</span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {throughput.segments_per_hour
-                ? `${throughput.segments_per_hour.toFixed(0)} segs / hr`
-                : '--'}{' '}
-              &middot; {throughput.annotator_hours.toFixed(1)} human hours logged
-            </p>
-          </CardContent>
-        </Card>
-
-        {/* Backlog & Remaining */}
-        <Card className="bg-card/50">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Backlog Left
-            </CardTitle>
-            <RiHourglassLine className="size-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="font-mono text-2xl font-bold">{queue.backlog.toLocaleString()} segs</div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Est.{' '}
-              {queue.projected_hours_to_finish
-                ? `${queue.projected_hours_to_finish.toFixed(1)} hrs left`
-                : '--'}{' '}
-              to complete corpus
-            </p>
-          </CardContent>
-        </Card>
+      {/* The ledger. Nine figures, one row: size on the left, breadth on the right, because
+          breadth is the constraint the corpus is actually under. */}
+      <div className="grid grid-cols-2 divide-x divide-y rounded-lg border bg-card sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 xl:divide-y-0">
+        <Stat
+          label="Audio"
+          value={`${hours(totals.hours)} h`}
+          sub={`${totals.segments.toLocaleString()} clips`}
+        />
+        <Stat
+          label="Labelled"
+          value={percent(totals.labeled_fraction)}
+          sub={`${hours(totals.labeled_hours)} h decided`}
+        />
+        <Stat
+          label="Heard"
+          value={percent(totals.verified_fraction)}
+          sub={`${hours(totals.verified_hours)} h of it played`}
+          title="Share of labelled audio someone actually listened to, rather than screening on the disagreement signal"
+        />
+        <Stat label="Episodes" value={totals.episodes} sub={`median ${length.median_minutes ?? '--'} min`} />
+        <Stat
+          label="Shows"
+          value={totals.shows}
+          sub={`top holds ${percent(dimensions.show_id?.top_share ?? 0)}`}
+          tone={(dimensions.show_id?.top_share ?? 0) > 0.5 ? 'text-amber-600 dark:text-amber-400' : ''}
+        />
+        <Stat
+          label="Speakers"
+          value={`≥ ${totals.speaker_profiles}`}
+          sub="distinct profiles"
+          title="Distinct (show, role, gender, age) combinations. Two guests of one show in the same bracket collapse into one, so this is a floor."
+        />
+        <Stat
+          label="Gender"
+          value={`${totals.gender_values}/${genderVocabulary}`}
+          sub="values carried"
+          tone={totals.gender_values < genderVocabulary ? 'text-amber-600 dark:text-amber-400' : ''}
+        />
+        <Stat
+          label="Age"
+          value={`${totals.age_values}/${ageVocabulary}`}
+          sub="brackets carried"
+          tone={totals.age_values < ageVocabulary ? 'text-amber-600 dark:text-amber-400' : ''}
+        />
+        <Stat
+          label="English"
+          value={percent(register.mean, 1)}
+          sub={
+            register.show_mean_spread !== null
+              ? `${percent(register.show_mean_spread)} spread across shows`
+              : 'one show only'
+          }
+        />
       </div>
 
-      {/* SECTION: the two pots, verification mix, coverage, milestones */}
-      <DatasetPanel
-        pots={report.pots}
-        verification={report.verification}
-        progress={report.progress}
+      <SourcingPanel
+        recommendations={inventory.recommendations}
+        minStratumHours={totals.min_stratum_hours}
       />
 
-      {/* Disposition Mix */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <RiPieChartLine className="size-4 text-primary" />
-            <CardTitle className="text-sm font-semibold">Annotation Disposition Mix</CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            Breakdown of decisions made by annotators on the corpus.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Visual Multi-color Progress Bar */}
-          <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              style={{ width: `${acceptedPct}%` }}
-              className="bg-emerald-500"
-              title={`Accepted Unchanged: ${acceptedPct}%`}
-            />
-            <div
-              style={{ width: `${editedPct}%` }}
-              className="bg-blue-500"
-              title={`Edited: ${editedPct}%`}
-            />
-            <div
-              style={{ width: `${unusablePct}%` }}
-              className="bg-rose-500"
-              title={`Unusable Audio: ${unusablePct}%`}
-            />
-            <div
-              style={{ width: `${uncertainPct}%` }}
-              className="bg-amber-500"
-              title={`Uncertain: ${uncertainPct}%`}
-            />
-          </div>
+      <CoveragePanel
+        matrix={inventory.speaker_matrix}
+        dimensions={dimensions}
+        corpusHours={totals.hours}
+        speakerProfiles={totals.speaker_profiles}
+        lengthProfile={length}
+      />
 
-          <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-            <div className="rounded-md border p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
-                <span className="size-2 rounded-full bg-emerald-500" />
-                Accepted
-              </div>
-              <div className="font-mono text-lg font-bold">{accepted.toLocaleString()}</div>
-              <div className="text-[10px] text-muted-foreground">{acceptedPct}% of labels</div>
-            </div>
+      <RegisterSection data={register} minStratumHours={totals.min_stratum_hours} />
 
-            <div className="rounded-md border p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-medium">
-                <span className="size-2 rounded-full bg-blue-500" />
-                Edited
-              </div>
-              <div className="font-mono text-lg font-bold">{edited.toLocaleString()}</div>
-              <div className="text-[10px] text-muted-foreground">{editedPct}% of labels</div>
-            </div>
+      {report ? <PotsPanel pots={report.pots} verification={report.verification} /> : null}
 
-            <div className="rounded-md border p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-medium">
-                <span className="size-2 rounded-full bg-rose-500" />
-                Unusable
-              </div>
-              <div className="font-mono text-lg font-bold">{unusable.toLocaleString()}</div>
-              <div className="text-[10px] text-muted-foreground">{unusablePct}% of labels</div>
-            </div>
+      <MetadataPanel rows={inventory.metadata_completeness} />
 
-            <div className="rounded-md border p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
-                <span className="size-2 rounded-full bg-amber-500" />
-                Uncertain
-              </div>
-              <div className="font-mono text-lg font-bold">{uncertain.toLocaleString()}</div>
-              <div className="text-[10px] text-muted-foreground">{uncertainPct}% of labels</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <ShowsTable shows={inventory.shows} />
 
-      {/* SECTION: Upstream Model Quality & Agreement */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <RiSparklingLine className="size-4 text-primary" />
-            <CardTitle className="text-sm font-semibold">
-              Quality &amp; Agreement Metrics
-            </CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            Model disagreement rates, language switching density, and script conflict averages.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Code Switch Density */}
-            <div className="rounded-lg border p-4 space-y-1">
-              <span className="font-heading text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                Mean CMI (Code Switch)
-              </span>
-              <div className="font-mono text-2xl font-bold">
-                {scores.mean_code_switch_density !== null
-                  ? `${(scores.mean_code_switch_density * 100).toFixed(1)}%`
-                  : '--'}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Density of intra-sentential English-Nepali code-switching.
-              </p>
-            </div>
+      <EpisodesTable episodes={inventory.episodes} />
 
-            {/* Word Disagreement Rate */}
-            <div className="rounded-lg border p-4 space-y-1">
-              <span className="font-heading text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                Word Disagreement
-              </span>
-              <div className="font-mono text-2xl font-bold">
-                {scores.mean_word_disagreement_rate !== null
-                  ? `${(scores.mean_word_disagreement_rate * 100).toFixed(1)}%`
-                  : '--'}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Token-level divergence between ASR candidate hypotheses.
-              </p>
-            </div>
-
-            {/* Script Conflict Rate */}
-            <div className="rounded-lg border p-4 space-y-1">
-              <span className="font-heading text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                Script Conflict
-              </span>
-              <div className="font-mono text-2xl font-bold">
-                {scores.mean_script_conflict_rate !== null
-                  ? `${(scores.mean_script_conflict_rate * 100).toFixed(1)}%`
-                  : '--'}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Devanagari vs Latin alphabet script conflict rate.
-              </p>
-            </div>
-
-            {/* Word Timestamps Coverage */}
-            <div className="rounded-lg border p-4 space-y-1">
-              <span className="font-heading text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                Word Timestamps
-              </span>
-              <div className="font-mono text-2xl font-bold">
-                {formatPercent(wordCoverage.fraction)}
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {wordCoverage.hypotheses_with_words} / {wordCoverage.hypotheses_total} hypotheses with
-                word-level timing.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* SECTION: Pipeline Health - Daily Accept Rate Trend */}
-      {report.accept_rate_by_day && report.accept_rate_by_day.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <RiTimeLine className="size-4 text-primary" />
-              <CardTitle className="text-sm font-semibold">
-                Daily Pipeline Health &amp; Accept Rate Trend
-              </CardTitle>
-            </div>
-            <CardDescription className="text-xs">
-              Daily accept rate monitoring detects changes or drift in upstream models over time.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-md border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs font-semibold">Date</TableHead>
-                    <TableHead className="text-xs font-semibold text-right">Labeled</TableHead>
-                    <TableHead className="text-xs font-semibold text-right">Accepted Unchanged</TableHead>
-                    <TableHead className="text-xs font-semibold text-right">Accept Rate</TableHead>
-                    <TableHead className="text-xs font-semibold w-48">Health Indicator</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.accept_rate_by_day.map((row) => {
-                    const pct =
-                      row.accept_rate !== null ? Math.round(row.accept_rate * 100) : 0
-
-                    return (
-                      <TableRow key={row.day}>
-                        <TableCell className="font-mono text-xs">{row.day}</TableCell>
-                        <TableCell className="text-right font-mono text-xs">
-                          {row.labeled}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-xs">
-                          {row.accepted}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-xs font-bold text-foreground">
-                          {formatPercent(row.accept_rate)}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress value={pct} className="h-2 flex-1" />
-                            <span className="font-mono text-[10px] text-muted-foreground w-8 text-right">
-                              {pct}%
-                            </span>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {report ? <PipelinePanel report={report} /> : null}
     </div>
   )
 }

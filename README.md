@@ -103,11 +103,14 @@ which candidate you picked and ranks it first next time.
 **Episodes** lets you browse what has been ingested and delete an episode or a single segment,
 audio and all.
 
-**Analytics** shows what the dataset actually looks like: each pot against its hours target, how
-much of it was heard rather than screened, and which shows, genders, age brackets and topics the
-benchmark does and does not span. Alongside it is a progress panel — level, streak, daily goal and
-milestones — computed on read from the tables that already exist and stored nowhere. It changes
-nothing about the corpus; it exists because a backlog only ever counts down.
+**Corpus** answers three questions in the order you ask them: what is in the dataset, what is
+missing from it, and what to go and record next. It opens with a ranked shopping list — the
+speaker strata that are empty or thin, the code-switching pole nothing sits at, the show holding
+too much of the corpus — each row carrying the measurement that produced it. Below that is the
+evidence: a gender-by-age grid whose empty cells are drawn rather than omitted, hours by show,
+topic and speaker, the distribution of English mixed in and how far apart the shows are on it, the
+two pots against their targets, which episode records have unfilled or off-taxonomy fields, and a
+sortable row per show and per episode. Everything is derived on read; nothing is stored.
 
 ### Keyboard
 

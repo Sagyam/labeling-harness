@@ -21,7 +21,6 @@ from app.models import (
     SegmentScore,
 )
 from app.models.enums import PIPELINE_STATUSES, SPLITS
-from app.services.gamify import collect_gamify
 from app.services.pots import pot_status
 from app.services.stats import collect_stats, latest_labels_subquery
 
@@ -101,18 +100,9 @@ def collect_report(session: Session) -> dict[str, Any]:
             "hours": round(float(seconds) / 3600, 3),
         }
 
-    # Pots, coverage and the progress panel. `pot_status` reads; it never assigns, so opening the
-    # dashboard cannot move an episode between pots as a side effect of being looked at (D63).
+    # Pots and coverage. `pot_status` reads; it never assigns, so opening the dashboard cannot
+    # move an episode between pots as a side effect of being looked at (D63).
     pots = pot_status(session)
-    progress = collect_gamify(
-        session,
-        pot_hours={
-            "gold": pots.gold_hours,
-            "train": pots.train_hours,
-            "val": pots.val_hours,
-        },
-        gold_coverage_complete=pots.coverage_complete,
-    )
 
     # How much of the corpus was actually listened to, against how much was screened through on the
     # disagreement signal. Reported next to the pots rather than buried, because it is the figure
@@ -196,27 +186,6 @@ def collect_report(session: Session) -> dict[str, Any]:
             **verification,
             "hours": verification_hours,
             "total": verification["verified"] + verification["screened"],
-        },
-        "progress": {
-            "level": progress.level,
-            "level_minutes": progress.level_minutes,
-            "minutes_into_level": progress.minutes_into_level,
-            "minutes_per_level": progress.minutes_per_level,
-            "level_fraction": progress.level_fraction,
-            "verified_minutes": progress.verified_minutes,
-            "screened_minutes": progress.screened_minutes,
-            "current_streak_days": progress.current_streak_days,
-            "longest_streak_days": progress.longest_streak_days,
-            "streak_active_today": progress.streak_active_today,
-            "today_segments": progress.today_segments,
-            "daily_goal_segments": progress.daily_goal_segments,
-            "daily_goal_fraction": progress.daily_goal_fraction,
-            "best_day_segments": progress.best_day_segments,
-            "best_day": progress.best_day,
-            "active_days": progress.active_days,
-            "activity": progress.activity,
-            "achievements": progress.achievements,
-            "unlocked_count": progress.unlocked_count,
         },
         "word_timestamp_coverage": {
             "hypotheses_total": hypotheses_total,
