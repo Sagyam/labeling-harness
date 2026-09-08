@@ -50,8 +50,6 @@ from app.llm.transcription import (
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.forced_align import ForcedAligner, align_text
 from app.services.importer import import_manifest
-from app.services.pots import assign_pots
-from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
     SileroVAD,
     extract_clips,
@@ -1155,29 +1153,24 @@ def _run_stages(
                 f"{import_report.clips_uploaded} clips uploaded to storage"
             )
 
-            # The pot is decided here, before the queue exists and so before a single clip has
-            # been looked at. That ordering is the whole point: a pot chosen later, while looking
-            # at clips, would correlate with how hard they turned out to be and quietly bias the
-            # benchmark (D63).
-            pot_report = assign_pots(session, settings=settings)
+            # The pot is *not* decided here. `assign_pots` chooses greedily, taking the episode
+            # that adds the most unseen show / gender / age bracket / topic; run once per ingest it
+            # only ever sees one candidate, and a greedy choice over one candidate is no choice at
+            # all -- it takes whatever arrived while gold was under target. Gold then tracks
+            # `gold_max_corpus_fraction` of a growing corpus rather than spanning strata, and rule
+            # 3 makes that permanent. So the episode lands unassigned and the assigner runs as a
+            # batch step over the whole corpus, which is the only shape its selection works in.
+            #
+            # D63 rule 1 still holds: the pot is decided before any clip is looked at, because the
+            # queue this episode needs cannot be built until the pot exists (`build_queue` refuses
+            # an unassigned episode -- gold rotates the seed system and train takes the strongest,
+            # so a queue built ahead of the pot would seed the benchmark wrong).
             job.log(
-                f"Pots: gold {pot_report.gold_hours:.2f}h / "
-                f"{pot_report.gold_target_hours:.2f}h target, "
-                f"train {pot_report.train_hours:.2f}h, val {pot_report.val_hours:.2f}h"
+                "Pot: unassigned -- run `python scripts/assign_pots.py` and then "
+                "`python scripts/build_queue.py` to place this episode and queue it."
             )
-
-            job.log("Building prioritized annotation queues...")
-            queue_report = build_queue(
-                session, episode_external_id=job.episode_id, settings=settings
-            )
+            queue_report = None
             session.commit()
-
-            msg = (
-                f"Queue built: {queue_report.tasks_created} tasks created "
-                f"({queue_report.review_tasks} review, {queue_report.audit_tasks} audit, "
-                f"{queue_report.error_tasks} error)"
-            )
-            job.log(msg)
 
         job.complete(
             {
@@ -1189,8 +1182,8 @@ def _run_stages(
                 # Which system cost what, so a bad run points at a vendor rather than at luck.
                 "discarded_by_system": job.discard_summary(),
                 "discarded_segments": [d.as_dict() for d in job.discarded],
-                "tasks_created": queue_report.tasks_created,
-                "review_tasks": queue_report.review_tasks,
+                "tasks_created": queue_report.tasks_created if queue_report else 0,
+                "review_tasks": queue_report.review_tasks if queue_report else 0,
             }
         )
     except Exception as exc:

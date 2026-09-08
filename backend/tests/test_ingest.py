@@ -26,6 +26,8 @@ from app.services.ingest import (
     normalize_audio,
     run_pipeline,
 )
+from app.services.pots import assign_pots
+from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
     SileroVAD,
     SpeechTurn,
@@ -322,7 +324,26 @@ def test_ingest_pipeline_end_to_end(
     segments = db_session.scalars(sa.select(Segment).where(Segment.episode_id == ep.id)).all()
     assert len(segments) >= 1
 
-    # Verify AnnotationTasks created and queued
+    # Ingest no longer places the episode or queues it. `assign_pots` picks greedily between
+    # candidates, and one run per ingest only ever has one, so the pot is decided in a batch step
+    # afterwards instead -- and the queue waits for it, because the seed a clip is given depends
+    # on which pot its episode landed in.
+    assert ep.pot == "unassigned"
+    assert ep.split == "unassigned"
+    assert (
+        db_session.scalars(
+            sa.select(AnnotationTask).where(AnnotationTask.segment_id.in_([s.id for s in segments]))
+        ).all()
+        == []
+    )
+
+    # The two batch steps the ingest log points at do the placing and the queueing.
+    assign_pots(db_session)
+    db_session.flush()
+    assert ep.pot in ("gold", "train")
+    build_queue(db_session)
+    db_session.flush()
+
     tasks = db_session.scalars(
         sa.select(AnnotationTask).where(AnnotationTask.segment_id.in_([s.id for s in segments]))
     ).all()

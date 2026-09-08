@@ -309,19 +309,33 @@ def _select_gold(
     remaining = [c for c in candidates if c.seconds > 0]
     chosen: list[Candidate] = []
     while seconds < target_seconds and remaining:
-        deficit = target_seconds - seconds
-        # An episode longer than the deficit still counts: overshooting the target by part of one
-        # episode is the price of rule 2, and undershooting a benchmark is worse than exceeding it.
+        # An episode longer than the remaining deficit still counts: overshooting the target by
+        # part of one episode is the price of rule 2, and undershooting is worse than exceeding it.
         best = max(
             remaining,
             key=lambda c: (
                 _coverage_gain(c, seen, keys),
-                # Prefer the one that lands closest to the deficit without leaving a sliver.
-                -abs(c.seconds - deficit),
+                # Among episodes bringing the same coverage, the *shortest* one. Ranking by
+                # nearness to the deficit spent the budget on the longest episodes, which buys the
+                # fewest strata per hour and locks the most audio out of training: at a 2 h target
+                # over this corpus it reached 3 shows where shortest-first reaches 6.
+                -c.seconds,
                 # Deterministic tie-break; a plain sort on external_id would bias toward one show.
                 _hash_unit(c.external_id, seed=seed),
             ),
         )
+        # Ranking by coverage only discriminates when there is a field to rank. Called with a
+        # single candidate -- which is what one run per ingest amounts to -- `max` returns it
+        # whatever its coverage, so the greedy selection degenerates into "whoever arrived while
+        # gold was under target". Gold then tracks `gold_max_corpus_fraction` of a growing corpus
+        # instead of spanning strata, and rule 3 makes that permanent.
+        #
+        # So an episode has to earn its place: it enters gold only if it brings a stratification
+        # value gold does not already hold. The hours target is a ceiling on that selection, never
+        # a quota to be filled -- an episode adding no new stratum adds no benchmark power, and
+        # those hours are worth more in the train pot.
+        if _coverage_gain(best, seen, keys) <= 0 and chosen + already_gold:
+            break
         remaining.remove(best)
         chosen.append(best)
         seconds += best.seconds
