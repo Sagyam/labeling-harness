@@ -42,7 +42,13 @@ importer:
 # Pot targets (D63). Durations, not ratios: a ratio over episode count cannot express
 # "five hours of benchmark audio" when episodes run from minutes to four hours.
 dataset:
-  gold_hours_target: 5.0         # gold pot stops taking episodes once this is met
+  gold_hours_target: 3.0         # gold pot stops taking episodes once this is met.
+                                 # Down from 5.0, which was set against the 50 h corpus
+                                 # D69 later cut to 20 h and was never revised with it:
+                                 # 5 h of 50 h is 10%, 5 h of 20 h is 25%. ~3 h is ~27k
+                                 # reference words, which holds the standard error on WER
+                                 # under a point -- ample to rank three systems. What
+                                 # limits this benchmark is speakers, not hours (D69).
   train_hours_target: 20.0       # informational; drives the dashboard, not the assigner.
                                  # Down from 50 h: the from-scratch scaling curve behind that
                                  # figure does not apply to domain adaptation on a pretrained
