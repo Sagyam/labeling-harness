@@ -37,3 +37,8 @@ backups/
 
 # Jupyter autosaves
 .ipynb_checkpoints/
+
+# Diarization notebook: its own venv (uv writes a .gitignore inside, this is belt and braces)
+# and the ECAPA embedding cache, which is regenerated in ~2.5 min from the audio.
+notebooks/.venv-diar/
+notebooks/.cache-diar/

@@ -1,0 +1,26 @@
+# Environment for notebooks/02-diarization.ipynb. Separate from both backend/pyproject.toml
+# (D43 keeps the runtime image thin) and notebooks/requirements.txt (the EDA env must stay
+# installable without a 200 MB torch download).
+#
+#   uv venv --python 3.13 notebooks/.venv-diar
+#   VIRTUAL_ENV=notebooks/.venv-diar uv pip install -r notebooks/requirements-diarization.txt \
+#       --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+#   notebooks/.venv-diar/bin/python -m ipykernel install --user \
+#       --name labeling-harness-diar --display-name "labeling-harness (diarization)"
+#
+# CPU-only torch: this machine has no CUDA device (AMD Raphael iGPU only), and the pilot is
+# sized for a 16-thread CPU. The speaker encoder is speechbrain/spkrec-ecapa-voxceleb, chosen
+# because it is UNGATED -- the pyannote diarization pipelines are gated=auto on the Hub and
+# need an accepted-conditions token, which this project does not carry.
+torch==2.9.1
+torchaudio==2.9.1
+speechbrain==1.1.1
+soundfile==0.13.1
+numpy==2.5.3
+scipy==1.18.1
+scikit-learn==1.8.0
+pandas==3.0.5
+matplotlib==3.11.1
+PyYAML==6.0.3
+ipykernel==7.3.0
+jupyterlab==4.6.3
