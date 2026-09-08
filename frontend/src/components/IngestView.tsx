@@ -132,13 +132,19 @@ function formatClock(seconds: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
+/**
+ * `\w` is ASCII-only in JavaScript, so a fully Devanagari title used to reduce to nothing and be
+ * stored as `_`. Unicode letters, numbers and combining marks are kept instead; a title that still
+ * leaves nothing returns '', so the backend slugifies from the title rather than the empty box.
+ */
 function slugify(text: string) {
   return text
     .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
+    .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
     .trim()
     .replace(/[-\s]+/g, '_')
     .slice(0, 40)
+    .replace(/^_+|_+$/g, '')
 }
 
 /**

@@ -8,6 +8,7 @@ import json
 import re
 import shutil
 import time
+import unicodedata
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
@@ -41,10 +42,26 @@ ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".flac", ".aac", ".ogg"}
 
 
 def _slugify(text: str) -> str:
-    """Generate a clean slug for episode IDs."""
-    clean = re.sub(r"[^\w\s-]", "", text).strip().lower()
-    slug = re.sub(r"[-\s]+", "_", clean)
-    return slug[:50] or f"ep_{int(time.time())}"
+    """Generate a clean slug for episode IDs.
+
+    Combining marks are kept alongside word characters. ``\\w`` matches Devanagari consonants but
+    not the matras attached to them (Unicode category ``M*``), so a plain ``[^\\w\\s-]`` filter
+    silently rewrites the title: हिमालयन becomes हमलयन. A slug that survives as nothing but
+    separators falls back to the timestamp, rather than being stored as ``_``.
+    """
+    kept = "".join(
+        character
+        if (
+            character.isalnum()
+            or character in "_-"
+            or character.isspace()
+            or unicodedata.category(character).startswith("M")
+        )
+        else ""
+        for character in text
+    )
+    slug = re.sub(r"[-\s]+", "_", kept.strip().lower())
+    return slug[:50].strip("_") or f"ep_{int(time.time())}"
 
 
 def _episode_metadata(genre: str, topic: str, speakers_json: str) -> dict[str, Any]:
