@@ -30,23 +30,42 @@ import type { PotName, QueueRow, VerificationTier } from '@/types'
 
 const QUEUES = ['review', 'audit', 'error'] as const
 
-//: What the priority score is actually made of since D54. These names must track
-//: `ScoreInputs` in the backend: the pre-D54 formula's `word_disagreement_rate` and
-//: `code_switch_density` still exist in `reason_jsonb`, but under `legacy`, so reading them
-//: from `components` yields undefined for every row.
+//: What the priority score is made of since D74. These names must track `ScoreInputs` in the
+//: backend; the D67 formula still rides along in `reason_jsonb`, but under `legacy`.
 const PRIORITY_COMPONENTS: ReadonlyArray<[string, string]> = [
-  ['seed_outvoted', 'seed outvoted'],
+  ['unsupported_rate', 'unheard words'],
+  ['dropped_rate', 'dropped words'],
+  ['asr_disagreement', 'recognisers disagree'],
+  ['acoustic_gap', 'acoustic gap'],
   ['low_confidence', 'low confidence'],
   ['rule_flag_score', 'rule flags'],
 ]
+
+//: What each hazard gate means, in the words the tooltip shows (D74).
+const HAZARD_LABEL: Record<string, string> = {
+  unfused: 'no fused text — seeded from one recogniser',
+  invention: 'words no recogniser heard',
+  dropped: 'words two recognisers heard, missing',
+  seam_bleed: 'words from the neighbouring clip',
+  length_outlier: 'wrong length for what was heard',
+  emptied: 'empty where speech was heard',
+  speech_over_silence: 'text where nothing was heard',
+  unaligned: 'text does not fit the audio',
+  fuser_uncertain: 'the fuser said it was unsure',
+}
+
+/** Rows a screen may not touch: gold, and any clip whose fused seed tripped a gate. */
+function screenable(row: QueueRow): boolean {
+  return row.pot !== 'gold' && !(row.reason?.hazards?.length ?? 0)
+}
 
 /** Render a score component, distinguishing "measured zero" from "not present".
  *
  * A `?? '0'` fallback here is what hid D54's rename: every row reported a confident 0.00 for a
  * field that had moved, and a real zero looks identical to a missing one.
  */
-function formatComponent(value: number | undefined): string {
-  return typeof value === 'number' ? value.toFixed(2) : '--'
+function formatComponent(value: number | undefined, unmeasured = false): string {
+  return typeof value === 'number' && !unmeasured ? value.toFixed(2) : '--'
 }
 
 interface TriageViewProps {
@@ -92,6 +111,8 @@ const SHORTCUTS: Array<[string, string]> = [
 ]
 
 function priorityClass(score: number) {
+  // A gated clip is lifted by 1.0 above every ungated one (D74).
+  if (score >= 1.0) return 'bg-destructive text-white'
   if (score >= 0.45) return 'bg-destructive/15 text-destructive'
   if (score >= 0.25) return 'bg-warning/15 text-warning'
   return 'bg-muted text-muted-foreground'
@@ -185,9 +206,9 @@ export function TriageView({
         return
       }
 
-      // Shift+S: Bulk screen -- accept on the disagreement signal without listening. Gold rows are
-      // dropped from the batch rather than failing it, because one gold row must not block the
-      // rest and screening it is refused by the server anyway.
+      // Shift+S: Bulk screen -- accept without listening. Gold and gated rows are dropped from
+      // the batch rather than failing it, because one of them must not block the rest and
+      // screening either is refused by the server anyway.
       if (e.shiftKey && (e.key === 'S' || e.key === 's')) {
         e.preventDefault()
         const candidates = (
@@ -196,7 +217,7 @@ export function TriageView({
             : focusedRow
               ? [focusedRow]
               : []
-        ).filter((r) => r.pot !== 'gold')
+        ).filter(screenable)
         if (candidates.length > 0) {
           onBulkAccept(
             candidates.map((r) => r.task_id),
@@ -218,7 +239,7 @@ export function TriageView({
       // for something that is simply not offered.
       if (!e.shiftKey && (e.key === 's' || e.key === 'S')) {
         e.preventDefault()
-        if (focusedRow && focusedRow.pot !== 'gold') {
+        if (focusedRow && screenable(focusedRow)) {
           onAcceptRow(focusedRow.task_id, getFocusedDurationMs(), 'screened')
         }
         return
@@ -412,9 +433,23 @@ export function TriageView({
                         </TooltipTrigger>
                         <TooltipContent className="font-mono text-xs">
                           <div>score: {row.priority_score.toFixed(3)}</div>
+                          {(row.reason?.hazards ?? []).map((hazard) => (
+                            <div key={hazard} className="text-destructive">
+                              ⚠ {HAZARD_LABEL[hazard] ?? hazard}
+                              {row.reason?.hazard_details?.[hazard] && (
+                                <span className="font-devanagari">
+                                  : {row.reason.hazard_details[hazard]}
+                                </span>
+                              )}
+                            </div>
+                          ))}
                           {PRIORITY_COMPONENTS.map(([key, label]) => (
                             <div key={key}>
-                              {label}: {formatComponent(row.reason?.components?.[key])}
+                              {label}:{' '}
+                              {formatComponent(
+                                row.reason?.components?.[key],
+                                row.reason?.unmeasured?.includes(key),
+                              )}
                               {row.reason?.weights?.[key] !== undefined && (
                                 <span className="text-muted-foreground">
                                   {' '}
@@ -464,6 +499,15 @@ export function TriageView({
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {row.seed_system_id && <Chip>{row.seed_system_id}</Chip>}
+                        {(row.reason?.hazards ?? []).map((hazard) => (
+                          <Chip
+                            key={hazard}
+                            className="bg-destructive/15 text-destructive"
+                            title={`${HAZARD_LABEL[hazard] ?? hazard} — listen to this one`}
+                          >
+                            {hazard}
+                          </Chip>
+                        ))}
                         {row.flags.map((flag) => (
                           <Chip key={flag} className="bg-warning/15 text-warning" title={flag}>
                             {flag}

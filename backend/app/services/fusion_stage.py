@@ -23,7 +23,7 @@ from app.config import FusionSettings, LlmRoute, Settings
 from app.llm.base import LlmResult
 from app.llm.fusion import PROMPT_VERSION, FusionSegment, fuse
 from app.services.analysis import analyze_transcript
-from app.services.forced_align import ForcedAligner, align_text
+from app.services.forced_align import ForcedAligner, align_text_with_fit
 
 #: ``asr_systems.kind`` and the manifest key that sets it. A fusion hypothesis is derived from the
 #: recognisers', so it is never a disagreement signal and never an input to another fusion.
@@ -124,24 +124,27 @@ def fuse_records(
     report.cost_usd = outcome.cost_usd
     versions = {c.window_index: c.model_version for c in outcome.calls if c.model_version}
 
-    def words_for(key: str, text: str) -> list[dict[str, Any]] | None:
+    def align(key: str, text: str) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
         if aligner is None or not text.strip():
-            return None
-        return align_text(aligner, clip_path_for(key), text)
+            return None, None
+        return align_text_with_fit(aligner, clip_path_for(key), text)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-        spans = {
-            key: pool.submit(words_for, key, fused.text) for key, fused in outcome.fused.items()
-        }
+        placed = {key: pool.submit(align, key, fused.text) for key, fused in outcome.fused.items()}
         for key, fused in outcome.fused.items():
             record = by_key[key]
+            words, fit = placed[key].result()
             record["hypotheses"].append(
                 {
                     "system_id": system_id,
                     "model_id": route.model,
                     "kind": FUSION_KIND,
                     "text": fused.text,
-                    "words": spans[key].result(),
+                    "words": words,
+                    # How well the fused text explains the clip, against the aligner's own
+                    # reading -- the acoustic leash the hazard score reads (D74). None when no
+                    # aligner ran, which the score treats as unmeasured, not as a fit.
+                    "acoustic": fit,
                     # Provenance, not a hypothesis field: the importer files unknown keys under
                     # `metadata_jsonb`. The model version is what makes a mid-build vendor
                     # rotation visible after the fact (new-plan §3.7).

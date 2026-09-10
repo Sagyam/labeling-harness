@@ -114,38 +114,67 @@ reaches it anyway. Every export row carries the tier and each manifest reports t
 
 ## Priority formula
 
-![Priority score composition: seed outvoted 0.60 and rule flags 0.15 are computed over every hypothesis; low confidence 0.25 reads the seed alone; the three weights sum to 1.0](diagrams/priority-scoring.svg)
+![Priority score composition](diagrams/priority-scoring.svg)
+
+> The figure above predates D74 and shows the D54 formula; the text below is current.
 
 ```text
 priority_score =
-    0.60 * seed_outvoted             (share of speech time the other systems contradict)
-  + 0.25 * low_confidence            (normalized from avg_logprob)
-  + 0.15 * rule_flag_score
+    0.30 * unsupported_rate    (fused words no recogniser heard, by sound)
+  + 0.20 * dropped_rate        (words two recognisers heard that the fused text lacks)
+  + 0.20 * asr_disagreement    (script-folded disagreement among the recognisers themselves)
+  + 0.15 * acoustic_gap        (the fused text against the aligner's own reading of the clip)
+  + 0.10 * low_confidence      (Scribe's avg_logprob)
+  + 0.05 * rule_flag_score
+
+priority = priority_score + 1  when any hazard gate fired
 ```
 
-Every input is normalized to 0–1 and the weights sum to 1, so the score is itself in 0–1. Weights
-live in `config/settings.yaml` under `queue.weights` and are validated to sum to 1.0 at load.
+Every component is in 0–1 and the weights sum to 1 (validated at load, `queue.weights`), so the
+score is in 0–1 and a gated clip's priority is in 1–2: it sorts above every ungated clip, and
+screening it is refused with 409. The weights are provisional (D74).
 
-The question the score answers is *how much of what this annotator is about to be shown is
-probably wrong*, so it is measured against the **seed** — the hypothesis they will actually edit —
-rather than symmetrically across systems. D54 has the measurement.
+The seed is the fused transcript, which was built to agree with the recognisers, so the question
+is not "how far is the seed from them" -- that is near zero by construction -- but "where does
+it say something the evidence does not support, or omit something it does", plus "how hard is
+this audio". `app/services/hazards.py` answers both, comparing everything through the
+script-folding normalizer (`app/services/fold.py`), so a respelling like `टिम`/`team` is never
+counted as a disagreement.
 
-- `seed_outvoted` — computed at queue build by `app/services/consensus.py`: every system's word
-  spans are placed on the segment's own clock and grouped by overlap into *slots*, and this is the
-  fraction of slot time where **every** other system present disagreed with the seed's token.
-  Unmeasurable (no seed, no word timings) is treated as 0.
-- `low_confidence` — `clamp(avg_logprob / logprob_floor, 0, 1)` over the **seed** hypothesis, where
-  `logprob_floor` is −0.5: an `avg_logprob` of 0 scores 0, the floor and anything below it
-  scores 1. A seed with no `avg_logprob` scores 0, not 1 — an absent confidence signal must not
-  push a segment up the queue on its own.
+- `unsupported_rate` — share of fused words that no recogniser has at that position, even as a
+  near-miss spelling (romanized similarity ≥ 0.6).
+- `dropped_rate` — the longest run of words two recognisers both have and the fused text lacks,
+  against the recognisers' median length.
+- `asr_disagreement` — mean pairwise folded word error among the recognisers. Still an independent
+  measurement: no recogniser sees another's output.
+- `acoustic_gap` — from the aligner's `AcousticFit`: the mean, over speech frames, of how much less
+  likely the fused text makes each frame than the model's own best reading, scaled by
+  `acoustic_gap_full_scale`. On hard audio both are low and the gap stays small, which is what the
+  plain forced-path posterior could not tell apart from hallucination. Uncalibrated: it ranks and
+  gates nothing. Unmeasured (no aligner) is recorded under `unmeasured`, not scored as a fit.
+- `low_confidence` — `clamp(avg_logprob / logprob_floor, 0, 1)` over Scribe, the only recogniser
+  reporting one. It describes Scribe's text, not the fused text shown; it is a difficulty prior.
 - `rule_flag_score` — fraction of rule flags raised for the segment (see below).
 
-`word_disagreement_rate` and `code_switch_density` no longer rank anything (D54). Both are still
-computed, stored and exported; the superseded score is written into `reason_jsonb.legacy` beside
-the live one so the first full run can compare the two on its own evidence.
+### Hazard gates
 
-The per-component breakdown is stored in `annotation_tasks.reason_jsonb`, so the UI can always show
-why a segment surfaced.
+Any gate makes a clip unscreenable and lifts it above every clip without one. They are about the
+*shape* of a failure, because a three-word invention in a forty-word clip barely moves a rate:
+
+| Gate | Fires when |
+|---|---|
+| `invention` | ≥ `invention_run` (3) consecutive fused words no recogniser heard |
+| `dropped` | ≥ `dropped_run` (3) consecutive words that two recognisers share and fusion lacks |
+| `seam_bleed` | unheard fused words that the neighbouring clip's recognisers did hear |
+| `length_outlier` | fused length outside 1/1.6–1.6× the recognisers' median, and ≥ 8 characters off |
+| `emptied` / `speech_over_silence` | empty over heard speech / text where nothing was heard |
+| `unaligned` | the aligner cannot fit the fused text into the clip |
+| `fuser_uncertain` | the fuser coded the clip `u` |
+| `unfused` | no fused text; the seed fell back to a recogniser |
+
+The words behind each gate travel in `reason_jsonb.hazard_details` and show in the triage tooltip.
+D67's formula is still computed, against the recogniser the old queue would have seeded with, and
+recorded under `reason_jsonb.legacy`; it ranks nothing.
 
 ### Rule flags (computed at import)
 
@@ -167,15 +196,15 @@ the harness does not simply store what it receives.
 
 ### Seed hypothesis selection
 
-- Train-pot clips: the highest-scoring hypothesis, because accepting it is the fastest path.
-- Gold clips: the seed system is **rotated deterministically** by hashing `segment_id` across
-  available systems, and recorded in `annotation_tasks.seed_hypothesis_id` and on the label. The
-  rotation costs the annotator nothing but keeps the gold set from being anchored to one system, and
-  makes a per-seed WER breakdown possible later.
+Every clip, gold included, is seeded with its fused transcript (D74); when a re-fusion has added
+a newer fusion system, the newest wins. A clip the fuser did not answer falls back to the
+recogniser with the highest `avg_logprob` and is gated `unfused`. Gold's old per-system seed
+rotation is gone: the owner chose the faster seed over a benchmark independent of the fuser, and
+D74 records what that costs.
 
 Segments with zero hypotheses go to the `error` queue, never to `review`. An audit queue takes a
-seeded random sample (default 5%) of low-priority, high-agreement segments so quality on the easy
-majority stays measurable.
+seeded random sample (default 5%) of the low-priority half of the *ungated* clips, so quality on
+the easy majority stays measurable.
 
 ## Ingestion and Cloud ASR
 

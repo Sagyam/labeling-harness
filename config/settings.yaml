@@ -58,15 +58,27 @@ dataset:
   min_stratum_hours: 1.0         # under this, the analytics page calls a stratum thin (D69)
 
 queue:
-  weights:                       # must sum to 1.0; validated at load
-    seed_outvoted: 0.30          # speech-time share where every other system contradicts the seed
-    seed_orphan_rate: 0.30       # share of seed tokens no other system has, at any time (D67)
-    roman_gap: 0.20              # Latin tokens the others agree on and the seed lacks (D67)
+  weights:                       # must sum to 1.0; validated at load. Provisional (D74).
+    unsupported_rate: 0.30       # fused words no recogniser heard, by sound
+    dropped_rate: 0.20           # words two recognisers agree on that fusion left out
+    asr_disagreement: 0.20       # script-folded disagreement among the recognisers themselves
+    acoustic_gap: 0.15           # fused text against the aligner's own reading; uncalibrated
+    low_confidence: 0.10         # Scribe avg_logprob -- how hard the audio is
+    rule_flag_score: 0.05
+  legacy_weights:                # D67, recorded beside the live score only (D54 pattern)
+    seed_outvoted: 0.30
+    seed_orphan_rate: 0.30
+    roman_gap: 0.20
     low_confidence: 0.125
     rule_flag_score: 0.075
-  legacy_weights:                # recorded beside the live score for comparison only (D54)
-    word_disagreement_rate: 0.40
-    code_switch_density: 0.20
+  hazards:                       # any gate: unscreenable, and above every ungated clip (D74)
+    invention_run: 3             # consecutive fused words no recogniser heard
+    dropped_run: 3               # consecutive words two recognisers heard and fusion lacks
+    bleed_words: 2               # unheard fused words the neighbouring clip did hear
+    near_similarity: 0.6         # romanized similarity at which a substitution counts as heard
+    length_ratio: 1.6            # fused length against the recognisers' median ...
+    length_min_chars: 8          # ... when also at least this many characters apart
+    acoustic_gap_full_scale: 2.0 # nats/frame that rank as 1.0; gates nothing until calibrated
   audit_sample_rate: 0.05
   audit_seed: 1234
   min_duration_seconds: 1.0

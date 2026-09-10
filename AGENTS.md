@@ -120,11 +120,15 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   synchronous endpoint, and a batch carrying audio is accepted and *then* terminally fails
   validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR
   route may name one; `test_config.py` enforces it (D22).
-- Only Scribe returns per-word log probabilities, so it is both the first route and in practice the
-  only source of the `low_confidence` term. Two different hypotheses are in play and they are easy
-  to conflate: the **primary** (first route) is what CMI is measured on, the **seed** (chosen per
-  split at queue build) is what `low_confidence` reads, and rule flags are computed over **all** of
-  them at import. Reordering the routes moves the first two.
+- The **seed** is the fused transcript (D74), and it is not a measurement of anything: it was built
+  to agree with the recognisers. Never score the seed *against* the recognisers -- that is what
+  the D67 terms did, and they collapse to zero on a fused seed and read as quality. Compare the
+  recognisers to each other, and the fused text to the recognisers and the waveform only through
+  `app/services/hazards.py`. `low_confidence` reads Scribe, the only route with `avg_logprob`;
+  CMI is measured on the fused text.
+- **Every text comparison goes through `app/services/fold.py`.** A plain token comparison charges
+  `टिम`/`team` and `गर्नुभयो`/`गर्नु भयो` as errors, which was about half of every system's
+  substitutions on the gold pot. Report folded and raw WER side by side, with `fold_version()`.
 - Word spans have two sources and they must not be confused. Scribe, MAI and Gemini 3.5
   Transcribe *report* their own; Gemini Flash's are *measured* afterwards by the local CTC aligner
   in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.

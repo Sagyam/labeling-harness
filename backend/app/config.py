@@ -149,32 +149,41 @@ class DatasetSettings(BaseModel):
 
 
 class QueueWeights(BaseModel):
-    """Priority score weights. Must sum to 1.0 so the score stays in 0-1."""
+    """Priority score weights for a fused seed (D74). Must sum to 1.0 so the score stays in 0-1.
+
+    Provisional. They replace terms that measured the seed against the recognisers -- which a
+    reconciled transcript satisfies by construction -- and no verified label has been scored
+    against them yet. The hazard gates, not these weights, are what keep a catastrophic fusion
+    out of the screenable pool; the weights only order what is left.
+    """
 
     model_config = _STRICT
 
-    #: Share of speech time where every other system contradicts the seed. Halved from 0.60 by
-    #: D67: it ranks the tails well and cannot separate the middle, because it measures how *much*
-    #: of a clip is wrong when the annotator's cost is driven by *whether* any of it is.
-    seed_outvoted: float = 0.30
-    low_confidence: float = 0.125
-    rule_flag_score: float = 0.075
-    #: ``seed_outvoted`` with the clock removed -- the share of seed tokens no other system has.
-    #: On its own it scores AUC 0.740 against realized edits, against 0.747 for the whole
-    #: superseded formula (D67).
-    seed_orphan_rate: float = 0.30
-    #: Latin-script tokens every other system agreed on and the seed lacks: the English-in-Latin
-    #: policy (D64) as a ranking signal.
-    roman_gap: float = 0.20
+    #: Share of fused words no recogniser heard, by sound. The value-add and the confabulation
+    #: both score here, which is why it ranks and a *contiguous* run of it gates.
+    unsupported_rate: float = 0.30
+    #: Words two recognisers agree on that the fused text lacks: deletion, which every
+    #: orphan-style signal is blind to.
+    dropped_rate: float = 0.20
+    #: Script-folded disagreement among the recognisers themselves: how hard the audio is. Still an
+    #: independent measurement, because no recogniser sees another's output.
+    asr_disagreement: float = 0.20
+    #: How much worse the fused text explains the clip than the aligner's own reading. Uncalibrated.
+    acoustic_gap: float = 0.15
+    #: Scribe's ``avg_logprob``: another "is this audio hard" prior. It describes Scribe's text,
+    #: not the fused text shown.
+    low_confidence: float = 0.10
+    rule_flag_score: float = 0.05
 
     @model_validator(mode="after")
     def _check_sum(self) -> QueueWeights:
         total = (
-            self.seed_outvoted
+            self.unsupported_rate
+            + self.dropped_rate
+            + self.asr_disagreement
+            + self.acoustic_gap
             + self.low_confidence
             + self.rule_flag_score
-            + self.seed_orphan_rate
-            + self.roman_gap
         )
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"queue weights must sum to 1.0, got {total}")
@@ -182,16 +191,43 @@ class QueueWeights(BaseModel):
 
 
 class LegacyQueueWeights(BaseModel):
-    """The superseded terms, kept so the old score can be recorded beside the new one (D54).
+    """D67's formula, recorded beside the live score and never ranking (the D54 pattern).
 
-    These do not rank anything and deliberately do not sum to 1: they exist to let the first full
-    run adjudicate between the two formulas on more than the 22 labels behind the change.
+    Measured against the recogniser the old queue would have seeded with, as if fusion did not
+    exist, so the first labelled run can compare which clips each formula would have surfaced.
     """
 
     model_config = _STRICT
 
-    word_disagreement_rate: float = 0.40
-    code_switch_density: float = 0.20
+    seed_outvoted: float = 0.30
+    seed_orphan_rate: float = 0.30
+    roman_gap: float = 0.20
+    low_confidence: float = 0.125
+    rule_flag_score: float = 0.075
+
+
+class HazardSettings(BaseModel):
+    """Thresholds for the fused-seed hazard gates (D74). Any gate that fires makes a clip
+    unscreenable and puts it at the top of the queue; the thresholds are where that happens."""
+
+    model_config = _STRICT
+
+    #: Consecutive fused words no recogniser heard -- by sound, not spelling -- that make an
+    #: invention. Scattered misses are ordinary mishearing; a contiguous clause is not.
+    invention_run: int = Field(default=3, ge=1)
+    #: Consecutive words at least two recognisers agree on that the fused text left out.
+    dropped_run: int = Field(default=3, ge=1)
+    #: Unheard fused words that turn up in the neighbouring clip: text moved across a seam.
+    bleed_words: int = Field(default=2, ge=1)
+    #: Romanized similarity at which a substituted word counts as heard (a near-miss spelling).
+    near_similarity: float = Field(default=0.6, ge=0.0, le=1.0)
+    #: Fused length against the recognisers' median, in romanized characters, beyond which the
+    #: clip is gated -- but only when the difference is also at least ``length_min_chars``.
+    length_ratio: float = Field(default=1.6, gt=1.0)
+    length_min_chars: int = Field(default=8, ge=0)
+    #: Mean acoustic gap (nats per speech frame) that maps to 1.0 on the ranking scale.
+    #: Uncalibrated: it ranks, and gates nothing, until a run against verified labels sets it.
+    acoustic_gap_full_scale: float = Field(default=2.0, gt=0.0)
 
 
 class QueueSettings(BaseModel):
@@ -201,6 +237,7 @@ class QueueSettings(BaseModel):
 
     weights: QueueWeights = Field(default_factory=QueueWeights)
     legacy_weights: LegacyQueueWeights = Field(default_factory=LegacyQueueWeights)
+    hazards: HazardSettings = Field(default_factory=HazardSettings)
     audit_sample_rate: float = 0.05
     audit_seed: int = 1234
     min_duration_seconds: float = 1.0

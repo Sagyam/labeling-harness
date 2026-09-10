@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
-from app.models import AnnotationTask, AsrHypothesis, AsrSystem, Episode, Segment
+from app.models import AnnotationTask, AsrHypothesis, AsrSystem, Segment
 from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
@@ -79,46 +79,102 @@ def test_queued_segments_change_pipeline_status(
 def test_every_task_carries_a_priority_and_a_reason(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
-    import_fixture(db_session, tmp_path, storage, settings, segments=6)
+    import_fixture(db_session, tmp_path, storage, settings, segments=6, with_fusion=True)
     build_queue(db_session, settings=settings)
     for task in tasks(db_session):
-        assert 0.0 <= task.priority_score <= 1.0
         assert task.reason_jsonb is not None
         assert set(task.reason_jsonb["components"]) == {
-            "seed_outvoted",
+            "unsupported_rate",
+            "dropped_rate",
+            "asr_disagreement",
+            "acoustic_gap",
             "low_confidence",
             "rule_flag_score",
-            "seed_orphan_rate",
-            "roman_gap",
         }
-        assert task.reason_jsonb["score"] == pytest.approx(task.priority_score)
-
-
-def test_top_priority_segments_are_the_disagreeing_ones(
-    db_session: Session, tmp_path: Path, storage, settings: Settings
-) -> None:
-    """The queue must lead with the segments whose seed the other systems contradict."""
-    import_fixture(db_session, tmp_path, storage, settings, segments=12)
-    build_queue(db_session, settings=settings)
-    ordered = tasks(db_session)
-    top = [t.reason_jsonb["components"]["seed_outvoted"] for t in ordered[:4]]
-    bottom = [t.reason_jsonb["components"]["seed_outvoted"] for t in ordered[-4:]]
-    assert sum(top) / 4 >= sum(bottom) / 4
+        offset = 1.0 if task.reason_jsonb["hazards"] else 0.0
+        assert task.reason_jsonb["score"] + offset == pytest.approx(task.priority_score)
 
 
 def test_the_superseded_score_is_recorded_but_does_not_rank(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
-    """D54 replaced the formula on 22 labels from one episode, so both numbers are kept."""
-    import_fixture(db_session, tmp_path, storage, settings, segments=6)
+    """D67 travels alongside, measured against the recogniser the old queue would have used."""
+    import_fixture(db_session, tmp_path, storage, settings, segments=6, with_fusion=True)
     build_queue(db_session, settings=settings)
     for task in tasks(db_session):
         legacy = task.reason_jsonb["legacy"]
-        assert set(legacy["components"]) == {"word_disagreement_rate", "code_switch_density"}
-        # Recorded only: the live score is the weighted sum of the live components alone.
-        assert task.priority_score == pytest.approx(
+        assert set(legacy["components"]) == {
+            "seed_outvoted",
+            "seed_orphan_rate",
+            "roman_gap",
+            "low_confidence",
+            "rule_flag_score",
+        }
+        assert task.reason_jsonb["score"] == pytest.approx(
             sum(task.reason_jsonb["contributions"].values())
         )
+
+
+# --- a fused seed (D74) ------------------------------------------------------------------------
+
+
+def test_every_clip_is_seeded_with_its_fused_transcript(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Gold included: the owner chose fused seeds for gold too (D74)."""
+    import_fixture(db_session, tmp_path, storage, settings, segments=6, with_fusion=True)
+    first = db_session.scalars(sa.select(Segment).order_by(Segment.id)).first()
+    first.pot = "gold"
+    db_session.flush()
+
+    build_queue(db_session, settings=settings)
+    for task in tasks(db_session):
+        assert task.seed_hypothesis.system.kind == "fusion"
+
+
+def test_a_clip_with_no_fused_text_falls_back_to_the_strongest_recogniser_and_is_gated(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    import_fixture(db_session, tmp_path, storage, settings, segments=4)
+    build_queue(db_session, settings=settings)
+    for task in tasks(db_session):
+        candidates = db_session.scalars(
+            sa.select(AsrHypothesis).where(AsrHypothesis.segment_id == task.segment_id)
+        )
+        best = max(candidates, key=lambda h: (h.avg_logprob or -99, h.id))
+        assert task.seed_hypothesis_id == best.id
+        assert task.reason_jsonb["hazards"] == ["unfused"]
+        assert task.priority_score >= 1.0
+
+
+def test_an_invented_clause_is_gated_to_the_top_of_the_queue(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    import_fixture(db_session, tmp_path, storage, settings, segments=8, with_fusion=True)
+    victim = db_session.scalars(
+        sa.select(AsrHypothesis)
+        .join(AsrSystem)
+        .where(AsrSystem.kind == "fusion")
+        .order_by(AsrHypothesis.id)
+        .offset(3)
+    ).first()
+    victim.text_raw = victim.text_raw + " प्रत्यक्ष निर्वाचित कार्यकारी नभइकन"
+    db_session.flush()
+
+    build_queue(db_session, settings=settings)
+    top = tasks(db_session)[0]
+    assert top.segment_id == victim.segment_id
+    assert "invention" in top.reason_jsonb["hazards"]
+    assert top.reason_jsonb["hazard_details"]["invention"].endswith("कार्यकारी नभइकन")
+
+
+def test_a_gated_clip_is_never_sampled_for_audit(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Audit measures the easy majority; a gated clip is not part of it."""
+    import_fixture(db_session, tmp_path, storage, settings, segments=30)
+    build_queue(db_session, settings=settings, audit_sample_rate=0.5)
+    assert {t.queue for t in tasks(db_session)} == {"review"}
 
 
 def test_every_task_has_a_seed_hypothesis(
@@ -220,66 +276,25 @@ def test_a_new_import_adds_only_the_new_tasks(
     assert report.tasks_created == 2
 
 
-# --- seed hypothesis selection -----------------------------------------------------------
+# --- seed hypothesis selection ---------------------------------------------------------------
 
 
-def test_train_episodes_seed_with_the_strongest_hypothesis(
+def test_a_newer_fusion_system_wins_the_seed(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
-    import_fixture(db_session, tmp_path, storage, settings, episode_id="q_ep001", segments=6)
-    episode = db_session.scalars(sa.select(Episode)).one()
-    episode.split = "train"
+    """A re-fusion under a new prompt version is a new system; the latest one seeds."""
+    import_fixture(db_session, tmp_path, storage, settings, segments=2, with_fusion=True)
+    newer = AsrSystem(system_id="fusion-gemini-3.8-flash-p2", kind="fusion")
+    db_session.add(newer)
+    db_session.flush()
+    for segment in db_session.scalars(sa.select(Segment)):
+        db_session.add(AsrHypothesis(segment_id=segment.id, asr_system_id=newer.id, text_raw="नयाँ"))
     db_session.flush()
 
     build_queue(db_session, settings=settings)
-    for task in tasks(db_session):
-        best = max(
-            db_session.scalars(
-                sa.select(AsrHypothesis).where(AsrHypothesis.segment_id == task.segment_id)
-            ),
-            key=lambda h: (h.avg_logprob if h.avg_logprob is not None else -99, h.id),
-        )
-        assert task.seed_hypothesis_id == best.id
-
-
-def test_gold_clip_seeds_rotate_across_systems(
-    db_session: Session, tmp_path: Path, storage, settings: Settings
-) -> None:
-    """A gold set anchored to one system cannot be defended later; rotation is the whole point."""
-    import_fixture(db_session, tmp_path, storage, settings, episode_id="rot_ep", segments=40)
-    episode = db_session.scalars(sa.select(Episode)).one()
-    for segment in episode.segments:
-        segment.pot = "gold"
-    db_session.flush()
-
-    build_queue(db_session, settings=settings)
-    seeds = db_session.execute(
-        sa.select(AsrSystem.system_id, sa.func.count())
-        .select_from(AnnotationTask)
-        .join(AsrHypothesis, AsrHypothesis.id == AnnotationTask.seed_hypothesis_id)
-        .join(AsrSystem, AsrSystem.id == AsrHypothesis.asr_system_id)
-        .group_by(AsrSystem.system_id)
-    ).all()
-    counts = dict(seeds)
-    assert len(counts) == 3, f"seeds concentrated on {counts}"
-    assert min(counts.values()) >= 5
-
-
-def test_gold_clip_seed_rotation_is_deterministic(
-    db_session: Session, tmp_path: Path, storage, settings: Settings
-) -> None:
-    import_fixture(db_session, tmp_path, storage, settings, episode_id="det_ep", segments=10)
-    episode = db_session.scalars(sa.select(Episode)).one()
-    for segment in episode.segments:
-        segment.pot = "gold"
-    db_session.flush()
-    build_queue(db_session, settings=settings)
-    first = {t.segment_id: t.seed_hypothesis_id for t in tasks(db_session)}
-
-    db_session.execute(sa.delete(AnnotationTask))
-    db_session.flush()
-    build_queue(db_session, settings=settings)
-    assert {t.segment_id: t.seed_hypothesis_id for t in tasks(db_session)} == first
+    assert {t.seed_hypothesis.system.system_id for t in tasks(db_session)} == {
+        "fusion-gemini-3.8-flash-p2"
+    }
 
 
 # --- audit queue -------------------------------------------------------------------------
@@ -288,7 +303,9 @@ def test_gold_clip_seed_rotation_is_deterministic(
 def test_audit_queue_samples_easy_segments(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
-    import_fixture(db_session, tmp_path, storage, settings, episode_id="aud_ep", segments=60)
+    import_fixture(
+        db_session, tmp_path, storage, settings, episode_id="aud_ep", segments=60, with_fusion=True
+    )
     report = build_queue(db_session, settings=settings, audit_sample_rate=0.2)
     audit = [t for t in tasks(db_session) if t.queue == "audit"]
     assert report.audit_tasks > 0
@@ -300,7 +317,9 @@ def test_audit_queue_samples_easy_segments(
 def test_audit_sampling_is_reproducible_under_a_fixed_seed(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
-    import_fixture(db_session, tmp_path, storage, settings, episode_id="aud2_ep", segments=40)
+    import_fixture(
+        db_session, tmp_path, storage, settings, episode_id="aud2_ep", segments=40, with_fusion=True
+    )
     build_queue(db_session, settings=settings, audit_sample_rate=0.25)
     first = sorted(t.segment_id for t in tasks(db_session) if t.queue == "audit")
 

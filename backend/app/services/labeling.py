@@ -126,6 +126,15 @@ def record_decision(
             f"segment {segment.external_id} is in the gold pot, which only accepts"
             " verified labels; listen to the clip or move on"
         )
+    # A hazard gate means the fused seed may say something nobody said, or leave out something
+    # somebody did (D74). Screening is accepting the seed without listening, which is exactly the
+    # one thing a gated clip must not get.
+    hazards = list((task.reason_jsonb or {}).get("hazards") or [])
+    if decision.verification_tier == "screened" and hazards:
+        raise LabelingError(
+            f"task {task.id} tripped {', '.join(hazards)}; its seed has to be listened to,"
+            " not screened"
+        )
 
     version = get_or_create_label_version(session, decision.label_version, settings)
     annotator = decision.annotator or settings.labels.default_annotator

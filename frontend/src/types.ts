@@ -67,6 +67,8 @@ export interface Hypothesis {
   id: number
   system_id: string
   model_id: string | null
+  /** `asr` for a recogniser, `fusion` for the reconciled transcript that seeds the editor. */
+  kind?: 'asr' | 'fusion'
   text: string
   avg_logprob: number | null
   no_speech_prob: number | null
@@ -122,6 +124,12 @@ export interface QueueReason {
   weights?: Record<string, number>
   components?: Record<string, number>
   contributions?: Record<string, number>
+  /** Hazard gates that fired on the fused seed (D74). Any one makes the clip unscreenable. */
+  hazards?: string[]
+  /** The words behind each gate, for the tooltip. */
+  hazard_details?: Record<string, string>
+  /** Components with no measurement behind them -- shown as `--`, never as a confident 0. */
+  unmeasured?: string[]
 }
 
 export interface QueueRow {

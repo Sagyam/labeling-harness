@@ -43,16 +43,21 @@ def test_queue_row_carries_everything_triage_needs(
     assert row["audio_url"].endswith("/audio")
     assert row["peaks_url"].endswith("/peaks")
     assert set(row["reason"]["components"]) == {
-        "seed_outvoted",
+        "unsupported_rate",
+        "dropped_rate",
+        "asr_disagreement",
+        "acoustic_gap",
         "low_confidence",
         "rule_flag_score",
-        "seed_orphan_rate",
-        "roman_gap",
     }
+    assert "hazards" in row["reason"]
     # The superseded formula rides along unweighted, so the first full run can compare (D54).
     assert set(row["reason"]["legacy"]["components"]) == {
-        "word_disagreement_rate",
-        "code_switch_density",
+        "seed_outvoted",
+        "seed_orphan_rate",
+        "roman_gap",
+        "low_confidence",
+        "rule_flag_score",
     }
 
 
@@ -400,7 +405,8 @@ def test_bulk_accept_requires_at_least_one_task(client: TestClient) -> None:
 def test_segment_detail_lists_every_hypothesis(client: TestClient, imported_episode: str) -> None:
     segment_id = queue_rows(client)[0]["segment_id"]
     body = client.get(f"/segments/{segment_id}").json()
-    assert len(body["hypotheses"]) == 3
+    assert len(body["hypotheses"]) == 4
+    assert [h["kind"] for h in body["hypotheses"]].count("fusion") == 1
     assert body["scores"] is not None
     # A manifest import places nothing: the pot is assigned corpus-wide, against a duration
     # target, by `assign_pots` (D63).
@@ -675,7 +681,7 @@ def test_a_clip_is_put_in_gold_and_taken_back_out(
 def test_a_screened_clip_is_refused_gold_with_409(
     client: TestClient, imported_episode: str
 ) -> None:
-    row = client.get("/queue").json()[0]
+    row = next(r for r in client.get("/queue").json() if not r["reason"]["hazards"])
     screened = client.post(
         f"/tasks/{row['task_id']}/accept", json={"verification_tier": "screened"}
     )

@@ -234,6 +234,11 @@ def _ascii(token: str) -> str:
     return re.sub(r"[^a-z]", "", text)
 
 
+def romanized(token: str) -> str:
+    """The word's crude romanization, vowels kept -- a script-independent measure of its length."""
+    return _ascii(token)
+
+
 def _reduce(text: str) -> str:
     for digraph, single in _DIGRAPHS:
         text = text.replace(digraph, single)

@@ -66,6 +66,10 @@ def _write_clip(
     sf.write(path, data, sample_rate, format=clip_format)
 
 
+#: System id the fixture's fused hypotheses are recorded under.
+FIXTURE_FUSION_SYSTEM = "fusion-gemini-3.8-flash-p1"
+
+
 def build_export_fixture(
     root: Path | str,
     *,
@@ -81,6 +85,7 @@ def build_export_fixture(
     channels: int = 1,
     empty_hypothesis_segments: Sequence[int] = (),
     with_episode_audio: bool = True,
+    with_fusion: bool = False,
 ) -> Path:
     """Write a synthetic export directory and return its path.
 
@@ -103,6 +108,9 @@ def build_export_fixture(
         with_episode_audio: Also write the whole episode's audio and point `audio_path` at it, as
             the real pipeline does. Off exercises a manifest from an upstream that ships only
             clips, which stays valid and simply has nothing to diarize later (D62).
+        with_fusion: Also append a fused hypothesis per segment, as the fusion stage does (D72).
+            It is the reference sentence -- a fuser that got it right -- and it draws nothing from
+            the random stream, so every other byte of the export is unchanged by the flag.
 
     Returns:
         The export directory path.
@@ -160,6 +168,17 @@ def build_export_fixture(
                         for position, token in enumerate(tokens)
                     ]
                 hypotheses.append(hypothesis)
+            if with_fusion:
+                hypotheses.append(
+                    {
+                        "system_id": FIXTURE_FUSION_SYSTEM,
+                        "model_id": "gemini-3.8-flash",
+                        "kind": "fusion",
+                        "text": reference,
+                        "fusion": {"code": "m", "window": 0, "depth": 0},
+                        "acoustic": None,
+                    }
+                )
 
         record: dict[str, Any] = {
             "segment_id": segment_id,

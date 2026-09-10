@@ -36,9 +36,10 @@ def test_loads_repository_default_settings() -> None:
 def test_queue_weights_sum_to_one() -> None:
     settings = load_settings()
     total = (
-        settings.queue.weights.seed_outvoted
-        + settings.queue.weights.seed_orphan_rate
-        + settings.queue.weights.roman_gap
+        settings.queue.weights.unsupported_rate
+        + settings.queue.weights.dropped_rate
+        + settings.queue.weights.asr_disagreement
+        + settings.queue.weights.acoustic_gap
         + settings.queue.weights.low_confidence
         + settings.queue.weights.rule_flag_score
     )

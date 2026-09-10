@@ -58,6 +58,14 @@ export function HypothesesList({
               <ItemContent className="gap-1.5">
                 <ItemTitle className="flex w-full flex-wrap items-center gap-1.5 line-clamp-none">
                   <Chip className="bg-foreground/10 text-foreground">{hyp.system_id}</Chip>
+                  {hyp.kind === 'fusion' && (
+                    <Chip
+                      className="bg-primary/15 text-primary"
+                      title="Reconciled from the recognisers by a model that never heard the audio"
+                    >
+                      fused
+                    </Chip>
+                  )}
                   {hyp.model_id && <Chip>{hyp.model_id}</Chip>}
                   {isSeed && <Chip className="bg-info/15 text-info">seed</Chip>}
                   {hyp.avg_logprob !== null && (

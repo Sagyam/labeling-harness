@@ -41,7 +41,7 @@ def queued(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> list[AnnotationTask]:
     root = build_export_fixture(
-        tmp_path / "export_tier", episode_id="tier_ep001", segments=6, systems=2
+        tmp_path / "export_tier", episode_id="tier_ep001", segments=6, systems=2, with_fusion=True
     )
     import_manifest(db_session, root, storage=storage, settings=settings)
     build_queue(db_session, settings=settings, audit_sample_rate=0.0)
@@ -140,7 +140,7 @@ def test_the_api_refuses_a_screened_gold_decision(
 
 
 def test_the_api_reports_the_tier_it_recorded(client, imported_episode: str) -> None:
-    task_id = client.get("/queue").json()[0]["task_id"]
+    task_id = next(r for r in client.get("/queue").json() if not r["reason"]["hazards"])["task_id"]
     body = client.post(f"/tasks/{task_id}/accept", json={"verification_tier": "screened"}).json()
     assert body["verification_tier"] == "screened"
 
@@ -282,3 +282,44 @@ def test_relabelling_records_a_new_tier_without_losing_the_old_one(
         )
     )
     assert tiers == ["screened", "verified"]
+
+
+# --- a hazard gate is a promise that someone will listen (D74) ---------------------------------
+
+
+def _gate(task: AnnotationTask, db_session: Session, *hazards: str) -> None:
+    task.reason_jsonb = {**(task.reason_jsonb or {}), "hazards": list(hazards)}
+    db_session.flush()
+
+
+def test_a_gated_clip_cannot_be_screened(
+    db_session: Session, queued: list[AnnotationTask], settings: Settings
+) -> None:
+    _gate(queued[0], db_session, "invention")
+    with pytest.raises(LabelingError, match="invention"):
+        record_decision(
+            db_session,
+            queued[0],
+            Decision(disposition="accepted_unchanged", verification_tier="screened"),
+            settings=settings,
+        )
+
+
+def test_a_gated_clip_can_still_be_verified(
+    db_session: Session, queued: list[AnnotationTask], settings: Settings
+) -> None:
+    _gate(queued[0], db_session, "dropped")
+    label = record_decision(
+        db_session, queued[0], Decision(disposition="accepted_unchanged"), settings=settings
+    )
+    assert label.verification_tier == "verified"
+
+
+def test_the_api_refuses_to_screen_a_gated_clip(client, imported_episode: str, db_session) -> None:
+    task_id = client.get("/queue").json()[0]["task_id"]
+    task = db_session.get(AnnotationTask, task_id)
+    task.reason_jsonb = {**task.reason_jsonb, "hazards": ["seam_bleed"]}
+    db_session.flush()
+    response = client.post(f"/tasks/{task_id}/accept", json={"verification_tier": "screened"})
+    assert response.status_code == 409
+    assert "seam_bleed" in response.json()["detail"]

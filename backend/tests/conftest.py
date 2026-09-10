@@ -138,13 +138,13 @@ def client(db_session: Session, object_storage, settings):
 
 @pytest.fixture
 def imported_episode(db_session: Session, object_storage, settings, tmp_path: Path):
-    """A fully imported and queued episode: 6 segments, 3 systems, tasks built."""
+    """A fully imported and queued episode: 6 segments, 3 recognisers and a fused seed each."""
     from app.services.fixtures import build_export_fixture
     from app.services.importer import import_manifest
     from app.services.queue_builder import build_queue
 
     root = build_export_fixture(
-        tmp_path / "export_api", episode_id="api_ep001", segments=6, systems=3
+        tmp_path / "export_api", episode_id="api_ep001", segments=6, systems=3, with_fusion=True
     )
     import_manifest(db_session, root, storage=object_storage, settings=settings)
     build_queue(db_session, settings=settings, audit_sample_rate=0.0)

@@ -26,6 +26,8 @@ class HypothesisOut(BaseModel):
     id: int
     system_id: str
     model_id: str | None = None
+    #: ``asr`` for a recogniser, ``fusion`` for the reconciled transcript (D72).
+    kind: str = "asr"
     text: str
     avg_logprob: float | None = None
     no_speech_prob: float | None = None

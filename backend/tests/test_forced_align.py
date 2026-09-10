@@ -15,6 +15,7 @@ import numpy as np
 from app.services.alignment import WordSpan
 from app.services.forced_align import (
     ForcedAligner,
+    acoustic_fit,
     align_emissions,
     align_text,
     build_target,
@@ -227,3 +228,58 @@ def test_align_text_returns_none_when_there_is_nothing_to_align(tmp_path: Path) 
     stub = _StubAligner([WordSpan(word="x", start=0.0, end=0.1)])
     assert align_text(stub, tmp_path / "clip.flac", "") is None
     assert align_text(stub, tmp_path / "clip.flac", "   ...   ") is None
+
+
+# --- acoustic fit: how well the text explains the audio, against the model's own reading ------
+
+
+def test_a_text_the_audio_supports_fits_with_almost_no_gap() -> None:
+    log_probs = _emissions([{1: 0.95}, {1: 0.95}, {0: 0.95}, {2: 0.95}, {2: 0.95}])
+    fit = acoustic_fit(log_probs, ["a", "b"], VOCAB)
+    assert fit.aligned
+    assert fit.gap < 0.05
+    assert fit.free_decode == "ab"
+    assert fit.decode_distance == 0.0
+
+
+def test_a_text_the_audio_does_not_support_has_a_large_gap() -> None:
+    """Invented words are forced onto frames the model reads as something else."""
+    log_probs = _emissions([{1: 0.95}, {1: 0.95}, {0: 0.95}, {2: 0.95}, {2: 0.95}])
+    fit = acoustic_fit(log_probs, ["c", "c"], VOCAB)
+    assert fit.aligned
+    assert fit.gap > 2.0
+    assert fit.decode_distance == 1.0
+    assert fit.worst_word_gap >= fit.gap
+
+
+def test_hard_audio_with_the_right_text_is_not_mistaken_for_invention() -> None:
+    """The confound new-plan §4.2 named: a low posterior on hard audio is not a hallucination.
+
+    Here the right letters win each frame by a hair. The forced path's probability is low -- the
+    old per-word confidence -- but so is the model's own best reading, so the gap stays small.
+    """
+    murky = [{1: 0.4, 2: 0.3, 3: 0.3}, {0: 0.4, 1: 0.3, 3: 0.3}, {2: 0.4, 1: 0.3, 3: 0.3}]
+    confident_wrong = [{3: 0.95}, {0: 0.95}, {3: 0.95}]
+    hard = acoustic_fit(_emissions(murky), ["a", "b"], VOCAB)
+    wrong = acoustic_fit(_emissions(confident_wrong), ["a", "b"], VOCAB)
+    assert hard.gap < 0.2
+    assert wrong.gap > 5 * hard.gap
+
+
+def test_text_too_long_for_the_audio_does_not_align() -> None:
+    fit = acoustic_fit(_emissions([{1: 0.9}]), ["abcabc"], VOCAB)
+    assert fit.aligned is False
+    assert fit.gap is None
+
+
+def test_the_fit_serialises_without_its_per_word_detail() -> None:
+    fit = acoustic_fit(_emissions([{1: 0.9}, {2: 0.9}]), ["a", "b"], VOCAB)
+    payload = fit.as_dict()
+    assert set(payload) == {
+        "aligned",
+        "frames",
+        "gap",
+        "worst_word_gap",
+        "decode_distance",
+        "free_decode",
+    }

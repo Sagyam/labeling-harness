@@ -69,7 +69,7 @@ def run(records: list[dict[str, Any]], **overrides: Any):
         route=ROUTE,
         fusion=overrides.pop("fusion", FusionSettings()),
         settings=load_settings(),
-        aligner=None,
+        aligner=overrides.pop("aligner", None),
         clip_path_for=lambda _segment_id: Path("/nonexistent.flac"),
         **overrides,
     )
@@ -148,3 +148,29 @@ def test_the_report_sums_the_run(records) -> None:
     assert report.windows == 1
     assert report.system_id == fusion_system_id(ROUTE)
     assert report.as_dict()["fused"] == 2
+
+
+class _StubAligner:
+    available = True
+
+    def align_with_fit(self, audio_path, tokens, sample_rate: int = 16000):
+        from app.services.alignment import WordSpan
+        from app.services.forced_align import AcousticFit
+
+        spans = [WordSpan(word=t, start=i * 0.5, end=i * 0.5 + 0.4, confidence=0.9)
+                 for i, t in enumerate(tokens)]  # fmt: skip
+        return spans, AcousticFit(aligned=True, frames=100, gap=0.12, worst_word_gap=0.4,
+                                  free_decode="hamro", decode_distance=0.2)  # fmt: skip
+
+
+def test_the_fused_text_is_placed_on_the_clip_and_its_fit_recorded(records) -> None:
+    run(records, aligner=_StubAligner())
+    fused = records[0]["hypotheses"][-1]
+    assert [w["word"] for w in fused["words"]] == ["हाम्रो", "team", "राम्रो", "छ"]
+    assert fused["acoustic"]["gap"] == 0.12
+    assert fused["acoustic"]["aligned"] is True
+
+
+def test_no_aligner_means_an_unmeasured_fit_not_a_perfect_one(records) -> None:
+    run(records)
+    assert records[0]["hypotheses"][-1]["acoustic"] is None

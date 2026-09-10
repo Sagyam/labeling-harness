@@ -95,7 +95,10 @@ harness refuses to screen a gold clip, and refuses to write a gold export contai
 
 **Triage** is where the time goes. A dense list, highest-priority segment first, with the reason it
 surfaced shown next to it. Most segments are correct, so the dominant motion is listen, `Enter`,
-move on — or `s` to screen without listening, where the pot allows it.
+move on — or `s` to screen without listening, where the pot allows it. A clip whose fused seed
+tripped a **hazard gate** — words no recogniser heard, words two of them heard that it dropped, text
+from the neighbouring clip, the wrong length, text the audio cannot hold — carries a red chip, sits
+above everything else, and cannot be screened (D74).
 
 **Editor** (`e`) is for the ones that are not: waveform, loopable playback, the transcript, the
 other systems' hypotheses, and a live word diff against what you started from. Under the waveform

@@ -47,6 +47,7 @@ def serialize_hypothesis(hypothesis: AsrHypothesis) -> HypothesisOut:
         id=hypothesis.id,
         system_id=hypothesis.system.system_id,
         model_id=hypothesis.system.model_id,
+        kind=hypothesis.system.kind,
         text=hypothesis.text_raw,
         avg_logprob=hypothesis.avg_logprob,
         no_speech_prob=hypothesis.no_speech_prob,

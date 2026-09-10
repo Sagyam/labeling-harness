@@ -1742,6 +1742,10 @@ endpoint and the `job.scrammed` checks; nothing persists a scram beyond the job'
 
 ## D67 — The queue ranks on whether a clip is wrong, not on how much of it is
 
+> **Superseded by D74.** Every D67 term measures the seed against the recognisers, and the seed is
+> now built from them. The formula is still computed, against the recogniser it would have seeded
+> with, and recorded under `reason_jsonb.legacy`.
+
 `seed_outvoted` weights disagreement by speech time (D54). That answers "how much of this
 transcript is wrong", which is not the quantity that costs the annotator anything. A clip whose
 seed needs one two-word fix scores near zero and still costs a full open-listen-edit-save cycle.
@@ -2049,3 +2053,65 @@ English no longer inflates disagreement either -- D74's comparison is script-fol
 **Reversal:** put `restore_script_route: script_restore` back on the Scribe block and restore the
 route from git. Restored hypotheses would then feed the fuser again, which is the double vote above.
 
+## D74 — The fused transcript is the seed, and the queue looks for what fusion got catastrophically wrong
+
+The seed -- what the editor opens with -- is the newest fused hypothesis, for every clip,
+**gold included**. The priority score is rebuilt around it, hazard gates make a clip
+unscreenable, and every comparison goes through a new script-folding normalizer
+(`app/services/fold.py`, `fold-v1`). D67's formula is kept only as a recorded `legacy` score.
+
+**The old score cannot follow the seed.** `seed_outvoted`, `seed_orphan_rate` and `roman_gap`
+measure how far the seed is from the recognisers. A transcript built to reconcile them is near
+zero on all three by construction, so the queue would sort by almost nothing, and the
+auto-approve rate would jump with no evidence that a single label had improved. Given that the
+screening ceiling is set by the base edit rate, that is exactly the number that must not be
+allowed to fool anyone.
+
+**What replaces it asks where the seed and the evidence part company.** `unsupported_rate`: fused
+words no recogniser heard, by sound. `dropped_rate`: words two recognisers heard that the fused
+text lacks -- deletion, which every orphan-style signal is blind to by construction.
+`asr_disagreement`: the recognisers against each other, which is still independent and still
+measures how hard the audio is. `acoustic_gap`: the aligner's goodness-of-pronunciation gap
+between the fused text and its own reading of the clip. That separates hard audio from
+invented words, and the plain forced-path posterior could not (new-plan §4.2). Weights 0.30 /
+0.20 / 0.20 / 0.15, plus 0.10 for Scribe's logprob and 0.05 for rule flags. They are provisional
+-- nothing verified has been scored against them.
+
+**Gates are about shape, and they are what actually protects screening.** A contiguous run of
+unheard words (`invention`), a contiguous run two recognisers share and fusion lacks (`dropped`),
+unheard words the neighbouring clip heard (`seam_bleed` -- the failure long windows invite), a
+fused text of the wrong size (`length_outlier`, `emptied`, `speech_over_silence`), text the
+aligner cannot fit into the clip (`unaligned`), the fuser's own `u`, and no fused text at all
+(`unfused`). Any one lifts the clip's priority by 1.0 above every ungated clip and makes
+`record_decision` refuse a screened decision (409). Scattered unheard words rank but do not gate:
+a correction only the fuser could make is also a word no recogniser produced, and gating on that
+would punish the thing fusion is for. The acoustic gap gates nothing until it is calibrated.
+
+**The normalizer is aggressive on purpose, and only as a comparison.** Scribe and MAI
+transliterate English into Devanagari whatever they are told, and fixing every instance in the
+corpus is not feasible. So `fold.py` treats a Latin word and a Devanagari word as the same when
+their consonant skeletons match (`एक्टिभ`/`active`, `कफी`/`coffee`, `phoneमा`/`फोनमा`). It folds
+the spelling variants Nepali writers do not hold consistently (vowel length,
+chandrabindu/anusvara, nukta, final virama, digit script, the D64 table), and accepts a zero-cost
+two-to-one merge for spacing (`गर्नुभयो`/`गर्नु भयो`). It never matches two Devanagari words by
+sound, because `गर्नु` and `गर्ने` share a skeleton and are different words. On the gold pot about
+half of every system's substitutions were respellings of these kinds. The owner accepted the
+cost: a WER computed this way cannot see a wrong script, and it erases the loanword/English
+distinction in the metric. Labels are never rewritten by it; the D64 table still decides exported
+spelling. Report raw and folded WER side by side, named by `fold_version()`.
+
+**Gold is seeded by fusion too, and that is a real cost the owner chose.** D63 rotated gold's seed
+across recognisers so the benchmark was not anchored to one of them. Gold labels will now lean
+toward the fuser's reading, and a model fine-tuned on fusion-seeded train labels shares that
+lean, so its gold WER will be flattered against the commercial systems by an amount nothing here
+measures. The pilot measured the anchoring effect at about +0.23 WER for any system on clips it
+had seeded. Gold is still 100% listened to, which bounds the damage to what a listener fails to
+catch, and that is not zero.
+
+**What no gate can see.** A knowledgeable correction of a speaker's actual misstatement sounds
+right, aligns fine, agrees with at most one recogniser, and passes everything above. The fuser's
+instruction forbids it, and the harness cannot check.
+
+**Reversal:** `select_seed_hypothesis` back to the strongest recogniser, and the D67 weights back
+into `queue.weights` (they are still in `queue.legacy_weights`). The gates are independent of the
+seed and could be kept.

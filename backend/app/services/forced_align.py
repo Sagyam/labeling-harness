@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -252,6 +253,116 @@ def align_emissions(
     return project_missing_spans(aligned, 0.0, duration_seconds)
 
 
+@dataclass(frozen=True)
+class AcousticFit:
+    """How well a transcript explains its clip, measured against the model's own reading.
+
+    The per-word ``confidence`` on a span is the forced path's posterior, and it is low on hard
+    audio whether or not the words are right -- which makes it a difficulty meter, not a
+    hallucination detector (new-plan §4.2). The gap here subtracts the model's *best* reading of
+    each frame, goodness-of-pronunciation style: on murky audio both are low and the gap stays
+    small; a word the audio does not contain is forced onto frames the model confidently reads as
+    something else, and the gap is large.
+
+    Attributes:
+        aligned: Whether any monotonic path exists. False means more text than the clip can hold.
+        frames: Emission frames in the clip.
+        gap: Mean over speech frames of (best log-prob - forced log-prob), in nats. 0 is a perfect
+            fit; None when nothing aligned.
+        worst_word_gap: The largest mean gap over any one word's frames.
+        free_decode: The model's own greedy reading, in its romanized alphabet.
+        decode_distance: Normalized character edit distance between ``free_decode`` and the
+            romanized transcript -- an independent, audio-only second opinion, 0-1.
+    """
+
+    aligned: bool
+    frames: int
+    gap: float | None = None
+    worst_word_gap: float | None = None
+    free_decode: str = ""
+    decode_distance: float | None = None
+    word_gaps: tuple[float, ...] = field(default=(), repr=False)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "aligned": self.aligned,
+            "frames": self.frames,
+            "gap": self.gap,
+            "worst_word_gap": self.worst_word_gap,
+            "decode_distance": self.decode_distance,
+            "free_decode": self.free_decode,
+        }
+
+
+def _char_distance(a: str, b: str) -> float:
+    longest = max(len(a), len(b))
+    if not longest:
+        return 0.0
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1] / longest
+
+
+def acoustic_fit(
+    log_probs: np.ndarray,
+    tokens: list[str],
+    vocab: dict[str, int],
+    blank_id: int = 0,
+) -> AcousticFit:
+    """Measure how well ``tokens`` explain an emission matrix. See :class:`AcousticFit`."""
+    n_frames = int(log_probs.shape[0])
+    inverse = {index: label for label, index in vocab.items()}
+    best = log_probs.argmax(axis=1)
+    decoded: list[str] = []
+    previous = None
+    for index in best:
+        index = int(index)
+        if index != previous and index != blank_id:
+            label = inverse.get(index, "")
+            if len(label) == 1 and label != WORD_DELIMITER:
+                decoded.append(label)
+        previous = index
+    free_decode = "".join(decoded)
+
+    delimiter = WORD_DELIMITER if WORD_DELIMITER in vocab else None
+    romanized = [romanize(tok) for tok in tokens]
+    alignable = [roman for roman in romanized if roman]
+    target_ids, char_ranges = build_target(alignable, vocab, delimiter)
+    spoken = "".join(ch for word in alignable for ch in word if ch in vocab)
+    path = ctc_forced_align(log_probs, target_ids, blank_id=blank_id) if target_ids else None
+    if path is None or path.size == 0:
+        return AcousticFit(aligned=False, frames=n_frames, free_decode=free_decode)
+
+    extended = np.full(2 * len(target_ids) + 1, blank_id, dtype=np.int64)
+    extended[1::2] = target_ids
+    forced_labels = extended[path]
+    frame_index = np.arange(n_frames)
+    gaps = log_probs[frame_index, best] - log_probs[frame_index, forced_labels]
+    speech = (forced_labels != blank_id) | (best != blank_id)
+    gap = float(gaps[speech].mean()) if speech.any() else 0.0
+
+    word_gaps: list[float] = []
+    for start_char, end_char in char_ranges:
+        states = {2 * char + 1 for char in range(start_char, end_char)}
+        frames = [f for f, state in enumerate(path) if int(state) in states]
+        if frames:
+            word_gaps.append(float(gaps[frames].mean()))
+
+    return AcousticFit(
+        aligned=True,
+        frames=n_frames,
+        gap=round(gap, 4),
+        worst_word_gap=round(max(word_gaps), 4) if word_gaps else None,
+        free_decode=free_decode,
+        decode_distance=round(_char_distance(free_decode, spoken), 4),
+        word_gaps=tuple(round(g, 4) for g in word_gaps),
+    )
+
+
 class ForcedAligner:
     """ONNX CTC aligner, loaded lazily and absent-tolerant.
 
@@ -349,7 +460,34 @@ class ForcedAligner:
         """
         if not self.available or not tokens:
             return None
+        emitted = self._emissions(audio_path, sample_rate)
+        if emitted is None:
+            return None
+        log_probs, duration = emitted
+        assert self._vocab is not None
+        return align_emissions(log_probs, tokens, self._vocab, duration, blank_id=self._blank_id)
 
+    def align_with_fit(
+        self,
+        audio_path: Path | str,
+        tokens: list[str],
+        sample_rate: int = SAMPLE_RATE,
+    ) -> tuple[list[WordSpan] | None, AcousticFit | None]:
+        """:meth:`align`, plus how well the tokens explain the clip -- one inference for both."""
+        if not self.available or not tokens:
+            return None, None
+        emitted = self._emissions(audio_path, sample_rate)
+        if emitted is None:
+            return None, None
+        log_probs, duration = emitted
+        assert self._vocab is not None
+        spans = align_emissions(log_probs, tokens, self._vocab, duration, blank_id=self._blank_id)
+        return spans, acoustic_fit(log_probs, tokens, self._vocab, blank_id=self._blank_id)
+
+    def _emissions(
+        self, audio_path: Path | str, sample_rate: int
+    ) -> tuple[np.ndarray, float] | None:
+        """Run the acoustic model over a clip: ``[T, V]`` log-probabilities and the duration."""
         try:
             audio, file_rate = sf.read(str(audio_path), dtype="float32")
         except Exception as exc:
@@ -375,10 +513,7 @@ class ForcedAligner:
         logits = np.asarray(outputs[0], dtype=np.float64)
         if logits.ndim == 3:
             logits = logits[0]
-        log_probs = logits - _logsumexp(logits)
-
-        assert self._vocab is not None
-        return align_emissions(log_probs, tokens, self._vocab, duration, blank_id=self._blank_id)
+        return logits - _logsumexp(logits), duration
 
 
 def _logsumexp(logits: np.ndarray) -> np.ndarray:
@@ -413,3 +548,28 @@ def align_text(
         {"word": span.word, "start": span.start, "end": span.end, "confidence": span.confidence}
         for span in spans
     ]
+
+
+def align_text_with_fit(
+    aligner: ForcedAligner,
+    audio_path: Path | str,
+    text: str,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any] | None]:
+    """:func:`align_text`, plus the :class:`AcousticFit` as a dict for ``metadata_jsonb``.
+
+    The fit is returned even when no span could be placed: "this text does not fit this clip" is
+    exactly the finding the fusion hazard gates need.
+    """
+    tokens = WORD_TOKEN_RE.findall(text or "")
+    if not tokens:
+        return None, None
+    spans, fit = aligner.align_with_fit(audio_path, tokens)
+    words = (
+        [
+            {"word": span.word, "start": span.start, "end": span.end, "confidence": span.confidence}
+            for span in spans
+        ]
+        if spans
+        else None
+    )
+    return words, fit.as_dict() if fit is not None else None
