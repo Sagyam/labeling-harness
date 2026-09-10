@@ -134,7 +134,11 @@ def withheld_reason(body: dict[str, Any]) -> str | None:
     return None
 
 
-def apply_thinking(generation_config: dict[str, Any], reasoning_enabled: bool | None) -> None:
+def apply_thinking(
+    generation_config: dict[str, Any],
+    reasoning_enabled: bool | None,
+    budget: int | None = None,
+) -> None:
     """Write Gemini's thinking switch into a ``generationConfig``, when the route has an opinion.
 
     ``thinkingBudget: 0`` is how Vertex spells "do not think"; OpenRouter spells the same route
@@ -146,9 +150,26 @@ def apply_thinking(generation_config: dict[str, Any], reasoning_enabled: bool | 
     ``thinkingConfig`` at all with ``400 Thinking is not enabled for this model``, and it reports
     zero thought tokens anyway, so there is nothing there to switch off.
     """
+    if budget is not None:
+        generation_config["thinkingConfig"] = {"thinkingBudget": budget}
+        return
     if reasoning_enabled is None:
         return
     generation_config["thinkingConfig"] = {"thinkingBudget": -1 if reasoning_enabled else 0}
+
+
+def billed_output_tokens(usage: dict[str, Any]) -> int | None:
+    """Output tokens as Google bills them: the answer *and* the thoughts behind it.
+
+    ``candidatesTokenCount`` alone is only the visible answer. On a thinking route the thoughts
+    are most of the bill -- the fusion pilot spent 754k thought tokens against 75k of answer --
+    and an estimate without them understated its cost by a factor of five.
+    """
+    answer = usage.get("candidatesTokenCount") or usage.get("candidates_token_count")
+    thoughts = usage.get("thoughtsTokenCount") or usage.get("thoughts_token_count")
+    if answer is None and thoughts is None:
+        return None
+    return int(answer or 0) + int(thoughts or 0)
 
 
 def _parts(body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -442,7 +463,7 @@ class VertexClient(ProviderClient):
 
         usage = body.get("usageMetadata") or body.get("usage_metadata") or {}
         prompt_tokens = usage.get("promptTokenCount") or usage.get("prompt_token_count")
-        completion_tokens = usage.get("candidatesTokenCount") or usage.get("candidates_token_count")
+        completion_tokens = billed_output_tokens(usage)
         duration = get_audio_duration(audio_file)
         cost = calculate_vertex_cost(
             model_id,
@@ -528,7 +549,9 @@ class VertexClient(ProviderClient):
         effective_temp = temperature if temperature is not None else route_config.temperature
         if effective_temp is not None:
             generation_config["temperature"] = effective_temp
-        apply_thinking(generation_config, route_config.reasoning_enabled)
+        apply_thinking(
+            generation_config, route_config.reasoning_enabled, route_config.thinking_budget
+        )
 
         payload: dict[str, Any] = {
             "contents": contents,
@@ -606,7 +629,7 @@ class VertexClient(ProviderClient):
 
         usage = body.get("usageMetadata") or {}
         prompt_tokens = usage.get("promptTokenCount")
-        completion_tokens = usage.get("candidatesTokenCount")
+        completion_tokens = billed_output_tokens(usage)
         result = LlmResult(
             route=route,
             model=body.get("modelVersion", model_id),
@@ -727,7 +750,9 @@ class VertexClient(ProviderClient):
             "temperature": route_config.temperature or 0.0,
             "responseModalities": ["TEXT"],
         }
-        apply_thinking(generation_config, route_config.reasoning_enabled)
+        apply_thinking(
+            generation_config, route_config.reasoning_enabled, route_config.thinking_budget
+        )
 
         payload: dict[str, Any] = {
             "contents": [

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.config import LlmRoute, LlmRoutes
 from app.llm.base import LlmDisabledError, LlmRequestFailed, LlmRouteNotConfigured
+from app.llm.cost import calculate_vertex_cost
 from app.llm.vertex import (
     VertexClient,
     parse_generate_content,
@@ -651,3 +652,46 @@ def test_a_text_route_can_turn_thinking_off(db_session: Session) -> None:
     ).complete("script_restore", [{"role": "user", "content": "hi"}])
     gen = json.loads(seen[0].content)["generationConfig"]
     assert gen["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+# --- thinking is billed, and can be bounded ---------------------------------------------------
+
+
+@pytest.mark.db
+def test_thinking_tokens_are_billed_as_output(db_session: Session) -> None:
+    """Gemini bills thought tokens at the output rate. Leaving them out of the estimate made the
+    fusion pilot report $0.64 for a run whose 754k thinking tokens cost another ~$2.83."""
+    body = {
+        **_generate_content_body("ok"),
+        "usageMetadata": {
+            "promptTokenCount": 1000,
+            "candidatesTokenCount": 100,
+            "thoughtsTokenCount": 900,
+        },
+    }
+    result = make_client(db_session, _ok(body), config=_text_routes()).complete(
+        "script_restore", [{"role": "user", "content": "hi"}]
+    )
+    assert result.completion_tokens == 1000
+    assert result.estimated_cost_usd == calculate_vertex_cost(
+        "gemini-3.8-flash", prompt_tokens=1000, completion_tokens=1000
+    )
+
+
+@pytest.mark.db
+def test_a_thinking_budget_is_sent_as_a_number(db_session: Session) -> None:
+    seen: list[httpx.Request] = []
+    make_client(
+        db_session,
+        _ok(_generate_content_body("ok"), seen),
+        config=_text_routes(reasoning_enabled=True, thinking_budget=24576),
+    ).complete("script_restore", [{"role": "user", "content": "hi"}])
+    gen = json.loads(seen[0].content)["generationConfig"]
+    assert gen["thinkingConfig"] == {"thinkingBudget": 24576}
+
+
+def test_a_thinking_budget_on_a_route_that_does_not_think_is_refused() -> None:
+    with pytest.raises(ValueError, match="thinking_budget"):
+        LlmRoute(
+            provider="vertex", api="chat", model="m", reasoning_enabled=False, thinking_budget=1
+        )

@@ -376,6 +376,12 @@ class LlmRoute(BaseModel):
     #: Never set on an ``api: transcription`` route: the dedicated recogniser answers any
     #: ``thinkingConfig`` with ``400 Thinking is not enabled for this model``.
     reasoning_enabled: bool | None = None
+    #: Upper bound on thought tokens, for the one kind of route where thinking is the job rather
+    #: than a default left on (transcript fusion, D72). Sent as Vertex's ``thinkingBudget``;
+    #: without it ``reasoning_enabled: true`` means unbounded (-1). Thought tokens are billed as
+    #: output and count against ``max_tokens``, so the budget is what keeps a long answer from
+    #: being truncated by its own reasoning.
+    thinking_budget: int | None = Field(default=None, gt=0)
     #: Fill this route's word spans with the local CTC forced aligner (D32). For a transcriber
     #: that returns no timestamps of its own; a route that reports them keeps what it reported.
     forced_align: bool = False
@@ -400,6 +406,8 @@ class LlmRoute(BaseModel):
 
     @model_validator(mode="after")
     def _check_provider_api(self) -> LlmRoute:
+        if self.thinking_budget is not None and self.reasoning_enabled is False:
+            raise ValueError("thinking_budget is set on a route with reasoning_enabled: false")
         if self.provider == "elevenlabs" and self.api != "transcription":
             raise ValueError("the elevenlabs provider only offers api: transcription")
         if self.provider == "vertex" and self.api not in ("transcription", "audio_chat", "chat"):
