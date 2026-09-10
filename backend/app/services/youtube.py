@@ -66,8 +66,32 @@ class YouTubeUnavailable(YouTubeError):
     """yt-dlp could not deliver the video. Upstream's fault or the network's; a 502."""
 
 
+class YouTubeBotDetected(YouTubeUnavailable):
+    """YouTube triggered anti-bot, captcha, sign-in requirement, or HTTP 429 rate-limiting."""
+
+
 class VideoTooLong(YouTubeError):
     """The video exceeds ``ingest.youtube.max_duration_seconds``, the spend guard."""
+
+
+BOT_DETECTION_PATTERNS: tuple[str, ...] = (
+    "confirm you’re not a bot",  # noqa: RUF001
+    "confirm you're not a bot",
+    "confirm you are not a bot",
+    "bot detection",
+    "automated queries",
+    "http error 429",
+    "too many requests",
+    "sign in to confirm",
+    "use --cookies",
+    "sign in if you've been granted access",
+)
+
+
+def is_bot_detection_error(text: str) -> bool:
+    """True if text indicates YouTube bot detection, captcha, or rate limiting."""
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in BOT_DETECTION_PATTERNS)
 
 
 @dataclass(frozen=True)
@@ -166,6 +190,8 @@ def _youtube_settings(settings: Settings | None) -> YouTubeSettings:
 def _fail(action: str, stderr: str, returncode: int) -> YouTubeUnavailable:
     """Turn a yt-dlp failure into an exception carrying the tail of what it said."""
     detail = " ".join(stderr.strip().splitlines()[-3:])[:400] or f"exit code {returncode}"
+    if is_bot_detection_error(stderr) or is_bot_detection_error(detail):
+        return YouTubeBotDetected(f"yt-dlp {action} hit YouTube bot detection: {detail}")
     return YouTubeUnavailable(f"yt-dlp {action} failed: {detail}")
 
 

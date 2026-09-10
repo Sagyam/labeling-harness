@@ -1220,8 +1220,9 @@ def _drain(timeout: float = 5.0) -> None:
     """Block until the queue is empty and nothing is running."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if manager._pending.empty() and manager._running_id is None:
-            return
+        with manager._lock:
+            if manager._pending.empty() and manager._running_id is None and not manager._waiting:
+                return
         time.sleep(0.01)
     raise AssertionError("ingestion queue did not drain")
 
@@ -1435,3 +1436,123 @@ def test_a_fuser_that_blows_up_never_fails_the_episode(
 
     assert job.status == "completed"
     assert "vertex is on fire" in job.summary["fusion"]["error"]
+
+
+def test_queue_rich_snapshot_api(client: TestClient, tmp_path: Path) -> None:
+    manager.reset()
+    job = manager.create_job(
+        episode_id="snap_ep",
+        show_id="demo",
+        title="Snapshot Ep",
+        work_dir=tmp_path / "snap",
+    )
+    job.status = "backlog"
+    job.backlog(reason="youtube_bot_detected", error_message="Bot challenge")
+
+    response = client.get("/ingest")
+    assert response.status_code == 200
+    data = response.json()
+    assert "running" in data
+    assert "upcoming" in data
+    assert "backlog" in data
+    assert "past" in data
+    assert "counts" in data
+    assert data["counts"]["backlog"] == 1
+    assert data["backlog"][0]["episode_id"] == "snap_ep"
+
+
+def test_retry_and_cancel_endpoints_api(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.services.ingest.run_pipeline", lambda *args, **kwargs: None)
+    manager.reset()
+    work_dir = tmp_path / "retry_ep"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    job = manager.create_job(
+        episode_id="retry_ep",
+        show_id="demo",
+        title="Retry Ep",
+        work_dir=work_dir,
+    )
+    job.status = "failed"
+    job.error = "Simulated failure"
+
+    # Retry single
+    resp = client.post(f"/ingest/{job.job_id}/retry")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+    _drain()
+
+    # Cancel job
+    cancel_resp = client.delete(f"/ingest/{job.job_id}")
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["action"] in ("scrammed", "removed", "cancelled", "deleted")
+
+    # Retry all matching status
+    job2 = manager.create_job(
+        episode_id="backlog_ep",
+        show_id="demo",
+        title="Backlog Ep",
+        work_dir=tmp_path / "backlog_ep",
+    )
+    job2.status = "backlog"
+    job2.stage = "backlog"
+    with manager._lock:
+        manager._backlog.append(job2.job_id)
+
+    batch_retry = client.post("/ingest/retry-all", json={"status": "backlog"})
+    assert batch_retry.status_code == 200
+    assert len(batch_retry.json()["results"]) == 1
+    assert batch_retry.json()["results"][0]["success"] is True
+    _drain()
+
+    # Clear past
+    job3 = manager.create_job(
+        episode_id="past_ep",
+        show_id="demo",
+        title="Past Ep",
+        work_dir=tmp_path / "past_ep",
+    )
+    job3.status = "completed"
+    clear_resp = client.post("/ingest/clear-past")
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["cleared_count"] >= 1
+    assert manager.get_job(job3.job_id) is None
+    manager.reset()
+
+
+def test_youtube_batch_ingest_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.services.ingest.run_pipeline", lambda *args, **kwargs: None)
+    manager.reset()
+    from app.services.youtube import VideoInfo
+
+    def fake_probe(url: str, settings=None):
+        vid = url.split("=")[-1] if "=" in url else "vid123"
+        return VideoInfo(
+            video_id=vid,
+            url=url,
+            title=f"Title {vid}",
+            duration_seconds=300.0,
+            uploader="Channel",
+        )
+
+    monkeypatch.setattr("app.api.ingest.probe", fake_probe)
+
+    resp = client.post(
+        "/ingest/youtube/batch",
+        json={
+            "urls": [
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "https://www.youtube.com/watch?v=abc12345678",
+            ],
+            "show_id": "test_show",
+            "topic": "tech_gadgets",
+        },
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["total"] == 2
+    assert len(data["queued"]) == 2
+    assert data["errors"] == []
+    _drain()
+    manager.reset()

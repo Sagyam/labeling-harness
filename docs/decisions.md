@@ -2115,3 +2115,38 @@ instruction forbids it, and the harness cannot check.
 **Reversal:** `select_seed_hypothesis` back to the strongest recogniser, and the D67 weights back
 into `queue.weights` (they are still in `queue.legacy_weights`). The gates are independent of the
 seed and could be kept.
+
+## D75 — Ingest Queue, Bot Detection Backlog, and 8-Core Multithreading
+
+To scale video ingestion to ~50 hours in 48 hours, the ingestion pipeline separates job
+submission from execution through an in-memory and disk-persisted FIFO queue with rich
+inspection endpoints, automatic quarantine of YouTube bot verification challenges, batch
+URL submission, and multi-core CPU parallelization across VAD, audio normalization, and ONNX
+aligner runtimes.
+
+**Why a persistent queue with background runner.** Previous ingestion executed in synchronous
+or single-task memory state where errors or browser disconnection risked halting or obscuring
+pipelines. The `IngestionManager` manages pending, running, backlog, and past jobs, serializing
+queue state atomically to `data/ingest_state.json`.
+
+**Why a dedicated backlog for bot detection.** YouTube periodically serves CAPTCHAs, bot
+verification gates ("Sign in to confirm you're not a bot"), or HTTP 429 Too Many Requests.
+Crashing the pipeline or failing the entire batch on a bot challenge halts processing for all
+other pending jobs. Instead, `_fetch_source_audio` traps `YouTubeBotDetected` (and bot signature
+patterns) and immediately quarantines the job to `backlog`. The queue proceeds without delay to
+subsequent episodes. Backlogged jobs can be retried individually or in bulk via `POST /ingest/{id}/retry`
+and `POST /ingest/retry-all`.
+
+**8-core CPU parallelization.** Ingestion involves CPU-intensive tasks that previously ran
+single-threaded or under-utilized multi-core hosts:
+1. `SileroVAD.extract_clips`: Slicing, edge cosine fading, mono 16 kHz FLAC encoding, and SHA256
+   checksum hashing are now parallelized using `ThreadPoolExecutor` sized up to `min(8, os.cpu_count())`.
+2. ONNX Runtime: Both `SileroVAD` and `ForcedAligner` configure `SessionOptions.intra_op_num_threads`
+   to utilize available CPU cores (up to 8).
+3. FFmpeg loudnorm passes specify `-threads 0` to utilize all CPU execution threads.
+4. Concurrency settings in `settings.yaml` default `max_segment_concurrency` to 8 (supporting up to 32)
+   and configure `cpu_workers: 8`.
+
+**Reversal:** Replace `IngestionManager` with simple synchronous runs; set `intra_op_num_threads = 1`
+and single-threaded list comprehension in `extract_clips`.
+

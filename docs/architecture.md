@@ -386,8 +386,14 @@ the same inputs and filters produce byte-identical output.
 | `POST /translit` | Latin token → ranked Devanagari candidates |
 | `POST /translit/choice` | Record the chosen form for the correction memory |
 | `POST /ingest` | Upload an episode's audio; starts the pipeline, returns a job id |
+| `GET /ingest` | Inspect queue status: running job, upcoming queue, bot backlog, and past jobs |
 | `POST /ingest/youtube` | Ingest from a YouTube URL; the server fetches the audio itself |
+| `POST /ingest/youtube/batch` | Queue multiple YouTube URLs for batch ingestion |
 | `POST /ingest/youtube/probe` | Read a video's metadata; downloads nothing and creates no job |
+| `POST /ingest/{id}/retry` | Requeue a failed, aborted, or backlogged ingestion job |
+| `POST /ingest/retry-all` | Batch retry all jobs matching a status filter (e.g. `backlog`, `failed`) |
+| `DELETE /ingest/{id}` | Cancel a queued/running job or remove a finished/backlog job |
+| `POST /ingest/clear-past` | Prune finished history jobs from the manager |
 | `GET /ingest/{id}` | Job stage, progress, active segment count, error state |
 | `GET /ingest/{id}/events` | SSE stream of the job's log lines |
 | `GET /episodes` | Episode list with per-episode segment counts and progress |

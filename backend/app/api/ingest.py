@@ -9,6 +9,7 @@ import re
 import shutil
 import time
 import unicodedata
+import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,21 @@ class YouTubeIngestIn(YouTubeProbeIn):
     genre: str = ""
     topic: str = ""
     speakers_json: str = ""
+
+
+class YouTubeBatchIngestIn(BaseModel):
+    """A list of YouTube URLs to batch enqueue."""
+
+    urls: list[str] = Field(min_length=1, max_length=100)
+    show_id: str = "podcast"
+    genre: str = ""
+    topic: str = ""
+
+
+class RetryAllIn(BaseModel):
+    """Filter for batch retry."""
+
+    status_filter: str | None = None  # 'backlog', 'failed', or None for all retryable
 
 
 class YouTubeProbeOut(BaseModel):
@@ -226,6 +242,58 @@ async def start_youtube_ingestion(
     }
 
 
+@router.post("/youtube/batch", status_code=status.HTTP_202_ACCEPTED)
+async def start_youtube_batch_ingest(
+    body: YouTubeBatchIngestIn,
+    settings: Settings = Depends(get_config),
+    storage: ObjectStorage = Depends(get_object_storage),
+    session_factory: Callable[[], Session] = Depends(get_session_factory),
+) -> dict[str, Any]:
+    """Queue multiple YouTube URLs in batch."""
+    queued: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+
+    for raw_url in body.urls:
+        url_str = raw_url.strip()
+        if not url_str:
+            continue
+        try:
+            info = _probe_or_http_error(url_str, settings)
+            title = info.title
+            ep_id = _slugify(title)
+            work_dir = (
+                settings.ingest.work_root / f"{ep_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            )
+            work_dir.mkdir(parents=True, exist_ok=True)
+            metadata = _episode_metadata(body.genre, body.topic, "")
+            job = manager.create_job(
+                episode_id=ep_id,
+                show_id=body.show_id.strip() or "podcast",
+                title=title,
+                work_dir=work_dir,
+                source_url=canonical_url(url_str),
+                metadata=metadata,
+            )
+            ahead = manager.submit(job, session_factory, storage, settings)
+            queued.append(
+                {
+                    "job_id": job.job_id,
+                    "episode_id": job.episode_id,
+                    "title": job.title,
+                    "queue_position": ahead,
+                }
+            )
+        except Exception as exc:
+            errors.append({"url": url_str, "error": str(exc)})
+
+    return {
+        "total": len(body.urls),
+        "queued": queued,
+        "queued_count": len(queued),
+        "errors": errors,
+    }
+
+
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def start_ingestion(
     file: UploadFile = File(...),
@@ -297,12 +365,66 @@ async def start_ingestion(
 
 @router.get("")
 async def list_queue() -> dict[str, Any]:
-    """The running ingestion and everything waiting behind it, in the order they will run."""
-    rows = manager.queue_snapshot()
+    """The running ingestion, upcoming queue, backlog, and past jobs."""
+    return manager.queue_snapshot_rich()
+
+
+@router.post("/retry-all")
+async def retry_all_jobs(
+    body: RetryAllIn | None = None,
+    settings: Settings = Depends(get_config),
+    storage: ObjectStorage = Depends(get_object_storage),
+    session_factory: Callable[[], Session] = Depends(get_session_factory),
+) -> dict[str, Any]:
+    """Retry all backlogged or failed jobs."""
+    filter_status = body.status_filter if body else None
+    results = manager.retry_all(filter_status, session_factory, storage, settings)
     return {
-        "running": rows[0] if rows and rows[0]["status"] == "processing" else None,
-        "jobs": rows,
+        "retried_count": len([r for r in results if r.get("success")]),
+        "results": results,
     }
+
+
+@router.post("/clear-past")
+async def clear_past_jobs() -> dict[str, Any]:
+    """Clear finished history."""
+    count = manager.clear_past()
+    return {"cleared_count": count}
+
+
+@router.post("/{job_id}/retry")
+async def retry_job(
+    job_id: str,
+    settings: Settings = Depends(get_config),
+    storage: ObjectStorage = Depends(get_object_storage),
+    session_factory: Callable[[], Session] = Depends(get_session_factory),
+) -> dict[str, Any]:
+    """Retry a failed, aborted, or backlogged job."""
+    job = manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ingestion job not found")
+    if job.status not in ("failed", "aborted", "backlog"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"job is {job.status} and cannot be retried",
+        )
+    ahead = manager.retry_job(job_id, session_factory, storage, settings)
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "episode_id": job.episode_id,
+        "title": job.title,
+        "queue_position": ahead,
+    }
+
+
+@router.delete("/{job_id}")
+async def cancel_or_delete_job(job_id: str) -> dict[str, Any]:
+    """Cancel a queued job or remove a finished/backlogged job."""
+    try:
+        return manager.cancel_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/{job_id}")
@@ -325,6 +447,7 @@ async def get_job_status(job_id: str) -> dict[str, Any]:
         "episode_id": job.episode_id,
         "show_id": job.show_id,
         "title": job.title,
+        "source_url": job.source_url,
         # None once the job is running or finished; a count of jobs ahead while it waits.
         "queue_position": manager.queue_position(job_id),
         "logs": [

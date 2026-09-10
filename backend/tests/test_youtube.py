@@ -22,6 +22,7 @@ from app.services.youtube import (
     InvalidYouTubeUrl,
     VideoInfo,
     VideoTooLong,
+    YouTubeBotDetected,
     YouTubeUnavailable,
     canonical_url,
     check_duration,
@@ -628,3 +629,56 @@ def test_a_speaker_name_posted_to_the_endpoint_never_reaches_the_job(
     job = manager.get_job(response.json()["job_id"])
     assert job is not None
     assert job.metadata == {"topic": "tech_gadgets", "speakers": {"spk0": {"role": "host"}}}
+
+
+def test_probe_bot_challenge_raises_youtube_bot_detected(
+    monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    fake_run(
+        monkeypatch,
+        returncode=1,
+        stderr=(
+            b"ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you\xe2\x80\x99re not a bot. "
+            b"This helps protect our community.\n"
+        ),
+    )
+
+    with pytest.raises(YouTubeBotDetected, match="bot"):
+        probe(f"https://youtu.be/{VIDEO_ID}", settings=settings)
+
+
+def test_download_audio_bot_challenge_raises_youtube_bot_detected(
+    fake_popen, settings, tmp_path: Path
+) -> None:
+    fake_popen.returncode_after = 1
+    fake_popen.stderr_text = "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot."
+
+    with pytest.raises(YouTubeBotDetected, match="bot"):
+        download_audio(f"https://youtu.be/{VIDEO_ID}", tmp_path / "work", settings=settings)
+
+
+def test_pipeline_bot_detection_moves_job_to_backlog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    work_dir = tmp_path / "bot_test"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    job = manager.create_job(
+        episode_id="bot_ep",
+        show_id="demo",
+        title="Bot Episode",
+        work_dir=work_dir,
+        source_url=f"https://youtu.be/{VIDEO_ID}",
+    )
+
+    def _fail_bot(*args, **kwargs):
+        raise YouTubeBotDetected("Sign in to confirm you're not a bot")
+
+    monkeypatch.setattr("app.services.ingest.download_audio", _fail_bot)
+
+    # run_pipeline directly
+    run_pipeline(job, lambda: None, None, settings)
+
+    assert job.status == "backlog"
+    assert job.stage == "backlog"
+    assert "bot" in (job.error or "").lower()
+    assert job.job_id in manager._backlog
