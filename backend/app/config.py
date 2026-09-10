@@ -319,7 +319,8 @@ class IngestSettings(BaseModel):
     model_config = _STRICT
 
     work_root: Path = Path("./data/ingest_work")
-    max_segment_concurrency: int = Field(default=4, ge=1, le=16)
+    max_segment_concurrency: int = Field(default=8, ge=1, le=32)
+    cpu_workers: int = Field(default=8, ge=1, le=64)
     youtube: YouTubeSettings = Field(default_factory=YouTubeSettings)
     #: Text route that labels an episode's topic from its transcript (D57). One call per episode,
     #: only when the form left the topic blank. Empty disables it; a name that is not in

@@ -7,7 +7,9 @@ Enforces 2.0s - 20.0s utterance boundaries per the corpus specification.
 
 from __future__ import annotations
 
+import concurrent.futures
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -87,8 +89,9 @@ class SileroVAD:
             import onnxruntime as ort
 
             opts = ort.SessionOptions()
-            opts.inter_op_num_threads = 1
-            opts.intra_op_num_threads = 1
+            threads = min(8, os.cpu_count() or 4)
+            opts.inter_op_num_threads = 2
+            opts.intra_op_num_threads = threads
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             self._session = ort.InferenceSession(
                 str(self.model_path), sess_options=opts, providers=["CPUExecutionProvider"]
@@ -452,8 +455,9 @@ def extract_clips(
     slices: list[tuple[float, float]],
     episode_id: str,
     output_dir: Path,
+    max_workers: int | None = None,
 ) -> list[CutSegment]:
-    """Slice 16 kHz mono audio into segment FLAC files.
+    """Slice 16 kHz mono audio into segment FLAC files in parallel across worker threads.
 
     Writes clips to ``output_dir / f'{segment_id}.flac'``.
     """
@@ -462,8 +466,10 @@ def extract_clips(
     if audio_data.ndim > 1:
         audio_data = audio_data[:, 0]
 
-    segments: list[CutSegment] = []
-    for i, (start_sec, end_sec) in enumerate(slices):
+    num_workers = max_workers or min(8, os.cpu_count() or 4)
+
+    def _process_one(idx_and_slice: tuple[int, tuple[float, float]]) -> tuple[int, CutSegment]:
+        i, (start_sec, end_sec) = idx_and_slice
         seg_id = f"{episode_id}_{i:05d}"
         clip_file = output_dir / f"{seg_id}.flac"
 
@@ -474,16 +480,21 @@ def extract_clips(
         sf.write(str(clip_file), clip_data, sr, format="FLAC", subtype="PCM_16")
         checksum = sha256_file(clip_file)
 
-        segments.append(
-            CutSegment(
-                segment_id=seg_id,
-                start_time=start_sec,
-                end_time=end_sec,
-                duration=round(end_sec - start_sec, 3),
-                clip_path=clip_file,
-                clip_rel_path=f"clips/{seg_id}.flac",
-                clip_checksum=checksum,
-            )
+        return i, CutSegment(
+            segment_id=seg_id,
+            start_time=start_sec,
+            end_time=end_sec,
+            duration=round(end_sec - start_sec, 3),
+            clip_path=clip_file,
+            clip_rel_path=f"clips/{seg_id}.flac",
+            clip_checksum=checksum,
         )
 
-    return segments
+    if len(slices) <= 1 or num_workers <= 1:
+        indexed_results = [_process_one((i, s)) for i, s in enumerate(slices)]
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as pool:
+            indexed_results = list(pool.map(_process_one, enumerate(slices)))
+
+    indexed_results.sort(key=lambda x: x[0])
+    return [seg for _, seg in indexed_results]

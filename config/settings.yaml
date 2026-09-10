@@ -108,7 +108,8 @@ export:
 
 ingest:
   work_root: ./data/ingest_work   # scratch space for web uploads; removed when a job finishes
-  max_segment_concurrency: 4     # number of segments transcribed concurrently
+  max_segment_concurrency: 8     # number of segments transcribed concurrently
+  cpu_workers: 8                 # number of worker threads for audio slicing & ONNX
   # Text route that labels an episode's topic from its own transcript, once per episode, only
   # when the form left the topic blank (D57). Empty disables it.
   topic_route: classify_topic
