@@ -267,7 +267,7 @@ export interface DiscardedSegment {
 
 export interface IngestJobStatus {
   job_id: string
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'aborted'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'aborted' | 'backlog'
   stage:
     | 'upload'
     | 'downloading'
@@ -280,6 +280,7 @@ export interface IngestJobStatus {
     | 'complete'
     | 'failed'
     | 'aborted'
+    | 'backlog'
   progress: number
   active_segments: number
   total_segments: number
@@ -290,6 +291,7 @@ export interface IngestJobStatus {
   episode_id: string
   show_id: string
   title: string
+  source_url?: string | null
   logs: IngestLogEntry[]
   discarded_segments: DiscardedSegment[]
   /** system_id -> how many segments it cost, most expensive first. */
@@ -325,6 +327,40 @@ export type IngestEvent =
   | { type: 'scram'; reason: string }
   /** The scrammed run has stopped. Nothing was imported. */
   | { type: 'aborted'; summary: Record<string, any>; reason: string | null }
+  /** Placed into backlog (e.g. bot challenge) to retry later. */
+  | { type: 'backlog'; reason: string; error: string }
+
+/** Summary of a job in the queue dashboard. */
+export interface QueueJobSummary {
+  job_id: string
+  episode_id: string
+  show_id: string
+  title: string
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'aborted' | 'backlog'
+  stage: string
+  progress: number
+  active_segments: number
+  total_segments: number
+  error?: string | null
+  source_url?: string | null
+  created_at: number
+  queue_position?: number | null
+}
+
+export interface IngestQueueResponse {
+  running: QueueJobSummary | null
+  upcoming: QueueJobSummary[]
+  backlog: QueueJobSummary[]
+  past: QueueJobSummary[]
+  counts: {
+    running: number
+    upcoming: number
+    backlog: number
+    past: number
+    total: number
+  }
+  jobs: QueueJobSummary[]
+}
 
 /** Metadata read from a YouTube URL before anything is downloaded. */
 export interface YouTubeProbe {
@@ -347,6 +383,25 @@ export interface YouTubeIngestIn {
   genre?: string
   topic?: string
   speakers_json?: string
+}
+
+export interface YouTubeBatchIngestIn {
+  urls: string[]
+  show_id?: string
+  genre?: string
+  topic?: string
+}
+
+export interface YouTubeBatchIngestOut {
+  total?: number
+  queued: Array<{
+    job_id: string
+    episode_id: string
+    title: string
+    queue_position: number
+  }>
+  queued_count: number
+  errors: Array<{ url: string; error: string }>
 }
 
 export interface EpisodeSummary {

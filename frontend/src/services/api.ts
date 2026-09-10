@@ -32,6 +32,9 @@ import {
   PotName,
   PotPanel,
   SegmentPotOut,
+  IngestQueueResponse,
+  YouTubeBatchIngestIn,
+  YouTubeBatchIngestOut,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -261,6 +264,44 @@ export const api = {
     return () => {
       eventSource.close()
     }
+  },
+
+  getIngestQueue: (): Promise<IngestQueueResponse> => {
+    return request<IngestQueueResponse>('/ingest')
+  },
+
+  retryIngest: (
+    jobId: string
+  ): Promise<{ job_id: string; status: string; queue_position: number; message: string }> => {
+    return request(`/ingest/${jobId}/retry`, { method: 'POST' })
+  },
+
+  retryAllIngest: (
+    statusFilter?: string
+  ): Promise<{ retried_count: number; results: any[] }> => {
+    return request('/ingest/retry-all', {
+      method: 'POST',
+      body: JSON.stringify({ status_filter: statusFilter ?? null }),
+    })
+  },
+
+  cancelIngest: (
+    jobId: string
+  ): Promise<{ job_id: string; action: string; status?: string }> => {
+    return request(`/ingest/${jobId}`, { method: 'DELETE' })
+  },
+
+  clearPastIngest: (): Promise<{ cleared_count: number }> => {
+    return request('/ingest/clear-past', { method: 'POST' })
+  },
+
+  startYouTubeBatchIngest: (
+    body: YouTubeBatchIngestIn
+  ): Promise<YouTubeBatchIngestOut> => {
+    return request<YouTubeBatchIngestOut>('/ingest/youtube/batch', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
   },
 
   listEpisodes: (): Promise<EpisodeSummary[]> => {
