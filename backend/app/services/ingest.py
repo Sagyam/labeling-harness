@@ -1,11 +1,12 @@
 """Backend ingestion service for podcast episodes.
 
-Coordinates the 5-stage ingestion pipeline:
+Coordinates the 6-stage ingestion pipeline:
 1. Audio normalization via FFmpeg with loudnorm (16 kHz mono FLAC)
 2. Utterance segmentation via Silero VAD (2.0s - 20.0s boundaries)
 3. Cloud ASR inference across every configured `asr*` route (logged to llm_requests)
-4. Orthography-aware token tagging, CMI, and rule flags
-5. Manifest generation and direct database import + queue building
+4. Fusion: a reasoning model reconciles the recognisers into one transcript per clip (D72)
+5. Orthography-aware token tagging, CMI, and rule flags -- on the fused text where there is one
+6. Manifest generation and direct database import + queue building
 
 A segment that cannot be transcribed by every configured system is discarded and the run carries
 on (D46). Stage 3 is where all the money is: it dispatches every `asr*` route at every clip, so
@@ -38,7 +39,8 @@ import soundfile as sf
 from sqlalchemy.orm import Session
 
 from app.config import LlmRoutes, Settings, get_settings, load_llm_routes
-from app.llm.base import AsrResult
+from app.llm.base import AsrResult, LlmResult
+from app.llm.openrouter import OpenRouterClient
 from app.llm.topic import classify_topic, sample_transcript
 from app.llm.transcription import (
     ASR_PROMPT,
@@ -47,8 +49,10 @@ from app.llm.transcription import (
     system_id_for,
     transcribe,
 )
+from app.llm.vertex import VertexClient
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.forced_align import ForcedAligner, align_text
+from app.services.fusion_stage import FUSION_KIND, fuse_records
 from app.services.importer import import_manifest
 from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
@@ -613,6 +617,98 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
     return float(info.duration)
 
 
+def _best_text(record: dict[str, Any]) -> str:
+    """The fused transcript when there is one, otherwise the first recogniser's."""
+    for hypothesis in record["hypotheses"]:
+        if hypothesis.get("kind") == FUSION_KIND:
+            return str(hypothesis.get("text") or "")
+    return str(record["hypotheses"][0].get("text") or "")
+
+
+def _fusion_completer(
+    session: Session, routes: LlmRoutes, route_name: str
+) -> Callable[[list[dict[str, Any]]], LlmResult] | None:
+    """A routed, logged completion on the fusion route, or ``None`` when fusion cannot run.
+
+    ``None`` on a dry run -- the recognisers returned canned text and there is nothing to
+    reconcile -- and when the route is not configured. Every real request goes through the
+    provider client, so it writes its ``llm_requests`` row like any other inference (invariant 6).
+    """
+    route = routes.routes.get(route_name) if route_name else None
+    if route is None or routes.dry_run:
+        return None
+    client: VertexClient | OpenRouterClient = (
+        VertexClient(session, config=routes)
+        if route.provider == "vertex"
+        else OpenRouterClient(session, config=routes)
+    )
+    return lambda messages: client.complete(route_name, messages)
+
+
+def _run_fusion_stage(
+    job: IngestJob,
+    segment_records: list[dict[str, Any]],
+    segments: list[Any],
+    session_factory: Callable[[], Session],
+    settings: Settings,
+    *,
+    routes: LlmRoutes,
+    aligner: ForcedAligner | None,
+) -> dict[str, Any] | None:
+    """Stage 4: fuse the episode's recognisers into one hypothesis per clip (D72).
+
+    Mutates ``segment_records`` in place. Never raises: a stage that fails outright is logged, the
+    clips keep their recognisers, and the queue seeds and routes them without a fused text.
+    """
+    route_name = settings.fusion.route
+    route = routes.routes.get(route_name) if route_name else None
+    if route is None:
+        job.log(
+            "Stage 4/6: Fusion skipped -- no fusion route configured; seeds fall back to one "
+            "recogniser",
+            "warn",
+        )
+        return None
+
+    clip_paths = {seg.segment_id: Path(seg.clip_path) for seg in segments}
+    try:
+        with session_factory() as session:
+            complete = _fusion_completer(LockedSession(session), routes, route_name)
+            if complete is None:
+                job.log("Stage 4/6: Fusion skipped on a dry run -- canned text has nothing to fuse")
+                return None
+            job.log(
+                f"Stage 4/6: Fusing {len(segment_records)} segments with {route.model} "
+                f"(windows of ~{settings.fusion.window_target_seconds / 60:.0f} min)..."
+            )
+            report = fuse_records(
+                segment_records,
+                complete=complete,
+                route=route,
+                fusion=settings.fusion,
+                settings=settings,
+                aligner=aligner if aligner is not None and aligner.available else None,
+                clip_path_for=clip_paths.__getitem__,
+                should_stop=lambda: job.scrammed,
+                log=job.log,
+                max_workers=settings.ingest.max_segment_concurrency,
+            )
+            session.commit()
+    except Exception as exc:  # the recognisers' work is paid for; see the docstring
+        logger.warning("fusion_stage_failed", error=str(exc))
+        job.log(f"Fusion failed ({type(exc).__name__}: {exc}); seeds fall back to one recogniser",
+                "warn")  # fmt: skip
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+    job.log(
+        f"Fusion: {report.fused}/{report.segments} segments fused in {report.windows} window(s), "
+        f"{report.requests} request(s), {report.thought_tokens:,} thought tokens, "
+        f"${report.cost_usd:.3f}"
+        + (f" -- {len(report.unfused)} left unfused" if report.unfused else "")
+    )
+    return report.as_dict()
+
+
 def _classify_episode_topic(
     job: IngestJob,
     segment_records: list[dict[str, Any]],
@@ -640,7 +736,7 @@ def _classify_episode_topic(
         return {}
 
     excerpt = sample_transcript(
-        [record["hypotheses"][0]["text"] for record in segment_records if record["hypotheses"]]
+        [_best_text(record) for record in segment_records if record["hypotheses"]]
     )
     try:
         with session_factory() as session:
@@ -787,7 +883,7 @@ def _run_stages(
     # Stage 1: Normalize Audio
     try:
         job.set_progress("normalizing", 5.0)
-        job.log("Stage 1/5: Normalizing audio (FFmpeg loudnorm, 16 kHz mono FLAC)...")
+        job.log("Stage 1/6: Normalizing audio (FFmpeg loudnorm, 16 kHz mono FLAC)...")
         duration = normalize_audio(job.audio_path, norm_flac)
         source_checksum = sha256_file(job.audio_path)
         job.log(f"Audio normalized: {duration:.1f}s ({duration / 60:.1f} min)")
@@ -802,7 +898,7 @@ def _run_stages(
     # Stage 2: Silero VAD Segmentation
     try:
         job.set_progress("segmenting", 22.0)
-        job.log("Stage 2/5: Detecting speech turns via Silero VAD (2.0s - 20.0s bounds)...")
+        job.log("Stage 2/6: Detecting speech turns via Silero VAD (2.0s - 20.0s bounds)...")
         vad = SileroVAD()
         audio_data, sr = sf.read(str(norm_flac), dtype="float32")
         turns = vad.detect_turns(audio_data, sample_rate=sr)
@@ -834,7 +930,7 @@ def _run_stages(
         asr_routes = asr_route_names(routes) or ["asr"]
         systems = ", ".join(system_id_for(r, routes.routes.get(r)) for r in asr_routes)
         job.log(
-            f"Stage 3/5: Cloud ASR inference for {len(segments)} segments "
+            f"Stage 3/6: Cloud ASR inference for {len(segments)} segments "
             f"across {len(asr_routes)} systems ({systems})..."
         )
 
@@ -843,7 +939,10 @@ def _run_stages(
         aligning_routes = {
             r for r in asr_routes if getattr(routes.routes.get(r), "forced_align", False)
         }
-        aligner = ForcedAligner() if aligning_routes and not routes.dry_run else None
+        # The fusion stage aligns the fused text too, so the aligner is loaded whenever a real
+        # run is going to fuse, not only when a recogniser needs it.
+        wants_aligner = bool(aligning_routes) or bool(settings.fusion.route)
+        aligner = ForcedAligner() if wants_aligner and not routes.dry_run else None
         if aligner is not None and not aligner.available:
             job.log("Forced aligner model not available -- word spans will be skipped.")
 
@@ -1097,8 +1196,6 @@ def _run_stages(
             )
             return
 
-        job.set_progress("analyzing", 80.0)
-        job.log("Stage 4/5: Orthography analysis, CMI and rule flags completed")
     except Exception as exc:
         job.fail(f"Stage 3/4 ASR Inference / Analysis failed: {exc}")
         return
@@ -1106,10 +1203,23 @@ def _run_stages(
     if _halted(job, segments_detected=len(segments), segments_transcribed=len(segment_records)):
         return
 
-    # Stage 5: Manifest Generation, Direct Import & Queue Building
+    # Stage 4: Fusion. Never fails the episode: every recogniser's work is already paid for, and a
+    # clip the fuser did not answer is seeded from a recogniser and sent to review instead.
+    job.set_progress("fusing", 76.0)
+    fusion_summary = _run_fusion_stage(
+        job, segment_records, segments, session_factory, settings, routes=routes, aligner=aligner
+    )
+
+    if _halted(job, segments_detected=len(segments), segments_transcribed=len(segment_records)):
+        return
+
+    job.set_progress("analyzing", 82.0)
+    job.log("Stage 5/6: Orthography analysis, CMI and rule flags completed")
+
+    # Stage 6: Manifest Generation, Direct Import & Queue Building
     try:
         job.set_progress("importing", 85.0)
-        job.log("Stage 5/5: Generating manifest and importing directly into database...")
+        job.log("Stage 6/6: Generating manifest and importing directly into database...")
 
         job_meta = strip_speaker_pii(job.metadata)
         job_meta.update(
@@ -1175,10 +1285,11 @@ def _run_stages(
                 # Which system cost what, so a bad run points at a vendor rather than at luck.
                 "discarded_by_system": job.discard_summary(),
                 "discarded_segments": [d.as_dict() for d in job.discarded],
+                "fusion": fusion_summary,
                 "tasks_created": queue_report.tasks_created if queue_report else 0,
                 "review_tasks": queue_report.review_tasks if queue_report else 0,
             }
         )
     except Exception as exc:
-        job.fail(f"Stage 5 Database Import & Queue Building failed: {exc}")
+        job.fail(f"Stage 6 Database Import & Queue Building failed: {exc}")
         return

@@ -42,12 +42,10 @@ routes:
     # be wrong -- `spk:0` in one hypothesis is not `spk:0` in another. Speaker identity is a
     # full-episode problem and belongs to a stage that runs before segmentation, not to a flag.
     diarize: false
-    # Scribe spells English loanwords phonetically in Devanagari -- क्याप्टन for Captain, टिम for
-    # team -- and the corpus policy is English in Latin, Nepali in Devanagari. In the first
-    # episode that was corrected by hand 67 times, at roughly half a minute each, and this is
-    # the route where fixing it pays: the seed is the text the annotator actually edits. One
-    # restored token per recognised token, so every word keeps the span Scribe measured (D65).
-    restore_script_route: script_restore
+    # No `restore_script_route` since D73. Scribe still spells English phonetically in Devanagari
+    # (क्याप्टन for Captain), but the seed is the fused transcript now, and the fuser writes the
+    # script policy itself -- so restoring Scribe first bought one extra call per clip and a second
+    # Scribe vote in the fuser's input. Raw Scribe is the independent reading the fuser needs.
 
   # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
   # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash
@@ -89,30 +87,6 @@ routes:
     # `script_restore` this route has no `max_tokens`, so nothing was making the spend visible.
     reasoning_enabled: false
 
-  # Script restoration (D65), not transcription -- no `asr_` prefix, so it never becomes an ASR
-  # system and never appears as a disagreement signal. One chat call per clip whose transcript
-  # contains Devanagari, against the token list rather than the prose, because the contract is one
-  # output token per input token: that is what lets each restored word inherit its own span with
-  # no re-alignment. A response with a different token count is retried and then rejected, never
-  # patched up -- a silently misaligned transcript corrupts every span in the clip.
-  #
-  # On Vertex rather than OpenRouter (D66). OpenRouter began answering `reasoning: {enabled:
-  # false}` on this model with `400 Reasoning is mandatory for this endpoint and cannot be
-  # disabled.`, and dropping the field is not an option here: the route's whole output is a
-  # 2048-token JSON array, and an unbounded thinking budget spends it before the array starts --
-  # D44's rule-2 violation exactly. Vertex spells the same switch `thinkingBudget: 0` and still
-  # honours it, so the route moves rather than the policy. `_client_for` already dispatches on
-  # `provider`, which is what made this a config change (D45).
-  script_restore:
-    provider: vertex
-    api: chat
-    model: gemini-3.8-flash
-    temperature: 0.0
-    # Bounded because the output is a JSON array of tokens, never prose. Thinking off for the
-    # same reason as the ASR routes (D45): there is nothing to reason about in a respelling.
-    max_tokens: 2048
-    reasoning_enabled: false
-
   # Topic labelling (D57), not transcription -- the name has no `asr_` prefix, so it never becomes
   # an ASR system. One text call per episode against an excerpt sampled across the whole of it,
   # answering with one label from the closed taxonomy in `app/llm/topic.py`.
@@ -127,3 +101,28 @@ routes:
     max_tokens: 16
     temperature: 0.0
     reasoning_enabled: false
+
+  # Transcript fusion (D72), not transcription -- no `asr_` prefix, so it never becomes an ASR
+  # system and never a disagreement signal; its hypotheses land under `asr_systems.kind =
+  # fusion`, with `-<prompt version>` appended to the system id. It reads every recogniser's text
+  # for ~30 minutes of consecutive clips and writes one verbatim transcript per clip: the seed.
+  #
+  # Thinking ON, and bounded: arbitrating conflicting readings is what a reasoning budget is for
+  # (against D44/D45, which were about mechanical routes). The pilot's dynamic budget spent 20-34k
+  # thought tokens per ~100 segments read; a 30-minute window reads ~190, so left dynamic it could
+  # spend past `max_tokens` -- thoughts and answer share it -- and truncate the JSON. 24,576 bounds
+  # the worst window near 36k. Thought tokens are billed as output, which is most of this route's
+  # cost (~$0.16 per 30-minute window at list price).
+  fuse_transcript:
+    provider: vertex
+    api: chat
+    model: gemini-3.8-flash
+    system_id: fusion-gemini-3.8-flash
+    temperature: 0.0
+    max_tokens: 65536
+    reasoning_enabled: true
+    thinking_budget: 24576
+    # Minutes, not seconds: ~35k generated tokens at the pilot's ~190 tok/s is about three minutes,
+    # and a timeout turns into a retried, re-billed generation.
+    timeout_seconds: 900
+

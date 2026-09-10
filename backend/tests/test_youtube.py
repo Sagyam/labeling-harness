@@ -402,7 +402,7 @@ def test_a_url_job_downloads_before_stage_one_and_records_where_it_came_from(
     assert job.status == "completed"
     assert job.stage == "complete"
     assert any("Fetching audio from" in entry.message for entry in job.logs)
-    assert any("Stage 1/5" in entry.message for entry in job.logs)
+    assert any("Stage 1/6" in entry.message for entry in job.logs)
 
     episode = db_session.scalar(sa.select(Episode).where(Episode.external_id == "yt_ep001"))
     assert episode is not None
@@ -431,7 +431,7 @@ def test_a_failed_download_fails_the_job_without_running_a_stage(
 
     assert job.status == "failed"
     assert "Video unavailable" in (job.error or "")
-    assert not any("Stage 1/5" in entry.message for entry in job.logs)
+    assert not any("Stage 1/6" in entry.message for entry in job.logs)
     assert not (tmp_path / "work_yt_fail").exists()
 
 

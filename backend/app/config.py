@@ -295,6 +295,32 @@ class IngestSettings(BaseModel):
         return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
+class FusionSettings(BaseModel):
+    """The fusion stage (D72): how an episode is cut into requests for the reasoning fuser.
+
+    Measured on the pilot, context is not the binding constraint -- a whole hour of three
+    hypotheses is ~65k tokens -- and output is: thinking plus the answer share ``max_tokens``.
+    A 30-minute window is ~150 segments, ~11k tokens of answer and up to the route's
+    ``thinking_budget`` of thought, which is why the route bounds thinking rather than leaving it
+    dynamic. A window that still overflows is halved, never truncated.
+    """
+
+    model_config = _STRICT
+
+    #: Text route that fuses. Empty disables the stage, and the seed falls back to one recogniser.
+    route: str = "fuse_transcript"
+    #: Speech time per window. Windows are balanced, so a 45-minute episode is two of 22.5.
+    window_target_seconds: float = Field(default=1800.0, gt=0)
+    #: Raw hypotheses shown after the targets -- where a sentence or a name is going.
+    lookahead_seconds: float = Field(default=120.0, ge=0)
+    #: The fuser's own earlier output shown before the targets -- what it has already settled.
+    carryover_seconds: float = Field(default=300.0, ge=0)
+    #: Hard cap on targets per window, whatever their duration.
+    max_window_segments: int = Field(default=250, gt=0)
+    #: How many times a failing window may be halved before its clips are left unfused.
+    max_depth: int = Field(default=2, ge=0)
+
+
 class Settings(BaseSettings):
     """Root settings object, assembled from YAML then overlaid with environment variables."""
 
@@ -328,6 +354,7 @@ class Settings(BaseSettings):
     labels: LabelSettings = Field(default_factory=LabelSettings)
     export: ExportSettings = Field(default_factory=ExportSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
+    fusion: FusionSettings = Field(default_factory=FusionSettings)
 
 
 class LlmRoute(BaseModel):

@@ -181,7 +181,7 @@ majority stays measurable.
 
 Ingestion runs inside the app, not in an upstream notebook: the annotator uploads an episode in the
 browser -- or pastes a YouTube URL and lets the server fetch it (below) -- and watches it become a
-queue. `POST /ingest` starts a background job and returns a job id; the five stages are:
+queue. `POST /ingest` starts a background job and returns a job id; the six stages are:
 
 1. **Normalize** — FFmpeg two-pass `loudnorm` to 16 kHz mono FLAC with linear normalization,
    avoiding dynamic AGC gain pumping between words. The downsample runs through libsoxr, whose
@@ -196,12 +196,38 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
    pooling, while up to `max_segment_concurrency` segments are processed in parallel. Each attempt is
    logged to `llm_requests`, whichever provider served it. `app/llm/transcription.py` dispatches
    on the route's `provider` and `api`; see the table below.
-4. **Analyse** — Devanagari/Latin ratio, code-mixing index, cross-system word disagreement, script
-   conflict and the rule flags below. Disagreement is the mean over every *pair* of systems, so a
-   third hypothesis informs the queue instead of being paid for and ignored; with two systems it
-   is exactly the single comparison between them.
-5. **Import and build** — segments, hypotheses, scores and queue tasks are written in one pass, so
+4. **Fuse** — a reasoning model reads every recogniser's text for ~30 minutes of consecutive
+   clips at a time and writes one verbatim transcript per clip (D72, `app/llm/fusion.py`,
+   `app/services/fusion_stage.py`). It never hears the audio; the CTC aligner places the fused text
+   back on each clip for its word spans. The result is one more hypothesis per clip, under an
+   `asr_systems.kind = fusion` system -- the seed, and never a disagreement signal. Skipped on a
+   dry run; a clip the fuser did not answer keeps its recognisers and falls back to one of them.
+5. **Analyse** — Devanagari/Latin ratio, code-mixing index, cross-system word disagreement, script
+   conflict and the rule flags below. Disagreement is the mean over every *pair* of recognisers,
+   never the fused text; code-mixing is measured on the fused text where there is one, because it
+   is the only transcript that follows the script policy.
+6. **Import and build** — segments, hypotheses, scores and queue tasks are written in one pass, so
    "Start Annotating" works the moment the job finishes.
+
+### Fusion windows
+
+A window is about `fusion.window_target_seconds` (1800) of speech, and windows are balanced: a
+45-minute episode is two of 22.5, never 30 + 15, because thinking cost scales with what the model
+reads rather than with what it writes. Most sources are 5-20 minute videos and are one window,
+with no seams at all. Around its targets a window carries `lookahead_seconds` of the following
+clips' raw hypotheses and `carryover_seconds` of the fuser's own output for the clips before.
+Recognisers are shown as anonymous `A`/`B`/`C`, in route order.
+
+The contract is one JSON object per target id. A missing, duplicate or invented id, or unparseable
+output, earns one retry; a truncated answer (`finishReason` other than `STOP`) is halved at once;
+halving stops at `max_depth`, and what still fails is left unfused rather than guessed. A 429 is
+waited out in minutes. Each request is an `llm_requests` row; the fused hypothesis's
+`metadata_jsonb.fusion` carries its window, the model's code (`k`/`s`/`m`/`c`/`u`), the prompt
+version and the model version.
+
+The route bounds thinking (`thinking_budget: 24576`) because thoughts and answer share
+`max_tokens`: a 30-minute window reads ~190 segments and answers in ~11k tokens, and the pilot's
+dynamic budget spent 20-34k thought tokens per ~100 segments read.
 
 ### Configured transcribers
 
@@ -211,10 +237,9 @@ queue. `POST /ingest` starts a background job and returns a job id; the five sta
 | `asr_mai_transcribe_2` | OpenRouter | `/audio/transcriptions` | text, word spans | `language: ne` — nothing else (D48) |
 | `asr_gemini_flash` | Vertex AI (direct) | `POST …/gemini-3.8-flash:generateContent` | text only | the full policy prompt as `systemInstruction`, `language: ne` |
 
-The first route is the **primary** hypothesis: stage 4 measures the Devanagari/Latin ratio and the
-code-mixing index on its text alone. That is not the same as the **seed** hypothesis, which is
-chosen per split at queue build (see above) and is what `low_confidence` reads. Rule flags are a
-third thing again: they are computed at import over *all* hypotheses, not just the primary one.
+The fused hypothesis is what stage 5 measures the Devanagari/Latin ratio and the code-mixing
+index on; the first route stands in for a clip the fuser did not answer. Rule flags are computed
+at import over *all* hypotheses, fused included.
 
 Scribe is first because it is the only configured transcriber reporting per-word log probabilities —
 so it remains the source of the `low_confidence` term. Reordering the routes moves the CMI
@@ -226,10 +251,12 @@ chat model and takes the policy as a `systemInstruction`; the other two are dedi
 and neither can be told anything in prose (D48).
 
 Ingestion routes each clip across all three systems, producing a three-way disagreement signal for
-queue prioritisation. Each hears only the audio -- no system is ever shown another's transcript,
-which is what keeps their disagreement an independent measurement rather than a correlated one.
-Three systems is three paid calls per clip; the count is the routing table's, so removing a route
-is how you make an ingest cheaper. It was four until D51 removed the composite.
+queue prioritisation. Each hears only the audio -- no recogniser is ever shown another's
+transcript, which is what keeps their disagreement an independent measurement rather than a
+correlated one. The fuser is the only thing that reads all three, and it is not a recogniser.
+Three systems is three paid calls per clip, plus one fusion request per ~30 minutes; the count is
+the routing table's. It was four until D51 removed the composite, and Scribe cost a fifth call
+per clip for script restoration until D73.
 
 The three do not return the same thing. Scribe reports word spans, per-word log probabilities and
 a speaker label per word (D49); MAI reports text and word spans; Gemini 3.8 Flash reports text
@@ -248,8 +275,8 @@ it transcribes.
 ### Fetching the audio instead of uploading it
 
 A job may name a YouTube URL rather than carry a file. The download occupies the **same slot an
-upload does** -- it is how the source file arrives, not a sixth stage -- so it reports under a
-`downloading` stage that precedes stage 1 and leaves the five stages below untouched.
+upload does** -- it is how the source file arrives, not a seventh stage -- so it reports under a
+`downloading` stage that precedes stage 1 and leaves the six stages untouched.
 `app/services/youtube.py` shells out to `yt-dlp`, and two rules shape it:
 
 - **Nothing the annotator typed reaches the subprocess.** A URL is parsed down to its

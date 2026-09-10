@@ -266,6 +266,7 @@ export interface IngestJobStatus {
     | 'normalizing'
     | 'segmenting'
     | 'transcribing'
+    | 'fusing'
     | 'analyzing'
     | 'importing'
     | 'complete'

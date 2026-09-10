@@ -106,3 +106,13 @@ ingest:
     probe_timeout_seconds: 30
     download_timeout_seconds: 1800
     cookies_file: ""              # Netscape cookie jar, for videos YouTube will not serve anonymously
+
+# Transcript fusion (D72): a reasoning model reconciles the three recognisers into the seed.
+# The route itself -- model, thinking budget, timeout -- is `fuse_transcript` in llm_routes.yaml.
+fusion:
+  route: fuse_transcript          # empty disables the stage; the seed falls back to one recogniser
+  window_target_seconds: 1800     # ~30 min of speech per request; windows are balanced
+  lookahead_seconds: 120          # raw hypotheses shown after the targets
+  carryover_seconds: 300          # the fuser's own earlier output shown before them
+  max_window_segments: 250        # cap on targets per request, whatever their duration
+  max_depth: 2                    # halvings a failing window gets before its clips stay unfused

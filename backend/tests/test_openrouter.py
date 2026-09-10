@@ -142,23 +142,21 @@ def test_a_route_can_turn_thinking_off(db_session: Session) -> None:
     assert seen["body"]["reasoning"] == {"enabled": False}
 
 
-def test_the_script_restore_route_never_becomes_an_asr_system() -> None:
-    """D51's real worry, kept as a test now that the route is back (D65).
+def test_the_fusion_route_never_becomes_an_asr_system() -> None:
+    """Fusion reads the recognisers' text, so it must never be counted as one of them (D72).
 
-    D51 deleted the route rather than disabling it because a configured-but-unused *recogniser*
-    leaves `exclude_from_disagreement` as the only thing between its hypotheses and the score,
-    and the two computation sites desynchronise silently. That risk is specific to a route that
-    produces hypotheses. This one is a chat route with no `asr_` prefix and no `system_id`, so
-    it cannot enter the disagreement signal however the flags are set -- which is the property
-    worth asserting, rather than the route's absence.
+    D51 deleted a hold-out route rather than disabling it because a configured-but-unused
+    *recogniser* leaves `exclude_from_disagreement` as the only thing between its hypotheses and
+    the score. The fusion route has no `asr_` prefix, so it is never dispatched as a recogniser,
+    and its hypotheses carry `asr_systems.kind = fusion`, which the scorers filter on.
     """
-    from app.config import load_llm_routes
+    from app.config import load_llm_routes, load_settings
     from app.llm.transcription import asr_route_names
 
     table = load_llm_routes()
-    assert "script_restore" in table.routes
-    assert table.routes["script_restore"].system_id is None
-    assert "script_restore" not in asr_route_names(table)
+    route = load_settings().fusion.route
+    assert route in table.routes
+    assert route not in asr_route_names(table)
 
 
 def test_a_missing_api_key_is_refused(db_session: Session) -> None:

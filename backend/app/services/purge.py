@@ -117,6 +117,8 @@ def _rescore(session: Session, segment_ids: set[int], config: LlmRoutes | None =
                 .join(AsrSystem, AsrSystem.id == AsrHypothesis.asr_system_id)
                 .where(
                     AsrHypothesis.segment_id == segment_id,
+                    # A fused hypothesis is derived from the others (D72); it never votes.
+                    AsrSystem.kind == "asr",
                     AsrSystem.system_id.not_in(held_out) if held_out else sa.true(),
                 )
             ).all()

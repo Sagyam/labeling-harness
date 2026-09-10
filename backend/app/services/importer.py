@@ -240,7 +240,11 @@ def _upsert_systems(
                 continue
             system = session.scalar(sa.select(AsrSystem).where(AsrSystem.system_id == system_id))
             if system is None:
-                system = AsrSystem(system_id=system_id, model_id=hypothesis.get("model_id"))
+                system = AsrSystem(
+                    system_id=system_id,
+                    model_id=hypothesis.get("model_id"),
+                    kind=str(hypothesis.get("kind") or "asr"),
+                )
                 session.add(system)
                 session.flush()
                 report.systems_created += 1
@@ -335,7 +339,15 @@ def _import_hypotheses(
                 k: v
                 for k, v in record.items()
                 if k
-                not in {"system_id", "model_id", "text", "avg_logprob", "no_speech_prob", "words"}
+                not in {
+                    "system_id",
+                    "model_id",
+                    "kind",
+                    "text",
+                    "avg_logprob",
+                    "no_speech_prob",
+                    "words",
+                }
             }
             or None,
         )

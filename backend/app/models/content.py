@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, utc_now_column, utc_optional_column
-from app.models.enums import EPISODE_SPLITS, PIPELINE_STATUSES, POTS, check_in
+from app.models.enums import EPISODE_SPLITS, PIPELINE_STATUSES, POTS, SYSTEM_KINDS, check_in
 
 if TYPE_CHECKING:
     from app.models.provenance import ImportRun
@@ -137,9 +137,17 @@ class AsrSystem(Base):
     """One upstream ASR system, identified by the manifest's ``system_id``."""
 
     __tablename__ = "asr_systems"
+    __table_args__ = (CheckConstraint(check_in("kind", SYSTEM_KINDS), name="kind_allowed"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     system_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    #: ``asr`` for a recogniser that heard the audio; ``fusion`` for a transcript reconciled from
+    #: the recognisers' text (D72). A fusion system is derived from the others, so it is never a
+    #: disagreement signal and never an input to another fusion -- and that is enforced by this
+    #: column, not by remembering which system ids are special.
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="asr", server_default="asr"
+    )
     model_id: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = utc_now_column()

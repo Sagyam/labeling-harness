@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
@@ -445,3 +446,54 @@ def test_report_renders_a_readable_summary(
     assert "imp_ep001" in text
     assert "DRY RUN" in text
     assert "segments" in text
+
+
+# --- a fused hypothesis is a different kind of system (D72) -------------------------------------
+
+
+def with_fusion(root: Path) -> Path:
+    """Append a fused hypothesis to every record, the way the fusion stage does."""
+    manifest = root / "segments.jsonl"
+    records = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
+    for record in records:
+        record["hypotheses"].append(
+            {
+                "system_id": "fusion-gemini-3.8-flash-p1",
+                "model_id": "gemini-3.8-flash",
+                "kind": "fusion",
+                "text": record["hypotheses"][0]["text"],
+                "fusion": {"code": "k", "window": 0},
+            }
+        )
+    manifest.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records), encoding="utf-8"
+    )
+    return root
+
+
+def test_a_fused_hypothesis_lands_under_a_fusion_system(
+    db_session: Session, export_dir: Path, storage, settings: Settings
+) -> None:
+    run_import(db_session, with_fusion(export_dir), storage, settings)
+    kinds = dict(db_session.execute(sa.select(AsrSystem.system_id, AsrSystem.kind)).all())
+    assert kinds.pop("fusion-gemini-3.8-flash-p1") == "fusion"
+    assert set(kinds.values()) == {"asr"}
+
+
+def test_the_kind_is_a_column_not_metadata(
+    db_session: Session, export_dir: Path, storage, settings: Settings
+) -> None:
+    run_import(db_session, with_fusion(export_dir), storage, settings)
+    fused = db_session.scalars(
+        sa.select(AsrHypothesis)
+        .join(AsrSystem)
+        .where(AsrSystem.system_id == "fusion-gemini-3.8-flash-p1")
+    ).first()
+    assert "kind" not in (fused.metadata_jsonb or {})
+    assert fused.metadata_jsonb["fusion"] == {"code": "k", "window": 0}
+
+
+def test_the_database_refuses_an_unknown_system_kind(db_session: Session) -> None:
+    db_session.add(AsrSystem(system_id="odd", kind="oracle"))
+    with pytest.raises(IntegrityError):
+        db_session.flush()

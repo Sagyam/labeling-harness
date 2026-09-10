@@ -45,8 +45,8 @@ the backend, so YouTube ingestion needs no separate install.
 
 **Ingest.** `+ Ingest` in the header takes an `.mp3`, `.m4a` or `.wav`, plus a show and episode
 title — or a **YouTube URL**, in which case the server fetches the audio itself with `yt-dlp` and
-fills the title and slug in from the video. Five stages run in the background — normalize, segment,
-transcribe, analyse, build queue — and stream their logs into the panel as they go. When it
+fills the title and slug in from the video. Six stages run in the background — normalize, segment,
+transcribe, fuse, analyse, build queue — and stream their logs into the panel as they go. When it
 finishes, `Start Annotating` drops you straight into the queue.
 
 A URL is looked up before anything is downloaded, so a private, live or over-long video is refused
@@ -62,6 +62,14 @@ against your ElevenLabs, OpenRouter and Google Cloud accounts. Every attempt is 
 provider-side budget alert) rather than expecting the harness to stop you. Each model hears only
 the audio; none is shown another's transcript, so where they disagree is a measurement rather
 than an echo.
+
+**Fusion** is the one step that reads all three. A thinking Gemini 3.8 Flash takes every
+recogniser's text for about thirty minutes of clips at once — plus a little of what comes next and
+its own output for what came before — and writes one verbatim transcript per clip, English in
+Latin and Nepali in Devanagari. That fused text is what the editor opens with (D72). It costs one
+request per ~30 minutes of audio, mostly in thinking tokens, and it never hears the audio: the
+forced aligner places its words back on the clip, and the queue checks them against the
+recognisers and the waveform before anything is allowed to skip listening.
 
 Word-level timestamps do not all come from the models. Scribe, MAI and Gemini 3.5 Transcribe
 report their own — and Gemini 3.5 Transcribe also says which speaker said each word, so a clip

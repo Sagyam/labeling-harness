@@ -170,10 +170,17 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert "asr_gemini_composite" not in routes, (
         "the composite recogniser was removed in D51; it deleted the dependent variable"
     )
-    # D51 removed the composite and kept `script_restore.py` for the next recogniser that needed
-    # it. D65 points it at Scribe, which spells English loanwords in Devanagari like every other
-    # route here -- what D51 removed was the composite ASR system, not the repair.
-    assert scribe.restore_script_route == "script_restore"
+    # D73: raw Scribe feeds the fuser, which writes the script policy itself. `script_restore.py`
+    # stays in the tree (D51) for a recogniser whose spans must survive a respelling.
+    assert scribe.restore_script_route is None
+    assert "script_restore" not in routes
+
+    fusion = routes["fuse_transcript"]
+    assert (fusion.provider, fusion.api) == ("vertex", "chat")
+    assert fusion.reasoning_enabled is True
+    # Thinking and answer share max_tokens; an unbounded budget is what truncates a window.
+    assert fusion.thinking_budget is not None
+    assert fusion.thinking_budget < fusion.max_tokens
 
     gemini = routes["asr_gemini_flash"]
     assert (gemini.provider, gemini.api) == ("vertex", "audio_chat"), (

@@ -1631,6 +1631,9 @@ to recover, because none was ever overwritten.
 
 ## D65 — Script restoration moves to the seed route; screening and gold are made mutually exclusive
 
+> **Script restoration superseded by D73**: the fused transcript is the seed, and the fuser writes
+> the script policy itself. The screening/gold rule stands (per clip since D71).
+
 Three changes that came out of the first episode's numbers. `asr_scribe_v2` gains
 `restore_script_route: script_restore`, partially reversing D51. `assign_pots` refuses to place a
 screened episode in gold and takes back one already there. The queue tooltip reads the components
@@ -1984,4 +1987,65 @@ mean anything, that is itself the finding.
 episode with mixed clips becomes; the migration's downgrade makes any episode with a gold clip a
 gold episode, which moves that episode's train clips into the benchmark. Do it before any model is
 trained on this corpus, or not at all.
+
+## D72 — A reasoning model fuses the recognisers into one transcript per clip
+
+A sixth ingest stage, between transcription and analysis. `fuse_transcript` (Vertex, thinking
+Gemini 3.8 Flash, `thinking_budget: 24576`) reads every recogniser's text for about thirty
+minutes of consecutive clips and writes one verbatim transcript per clip, which is imported as one
+more hypothesis under an `asr_systems.kind = fusion` system (`fusion-gemini-3.8-flash-p1`). Its
+words are placed on the clip by the CTC aligner. Code-mixing is measured on it. D74 makes it the
+seed.
+
+**Why.** Each recogniser hears one clip and nothing else, so each gets wrong what only context
+fixes: a name said clearly a minute earlier, a term the speaker keeps using, a sentence finishing
+in the next clip. Scored on 896 gold labels, each system only where it had not seeded the label,
+the pilot fused text posted 0.192 WER against 0.262 (Scribe), 0.304 (MAI) and 0.313 (Gemini). On
+the 120 clips whose label matched no hypothesis -- the only reference none of them could be
+anchored to -- it was at parity with Scribe, 0.245 against 0.250. The owner listened to the
+disagreements and preferred the fused text. After their spot check corrected the pilot's
+hallucination count, one block of words no recogniser produced remained in 896 clips, and it
+was not an invention.
+
+**Windows, not the whole episode, and not one clip.** One clip loses the context that makes fusion
+work. A whole long episode is slow and makes one bad response cost everything, although the pilot
+measured an entire hour of three hypotheses at ~65k tokens, so context is not what binds. Output
+is: thoughts and answer share `max_tokens`, and one 40-segment pilot window spent 27,922 thought
+tokens against 3,361 of answer. So windows are about 30 minutes, balanced across the episode,
+with ~2 minutes of raw lookahead and ~5 of the fuser's own earlier output as carry-over, and
+thinking is bounded. A 5-20 minute video is one window.
+
+**What is refused rather than patched.** The answer must be one JSON object per target id. A broken
+contract gets one retry; a truncated answer is halved at once; a window still failing at
+`max_depth` leaves its clips unfused, and those clips keep their recognisers. The recognisers'
+work is paid for before fusion starts, so fusion failing -- even raising -- never fails an
+episode.
+
+**Known, unmitigated, and recorded.** The fuser is a Gemini model arbitrating a slate with a
+Gemini transcript in it; the systems are anonymised as A/B/C, and nothing more is done about
+self-preference. Prompt order is fixed and its effect unmeasured. World knowledge is how the fuser
+corrects, and it is also how it would quietly "fix" a speaker's misstated fact. The instruction
+prohibits that explicitly, and nothing in the harness can see it happen. Thinking tokens are
+billed as output and are most of this route's cost -- the pilot reported $0.64 when it actually
+cost about $3.47, because thinking was left out of the estimate. That is fixed in the same series.
+
+**Reversal:** set `fusion.route: ""`. Ingests go back to three recognisers and a recogniser seed;
+fused hypotheses already imported stay (hypotheses are immutable) and can be ignored by kind.
+
+## D73 — Scribe is fed to the fuser raw; script restoration comes off the seed route
+
+Supersedes D65's script restoration. `asr_scribe_v2` loses `restore_script_route`, and the
+`script_restore` route leaves `config/llm_routes.yaml`. `app/llm/script_restore.py` stays in the
+tree, as D51 kept it, for a recogniser whose word spans must survive a respelling.
+
+D65's argument was the seed: Scribe's `क्याप्टन` for Captain was what the annotator had to retype,
+and a one-token-in, one-token-out rewrite kept every span. Neither holds now. The seed is the fused
+text, which writes English in Latin itself, and its spans come from the aligner, so nothing is
+left for the restoration to protect. What it would still buy is worse than nothing: the pilot fed
+the fuser restored Scribe, so Scribe's respelling entered as a second, dependent vote on exactly
+the question the fuser is there to settle. It also cost one call per clip. Scribe's Devanagari
+English no longer inflates disagreement either -- D74's comparison is script-folded.
+
+**Reversal:** put `restore_script_route: script_restore` back on the Scribe block and restore the
+route from git. Restored hypotheses would then feed the fuser again, which is the double vote above.
 

@@ -599,8 +599,8 @@ def test_a_seed_route_without_a_restore_route_is_untouched(
     assert result.metadata is None
 
 
-def test_the_shipped_scribe_route_has_script_restoration_enabled() -> None:
-    """The seed is what the annotator edits, so this is the route where it pays."""
+def test_the_shipped_scribe_route_is_raw() -> None:
+    """The seed is fused text now, so the respelling moved to the fuser (D73). Scribe feeds it as
+    heard: restoring first would give the fuser a second, dependent Scribe vote."""
     table = load_llm_routes()
-    assert table.routes["asr_scribe_v2"].restore_script_route == "script_restore"
-    assert "script_restore" in table.routes
+    assert table.routes["asr_scribe_v2"].restore_script_route is None

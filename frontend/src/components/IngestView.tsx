@@ -39,6 +39,7 @@ const STAGES = [
   { key: 'normalizing', label: 'Normalize audio', desc: 'FFmpeg loudnorm, 16 kHz mono FLAC' },
   { key: 'segmenting', label: 'Silero VAD', desc: 'CPU speech turn detection (2s–20s)' },
   { key: 'transcribing', label: 'Cloud ASR', desc: 'Every configured system, per clip' },
+  { key: 'fusing', label: 'Fusion', desc: 'Reasoning model reconciles the recognisers' },
   { key: 'analyzing', label: 'Token analysis', desc: 'Devanagari/Latin tagging & CMI' },
   { key: 'importing', label: 'Direct import', desc: 'Database records & queue building' },
 ]

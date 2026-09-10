@@ -220,3 +220,26 @@ def test_the_rescore_holds_out_the_same_systems_the_ingest_does(
     # Only KEPT is left in the comparison, so nothing disagrees. Counting the held-out
     # hypothesis would score its single-script spelling as disagreement instead.
     assert score.word_disagreement_rate == 0.0
+
+
+def test_a_fused_hypothesis_never_votes_in_the_rescore(db_session: Session, tmp_path: Path) -> None:
+    """Fusion is derived from the recognisers, so agreeing with them measures nothing (D72).
+
+    After the purge each segment has one recogniser left, which cannot disagree with anything --
+    unless the fused hypothesis is wrongly counted as a second.
+    """
+    _corpus(db_session)
+    fusion = AsrSystem(system_id="fusion-gemini-3.8-flash-p1", kind="fusion")
+    db_session.add(fusion)
+    db_session.flush()
+    for segment in db_session.scalars(sa.select(Segment)):
+        db_session.add(
+            AsrHypothesis(
+                segment_id=segment.id, asr_system_id=fusion.id, text_raw="entirely other words"
+            )
+        )
+    db_session.flush()
+
+    purge_asr_system(db_session, DOOMED, dump_dir=tmp_path)
+
+    assert {s.word_disagreement_rate for s in db_session.scalars(sa.select(SegmentScore))} == {0.0}

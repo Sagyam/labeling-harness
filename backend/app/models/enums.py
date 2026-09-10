@@ -31,6 +31,11 @@ POTS: Final[tuple[str, ...]] = ("gold", "train")
 #: longer to whole episodes.
 EPISODE_SPLITS: Final[tuple[str, ...]] = ("train", "val", "unassigned")
 
+#: What produced a hypothesis (D72): a recogniser that heard the clip, or the fuser that reconciled
+#: the recognisers' text. Only ``asr`` hypotheses are independent evidence of what was said.
+SystemKind = Literal["asr", "fusion"]
+SYSTEM_KINDS: Final[tuple[str, ...]] = ("asr", "fusion")
+
 #: How much human attention one label actually got. Both are legitimate ways to build a corpus and
 #: they are not the same claim, so the corpus records which was made rather than presenting a
 #: screened row as if a human had listened to it (D63).

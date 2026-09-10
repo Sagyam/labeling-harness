@@ -104,9 +104,10 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Gotchas
 
-- Ingestion spends real money: each `asr*` route transcribes every clip, and four are configured,
-  so a clip costs four calls. Use a short audio file, or `dry_run: true` in
-  `config/llm_routes.yaml`, when exercising the pipeline. The same arithmetic is why
+- Ingestion spends real money: each `asr*` route transcribes every clip, and three are
+  configured, so a clip costs three calls -- plus one fusion request per ~30 minutes of audio,
+  which is billed mostly as thinking tokens. Use a short audio file, or `dry_run: true` in
+  `config/llm_routes.yaml`, when exercising the pipeline; a dry run skips fusion entirely. The same arithmetic is why
   `ingest.youtube.max_duration_seconds` exists — cost is linear in source duration, so a YouTube
   URL is a bigger footgun than a file the annotator had to download first.
 - A YouTube URL never reaches `yt-dlp` as typed. `app/services/youtube.py` parses out the
@@ -161,6 +162,12 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   empty with no `blockReason`: `ASR_PROMPT` asks for that when there is no intelligible speech.
 - The raw Devanagari lives in the hypothesis's `metadata_jsonb` as `text_devanagari`. It is
   provenance: keep it out of `text_raw`, the disagreement comparison, the analysis and the queue.
+- **A fused hypothesis is never a recogniser.** Its system has `asr_systems.kind = fusion`, and
+  every disagreement computation filters on `kind = 'asr'` -- the fused text was built to agree
+  with the recognisers, so counting it would make agreement meaningless. The fuser is also never
+  shown an earlier fusion's output as an input. Its system id ends in the prompt version
+  (`fusion-gemini-3.8-flash-p1`); change `PROMPT_VERSION` in `app/llm/fusion.py` whenever the
+  instruction changes, or a re-fusion collides with the old hypotheses' unique key.
 - No route is held out of the disagreement scores: D51 removed the only one that ever was, so
   `disagreement_excluded_system_ids()` returns an empty set. It is still the single source both
   computation sites -- `ingest.py` and `purge.py` -- read from. Naming a system in either place
@@ -205,7 +212,7 @@ architect around them either — just avoid decisions that would make them expen
 | Job queue / worker pool | Import and queue-build stay pure functions over a batch |
 | Table partitioning | Keep `hypothesis_words` writes batched and its foreign keys clean |
 | Multi-annotator, IAA, adjudication | `segment_labels` carries `annotator`; rows stay append-only |
-| LLM-assisted policy checks or correction suggestion | The client and `llm_requests` already exist |
+| LLM-assisted policy checks | The client and `llm_requests` already exist; fusion (D72) is the one LLM that writes text a label starts from |
 | Word-level language editing | `hypothesis_words` schema is retained; no UI |
 | In-app annotation guidelines, policy linter | `policy_version` is stored on every label |
 | Auth and user management | The optional bearer-token hook is already in the API layer |
