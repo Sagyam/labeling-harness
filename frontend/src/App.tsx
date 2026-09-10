@@ -13,6 +13,7 @@ import { TriageView } from '@/components/TriageView'
 import { api } from '@/services/api'
 import type {
   HealthResponse,
+  PotName,
   QueueRow,
   StatsResponse,
   Task,
@@ -286,6 +287,30 @@ export default function App() {
     }
   }
 
+  // Gold is chosen per clip, by hand (D71). A move changes nothing but the clip's pot, so the row
+  // and the open task are patched in place rather than reloading the queue and losing focus.
+  const handleToggleGold = async (segmentId: number, currentPot: PotName) => {
+    const target: PotName = currentPot === 'gold' ? 'train' : 'gold'
+    try {
+      const result = await api.setSegmentPot(segmentId, target)
+      setQueueRows((rows) =>
+        rows.map((r) => (r.segment_id === segmentId ? { ...r, pot: result.pot } : r)),
+      )
+      setCurrentTask((task) =>
+        task && task.segment.id === segmentId
+          ? { ...task, segment: { ...task.segment, pot: result.pot } }
+          : task,
+      )
+      toast.success(
+        result.pot === 'gold'
+          ? `${result.external_id} added to gold`
+          : `${result.external_id} removed from gold`,
+      )
+    } catch (err: any) {
+      toast.error(err.detail || 'Could not change the pot')
+    }
+  }
+
   // Editor: Save and next
   const handleSaveAndNext = async (taskId: number, finalText: string, durationMs: number) => {
     if (!currentTask) return
@@ -437,6 +462,7 @@ export default function App() {
             setActiveMode('triage')
             loadQueue(activeQueue)
           }}
+          onToggleGold={handleToggleGold}
         />
       ) : (
         <TriageView
@@ -462,6 +488,7 @@ export default function App() {
           onOpenEditor={handleOpenEditor}
           onFlagRow={handleFlagRow}
           onBulkAccept={handleBulkAccept}
+          onToggleGold={handleToggleGold}
         />
       )}
 

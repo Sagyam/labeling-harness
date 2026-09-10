@@ -1494,6 +1494,10 @@ are ordinary metadata and the allowlist in `speaker_meta.py` is what governs the
 
 ## D63 — Two pots, filled to a duration; the tier records how hard a label was looked at
 
+> **Superseded by D71 for how gold is chosen.** Gold is now picked per clip, by hand; the
+> episode-level assigner, the hours-target selection and the one-directional rule are gone. The
+> verification tier, and the rule that gold holds only verified labels, stand.
+
 Supersedes D5. `episodes.pot` (`gold` / `train` / `unassigned`) replaces the hashed split as the
 thing the corpus is organised by, and `segment_labels.verification_tier` (`verified` / `screened`)
 records how much attention each decision actually got. `episodes.split` survives as a derived
@@ -1789,6 +1793,9 @@ Nothing is stored — both signals are recomputed from `text_raw` at queue build
 
 ## D68 — One episode is demoted out of gold, once, while the benchmark still measures nothing
 
+> **Superseded by D71.** `scripts/demote_from_gold.py` is deleted: taking a clip out of gold is
+> now the same button that put it there.
+
 `ep_602_do_higher_traffic_fines_reduce_ro` moves from the gold pot to train. Gold goes 5.42 h → 3.06 h
 across three episodes; train goes 5.47 h → 7.83 h. This overrides D63 rule 3 and is not a general
 capability — `scripts/demote_from_gold.py` takes one episode by name, refuses a blank reason, and
@@ -1934,3 +1941,47 @@ recorded this" from "this does not exist".
 Cheap and total while nothing is stored under them. It stops being cheap the moment a speaker is
 recorded under one and a later narrowing would drop their record on re-import — so if the corpus
 ever does reach such a speaker, widen it first and re-ingest rather than editing the row.
+
+## D71 — Gold is chosen one clip at a time, by hand
+
+Supersedes D63's assigner and D68's demotion script. `segments.pot` (`gold` / `train`, default
+`train`) replaces `episodes.pot`; `POST /segments/{id}/pot` moves one clip, from a star button on
+the triage row, `g` on the keyboard, or "Add to gold" in the editor. `episodes.split` keeps only
+`train` / `val` / `unassigned`, drawn by hash at import, and a gold clip exports as `test` whatever
+its episode drew. `assign_pots`, `demote_from_gold`, `POST /pots/assign`,
+`dataset.gold_max_corpus_fraction` and both scripts are deleted. Ingest now builds the queue
+itself, because nothing is left for it to wait on.
+
+**Why.** The owner does not trust what the algorithm put in gold and wants to decide it. D63's
+greedy coverage-first selection was never measured against anything, and D68 had already had to
+override it once by hand. A benchmark whose membership the owner cannot defend clip by clip is a
+worse benchmark than one they chose.
+
+**What survives, because it is a property of a label rather than of a selection rule.** Gold holds
+only what was listened to: `set_segment_pot` refuses to move a clip carrying a screened label into
+gold (409 at the API), `record_decision` still refuses a screened decision on a gold clip, and the
+gold export still refuses a screened row. Every move writes an `audit_logs` row
+(`entity_type=segment`, `action=pot_changed`, old and new pot, optional reason), so the benchmark's
+history can be rebuilt even though a clip may now leave gold.
+
+**The cost, stated rather than discovered.** D63's two rules existed for measured reasons and this
+decision gives both up:
+
+- *Chosen while looking at the clip.* Selection can now correlate with anything the owner notices
+  -- clean audio, one speaker, an easy transcript -- and gold WER then describes the clips that
+  were chosen, not the corpus. Nothing recorded afterwards can separate the two.
+- *Clips, not episodes.* Consecutive clips share audio padding, speaker, topic and rare
+  vocabulary, so a gold clip whose neighbours are training material is partly memorised by any
+  model trained on this corpus. Its gold score is optimistic in a way no metric reveals.
+
+The second is at least countable, so it is counted. `pot_status` reports how many gold episodes
+also feed train and how many gold clips they hold, the analytics page says so when it is nonzero,
+and every export row carries `episode_spans_pots`. A paper can report gold WER both over all gold
+clips and over those from episodes nothing was trained on -- if the second set is too small to
+mean anything, that is itself the finding.
+
+**Reversal:** mechanical but real. Reintroducing episode-level pots means deciding what an
+episode with mixed clips becomes; the migration's downgrade makes any episode with a gold clip a
+gold episode, which moves that episode's train clips into the benchmark. Do it before any model is
+trained on this corpus, or not at all.
+

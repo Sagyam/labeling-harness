@@ -35,6 +35,7 @@ from app.models import (
 from app.services.audio import ClipFormatError, compute_peaks, validate_clip
 from app.services.flags import FlagHypothesis, compute_flags
 from app.services.manifest import Manifest, ManifestError, read_manifest
+from app.services.pots import draw_split
 from app.services.speaker_meta import strip_speaker_pii
 from app.storage.base import ObjectStorage
 from app.utils.hashing import checksums_match, sha256_file
@@ -428,11 +429,18 @@ def import_manifest(
     existing_episode = session.scalar(
         sa.select(Episode).where(Episode.external_id == manifest.episode_id)
     )
-    # A new episode arrives with no pot and no split. Placing it is a separate, corpus-wide
-    # decision made against a duration target by `assign_pots` (D63), not something one import can
-    # answer -- an importer looking only at the episode in front of it cannot know whether the gold
-    # pot still needs five hours or is already full. A re-import keeps whatever it was given.
-    split = existing_episode.split if existing_episode is not None else "unassigned"
+    # A new episode draws train or val from a hash of its id; there is no corpus-wide placement
+    # any more, because gold is chosen per clip by hand (D71) rather than per episode. Every clip
+    # starts in the train pot. A re-import keeps whatever split the episode already has.
+    split = (
+        existing_episode.split
+        if existing_episode is not None
+        else draw_split(
+            manifest.episode_id,
+            val_fraction=settings.dataset.val_fraction,
+            seed=settings.dataset.pot_seed,
+        )
+    )
 
     plans = _plan(session, manifest, settings, allow_clip_change=allow_clip_change)
 

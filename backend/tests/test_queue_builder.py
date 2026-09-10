@@ -242,13 +242,14 @@ def test_train_episodes_seed_with_the_strongest_hypothesis(
         assert task.seed_hypothesis_id == best.id
 
 
-def test_test_episode_seeds_rotate_across_systems(
+def test_gold_clip_seeds_rotate_across_systems(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
     """A gold set anchored to one system cannot be defended later; rotation is the whole point."""
     import_fixture(db_session, tmp_path, storage, settings, episode_id="rot_ep", segments=40)
     episode = db_session.scalars(sa.select(Episode)).one()
-    episode.split = "test"
+    for segment in episode.segments:
+        segment.pot = "gold"
     db_session.flush()
 
     build_queue(db_session, settings=settings)
@@ -264,12 +265,13 @@ def test_test_episode_seeds_rotate_across_systems(
     assert min(counts.values()) >= 5
 
 
-def test_test_episode_seed_rotation_is_deterministic(
+def test_gold_clip_seed_rotation_is_deterministic(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:
     import_fixture(db_session, tmp_path, storage, settings, episode_id="det_ep", segments=10)
     episode = db_session.scalars(sa.select(Episode)).one()
-    episode.split = "test"
+    for segment in episode.segments:
+        segment.pot = "gold"
     db_session.flush()
     build_queue(db_session, settings=settings)
     first = {t.segment_id: t.seed_hypothesis_id for t in tasks(db_session)}

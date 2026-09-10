@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.models import AsrHypothesis, AsrSystem, Episode, Segment, SegmentScore
 from app.services.corpus import SYSTEMS, perturb, sentence_for
-from app.services.pots import assign_pots
+from app.services.pots import draw_split
 
 
 @dataclass(frozen=True)
@@ -81,10 +81,14 @@ def seed_dev_data(
                 published_at=dt.date(2026, 1, 1) + dt.timedelta(days=episode_index),
                 source_audio_checksum=f"sha256:{hashlib.sha256(external_id.encode()).hexdigest()}",
                 duration_seconds=float(segments_per_episode * 12),
-                # Left unplaced; `assign_pots` below puts every seeded episode in a pot at once,
-                # exactly as ingestion does (D63).
-                split="unassigned",
-                pot="unassigned",
+                # Drawn the way the importer draws it; every clip starts in the train pot (D71).
+                split=draw_split(
+                    external_id,
+                    val_fraction=settings.dataset.val_fraction,
+                    seed=settings.dataset.pot_seed,
+                ),
+                split_seed=settings.dataset.pot_seed,
+                split_assigned_at=dt.datetime.now(dt.UTC),
                 metadata_jsonb={
                     "synthetic": True,
                     # Enough of a stratification spread that the assigner's coverage-first
@@ -165,10 +169,6 @@ def seed_dev_data(
                 )
             )
         session.flush()
-
-    # Place every seeded episode in a pot in one pass, the same way ingestion does: the pot is a
-    # corpus-wide decision against a duration target, not something one episode answers (D63).
-    assign_pots(session, settings=settings)
 
     return SeedSummary(
         episodes=episodes_inserted,

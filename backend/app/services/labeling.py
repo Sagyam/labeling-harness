@@ -119,13 +119,9 @@ def record_decision(
 
     # The gold pot's entire value is that every row in it was actually checked. One screened row
     # would make the benchmark's claim false, and nothing downstream could tell which row it was,
-    # so this is refused at the write rather than reported at export (D63).
+    # so this is refused at the write rather than reported at export (D63, per clip since D71).
     segment = session.get(Segment, task.segment_id)
-    if (
-        decision.verification_tier == "screened"
-        and segment is not None
-        and segment.episode.pot == "gold"
-    ):
+    if decision.verification_tier == "screened" and segment is not None and segment.pot == "gold":
         raise LabelingError(
             f"segment {segment.external_id} is in the gold pot, which only accepts"
             " verified labels; listen to the clip or move on"

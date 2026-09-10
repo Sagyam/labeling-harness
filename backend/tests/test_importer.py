@@ -234,39 +234,35 @@ def test_episode_metadata_is_stored(
 # --- frozen splits -----------------------------------------------------------------------
 
 
-def test_import_leaves_a_new_episode_unplaced(
+def test_import_draws_a_new_episode_into_train_or_val(
     db_session: Session, export_dir: Path, storage, settings: Settings
 ) -> None:
-    """The importer no longer picks a split (D63).
+    """The split is drawn by hash at import, and every clip starts in the train pot (D71).
 
-    Which pot an episode belongs in is a corpus-wide decision against a duration target, and an
-    importer looking only at the episode in front of it cannot make it -- it has no idea whether
-    the gold pot still needs five hours or is already full.
+    Gold is chosen per clip by hand, so there is no corpus-wide placement for an import to wait on.
     """
     report = run_import(db_session, export_dir, storage, settings)
     episode = db_session.scalars(sa.select(Episode)).one()
-    assert episode.pot == "unassigned"
-    assert episode.split == "unassigned"
-    assert report.split == "unassigned"
+    assert episode.split in ("train", "val")
+    assert report.split == episode.split
+    assert {s.pot for s in episode.segments} == {"train"}
 
 
-def test_import_does_not_disturb_a_pot_already_assigned(
+def test_import_does_not_disturb_a_clip_already_in_gold(
     db_session: Session, export_dir: Path, storage, settings: Settings
 ) -> None:
-    """A re-import keeps the pot the episode was placed in, audio, hypotheses and all."""
-    from app.services.pots import assign_pots
-
+    """A re-import keeps the episode's split and every clip's pot."""
     run_import(db_session, export_dir, storage, settings)
-    assign_pots(db_session, settings=settings)
-    db_session.flush()
     episode = db_session.scalars(sa.select(Episode)).one()
-    first_pot, first_split = episode.pot, episode.split
-    assert first_pot != "unassigned"
+    first_split = episode.split
+    episode.segments[0].pot = "gold"
+    db_session.flush()
 
     run_import(db_session, export_dir, storage, settings)
     db_session.expire_all()
     episode = db_session.scalars(sa.select(Episode)).one()
-    assert (episode.pot, episode.split) == (first_pot, first_split)
+    assert episode.split == first_split
+    assert episode.segments[0].pot == "gold"
 
 
 # --- idempotency -------------------------------------------------------------------------

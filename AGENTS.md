@@ -31,16 +31,15 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 3. **Exactly three status fields**, each with one owner: `segments.pipeline_status`,
    `annotation_tasks.status`, `segment_labels.disposition`. Do not add a fourth, and do not add a
    boolean that duplicates one.
-4. **Two pots, assigned per episode before any of its clips is annotated** (D63). `episodes.pot`
-   is `gold` or `train`; `episodes.split` is derived from it and a CHECK enforces the agreement
-   (gold ⇒ `test`, train ⇒ `train`/`val`). Gold is one-directional — an episode never leaves it,
-   and only enters from train under an explicit opt-in. Never assign a pot per clip, and never
-   while looking at the clip: that correlates the benchmark with clip difficulty and nothing
-   downstream can undo it. Train and val may be redrawn freely.
+4. **Two pots, chosen per clip by hand** (D71). `segments.pot` is `gold` or `train`; a gold
+   clip exports as `test` whatever its episode's `train`/`val` split is. Only
+   `set_segment_pot` moves a clip, and every move writes an `audit_logs` row. No algorithm
+   decides gold, and nothing may reintroduce one without a new decision entry. Train and val are
+   per episode, drawn by hash at import, and may be redrawn freely.
 5. **A label says how hard it was looked at.** `segment_labels.verification_tier` is `verified`
    (played and read) or `screened` (accepted on the disagreement signal without listening). It
-   defaults to `verified` everywhere, so no caller can weaken the claim by omission, and a
-   screened decision on a gold segment is refused with 409.
+   defaults to `verified` everywhere, so no caller can weaken the claim by omission. A screened
+   decision on a gold clip is refused with 409, and so is moving a screened clip into gold.
 6. **Every inference call is routed and logged.** Inference goes through a named route in
    `config/llm_routes.yaml` and a client in `app/llm/`, and writes an `llm_requests` row —
    whichever vendor served it, and whether it succeeded, failed or was a dry run. There is no

@@ -69,7 +69,7 @@ def test_seeded_episodes_have_a_frozen_split(db_session: Session) -> None:
     seed_dev_data(db_session, episodes=4, segments_per_episode=2, systems=2)
     episodes = db_session.scalars(sa.select(Episode)).all()
     for episode in episodes:
-        assert episode.split in {"train", "val", "test"}
+        assert episode.split in {"train", "val"}
         assert episode.split_seed is not None
         assert episode.split_assigned_at is not None
 

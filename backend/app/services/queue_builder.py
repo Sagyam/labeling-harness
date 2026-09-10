@@ -25,6 +25,7 @@ from app.services.consensus import (
     seed_outvoted_fraction,
 )
 from app.services.lexical import lexical_signals
+from app.services.pots import effective_split
 from app.services.scoring import ScoreInputs, priority_score
 from app.utils.logging import get_logger
 
@@ -213,7 +214,9 @@ def build_queue(
     planned: list[tuple[Segment, AsrHypothesis | None, float, dict[str, Any]]] = []
     for segment in segments:
         seed_hypothesis = select_seed_hypothesis(
-            segment, list(segment.hypotheses), split=splits.get(segment.episode_id, "unassigned")
+            segment,
+            list(segment.hypotheses),
+            split=effective_split(segment.pot, splits.get(segment.episode_id, "unassigned")),
         )
         score, reason = _score_for(segment, segment.scores, seed_hypothesis, settings)
         planned.append((segment, seed_hypothesis, score, reason))

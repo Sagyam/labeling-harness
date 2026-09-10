@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, utc_now_column, utc_optional_column
-from app.models.enums import PIPELINE_STATUSES, POTS, SPLITS, check_in
+from app.models.enums import EPISODE_SPLITS, PIPELINE_STATUSES, POTS, check_in
 
 if TYPE_CHECKING:
     from app.models.provenance import ImportRun
@@ -36,22 +36,12 @@ JsonB = JSONB().with_variant(JSON(), "sqlite")
 
 
 class Episode(Base):
-    """One podcast episode. Carries the frozen train/val/test split."""
+    """One podcast episode. Carries the train/val split its non-gold clips export under."""
 
     __tablename__ = "episodes"
     __table_args__ = (
-        CheckConstraint(check_in("split", SPLITS), name="split_allowed"),
-        CheckConstraint(check_in("pot", POTS), name="pot_allowed"),
-        # A gold-pot episode is always the test split and a train-pot episode never is. The rule
-        # lives here rather than only in the assigner because it is the one thing that must not
-        # drift: a gold clip reaching train is benchmark contamination, and it is silent.
-        CheckConstraint(
-            "(pot = 'gold' AND split = 'test') OR (pot = 'train' AND split IN ('train', 'val'))"
-            " OR pot = 'unassigned'",
-            name="pot_matches_split",
-        ),
+        CheckConstraint(check_in("split", EPISODE_SPLITS), name="split_allowed"),
         Index("ix_episodes_split", "split"),
-        Index("ix_episodes_pot", "pot"),
         Index("ix_episodes_show_id", "show_id"),
     )
 
@@ -68,18 +58,12 @@ class Episode(Base):
     #: before episode audio was retained, and for a manifest that does not ship it.
     audio_object_key: Mapped[str | None] = mapped_column(Text)
 
-    #: Derived from :attr:`pot`. ``test`` for the gold pot; ``train`` or ``val`` for the train pot,
-    #: where the two may be redrawn because they hold data of the same standard (D63).
+    #: ``train`` or ``val``, drawn by hash at import and redrawable: the two hold data of the same
+    #: standard. Gold is not a split an episode can have any more -- it belongs to individual
+    #: clips (:attr:`Segment.pot`), which export as ``test`` whatever their episode drew (D71).
     split: Mapped[str] = mapped_column(String(16), nullable=False, default="unassigned")
     split_seed: Mapped[int | None] = mapped_column(Integer)
     split_assigned_at: Mapped[dt.datetime | None] = utc_optional_column()
-
-    #: ``gold``, ``train`` or ``unassigned``. Assigned to the whole episode against a duration
-    #: target before any of its clips is annotated, and one-directional: an episode in the gold pot
-    #: is never reassigned, because a benchmark recording that later turns up in training
-    #: invalidates every number measured against it (D63).
-    pot: Mapped[str] = mapped_column(String(16), nullable=False, default="unassigned")
-    pot_assigned_at: Mapped[dt.datetime | None] = utc_optional_column()
 
     metadata_jsonb: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
     created_at: Mapped[dt.datetime] = utc_now_column()
@@ -97,8 +81,10 @@ class Segment(Base):
     __table_args__ = (
         CheckConstraint(check_in("pipeline_status", PIPELINE_STATUSES), name="status_allowed"),
         CheckConstraint("end_time > start_time", name="end_after_start"),
+        CheckConstraint(check_in("pot", POTS), name="pot_allowed"),
         Index("ix_segments_episode_id", "episode_id"),
         Index("ix_segments_pipeline_status", "pipeline_status"),
+        Index("ix_segments_pot", "pot"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -126,6 +112,11 @@ class Segment(Base):
     vad_spans_jsonb: Mapped[list[list[float]] | None] = mapped_column(JsonB)
 
     pipeline_status: Mapped[str] = mapped_column(String(16), nullable=False, default="imported")
+    #: ``gold`` or ``train``, chosen for this one clip by hand (D71). Every move writes an
+    #: ``audit_logs`` row, and a clip carrying a screened label cannot enter gold.
+    pot: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="train", server_default="train"
+    )
     import_run_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("import_runs.id", ondelete="SET NULL")
     )

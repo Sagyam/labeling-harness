@@ -404,8 +404,8 @@ def test_segment_detail_lists_every_hypothesis(client: TestClient, imported_epis
     assert body["scores"] is not None
     # A manifest import places nothing: the pot is assigned corpus-wide, against a duration
     # target, by `assign_pots` (D63).
-    assert body["split"] == "unassigned"
-    assert body["pot"] == "unassigned"
+    assert body["split"] in ("train", "val")
+    assert body["pot"] == "train"
 
 
 def test_unknown_segment_is_404(client: TestClient) -> None:
@@ -646,3 +646,47 @@ def test_serving_a_task_commits_the_status_it_reports(
     assert served["status"] == "in_progress"
     db_session.expire_all()
     assert db_session.get(AnnotationTask, served["id"]).status == "in_progress"
+
+
+# --- gold is chosen per clip (D71) --------------------------------------------------------
+
+
+def test_a_clip_is_put_in_gold_and_taken_back_out(
+    client: TestClient, imported_episode: str, db_session: Session
+) -> None:
+    segment_id = client.get("/queue").json()[0]["segment_id"]
+
+    response = client.post(f"/segments/{segment_id}/pot", json={"pot": "gold"})
+    assert response.status_code == 200
+    assert response.json()["pot"] == "gold"
+    assert response.json()["changed"] is True
+    assert client.get(f"/segments/{segment_id}").json()["pot"] == "gold"
+    assert client.get("/pots").json()["buckets"]["gold"]["segments"] == 1
+
+    response = client.post(f"/segments/{segment_id}/pot", json={"pot": "train"})
+    assert response.json() == {
+        "segment_id": segment_id,
+        "external_id": response.json()["external_id"],
+        "pot": "train",
+        "changed": True,
+    }
+
+
+def test_a_screened_clip_is_refused_gold_with_409(
+    client: TestClient, imported_episode: str
+) -> None:
+    row = client.get("/queue").json()[0]
+    screened = client.post(
+        f"/tasks/{row['task_id']}/accept", json={"verification_tier": "screened"}
+    )
+    assert screened.status_code == 200
+
+    response = client.post(f"/segments/{row['segment_id']}/pot", json={"pot": "gold"})
+    assert response.status_code == 409
+    assert "screened" in response.json()["detail"]
+
+
+def test_an_unknown_pot_or_segment_is_refused(client: TestClient, imported_episode: str) -> None:
+    segment_id = client.get("/queue").json()[0]["segment_id"]
+    assert client.post(f"/segments/{segment_id}/pot", json={"pot": "test"}).status_code == 422
+    assert client.post("/segments/999999/pot", json={"pot": "gold"}).status_code == 404

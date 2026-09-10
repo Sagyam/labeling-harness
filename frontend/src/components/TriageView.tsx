@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { RiCloseLine, RiInboxLine, RiPauseFill, RiPlayFill } from '@remixicon/react'
+import {
+  RiCloseLine,
+  RiInboxLine,
+  RiPauseFill,
+  RiPlayFill,
+  RiStarFill,
+  RiStarLine,
+} from '@remixicon/react'
 
 import { Chip } from '@/components/Chip'
 import { Button } from '@/components/ui/button'
@@ -19,7 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { resolveUrl } from '@/services/api'
 import { cn } from '@/lib/utils'
-import type { QueueRow, VerificationTier } from '@/types'
+import type { PotName, QueueRow, VerificationTier } from '@/types'
 
 const QUEUES = ['review', 'audit', 'error'] as const
 
@@ -66,6 +73,8 @@ interface TriageViewProps {
     durationMs: number,
   ) => Promise<void>
   onBulkAccept: (taskIds: number[], tier?: VerificationTier) => Promise<void>
+  /** Put the clip in gold, or take it back out (D71). */
+  onToggleGold: (segmentId: number, currentPot: PotName) => Promise<void>
 }
 
 const SHORTCUTS: Array<[string, string]> = [
@@ -76,6 +85,7 @@ const SHORTCUTS: Array<[string, string]> = [
   ['e', 'Editor'],
   ['f', 'Unusable'],
   ['u', 'Uncertain'],
+  ['g', 'Gold'],
   ['x', 'Select'],
   ['⇧ Enter', 'Bulk accept'],
   ['⇧ S', 'Bulk screen'],
@@ -103,6 +113,7 @@ export function TriageView({
   onOpenEditor,
   onFlagRow,
   onBulkAccept,
+  onToggleGold,
 }: TriageViewProps) {
   const [playingTaskId, setPlayingTaskId] = useState<number | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -231,6 +242,13 @@ export function TriageView({
       if (e.key === 'u' || e.key === 'U') {
         e.preventDefault()
         if (focusedRow) onFlagRow(focusedRow.task_id, 'uncertain', getFocusedDurationMs())
+        return
+      }
+
+      // g: Put the focused clip in gold, or take it back out. Gold is chosen per clip (D71).
+      if (e.key === 'g' || e.key === 'G') {
+        e.preventDefault()
+        if (focusedRow) onToggleGold(focusedRow.segment_id, focusedRow.pot)
         return
       }
 
@@ -467,6 +485,27 @@ export function TriageView({
                         <Button variant="ghost" size="xs" onClick={() => onOpenEditor(row.task_id)}>
                           Edit
                         </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className={cn(
+                                row.pot === 'gold'
+                                  ? 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-400'
+                                  : 'text-muted-foreground',
+                              )}
+                              aria-pressed={row.pot === 'gold'}
+                              aria-label={row.pot === 'gold' ? 'Remove from gold' : 'Add to gold'}
+                              onClick={() => onToggleGold(row.segment_id, row.pot)}
+                            >
+                              {row.pot === 'gold' ? <RiStarFill /> : <RiStarLine />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {row.pot === 'gold' ? 'Remove from gold (g)' : 'Add to gold (g)'}
+                          </TooltipContent>
+                        </Tooltip>
                         <Button
                           variant="ghost"
                           size="xs"

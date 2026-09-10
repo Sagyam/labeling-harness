@@ -50,9 +50,10 @@ def queued(
 
 
 def set_pot(db_session: Session, pot: str) -> None:
+    """Put every clip of the one episode in ``pot`` -- gold is per clip since D71."""
     episode = db_session.scalars(sa.select(Episode)).one()
-    episode.pot = pot
-    episode.split = "test" if pot == "gold" else "train"
+    for segment in episode.segments:
+        segment.pot = pot
     db_session.flush()
 
 
@@ -128,8 +129,8 @@ def test_the_api_refuses_a_screened_gold_decision(
     client, imported_episode: str, db_session: Session
 ) -> None:
     episode = db_session.scalars(sa.select(Episode)).one()
-    episode.pot = "gold"
-    episode.split = "test"
+    for segment in episode.segments:
+        segment.pot = "gold"
     db_session.flush()
 
     task_id = client.get("/queue").json()[0]["task_id"]

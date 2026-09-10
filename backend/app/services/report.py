@@ -21,7 +21,7 @@ from app.models import (
     SegmentScore,
 )
 from app.models.enums import PIPELINE_STATUSES, SPLITS
-from app.services.pots import pot_status
+from app.services.pots import effective_split_sql, pot_status
 from app.services.stats import collect_stats, latest_labels_subquery
 
 
@@ -83,16 +83,18 @@ def collect_report(session: Session) -> dict[str, Any]:
     ).one()
 
     split_balance = {name: {"episodes": 0, "segments": 0, "hours": 0.0} for name in SPLITS}
+    # By the split each *clip* exports under: a gold clip is ``test`` whatever its episode drew.
+    clip_split = effective_split_sql()
     for split, episode_count, segment_count, seconds in session.execute(
         sa.select(
-            Episode.split,
+            clip_split,
             sa.func.count(sa.distinct(Episode.id)),
             sa.func.count(Segment.id),
             sa.func.coalesce(sa.func.sum(Segment.duration_seconds), 0.0),
         )
-        .select_from(Episode)
-        .outerjoin(Segment, Segment.episode_id == Episode.id)
-        .group_by(Episode.split)
+        .select_from(Segment)
+        .join(Episode, Segment.episode_id == Episode.id)
+        .group_by(clip_split)
     ):
         split_balance[split] = {
             "episodes": episode_count,
@@ -100,8 +102,7 @@ def collect_report(session: Session) -> dict[str, Any]:
             "hours": round(float(seconds) / 3600, 3),
         }
 
-    # Pots and coverage. `pot_status` reads; it never assigns, so opening the dashboard cannot
-    # move an episode between pots as a side effect of being looked at (D63).
+    # Pots and coverage. `pot_status` is a pure read: opening the dashboard moves nothing.
     pots = pot_status(session)
 
     # How much of the corpus was actually listened to, against how much was screened through on the
@@ -173,10 +174,10 @@ def collect_report(session: Session) -> dict[str, Any]:
         "split_balance": split_balance,
         "pots": {
             "gold_target_hours": pots.gold_target_hours,
-            "gold_effective_target_hours": pots.gold_effective_target_hours,
-            "gold_capped_by_corpus_size": pots.gold_capped_by_corpus_size,
             "train_target_hours": pots.train_target_hours,
             "buckets": pots.buckets,
+            "gold_episodes_spanning_pots": pots.gold_episodes_spanning_pots,
+            "gold_segments_in_spanning_episodes": pots.gold_segments_in_spanning_episodes,
             "gold_coverage": pots.gold_coverage,
             "corpus_coverage": pots.corpus_coverage,
             "gold_coverage_gaps": pots.gold_coverage_gaps,
@@ -359,6 +360,7 @@ def render_html(report: dict[str, Any]) -> str:
                         "Gold",
                         f"{report['pots']['buckets']['gold']['hours']} h of"
                         f" {report['pots']['gold_target_hours']} h target,"
+                        f" {report['pots']['buckets']['gold']['segments']} clips from"
                         f" {report['pots']['buckets']['gold']['episodes']} episodes",
                     ),
                     (

@@ -91,22 +91,18 @@ No fourth status, and no boolean that duplicates one. `segment_labels` rows are 
 
 ### Two pots
 
-`episodes.pot` is `gold`, `train` or `unassigned`, and `episodes.split` is derived from it under a
-CHECK: gold is always `test`, train is always `train` or `val`. The pot is the frozen commitment;
-the split is the label that follows from it.
+`segments.pot` is `gold` or `train` (D71). The owner puts individual clips in gold by hand —
+`POST /segments/{id}/pot`, from the triage star, `g`, or the editor button — and can take them back
+out; `set_segment_pot` (`app/services/pots.py`) is the only writer, refuses to move a clip with a
+screened label into gold, and writes an `audit_logs` row per move. A gold clip exports as the
+`test` split whatever its episode is (`effective_split`).
 
-`assign_pots` (`app/services/pots.py`) fills gold to an **hours** target rather than a ratio —
-`dataset.gold_hours_target` — taking, of the episodes that still fit, the one that adds the most
-unseen show, gender, age bracket or topic. Ingestion calls it between import and queue build, so
-every episode is placed before any of its clips is looked at. Assigning a pot per clip, while
-looking at the clip, would correlate the benchmark with clip difficulty in a way nothing recorded
-afterwards could undo.
+`episodes.split` is `train`, `val` or `unassigned`, drawn at import from a BLAKE2b hash of the
+episode id against `dataset.val_fraction`, and subdivides only the clips that are not gold.
 
-Whole episodes only. VAD cuts are contiguous and D25 pads speech at the edges, so consecutive clips
-share audio samples; within an episode the vocabulary and topic are shared too. Gold is
-one-directional: an episode never leaves it, and only enters from train under an explicit opt-in,
-because a recording that was trained on and later promoted to the benchmark turns it into a
-memorization test. Train and val may be redrawn freely — they hold the same standard of data.
+Per-clip selection puts clips of one episode on both sides of the train/test line. `pot_status`
+counts the gold episodes that also feed train and the gold clips they hold, and every export row
+carries `episode_spans_pots`, so a gold result can be reported with and without them.
 
 ### Verification tier
 
@@ -171,8 +167,8 @@ the harness does not simply store what it receives.
 
 ### Seed hypothesis selection
 
-- `train`/`val` episodes: the highest-scoring hypothesis, because accepting it is the fastest path.
-- `test` episodes: the seed system is **rotated deterministically** by hashing `segment_id` across
+- Train-pot clips: the highest-scoring hypothesis, because accepting it is the fastest path.
+- Gold clips: the seed system is **rotated deterministically** by hashing `segment_id` across
   available systems, and recorded in `annotation_tasks.seed_hypothesis_id` and on the label. The
   rotation costs the annotator nothing but keeps the gold set from being anchored to one system, and
   makes a per-seed WER breakdown possible later.
@@ -344,8 +340,8 @@ the same inputs and filters produce byte-identical output.
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
 | `GET /stats/report` | Pipeline status: pots, coverage, verification mix, agreement, accept-rate trend |
 | `GET /stats/inventory` | Corpus inventory: hours by every recorded dimension, gaps, and ranked sourcing recommendations (D69) |
-| `GET /pots` | What each pot holds and what the gold pot does not cover; assigns nothing |
-| `POST /pots/assign` | Place unplaced episodes against an hours target; redraw the train/val line |
+| `GET /pots` | What each pot holds and what the gold pot does not cover; moves nothing |
+| `POST /segments/{id}/pot` | Put one clip in gold or take it out (D71); 409 for a screened clip |
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
 | `GET /export/history` | List previous exported dataset artifacts on disk |

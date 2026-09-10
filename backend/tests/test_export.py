@@ -41,9 +41,11 @@ def labeled_corpus(
     *,
     with_words: bool = True,
 ) -> dict[str, str]:
-    """Import three episodes, force one into each split, then label every segment.
+    """Import three episodes, one per split, then label every segment.
 
-    Dispositions cycle so every export kind has something to select.
+    The ``test`` episode is a train episode whose every clip was put in gold by hand -- gold is
+    chosen per clip since D71, and exports as ``test`` whatever its episode drew. Dispositions
+    cycle so every export kind has something to select.
     """
     splits = {}
     for index, split in enumerate(("train", "val", "test")):
@@ -57,7 +59,10 @@ def labeled_corpus(
         )
         import_manifest(session, root, storage=storage, settings=settings)
         episode = session.scalars(sa.select(Episode).where(Episode.external_id == episode_id)).one()
-        episode.split = split
+        episode.split = "train" if split == "test" else split
+        if split == "test":
+            for segment in episode.segments:
+                segment.pot = "gold"
         splits[episode_id] = split
     session.flush()
     build_queue(session, settings=settings, audit_sample_rate=0.0)
@@ -104,8 +109,7 @@ def test_a_test_segment_never_appears_in_the_training_export(
     labeled_corpus(db_session, tmp_path, storage, settings)
     result = export_dataset(db_session, kind="training", output_root=tmp_path / "out")
     test_ids = {
-        s.external_id
-        for s in db_session.scalars(sa.select(Segment).join(Episode).where(Episode.split == "test"))
+        s.external_id for s in db_session.scalars(sa.select(Segment).where(Segment.pot == "gold"))
     }
     exported = {r["segment_id"] for r in read_jsonl(result.data_path)}
     assert exported & test_ids == set()
@@ -203,6 +207,40 @@ def test_gold_export_contains_only_the_test_split(
     assert records
     assert {r["split"] for r in records} == {"test"}
     assert all(r["seed_system_id"] for r in records)
+
+
+def test_one_gold_clip_leaves_its_train_episode_for_the_gold_export(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Gold is chosen per clip (D71): the rest of the episode stays training material."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    train_episode = db_session.scalars(
+        sa.select(Episode).where(Episode.external_id == "exp_ep000")
+    ).one()
+    exportable = set(
+        db_session.scalars(
+            sa.select(SegmentLabel.segment_id).where(
+                SegmentLabel.disposition.in_(("accepted_unchanged", "edited"))
+            )
+        )
+    )
+    moved = next(s for s in train_episode.segments if s.id in exportable)
+    moved.pot = "gold"
+    db_session.flush()
+
+    gold = read_jsonl(export_dataset(db_session, kind="gold", output_root=tmp_path / "g").data_path)
+    training = read_jsonl(
+        export_dataset(db_session, kind="training", output_root=tmp_path / "t").data_path
+    )
+
+    gold_row = next(r for r in gold if r["segment_id"] == moved.external_id)
+    assert gold_row["split"] == "test"
+    assert gold_row["pot"] == "gold"
+    # The same episode now has clips on both sides of the train/test line, and the row says so.
+    assert gold_row["episode_spans_pots"] is True
+    assert moved.external_id not in {r["segment_id"] for r in training}
+    assert any(r["episode_id"] == "exp_ep000" for r in training)
+    assert all(not r["episode_spans_pots"] for r in gold if r["episode_id"] == "exp_ep002")
 
 
 def test_unusable_audio_never_appears_in_training_or_gold(

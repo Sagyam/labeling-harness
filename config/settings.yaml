@@ -39,25 +39,18 @@ importer:
   expected_channels: 1
   expected_format: FLAC
 
-# Pot targets (D63). Durations, not ratios: a ratio over episode count cannot express
-# "five hours of benchmark audio" when episodes run from minutes to four hours.
+# Pot targets (D71). Gold is chosen per clip, by hand -- these are progress bars for the
+# dashboard, not rules. Durations, not ratios.
 dataset:
-  gold_hours_target: 3.0         # gold pot stops taking episodes once this is met.
-                                 # Down from 5.0, which was set against the 50 h corpus
-                                 # D69 later cut to 20 h and was never revised with it:
-                                 # 5 h of 50 h is 10%, 5 h of 20 h is 25%. ~3 h is ~27k
-                                 # reference words, which holds the standard error on WER
-                                 # under a point -- ample to rank three systems. What
+  gold_hours_target: 3.0         # ~3 h is ~27k reference words, which holds the standard error
+                                 # on WER under a point -- ample to rank three systems. What
                                  # limits this benchmark is speakers, not hours (D69).
-  train_hours_target: 20.0       # informational; drives the dashboard, not the assigner.
-                                 # Down from 50 h: the from-scratch scaling curve behind that
-                                 # figure does not apply to domain adaptation on a pretrained
-                                 # model, and the corpus is limited by speakers, not hours.
-  gold_max_corpus_fraction: 0.35 # gold never takes more than this share of the ingested corpus,
-                                 # so a small corpus is not swallowed whole into the benchmark
-  val_fraction: 0.1              # share of the train pot held back as val; redrawable
-  pot_seed: 20260101
-  coverage_keys:                 # what the gold pot tries to cover before duration alone decides
+  train_hours_target: 20.0       # informational. Down from 50 h: the from-scratch scaling curve
+                                 # behind that figure does not apply to domain adaptation on a
+                                 # pretrained model, and the corpus is limited by speakers.
+  val_fraction: 0.1              # share of episodes whose non-gold clips are val; redrawable
+  pot_seed: 20260101             # seed for that draw
+  coverage_keys:                 # what the dashboard checks gold against
     - show_id
     - gender
     - age_bracket

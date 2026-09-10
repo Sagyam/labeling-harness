@@ -100,9 +100,9 @@ class ApiSettings(BaseModel):
 class ImporterSettings(BaseModel):
     """Manifest import behaviour.
 
-    Splits are not decided here any more. An import leaves a new episode unplaced and
-    ``dataset.gold_hours_target`` drives ``assign_pots``, because which pot an episode belongs in
-    is a corpus-wide question about duration that one import cannot answer (D63).
+    A new episode draws its train/val split here, from a hash of its id against
+    ``dataset.val_fraction``. Gold is not decided at import at all: it is chosen per clip, by hand
+    (D71).
     """
 
     model_config = _STRICT
@@ -114,39 +114,31 @@ class ImporterSettings(BaseModel):
 
 
 class DatasetSettings(BaseModel):
-    """Pot targets: how big each pot should get, and how the train pot subdivides (D63).
+    """Pot targets and the train/val line (D71).
 
-    Targets are **durations**, not ratios, because a duration is the thing anyone actually wants
-    from a corpus ("five hours of benchmark audio") and a ratio over episode count cannot express
-    it when episodes run from minutes to four hours.
+    Gold is chosen per clip by hand, so nothing here decides what goes into it; the targets are
+    progress bars for the dashboard. Durations, not ratios, because a duration is the thing anyone
+    actually wants from a corpus ("three hours of benchmark audio").
     """
 
     model_config = _STRICT
 
-    #: Hours of audio the gold pot is aiming at. Assignment stops once it is met.
+    #: Hours of audio the gold pot is aiming at. Informational: drives the dashboard.
     gold_hours_target: float = Field(default=5.0, gt=0)
-    #: Hours the train pot is aiming at. Informational -- everything not needed for gold goes to
-    #: train, so this drives the dashboard's progress bar rather than the assigner's decisions.
+    #: Hours the train pot is aiming at. Informational, like the gold target.
     #: Twenty rather than the original fifty: the from-scratch scaling curve the larger figure came
     #: from does not apply here. Nepali already has ~160 h public, and adapting a pretrained model
     #: to a domain saturates roughly an order of magnitude earlier. The corpus is short of
     #: speakers rather than hours (D69), and no number of extra hours from the same twelve people
     #: fixes that.
     train_hours_target: float = Field(default=20.0, gt=0)
-    #: Ceiling on gold's share of the ingested corpus. Without it a corpus smaller than
-    #: ``gold_hours_target`` is swallowed whole -- every episode locked irreversibly into the
-    #: benchmark, nothing left to train on, and the benchmark's coverage fixed at a point when the
-    #: corpus was too small to know what it should span. The gold pot instead grows with the
-    #: corpus and reaches its target once there is enough audio to spare.
-    gold_max_corpus_fraction: float = Field(default=0.35, gt=0.0, le=1.0)
     #: Share of the train pot held back as val. Redrawable: train and val hold the same standard
     #: of data, so moving an episode between them costs nothing (unlike moving one out of gold).
     val_fraction: float = Field(default=0.1, ge=0.0, lt=1.0)
-    #: Seed for the train/val subdivision and for tie-breaking during gold assignment, so a run is
-    #: reproducible.
+    #: Seed for the train/val draw, so it is reproducible; change it to redraw the line.
     pot_seed: int = 20260101
-    #: Stratification variables the gold pot tries to cover before duration alone decides. Ordered
-    #: by how much a gap in one would hurt: an all-one-show benchmark is the worst outcome.
+    #: Stratification variables the dashboard checks gold against. Ordered by how much a gap in
+    #: one would hurt: an all-one-show benchmark is the worst outcome.
     coverage_keys: list[Literal["show_id", "gender", "age_bracket", "topic"]] = Field(
         default_factory=lambda: ["show_id", "gender", "age_bracket", "topic"]
     )

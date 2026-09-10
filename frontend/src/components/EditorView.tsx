@@ -34,7 +34,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { api, resolveUrl } from '@/services/api'
 import { karaokeWords, stripEdgePunctuation } from '@/lib/karaoke'
 import { cn } from '@/lib/utils'
-import type { Dispute, PeaksPayload, Task } from '@/types'
+import type { Dispute, PeaksPayload, PotName, Task } from '@/types'
 
 interface EditorViewProps {
   task: Task
@@ -47,6 +47,8 @@ interface EditorViewProps {
   ) => Promise<void>
   onSkip: (taskId: number, durationMs: number) => Promise<void>
   onExitToTriage: () => void
+  /** Put the clip in gold, or take it back out (D71). */
+  onToggleGold: (segmentId: number, currentPot: PotName) => Promise<void>
 }
 
 const SPEEDS = ['0.75', '1', '1.25'] as const
@@ -58,6 +60,7 @@ export function EditorView({
   onFlag,
   onSkip,
   onExitToTriage,
+  onToggleGold,
 }: EditorViewProps) {
   const segment = task.segment
   const seedHypothesis = segment.hypotheses.find((h) => h.id === task.seed_hypothesis_id)
@@ -383,6 +386,15 @@ export function EditorView({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant={segment.pot === 'gold' ? 'secondary' : 'ghost'}
+            size="sm"
+            className={cn(segment.pot === 'gold' && 'text-amber-700 dark:text-amber-300')}
+            aria-pressed={segment.pot === 'gold'}
+            onClick={() => onToggleGold(segment.id, segment.pot)}
+          >
+            {segment.pot === 'gold' ? 'In gold' : 'Add to gold'}
+          </Button>
           <Button
             variant="ghost"
             size="sm"

@@ -1,5 +1,5 @@
 /**
- * The two pots, what was actually heard, and what the benchmark does not span (D63).
+ * The two pots, what was actually heard, and what the benchmark does not span (D63, D71).
  *
  * Condensed from the panel this replaces: the pots are a constraint on the corpus rather than the
  * subject of the page, so they get one row instead of a section. What survives is what qualifies
@@ -79,13 +79,18 @@ export function PotsPanel({
           icon={<RiSoundModuleLine className="size-4 text-primary" />}
           title="The two pots"
           note={
-            pots.gold_capped_by_corpus_size
-              ? `gold held at ${hours(pots.gold_effective_target_hours)} h — corpus too small`
+            pots.gold_episodes_spanning_pots > 0
+              ? `${pots.gold_segments_in_spanning_episodes} gold clips share an episode with train`
               : undefined
           }
         />
         <div className="space-y-3">
-          <PotBar bucket="gold" label="Gold — benchmark" entry={pots.buckets.gold} target={pots.gold_target_hours} />
+          <PotBar
+            bucket="gold"
+            label={`Gold — ${pots.buckets.gold.segments} clips`}
+            entry={pots.buckets.gold}
+            target={pots.gold_target_hours}
+          />
           <PotBar bucket="train" label="Train pot" entry={trainPot} target={pots.train_target_hours} />
           {pots.buckets.unassigned.episodes > 0 ? (
             <PotBar bucket="unassigned" label="Unplaced" entry={pots.buckets.unassigned} />

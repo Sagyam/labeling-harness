@@ -16,9 +16,11 @@ Two properties are worth more than the rest and are tested from several angles:
 from __future__ import annotations
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
+from app.models import AuditLog
 from app.services.inventory import (
     DOMINANT_SHARE,
     NARROW_SHOW_SPREAD,
@@ -56,6 +58,7 @@ def fact(
         show_id=show_id,
         published_at="2026-01-01",
         pot="train",
+        gold_segments=0,
         split="train",
         hours=hours,
         segments=segments,
@@ -429,14 +432,24 @@ def test_the_inventory_counts_a_real_corpus(db_session: Session, settings: Setti
 
 @pytest.mark.db
 def test_the_inventory_reads_and_never_writes(db_session: Session, settings: Settings) -> None:
-    """Opening the analytics page must not move an episode between pots (D63).
+    """Opening the analytics page must not move anything between pots.
 
-    `pot_status` is a read and `collect_inventory` calls it, but a page that assigned as a side
-    effect of being looked at would be a trap, and the failure would be silent.
+    `pot_status` is a read and `collect_inventory` calls it, but a page that changed the corpus as
+    a side effect of being looked at would be a trap, and the failure would be silent.
     """
     make_episode(db_session, "ep1", minutes=30, show_id="a")
     make_episode(db_session, "ep2", minutes=30, show_id="b")
 
     collect_inventory(db_session, settings=settings)
 
-    assert [f.pot for f in load_episode_facts(db_session)] == ["unassigned", "unassigned"]
+    assert [f.pot for f in load_episode_facts(db_session)] == ["train", "train"]
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(AuditLog)) == 0
+
+
+@pytest.mark.db
+def test_an_episode_with_some_gold_clips_is_mixed(db_session: Session, settings: Settings) -> None:
+    episode = make_episode(db_session, "ep1", minutes=3, show_id="a")
+    episode.segments[0].pot = "gold"
+    db_session.flush()
+    (facts,) = load_episode_facts(db_session)
+    assert (facts.pot, facts.gold_segments) == ("mixed", 1)

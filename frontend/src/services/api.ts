@@ -29,8 +29,9 @@ import {
   ExportHistoryItem,
   CostReportResponse,
   CostRequestsResponse,
+  PotName,
   PotPanel,
-  PotAssignReport,
+  SegmentPotOut,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -293,14 +294,12 @@ export const api = {
 
   getPots: (): Promise<PotPanel> => request<PotPanel>('/pots'),
 
-  assignPots: (
-    body: { gold_hours_target?: number; allow_promote_from_train?: boolean; dry_run?: boolean } = {}
-  ): Promise<PotAssignReport> => {
-    return request<PotAssignReport>('/pots/assign', {
+  /** Put one clip in gold, or take it back out (D71). A screened clip is refused with 409. */
+  setSegmentPot: (segmentId: number, pot: PotName, reason?: string): Promise<SegmentPotOut> =>
+    request<SegmentPotOut>(`/segments/${segmentId}/pot`, {
       method: 'POST',
-      body: JSON.stringify(body),
-    })
-  },
+      body: JSON.stringify({ pot, reason }),
+    }),
 
   runExport: (body: {
     kind: string

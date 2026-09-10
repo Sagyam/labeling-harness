@@ -22,6 +22,7 @@ export const POT_COLOR: Record<string, string> = {
   gold: 'bg-amber-500',
   train: 'bg-emerald-500',
   val: 'bg-sky-500',
+  mixed: 'bg-orange-400',
   unassigned: 'bg-muted-foreground/40',
 }
 
@@ -29,6 +30,7 @@ export const POT_TEXT: Record<string, string> = {
   gold: 'text-amber-600 dark:text-amber-400',
   train: 'text-emerald-600 dark:text-emerald-400',
   val: 'text-sky-600 dark:text-sky-400',
+  mixed: 'text-orange-600 dark:text-orange-400',
   unassigned: 'text-muted-foreground',
 }
 

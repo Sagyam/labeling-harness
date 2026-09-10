@@ -69,6 +69,9 @@ def list_episodes(session: Session = Depends(get_session)) -> list[EpisodeSummar
                     )
                 )
             ).label("pending_segments"),
+            sa.func.count(
+                sa.distinct(sa.case((Segment.pot == "gold", Segment.id), else_=None))
+            ).label("gold_segments"),
         )
         .outerjoin(AnnotationTask, AnnotationTask.segment_id == Segment.id)
         .group_by(Segment.episode_id)
@@ -87,7 +90,7 @@ def list_episodes(session: Session = Depends(get_session)) -> list[EpisodeSummar
                 show_id=ep.show_id,
                 duration_seconds=ep.duration_seconds,
                 split=ep.split,
-                pot=ep.pot,
+                gold_count=stats.gold_segments if stats else 0,
                 segment_count=stats.total_segments if stats else 0,
                 labeled_count=stats.labeled_segments if stats else 0,
                 pending_count=stats.pending_segments if stats else 0,
@@ -143,6 +146,7 @@ def list_episode_segments(
                 end_time=seg.end_time,
                 duration_seconds=seg.duration_seconds,
                 pipeline_status=seg.pipeline_status,
+                pot=seg.pot,
                 task_status=task_status,
                 task_id=task_info[0] if task_info else None,
                 seed_text=hyp.text_raw if hyp else None,

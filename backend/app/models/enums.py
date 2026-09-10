@@ -21,12 +21,15 @@ TaskStatus = Literal["pending", "in_progress", "done", "skipped"]
 TASK_STATUSES: Final[tuple[str, ...]] = ("pending", "in_progress", "done", "skipped")
 ACTIVE_TASK_STATUSES: Final[tuple[str, ...]] = ("pending", "in_progress")
 
-#: Which pot an episode belongs to. The pot is the *frozen* commitment -- assigned to a whole
-#: episode before any of its clips is seen, so the routing decision cannot correlate with how hard
-#: a clip turned out to be (D63). ``split`` is derived from it: a gold-pot episode is always
-#: ``test``; a train-pot episode is ``train`` or ``val`` and may be redrawn between the two.
-Pot = Literal["gold", "train", "unassigned"]
-POTS: Final[tuple[str, ...]] = ("gold", "train", "unassigned")
+#: Which pot a clip belongs to (D71). Chosen per clip, by hand: ``gold`` is the benchmark and
+#: exports as the ``test`` split; ``train`` is everything else, subdivided into ``train`` and
+#: ``val`` by the clip's episode.
+Pot = Literal["gold", "train"]
+POTS: Final[tuple[str, ...]] = ("gold", "train")
+
+#: The split an *episode* can hold. ``test`` is not among them: it belongs to gold clips, and no
+#: longer to whole episodes.
+EPISODE_SPLITS: Final[tuple[str, ...]] = ("train", "val", "unassigned")
 
 #: How much human attention one label actually got. Both are legitimate ways to build a corpus and
 #: they are not the same claim, so the corpus records which was made rather than presenting a

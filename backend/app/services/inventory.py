@@ -216,7 +216,10 @@ class EpisodeFacts:
     title: str | None
     show_id: str | None
     published_at: str | None
+    #: ``gold`` when every clip is in gold, ``train`` when none is, ``mixed`` in between -- gold is
+    #: chosen per clip since D71, so an episode no longer has a pot of its own.
     pot: str
+    gold_segments: int
     split: str
     hours: float
     segments: int
@@ -274,7 +277,7 @@ def load_episode_facts(session: Session) -> list[EpisodeFacts]:
 
     Hours come from the episode's *segments* -- the audio that actually reaches the queue -- and
     fall back to ``episodes.duration_seconds`` only for an episode whose segments are not imported
-    yet, exactly as the pot assigner budgets (D63).
+    yet.
     """
     segment_rows = {
         row.episode_id: row
@@ -282,6 +285,9 @@ def load_episode_facts(session: Session) -> list[EpisodeFacts]:
             sa.select(
                 Segment.episode_id.label("episode_id"),
                 sa.func.count().label("segments"),
+                sa.func.count(sa.case((Segment.pot == "gold", Segment.id), else_=None)).label(
+                    "gold_segments"
+                ),
                 sa.func.coalesce(sa.func.sum(Segment.duration_seconds), 0.0).label("seconds"),
                 sa.func.avg(SegmentScore.code_switch_density).label("mean_cmi"),
                 sa.func.min(SegmentScore.code_switch_density).label("min_cmi"),
@@ -317,16 +323,25 @@ def load_episode_facts(session: Session) -> list[EpisodeFacts]:
         metadata: Mapping[str, Any] = episode.metadata_jsonb or {}
         topic = metadata.get("topic")
         topic_source = metadata.get("topic_source")
+        segments = row.segments if row else 0
+        gold_segments = int(row.gold_segments) if row else 0
+        if gold_segments and gold_segments == segments:
+            pot = "gold"
+        elif gold_segments:
+            pot = "mixed"
+        else:
+            pot = "train"
         facts.append(
             EpisodeFacts(
                 external_id=episode.external_id,
                 title=episode.title,
                 show_id=episode.show_id,
                 published_at=episode.published_at.isoformat() if episode.published_at else None,
-                pot=episode.pot,
+                pot=pot,
+                gold_segments=gold_segments,
                 split=episode.split,
                 hours=seconds / 3600,
-                segments=row.segments if row else 0,
+                segments=segments,
                 labeled_hours=(tiers.get("verified", 0.0) + tiers.get("screened", 0.0)) / 3600,
                 verified_hours=tiers.get("verified", 0.0) / 3600,
                 screened_hours=tiers.get("screened", 0.0) / 3600,
@@ -911,6 +926,7 @@ def collect_inventory(session: Session, *, settings: Settings | None = None) -> 
                 "show_id": f.show_id,
                 "published_at": f.published_at,
                 "pot": f.pot,
+                "gold_segments": f.gold_segments,
                 "split": f.split,
                 "hours": _round(f.hours),
                 "minutes": _round(f.hours * 60, 1),

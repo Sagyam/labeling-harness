@@ -50,6 +50,7 @@ from app.llm.transcription import (
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.forced_align import ForcedAligner, align_text
 from app.services.importer import import_manifest
+from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
     SileroVAD,
     extract_clips,
@@ -1153,23 +1154,15 @@ def _run_stages(
                 f"{import_report.clips_uploaded} clips uploaded to storage"
             )
 
-            # The pot is *not* decided here. `assign_pots` chooses greedily, taking the episode
-            # that adds the most unseen show / gender / age bracket / topic; run once per ingest it
-            # only ever sees one candidate, and a greedy choice over one candidate is no choice at
-            # all -- it takes whatever arrived while gold was under target. Gold then tracks
-            # `gold_max_corpus_fraction` of a growing corpus rather than spanning strata, and rule
-            # 3 makes that permanent. So the episode lands unassigned and the assigner runs as a
-            # batch step over the whole corpus, which is the only shape its selection works in.
-            #
-            # D63 rule 1 still holds: the pot is decided before any clip is looked at, because the
-            # queue this episode needs cannot be built until the pot exists (`build_queue` refuses
-            # an unassigned episode -- gold rotates the seed system and train takes the strongest,
-            # so a queue built ahead of the pot would seed the benchmark wrong).
-            job.log(
-                "Pot: unassigned -- run `python scripts/assign_pots.py` and then "
-                "`python scripts/build_queue.py` to place this episode and queue it."
+            # Nothing stands between import and the queue any more: the episode drew its train/val
+            # split at import, and gold is chosen per clip by hand from the queue itself (D71).
+            queue_report = build_queue(
+                session, settings=settings, episode_external_id=job.episode_id
             )
-            queue_report = None
+            job.log(
+                f"Queue built: {queue_report.tasks_created} tasks "
+                f"({queue_report.review_tasks} review, {queue_report.audit_tasks} audit)"
+            )
             session.commit()
 
         job.complete(

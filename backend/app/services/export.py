@@ -47,6 +47,7 @@ from app.models import (
     SegmentLabel,
 )
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
+from app.services.pots import effective_split, effective_split_sql
 from app.services.stats import latest_labels_subquery
 from app.storage.base import ObjectStorage
 from app.utils.hashing import sha256_file
@@ -173,6 +174,7 @@ def _record(
     kind: ExportKind,
     seed_system_id: str | None,
     ruleset: Ruleset,
+    spanning_episode_ids: set[int],
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "segment_id": segment.external_id,
@@ -186,11 +188,15 @@ def _record(
         #: disagreement signal. Carried on every row of every kind, because a consumer that cannot
         #: tell the two apart is reading a claim the corpus never made (D63).
         "verification_tier": label.verification_tier,
-        "pot": segment.episode.pot,
+        "pot": segment.pot,
+        #: True when this clip's episode has clips in both pots -- the same speaker and topic on
+        #: both sides of the train/test line, which per-clip gold allows (D71). Lets a gold result
+        #: be reported with and without those clips.
+        "episode_spans_pots": segment.episode_id in spanning_episode_ids,
         "seed_system_id": seed_system_id,
         "label_version": version.name,
         "policy_version": version.policy_version,
-        "split": segment.episode.split,
+        "split": effective_split(segment.pot, segment.episode.split),
         "code_switch_density": segment.scores.code_switch_density if segment.scores else None,
     }
     if kind.include_hypotheses:
@@ -334,7 +340,7 @@ def export_dataset(
             .where(
                 current.c.label_version_id == version.id,
                 current.c.disposition.in_(definition.dispositions),
-                Episode.split.in_(definition.splits),
+                effective_split_sql().in_(definition.splits),
             )
             # Deterministic order: the same inputs must produce byte-identical output.
             .order_by(Segment.external_id)
@@ -357,6 +363,14 @@ def export_dataset(
                 ).all()
             )
 
+        spanning_episode_ids = set(
+            session.scalars(
+                sa.select(Segment.episode_id)
+                .group_by(Segment.episode_id)
+                .having(sa.func.count(sa.distinct(Segment.pot)) > 1)
+            )
+        )
+
         for segment, label in rows:
             records.append(
                 _record(
@@ -366,6 +380,7 @@ def export_dataset(
                     definition,
                     seed_systems.get(label.seed_hypothesis_id),
                     ruleset,
+                    spanning_episode_ids,
                 )
             )
             if segment.import_run_id:
@@ -374,8 +389,9 @@ def export_dataset(
                 episode_audio[segment.episode.external_id] = segment.episode.audio_object_key
 
     # The gold pot's whole value is that every row in it was checked by a human. `record_decision`
-    # refuses to write a screened gold label in the first place, so reaching here means something
-    # got in another way -- a direct insert, or a segment whose episode moved pots after labelling.
+    # refuses to write a screened gold label in the first place and `set_segment_pot` refuses to
+    # move a screened clip into gold, so reaching here means something got in another way -- a
+    # direct insert or update that went round both.
     # Refusing the export is the only response that cannot end with a screened row being cited as
     # a benchmark result (D63).
     if kind == "gold":
@@ -384,7 +400,7 @@ def export_dataset(
             raise GoldPurityError(
                 f"{len(screened)} gold row(s) are not verified, first {screened[0]!r};"
                 " the gold export is a claim that every row was listened to, so it will not"
-                " be written until these are re-verified or their episodes leave the gold pot"
+                " be written until these are re-verified or taken out of the gold pot"
             )
 
     with data_path.open("w", encoding="utf-8", newline="\n") as handle:

@@ -19,6 +19,7 @@ const TRIAGE: Shortcut[] = [
   ['Play / pause row audio', ['Space']],
   ['Accept unchanged, verified & advance', ['Enter']],
   ['Screen — accept without listening', ['s']],
+  ['Add to gold / remove from gold', ['g']],
   ['Open in editor', ['e']],
   ['Flag unusable audio', ['f']],
   ['Mark uncertain', ['u']],

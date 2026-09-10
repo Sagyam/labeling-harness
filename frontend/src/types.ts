@@ -347,7 +347,8 @@ export interface EpisodeSummary {
   show_id: string | null
   duration_seconds: number | null
   split: string
-  pot: PotName
+  /** Clips of this episode the owner has put in gold. */
+  gold_count: number
   segment_count: number
   labeled_count: number
   pending_count: number
@@ -421,8 +422,8 @@ export interface AnalyticsReport {
   }
 }
 
-/** Which pot an episode belongs to. Gold is the benchmark; train holds everything else. */
-export type PotName = 'gold' | 'train' | 'unassigned'
+/** Which pot a clip belongs to (D71). Gold is the benchmark, chosen per clip by hand. */
+export type PotName = 'gold' | 'train'
 
 /** The four rows the dashboard shows: the two pots, with the train pot split into train and val. */
 export type BucketName = 'gold' | 'train' | 'val' | 'unassigned'
@@ -438,15 +439,12 @@ export interface PotBucket {
 
 export interface PotPanel {
   gold_target_hours: number
-  /**
-   * The target actually being pursued: the configured one, capped at a share of the ingested
-   * corpus so a small corpus is not swallowed whole into the benchmark.
-   */
-  gold_effective_target_hours: number
-  /** True while the corpus is too small to reach the configured target. */
-  gold_capped_by_corpus_size: boolean
   train_target_hours: number
+  /** Gold is counted by clip; train, val and unassigned by the episode's split. */
   buckets: Record<BucketName, PotBucket>
+  /** Episodes with clips on both sides of the train/test line: same speaker, same topic. */
+  gold_episodes_spanning_pots: number
+  gold_segments_in_spanning_episodes: number
   /** `{coverage key: {value: episodes in gold carrying it}}`. */
   gold_coverage: Record<string, Record<string, number>>
   corpus_coverage: Record<string, Record<string, number>>
@@ -463,35 +461,6 @@ export interface VerificationPanel {
   screened: number
   total: number
   hours: Record<VerificationTier, number>
-}
-
-export interface PotChange {
-  external_id: string
-  from_pot: PotName
-  to_pot: PotName
-  from_split: string
-  to_split: string
-  hours: number
-}
-
-export interface PotAssignReport {
-  gold_hours: number
-  gold_effective_target_hours: number
-  gold_capped_by_corpus_size: boolean
-  train_hours: number
-  val_hours: number
-  unassigned_hours: number
-  gold_target_hours: number
-  train_target_hours: number
-  gold_episodes: number
-  train_episodes: number
-  val_episodes: number
-  unassigned_episodes: number
-  gold_target_met: boolean
-  gold_coverage: Record<string, Record<string, number>>
-  gold_coverage_gaps: Record<string, string[]>
-  dry_run: boolean
-  changes: PotChange[]
 }
 
 export interface ExportOutItem {
@@ -705,7 +674,9 @@ export interface InventoryEpisode {
   title: string | null
   show_id: string | null
   published_at: string | null
-  pot: PotName
+  /** `mixed` when some but not all of the episode's clips are in gold. */
+  pot: PotName | 'mixed'
+  gold_segments: number
   split: string
   hours: number
   minutes: number
@@ -774,4 +745,12 @@ export interface CorpusInventory {
   episodes: InventoryEpisode[]
   shows: InventoryShow[]
   recommendations: Recommendation[]
+}
+
+/** Result of moving one clip into or out of gold. */
+export interface SegmentPotOut {
+  segment_id: number
+  external_id: string
+  pot: PotName
+  changed: boolean
 }

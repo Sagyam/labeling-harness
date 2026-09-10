@@ -73,16 +73,14 @@ without word spans for that system.
 Routes are configured in `config/llm_routes.yaml`; set `dry_run: true` there to exercise the
 pipeline without spending anything.
 
-**Two pots.** Every episode is placed in one before a single one of its clips reaches the queue.
-The **gold** pot is the benchmark: every clip is listened to, and an episode never leaves it. The
-**train** pot is everything else, subdivided into train and val, where a clip may be *screened* —
-accepted on cross-ASR disagreement without listening, which is the only way fifty hours is
-affordable. Placement is greedy against an hours target (`dataset.gold_hours_target`), taking the
-episode that adds the most unseen show, gender, age bracket or topic, because a five-hour benchmark
-drawn from one show measures that show. Ingestion assigns pots itself; `scripts/assign_pots.py`
-covers the rest (D63). `scripts/demote_from_gold.py` is the one exception to "never leaves" — one
-episode, by name, with a reason on an audit row, and only while nothing has yet been trained on or
-measured against the benchmark (D68).
+**Two pots.** Every clip starts in the **train** pot, subdivided into train and val by its
+episode, where a clip may be *screened* — accepted on cross-ASR disagreement without listening.
+The **gold** pot is the benchmark, and you choose it one clip at a time: the star on a triage row,
+`g`, or "Add to gold" in the editor. The same button takes a clip back out, and every move is
+written to the audit log (D71). A clip that was screened cannot go into gold. Choosing clips from
+an episode that also feeds train puts the same speaker on both sides of the line; the analytics
+page counts those clips and every export row carries `episode_spans_pots`, so a result can be
+reported with and without them.
 
 Every label records which it was, `verified` or `screened`, and every export row carries it. The
 harness refuses to screen a gold clip, and refuses to write a gold export containing one.
@@ -123,6 +121,7 @@ sortable row per show and per episode. Everything is derived on read; nothing is
 | `e` | Open in editor | `Alt+1…5` | Load hypothesis 1–5 |
 | `f` | Flag unusable audio | `Alt+←` / `Alt+→` | Seek ∓2 s |
 | `u` | Mark uncertain | `Ctrl+L` | Toggle loop |
+| `g` | Add to / remove from gold | | |
 | `x` | Toggle row selection | `Ctrl+T` | Toggle transliteration |
 | `Shift+Enter` | Accept selected rows | `Esc` | Back to triage |
 | `Shift+S` | Screen selected rows | | |
@@ -136,8 +135,6 @@ Run from the repository root with the backend virtualenv:
 
 ```bash
 backend/.venv/bin/python scripts/import_manifest.py  export_show-a_ep012/ [--dry-run]
-backend/.venv/bin/python scripts/assign_pots.py      [--gold-hours 5] [--dry-run]
-backend/.venv/bin/python scripts/demote_from_gold.py --episode <id> --reason "..." [--dry-run]
 backend/.venv/bin/python scripts/build_queue.py      [--episode show-a_ep012]
 backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-version v1
 backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
