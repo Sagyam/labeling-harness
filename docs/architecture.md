@@ -372,7 +372,7 @@ the same inputs and filters produce byte-identical output.
 |---|---|
 | `GET /health` | Process health plus Postgres and object storage reachability |
 | `GET /stats` | Progress counters, disposition mix, accept rate, throughput, projected finish |
-| `GET /queue` | Triage list; `limit`, `offset`, `episode`, `min_priority`, `queue` |
+| `GET /queue` | Triage list; `limit`, `offset`, `episode`, `min_priority`, `queue`, `sort_by`, `sort_order` |
 | `GET /tasks/next` | Highest-priority pending task; marks it `in_progress` so reopening resumes |
 | `GET /tasks/{id}` | One task with its full segment payload; does not change status |
 | `GET /segments/{id}` | Segment with all hypotheses, scores, flags and current label |

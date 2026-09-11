@@ -111,6 +111,12 @@ def serialize_queue_row(task: AnnotationTask) -> QueueRowOut:
     """Serialize one triage row: enough to decide without opening the editor."""
     segment = task.segment
     seed = task.seed_hypothesis
+    scores = segment.scores
+    w_disagree = scores.word_disagreement_rate if scores else None
+    if w_disagree is None and task.reason_jsonb:
+        components = task.reason_jsonb.get("components") or {}
+        if "asr_disagreement" in components:
+            w_disagree = components["asr_disagreement"]
     return QueueRowOut(
         task_id=task.id,
         segment_id=segment.id,
@@ -121,11 +127,17 @@ def serialize_queue_row(task: AnnotationTask) -> QueueRowOut:
         pot=segment.pot,
         priority_score=task.priority_score,
         reason=task.reason_jsonb,
-        flags=list(segment.scores.flags_jsonb or []) if segment.scores else [],
+        flags=list(scores.flags_jsonb or []) if scores else [],
         duration_seconds=segment.duration_seconds,
         seed_hypothesis_id=task.seed_hypothesis_id,
         seed_system_id=seed.system.system_id if seed else None,
         seed_text=seed.text_raw if seed else None,
+        cmi=(
+            round(scores.code_switch_density * 100, 1)
+            if (scores and scores.code_switch_density is not None)
+            else None
+        ),
+        word_disagreement_rate=w_disagree,
         audio_url=audio_url(segment.id),
         peaks_url=peaks_url(segment),
     )

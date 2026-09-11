@@ -147,9 +147,14 @@ export interface QueueRow {
   seed_hypothesis_id: number | null
   seed_system_id: string | null
   seed_text: string | null
+  cmi?: number | null
+  word_disagreement_rate?: number | null
   audio_url: string
   peaks_url: string
 }
+
+export type TriageSortBy = 'priority' | 'cmi' | 'disagreement' | 'duration' | 'pot'
+export type SortOrder = 'asc' | 'desc'
 
 export interface DisputeAlternative {
   system_id: string

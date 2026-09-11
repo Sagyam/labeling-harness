@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  RiArrowDownSLine,
+  RiArrowUpDownLine,
+  RiArrowUpSLine,
   RiCloseLine,
   RiInboxLine,
   RiPauseFill,
@@ -11,6 +14,13 @@ import {
 import { Chip } from '@/components/Chip'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
@@ -26,9 +36,25 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { resolveUrl } from '@/services/api'
 import { cn } from '@/lib/utils'
-import type { PotName, QueueRow, VerificationTier } from '@/types'
+import type { PotName, QueueRow, SortOrder, TriageSortBy, VerificationTier } from '@/types'
 
 const QUEUES = ['review', 'audit', 'error'] as const
+
+const SORT_OPTIONS: Array<{ id: TriageSortBy; label: string }> = [
+  { id: 'priority', label: 'Priority' },
+  { id: 'cmi', label: 'CMI (Code-Mixing)' },
+  { id: 'disagreement', label: 'Disagreement' },
+  { id: 'duration', label: 'Duration' },
+  { id: 'pot', label: 'Pot (Gold first)' },
+]
+
+const SORT_LABELS: Record<TriageSortBy, string> = {
+  priority: 'Priority',
+  cmi: 'CMI',
+  disagreement: 'Disagreement',
+  duration: 'Duration',
+  pot: 'Pot',
+}
 
 //: What the priority score is made of since D74. These names must track `ScoreInputs` in the
 //: backend; the D67 formula still rides along in `reason_jsonb`, but under `legacy`.
@@ -75,6 +101,9 @@ interface TriageViewProps {
   queueStats?: Record<string, number>
   episodeFilter?: string | null
   onClearEpisodeFilter?: () => void
+  sortBy?: TriageSortBy
+  sortOrder?: SortOrder
+  onSortChange?: (sortBy: TriageSortBy, sortOrder: SortOrder) => void
   focusedIndex: number
   onSetFocusedIndex: (index: number) => void
   selectedIds: Set<number>
@@ -125,6 +154,9 @@ export function TriageView({
   queueStats,
   episodeFilter,
   onClearEpisodeFilter,
+  sortBy = 'priority',
+  sortOrder = 'desc',
+  onSortChange,
   focusedIndex,
   onSetFocusedIndex,
   selectedIds,
@@ -149,6 +181,15 @@ export function TriageView({
 
   const getFocusedDurationMs = () => Math.max(0, Date.now() - focusedRowOpenedAtRef.current)
 
+  const handleHeaderSort = (column: TriageSortBy) => {
+    if (!onSortChange) return
+    if (sortBy === column) {
+      onSortChange(column, sortOrder === 'desc' ? 'asc' : 'desc')
+    } else {
+      onSortChange(column, 'desc')
+    }
+  }
+
   // Audio Playback
   const togglePlay = (row: QueueRow) => {
     if (playingTaskId === row.task_id) {
@@ -156,20 +197,32 @@ export function TriageView({
       setPlayingTaskId(null)
       return
     }
-    audioRef.current?.pause()
-    const audio = new Audio(resolveUrl(row.audio_url))
-    audioRef.current = audio
+
+    if (!audioRef.current) {
+      audioRef.current = new Audio()
+      audioRef.current.onended = () => setPlayingTaskId(null)
+      audioRef.current.onerror = () => {
+        setPlayingTaskId(null)
+      }
+    }
+
+    audioRef.current.src = resolveUrl(row.audio_url)
+    audioRef.current.play().catch(() => {
+      setPlayingTaskId(null)
+    })
     setPlayingTaskId(row.task_id)
-    audio.play().catch((err) => console.error('Audio play error:', err))
-    audio.onended = () => setPlayingTaskId(null)
-    audio.onerror = () => setPlayingTaskId(null)
   }
 
   // Keyboard navigation for Triage mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-      if (targetTag === 'input' || targetTag === 'textarea') return
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target as HTMLElement).isContentEditable
+      ) {
+        return
+      }
 
       if (rows.length === 0) return
       const focusedRow = rows[focusedIndex]
@@ -189,14 +242,14 @@ export function TriageView({
       }
 
       // Space: Toggle play/pause focused row
-      if (e.code === 'Space') {
+      if (e.key === ' ') {
         e.preventDefault()
         if (focusedRow) togglePlay(focusedRow)
         return
       }
 
       // Shift+Enter: Bulk accept selected rows, as verified
-      if (e.shiftKey && e.key === 'Enter') {
+      if (e.key === 'Enter' && e.shiftKey) {
         e.preventDefault()
         if (selectedIds.size > 0) {
           onBulkAccept(Array.from(selectedIds))
@@ -209,7 +262,7 @@ export function TriageView({
       // Shift+S: Bulk screen -- accept without listening. Gold and gated rows are dropped from
       // the batch rather than failing it, because one of them must not block the rest and
       // screening either is refused by the server anyway.
-      if (e.shiftKey && (e.key === 'S' || e.key === 's')) {
+      if (e.key === 'S' && e.shiftKey) {
         e.preventDefault()
         const candidates = (
           selectedIds.size > 0
@@ -228,7 +281,7 @@ export function TriageView({
       }
 
       // Enter: Accept focused row unchanged
-      if (!e.shiftKey && !e.ctrlKey && e.key === 'Enter') {
+      if (e.key === 'Enter') {
         e.preventDefault()
         if (focusedRow) onAcceptRow(focusedRow.task_id, getFocusedDurationMs())
         return
@@ -237,7 +290,7 @@ export function TriageView({
       // s: Screen the focused row -- accepted on the disagreement signal, not by ear. Refused on
       // a gold row here as well as at the server, so the keystroke does not produce an error toast
       // for something that is simply not offered.
-      if (!e.shiftKey && (e.key === 's' || e.key === 'S')) {
+      if (e.key === 's' || e.key === 'S') {
         e.preventDefault()
         if (focusedRow && screenable(focusedRow)) {
           onAcceptRow(focusedRow.task_id, getFocusedDurationMs(), 'screened')
@@ -331,6 +384,61 @@ export function TriageView({
               )}
             </div>
           )}
+
+          {onSortChange && (
+            <>
+              <Separator orientation="vertical" className="h-4" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Sort:</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 gap-1.5 px-2.5 text-xs font-normal">
+                      <RiArrowUpDownLine className="size-3 text-muted-foreground" />
+                      <span className="font-medium text-foreground">
+                        {SORT_LABELS[sortBy ?? 'priority']}
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground uppercase">
+                        ({sortOrder === 'desc' ? 'desc' : 'asc'})
+                      </span>
+                      {sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-muted-foreground" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-muted-foreground" />
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    <DropdownMenuLabel className="text-[10px] uppercase text-muted-foreground">
+                      Sort triage by
+                    </DropdownMenuLabel>
+                    {SORT_OPTIONS.map((opt) => {
+                      const isSelected = (sortBy ?? 'priority') === opt.id
+                      return (
+                        <DropdownMenuItem
+                          key={opt.id}
+                          onClick={() => {
+                            if (isSelected) {
+                              onSortChange(opt.id, sortOrder === 'desc' ? 'asc' : 'desc')
+                            } else {
+                              onSortChange(opt.id, 'desc')
+                            }
+                          }}
+                          className="flex items-center justify-between text-xs cursor-pointer"
+                        >
+                          <span>{opt.label}</span>
+                          {isSelected && (
+                            <span className="font-mono text-[10px] font-semibold text-primary">
+                              {sortOrder === 'desc' ? '↓ desc' : '↑ asc'}
+                            </span>
+                          )}
+                        </DropdownMenuItem>
+                      )
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Right: Selection & count */}
@@ -378,11 +486,102 @@ export function TriageView({
                     aria-label="Select all rows"
                   />
                 </TableHead>
-                <TableHead className="w-20">Priority</TableHead>
-                <TableHead className="w-24">Audio</TableHead>
-                <TableHead className="w-52">Segment</TableHead>
+                <TableHead
+                  className="w-20 cursor-pointer select-none hover:text-foreground transition-colors"
+                  onClick={() => handleHeaderSort('priority')}
+                  title="Click to sort by priority"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className={sortBy === 'priority' ? 'font-semibold text-foreground' : ''}>
+                      Priority
+                    </span>
+                    {sortBy === 'priority' && (
+                      sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-primary" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-primary" />
+                      )
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="w-24 cursor-pointer select-none hover:text-foreground transition-colors"
+                  onClick={() => handleHeaderSort('duration')}
+                  title="Click to sort by audio duration"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className={sortBy === 'duration' ? 'font-semibold text-foreground' : ''}>
+                      Audio
+                    </span>
+                    {sortBy === 'duration' && (
+                      sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-primary" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-primary" />
+                      )
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="w-20 cursor-pointer select-none hover:text-foreground transition-colors"
+                  onClick={() => handleHeaderSort('cmi')}
+                  title="Click to sort by CMI (Code-Mixing Index)"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className={sortBy === 'cmi' ? 'font-semibold text-foreground' : ''}>
+                      CMI
+                    </span>
+                    {sortBy === 'cmi' ? (
+                      sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-primary" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-primary" />
+                      )
+                    ) : (
+                      <RiArrowUpDownLine className="size-2.5 opacity-30" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="w-24 cursor-pointer select-none hover:text-foreground transition-colors"
+                  onClick={() => handleHeaderSort('disagreement')}
+                  title="Click to sort by recogniser disagreement rate"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className={sortBy === 'disagreement' ? 'font-semibold text-foreground' : ''}>
+                      Disagree
+                    </span>
+                    {sortBy === 'disagreement' ? (
+                      sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-primary" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-primary" />
+                      )
+                    ) : (
+                      <RiArrowUpDownLine className="size-2.5 opacity-30" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="w-48 cursor-pointer select-none hover:text-foreground transition-colors"
+                  onClick={() => handleHeaderSort('pot')}
+                  title="Click to sort by pot (Gold clips first)"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className={sortBy === 'pot' ? 'font-semibold text-foreground' : ''}>
+                      Segment
+                    </span>
+                    {sortBy === 'pot' && (
+                      sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-primary" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-primary" />
+                      )
+                    )}
+                  </div>
+                </TableHead>
                 <TableHead>Seed hypothesis</TableHead>
-                <TableHead className="w-64">Flags &amp; reason</TableHead>
+                <TableHead className="w-56">Flags &amp; reason</TableHead>
                 <TableHead className="w-56 pr-4 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -476,7 +675,53 @@ export function TriageView({
                       </Button>
                     </TableCell>
 
-                    <TableCell className="max-w-52 truncate font-mono text-xs text-muted-foreground">
+                    <TableCell>
+                      {row.cmi != null ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {row.cmi >= 10 ? (
+                              <span className="inline-block rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-sky-700 dark:text-sky-300">
+                                {row.cmi.toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {row.cmi.toFixed(1)}%
+                              </span>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent className="font-mono text-xs">
+                            Code-Mixing Index: {row.cmi.toFixed(1)}% English/Devanagari
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <span className="font-mono text-xs text-muted-foreground/30">—</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell>
+                      {row.word_disagreement_rate != null ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {row.word_disagreement_rate >= 0.25 ? (
+                              <span className="inline-block rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-violet-700 dark:text-violet-300">
+                                {(row.word_disagreement_rate * 100).toFixed(0)}%
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {(row.word_disagreement_rate * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent className="font-mono text-xs">
+                            Disagreement rate: {(row.word_disagreement_rate * 100).toFixed(1)}% between recognisers
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <span className="font-mono text-xs text-muted-foreground/30">—</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="max-w-48 truncate font-mono text-xs text-muted-foreground">
                       <div className="flex items-center gap-1.5">
                         {row.pot === 'gold' && (
                           <Chip

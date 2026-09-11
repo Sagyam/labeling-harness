@@ -95,12 +95,16 @@ export const api = {
     episode,
     min_priority,
     queue = 'review',
+    sort_by,
+    sort_order,
   }: {
     limit?: number
     offset?: number
     episode?: string
     min_priority?: number | null
     queue?: string
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
   } = {}): Promise<QueueRow[]> => {
     const params = new URLSearchParams()
     if (limit) params.set('limit', String(limit))
@@ -110,6 +114,8 @@ export const api = {
       params.set('min_priority', String(min_priority))
     }
     if (queue) params.set('queue', queue)
+    if (sort_by) params.set('sort_by', sort_by)
+    if (sort_order) params.set('sort_order', sort_order)
     return request<QueueRow[]>(`/queue?${params.toString()}`)
   },
 

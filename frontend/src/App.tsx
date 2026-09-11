@@ -15,8 +15,10 @@ import type {
   HealthResponse,
   PotName,
   QueueRow,
+  SortOrder,
   StatsResponse,
   Task,
+  TriageSortBy,
   VerificationTier,
 } from '@/types'
 
@@ -52,6 +54,16 @@ export default function App() {
   const [queueRows, setQueueRows] = useState<QueueRow[]>([])
   const [focusedIndex, setFocusedIndex] = useState<number>(0)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [triageSortBy, setTriageSortBy] = useState<TriageSortBy>(() => {
+    const sb = new URLSearchParams(window.location.search).get('sort_by')
+    return (['priority', 'cmi', 'disagreement', 'duration', 'pot'].includes(sb || '')
+      ? sb
+      : 'priority') as TriageSortBy
+  })
+  const [triageSortOrder, setTriageSortOrder] = useState<SortOrder>(() => {
+    const so = new URLSearchParams(window.location.search).get('sort_order')
+    return so === 'asc' ? 'asc' : 'desc'
+  })
 
   // Editor state
   const [currentTask, setCurrentTask] = useState<Task | null>(null)
@@ -77,14 +89,23 @@ export default function App() {
     return () => clearInterval(interval)
   }, [refreshStats])
 
-  // Load queue rows with optional episode filter
+  // Load queue rows with optional episode filter and sorting
   const loadQueue = useCallback(
-    async (qName: string, epFilter?: string | null) => {
+    async (
+      qName: string,
+      epFilter?: string | null,
+      sortBy?: TriageSortBy,
+      sortOrder?: SortOrder,
+    ) => {
       try {
         const ep = epFilter !== undefined ? epFilter : episodeFilter
+        const sb = sortBy !== undefined ? sortBy : triageSortBy
+        const so = sortOrder !== undefined ? sortOrder : triageSortOrder
         const rows = await api.getQueue({
           queue: qName,
           episode: ep || undefined,
+          sort_by: sb,
+          sort_order: so,
           limit: 100,
         })
         setQueueRows(rows)
@@ -95,8 +116,14 @@ export default function App() {
         toast.error('Failed to load queue')
       }
     },
-    [episodeFilter],
+    [episodeFilter, triageSortBy, triageSortOrder],
   )
+
+  const handleTriageSortChange = (sortBy: TriageSortBy, sortOrder: SortOrder) => {
+    setTriageSortBy(sortBy)
+    setTriageSortOrder(sortOrder)
+    loadQueue(activeQueue, episodeFilter, sortBy, sortOrder)
+  }
 
   useEffect(() => {
     loadQueue(activeQueue)
@@ -479,6 +506,9 @@ export default function App() {
             loadQueue(activeQueue, null)
             toast.info('Cleared episode filter')
           }}
+          sortBy={triageSortBy}
+          sortOrder={triageSortOrder}
+          onSortChange={handleTriageSortChange}
           focusedIndex={focusedIndex}
           onSetFocusedIndex={setFocusedIndex}
           selectedIds={selectedIds}

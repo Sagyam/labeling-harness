@@ -82,6 +82,57 @@ def test_queue_rejects_an_unknown_queue_name(client: TestClient, imported_episod
     assert client.get("/queue", params={"queue": "nonsense"}).status_code == 422
 
 
+def test_queue_row_carries_cmi_and_disagreement(client: TestClient, imported_episode: str) -> None:
+    rows = queue_rows(client)
+    assert any(row.get("cmi") is not None for row in rows)
+    assert any(row.get("word_disagreement_rate") is not None for row in rows)
+
+
+def test_queue_sorts_by_cmi(client: TestClient, imported_episode: str) -> None:
+    rows_desc = queue_rows(client, sort_by="cmi", sort_order="desc")
+    cmis_desc = [r["cmi"] for r in rows_desc if r["cmi"] is not None]
+    assert cmis_desc == sorted(cmis_desc, reverse=True)
+
+    rows_asc = queue_rows(client, sort_by="cmi", sort_order="asc")
+    cmis_asc = [r["cmi"] for r in rows_asc if r["cmi"] is not None]
+    assert cmis_asc == sorted(cmis_asc)
+
+
+def test_queue_sorts_by_disagreement(client: TestClient, imported_episode: str) -> None:
+    rows_desc = queue_rows(client, sort_by="disagreement", sort_order="desc")
+    dis_desc = [
+        r["word_disagreement_rate"] for r in rows_desc if r["word_disagreement_rate"] is not None
+    ]
+    assert dis_desc == sorted(dis_desc, reverse=True)
+
+    rows_asc = queue_rows(client, sort_by="disagreement", sort_order="asc")
+    dis_asc = [
+        r["word_disagreement_rate"] for r in rows_asc if r["word_disagreement_rate"] is not None
+    ]
+    assert dis_asc == sorted(dis_asc)
+
+
+def test_queue_sorts_by_duration(client: TestClient, imported_episode: str) -> None:
+    rows_asc = queue_rows(client, sort_by="duration", sort_order="asc")
+    durs_asc = [r["duration_seconds"] for r in rows_asc]
+    assert durs_asc == sorted(durs_asc)
+
+
+def test_queue_sorts_by_pot(client: TestClient, imported_episode: str) -> None:
+    # Set one segment to gold
+    rows = queue_rows(client)
+    seg_id = rows[0]["segment_id"]
+    resp = client.post(f"/segments/{seg_id}/pot", json={"pot": "gold"})
+    assert resp.status_code == 200
+
+    rows_desc = queue_rows(client, sort_by="pot", sort_order="desc")
+    assert rows_desc[0]["segment_id"] == seg_id
+    assert rows_desc[0]["pot"] == "gold"
+
+    # Reset back to train
+    client.post(f"/segments/{seg_id}/pot", json={"pot": "train"})
+
+
 def test_stats_reports_progress(client: TestClient, imported_episode: str) -> None:
     stats = client.get("/stats").json()
     assert stats["segments"]["total"] == 6

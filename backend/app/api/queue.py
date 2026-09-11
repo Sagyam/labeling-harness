@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.deps import get_session, require_auth
 from app.api.schemas import QueueRowOut
 from app.api.serializers import serialize_queue_row
-from app.models import AnnotationTask, Episode, Segment
+from app.models import AnnotationTask, Episode, Segment, SegmentScore
 from app.services.inventory import collect_inventory
 from app.services.report import collect_report
 from app.services.stats import collect_stats
@@ -27,11 +27,22 @@ def get_queue(
     episode: str | None = Query(default=None, description="episode external id"),
     min_priority: float | None = Query(default=None, ge=0.0, le=1.0),
     queue: str | None = Query(default=None, pattern="^(review|audit|error)$"),
+    sort_by: str = Query(
+        default="priority",
+        pattern="^(priority|cmi|disagreement|duration|pot)$",
+        description="Field to sort by",
+    ),
+    sort_order: str = Query(
+        default="desc",
+        pattern="^(asc|desc)$",
+        description="Sort direction ('asc' or 'desc')",
+    ),
 ) -> list[QueueRowOut]:
-    """The triage list: pending work, highest priority first."""
+    """The triage list: pending work, with customizable sorting."""
     query = (
         sa.select(AnnotationTask)
         .join(Segment, Segment.id == AnnotationTask.segment_id)
+        .outerjoin(SegmentScore, SegmentScore.segment_id == Segment.id)
         .join(Episode, Episode.id == Segment.episode_id)
         .options(
             selectinload(AnnotationTask.segment).selectinload(Segment.episode),
@@ -39,15 +50,36 @@ def get_queue(
             selectinload(AnnotationTask.seed_hypothesis),
         )
         .where(AnnotationTask.status.in_(("pending", "in_progress")))
-        .order_by(AnnotationTask.priority_score.desc(), AnnotationTask.id)
-        .limit(limit)
-        .offset(offset)
     )
     if episode:
         query = query.where(Episode.external_id == episode)
     if min_priority is not None:
         query = query.where(AnnotationTask.priority_score >= min_priority)
     query = query.where(AnnotationTask.queue == (queue or "review"))
+
+    is_desc = sort_order == "desc"
+    order_clauses: list[Any] = []
+    if sort_by == "cmi":
+        col = SegmentScore.code_switch_density
+        order_clauses.append(col.desc().nulls_last() if is_desc else col.asc().nulls_last())
+    elif sort_by == "disagreement":
+        col = SegmentScore.word_disagreement_rate
+        order_clauses.append(col.desc().nulls_last() if is_desc else col.asc().nulls_last())
+    elif sort_by == "duration":
+        col = Segment.duration_seconds
+        order_clauses.append(col.desc() if is_desc else col.asc())
+    elif sort_by == "pot":
+        col = sa.case((Segment.pot == "gold", 1), else_=0)
+        order_clauses.append(col.desc() if is_desc else col.asc())
+    else:  # priority
+        col = AnnotationTask.priority_score
+        order_clauses.append(col.desc() if is_desc else col.asc())
+
+    if sort_by != "priority":
+        order_clauses.append(AnnotationTask.priority_score.desc())
+    order_clauses.append(AnnotationTask.id)
+
+    query = query.order_by(*order_clauses).limit(limit).offset(offset)
     return [serialize_queue_row(task) for task in session.scalars(query)]
 
 

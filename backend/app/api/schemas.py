@@ -102,6 +102,8 @@ class QueueRowOut(BaseModel):
     seed_hypothesis_id: int | None = None
     seed_system_id: str | None = None
     seed_text: str | None = None
+    cmi: float | None = None
+    word_disagreement_rate: float | None = None
     audio_url: str
     peaks_url: str | None = None
 
