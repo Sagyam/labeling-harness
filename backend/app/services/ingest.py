@@ -1010,7 +1010,7 @@ def _run_fusion_stage(
                 return None
             job.log(
                 f"Stage 4/6: Fusing {len(segment_records)} segments with {route.model} "
-                f"(windows of ~{settings.fusion.window_target_seconds / 60:.0f} min)..."
+                f"(windows of ~{settings.fusion.window_target_words} words sent)..."
             )
             report = fuse_records(
                 segment_records,

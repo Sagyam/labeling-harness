@@ -338,17 +338,17 @@ class FusionSettings(BaseModel):
 
     Measured on the pilot, context is not the binding constraint -- a whole hour of three
     hypotheses is ~65k tokens -- and output is: thinking plus the answer share ``max_tokens``.
-    A 30-minute window is ~150 segments, ~11k tokens of answer and up to the route's
-    ``thinking_budget`` of thought, which is why the route bounds thinking rather than leaving it
-    dynamic. A window that still overflows is halved, never truncated.
+    Windows are budgeted by total words being sent across recognisers rather than by duration,
+    because speech density varies: 75 word-heavy clips can hit token limits while 100 sparse clips
+    succeed. A window that still overflows is halved, never truncated.
     """
 
     model_config = _STRICT
 
     #: Text route that fuses. Empty disables the stage, and the seed falls back to one recogniser.
     route: str = "fuse_transcript"
-    #: Speech time per window. Windows are balanced, so a 45-minute episode is two of 22.5.
-    window_target_seconds: float = Field(default=1800.0, gt=0)
+    #: Words being sent per window (across all recognisers). Windows are balanced.
+    window_target_words: int = Field(default=3000, gt=0)
     #: Raw hypotheses shown after the targets -- where a sentence or a name is going.
     lookahead_seconds: float = Field(default=120.0, ge=0)
     #: The fuser's own earlier output shown before the targets -- what it has already settled.

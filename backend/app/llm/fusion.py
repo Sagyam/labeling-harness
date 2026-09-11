@@ -106,6 +106,11 @@ class FusionSegment:
     def duration(self) -> float:
         return max(0.0, self.end - self.start)
 
+    @property
+    def words(self) -> int:
+        """Total words sent for this segment across all its hypotheses."""
+        return sum(len((h or "").split()) for h in self.hypotheses)
+
 
 @dataclass
 class Window:
@@ -181,35 +186,41 @@ class FusionOutcome:
 def plan_windows(
     segments: Sequence[FusionSegment],
     *,
-    target_seconds: float,
-    lookahead_seconds: float,
+    target_words: int = 3000,
+    lookahead_seconds: float = 120.0,
     max_segments: int = 250,
 ) -> list[Window]:
     """Cut an episode into balanced windows; every segment is a target exactly once.
 
-    The number of windows is set by duration (``ceil(total / target)``) and by ``max_segments``,
-    then segments are dealt out so each window holds about the same speech time.
+    The number of windows is set by total words being sent (``ceil(total / target)``) and by
+    ``max_segments``, then segments are dealt out so each window holds about the same number
+    of words.
     """
     if not segments:
         return []
     ids = {s.key: position for position, s in enumerate(segments)}
-    total = sum(s.duration for s in segments)
+    total_words = sum(s.words for s in segments)
     count = max(
         1,
-        math.ceil(total / target_seconds) if target_seconds > 0 else 1,
+        math.ceil(total_words / target_words) if target_words > 0 else 1,
         math.ceil(len(segments) / max_segments),
     )
-    share = total / count
+    share = total_words / count
 
     groups: list[list[FusionSegment]] = [[]]
-    elapsed = 0.0
+    elapsed = 0
     for segment in segments:
-        boundary = share * len(groups)
         room = len(groups) < count and groups[-1]
-        if room and (elapsed + segment.duration / 2 > boundary or len(groups[-1]) >= max_segments):
+        if share > 0:
+            boundary = share * len(groups)
+            threshold_crossed = elapsed + segment.words / 2 > boundary
+        else:
+            seg_boundary = (len(segments) / count) * len(groups)
+            threshold_crossed = sum(len(g) for g in groups) >= seg_boundary
+        if room and (threshold_crossed or len(groups[-1]) >= max_segments):
             groups.append([])
         groups[-1].append(segment)
-        elapsed += segment.duration
+        elapsed += segment.words
 
     windows: list[Window] = []
     position = 0
@@ -332,8 +343,8 @@ def fuse(
     segments: Sequence[FusionSegment],
     *,
     complete: Callable[[list[dict[str, Any]]], LlmResult],
-    target_seconds: float,
-    lookahead_seconds: float,
+    target_words: int = 3000,
+    lookahead_seconds: float = 120.0,
     carryover_seconds: float = 300.0,
     max_segments: int = 250,
     max_depth: int = 2,
@@ -347,7 +358,7 @@ def fuse(
         segments: The episode's clips, in time order, each with every ASR system's text.
         complete: Sends one chat request and returns the result -- in production a routed,
             logged ``VertexClient.complete`` bound to the fusion route.
-        target_seconds: Speech time per window.
+        target_words: Words being sent per window across recognisers.
         lookahead_seconds: Raw hypotheses shown after a window's targets.
         carryover_seconds: The model's own earlier output shown before a window's targets.
         max_segments: Hard cap on targets per window, whatever their duration.
@@ -443,7 +454,7 @@ def fuse(
 
     windows = plan_windows(
         order,
-        target_seconds=target_seconds,
+        target_words=target_words,
         lookahead_seconds=lookahead_seconds,
         max_segments=max_segments,
     )

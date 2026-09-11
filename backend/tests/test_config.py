@@ -61,6 +61,12 @@ def test_the_importer_no_longer_decides_splits() -> None:
     assert not hasattr(settings.importer, "split_seed")
 
 
+def test_fusion_settings_window_targets_words() -> None:
+    settings = load_settings()
+    assert settings.fusion.window_target_words == 3000
+    assert not hasattr(settings.fusion, "window_target_seconds")
+
+
 def test_env_var_overrides_yaml_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = _write(
         tmp_path,

@@ -109,7 +109,7 @@ def fuse_records(
     outcome = fuse(
         segments,
         complete=complete,
-        target_seconds=fusion.window_target_seconds,
+        target_words=fusion.window_target_words,
         lookahead_seconds=fusion.lookahead_seconds,
         carryover_seconds=fusion.carryover_seconds,
         max_segments=fusion.max_window_segments,

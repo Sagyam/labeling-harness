@@ -240,12 +240,13 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
 
 ### Fusion windows
 
-A window is about `fusion.window_target_seconds` (1800) of speech, and windows are balanced: a
-45-minute episode is two of 22.5, never 30 + 15, because thinking cost scales with what the model
-reads rather than with what it writes. Most sources are 5-20 minute videos and are one window,
-with no seams at all. Around its targets a window carries `lookahead_seconds` of the following
-clips' raw hypotheses and `carryover_seconds` of the fuser's own output for the clips before.
-Recognisers are shown as anonymous `A`/`B`/`C`, in route order.
+A window is about `fusion.window_target_words` (3000 words sent across recognisers), and windows
+are balanced: an episode is cut into balanced word shares rather than full ones and a remainder,
+because thinking cost and output token load scale with the volume of text the model reconciles.
+Budgeting by words sent avoids token limit exhaustion (`MAX_TOKENS`) in word-dense episodes where
+audio duration would pack too many words into a single request. Around its targets a window carries
+`lookahead_seconds` of the following clips' raw hypotheses and `carryover_seconds` of the fuser's
+own output for the clips before. Recognisers are shown as anonymous `A`/`B`/`C`, in route order.
 
 The contract is one JSON object per target id. A missing, duplicate or invented id, or unparseable
 output, earns one retry; a truncated answer (`finishReason` other than `STOP`) is halved at once;
@@ -255,8 +256,8 @@ waited out in minutes. Each request is an `llm_requests` row; the fused hypothes
 version and the model version.
 
 The route bounds thinking (`thinking_budget: 24576`) because thoughts and answer share
-`max_tokens`: a 30-minute window reads ~190 segments and answers in ~11k tokens, and the pilot's
-dynamic budget spent 20-34k thought tokens per ~100 segments read.
+`max_tokens`: budgeting windows by ~3000 words sent keeps the thought + answer token footprint safely
+within `max_tokens: 65536`.
 
 ### Configured transcribers
 
