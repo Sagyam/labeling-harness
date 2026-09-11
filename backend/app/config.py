@@ -348,7 +348,7 @@ class FusionSettings(BaseModel):
     #: Text route that fuses. Empty disables the stage, and the seed falls back to one recogniser.
     route: str = "fuse_transcript"
     #: Words being sent per window (across all recognisers). Windows are balanced.
-    window_target_words: int = Field(default=3000, gt=0)
+    window_target_words: int = Field(default=7000, gt=0)
     #: Raw hypotheses shown after the targets -- where a sentence or a name is going.
     lookahead_seconds: float = Field(default=120.0, ge=0)
     #: The fuser's own earlier output shown before the targets -- what it has already settled.

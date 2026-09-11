@@ -186,7 +186,7 @@ class FusionOutcome:
 def plan_windows(
     segments: Sequence[FusionSegment],
     *,
-    target_words: int = 3000,
+    target_words: int = 7000,
     lookahead_seconds: float = 120.0,
     max_segments: int = 250,
 ) -> list[Window]:
@@ -343,7 +343,7 @@ def fuse(
     segments: Sequence[FusionSegment],
     *,
     complete: Callable[[list[dict[str, Any]]], LlmResult],
-    target_words: int = 3000,
+    target_words: int = 7000,
     lookahead_seconds: float = 120.0,
     carryover_seconds: float = 300.0,
     max_segments: int = 250,

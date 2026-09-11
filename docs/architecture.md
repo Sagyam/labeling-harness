@@ -240,8 +240,8 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
 
 ### Fusion windows
 
-A window is about `fusion.window_target_words` (3000 words sent across recognisers), and windows
-are balanced: an episode is cut into balanced word shares rather than full ones and a remainder,
+A window is about `fusion.window_target_words` (7000 words sent across recognisers, ~13 minutes of speech),
+and windows are balanced: an episode is cut into balanced word shares rather than full ones and a remainder,
 because thinking cost and output token load scale with the volume of text the model reconciles.
 Budgeting by words sent avoids token limit exhaustion (`MAX_TOKENS`) in word-dense episodes where
 audio duration would pack too many words into a single request. Around its targets a window carries
@@ -256,7 +256,7 @@ waited out in minutes. Each request is an `llm_requests` row; the fused hypothes
 version and the model version.
 
 The route bounds thinking (`thinking_budget: 24576`) because thoughts and answer share
-`max_tokens`: budgeting windows by ~3000 words sent keeps the thought + answer token footprint safely
+`max_tokens`: budgeting windows by ~7000 words sent keeps the thought + answer token footprint safely
 within `max_tokens: 65536`.
 
 ### Configured transcribers

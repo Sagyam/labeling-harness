@@ -63,7 +63,7 @@ def test_the_importer_no_longer_decides_splits() -> None:
 
 def test_fusion_settings_window_targets_words() -> None:
     settings = load_settings()
-    assert settings.fusion.window_target_words == 3000
+    assert settings.fusion.window_target_words == 7000
     assert not hasattr(settings.fusion, "window_target_seconds")
 
 

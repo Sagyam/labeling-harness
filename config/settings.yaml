@@ -124,7 +124,7 @@ ingest:
 # The route itself -- model, thinking budget, timeout -- is `fuse_transcript` in llm_routes.yaml.
 fusion:
   route: fuse_transcript          # empty disables the stage; the seed falls back to one recogniser
-  window_target_words: 3000       # ~3000 words sent across recognisers per request; windows are balanced
+  window_target_words: 7000       # ~7000 words sent across recognisers (~13 min speech); windows are balanced
   lookahead_seconds: 120          # raw hypotheses shown after the targets
   carryover_seconds: 300          # the fuser's own earlier output shown before them
   max_window_segments: 250        # cap on targets per request, whatever their duration
