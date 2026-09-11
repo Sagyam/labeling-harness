@@ -42,3 +42,5 @@ backups/
 # and the ECAPA embedding cache, which is regenerated in ~2.5 min from the audio.
 notebooks/.venv-diar/
 notebooks/.cache-diar/
+# Fine-tuning notebook: its own venv. Its outputs go to exports/finetune/, ignored above.
+notebooks/.venv-ft/
