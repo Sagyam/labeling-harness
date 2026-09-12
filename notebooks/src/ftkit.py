@@ -163,6 +163,31 @@ def loader(rows, batches, collate, workers: int) -> torch.utils.data.DataLoader:
 # --- scoring -----------------------------------------------------------------------------------
 
 
+def is_loop(text: str) -> bool:
+    """A 3-word sequence repeated 5 or more times: the decoder is stuck, not transcribing."""
+    toks = text.split()
+    top = Counter(zip(toks, toks[1:], toks[2:], strict=False)).most_common(1)
+    return bool(top) and top[0][1] >= 5
+
+
+class RetryLoops:
+    """Wraps a batch `transcribe`: a clip whose first decode loops is decoded again, alone, by
+    `retry` (anti-repetition settings); every other clip keeps its first decode untouched.
+    `log` keeps (segment_id, first, retried), so the effect is measurable within one run."""
+
+    def __init__(self, transcribe: Callable[[list[dict]], list[str]], retry: Callable[[dict], str]):
+        self.transcribe, self.retry = transcribe, retry
+        self.log: list[tuple[str, str, str]] = []
+
+    def __call__(self, rows: list[dict]) -> list[str]:
+        texts = self.transcribe(rows)
+        for i, text in enumerate(texts):
+            if is_loop(text):
+                texts[i] = self.retry(rows[i])
+                self.log.append((rows[i]["segment_id"], text, texts[i]))
+        return texts
+
+
 def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[str]], dict]:
     """fold.py from the dataset's harness/, imported from a real copy: the HF cache stores files as
     symlinks into its blob store, and normalize.py finds its config via its resolved path."""
@@ -189,9 +214,7 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
             rerr, rwords = rerr + raw.errors, rwords + raw.ref_words
             nchars += len(chars(ref))
             cerr += Levenshtein.distance(chars(ref), chars(hyp))
-            toks = hyp.split()
-            tri = Counter(zip(toks, toks[1:], toks[2:], strict=False))
-            loops += bool(tri) and tri.most_common(1)[0][1] >= 5
+            loops += is_loop(hyp)
         return {
             "wer": 100 * werr / max(words, 1),
             "raw_wer": 100 * rerr / max(rwords, 1),
@@ -319,9 +342,17 @@ def init_optimizer_state(model: torch.nn.Module, optimizer: torch.optim.Optimize
             state["step"].zero_()
 
 
-def probe_max_items(step: Callable[[int], None], lo: int, hi: int) -> int:
+def probe_max_items(
+    step: Callable[[int], None], lo: int, hi: int, params: Sequence[torch.nn.Parameter]
+) -> int:
     """The largest n in [lo, hi] for which `step(n)` (one forward+backward at the worst case)
-    fits in memory. `step` must leave no gradients behind."""
+    fits in memory. `step` must not touch the gradients.
+
+    The gradient buffer stays allocated throughout, as it does in training from the second
+    micro-batch of every accumulated step: freeing it between probes measured the activations
+    without it and picked a batch that ran out of memory once training accumulated."""
+    for p in params:
+        p.grad = torch.zeros_like(p)
     best = 0
     while lo <= hi:
         mid = (lo + hi) // 2
@@ -331,7 +362,12 @@ def probe_max_items(step: Callable[[int], None], lo: int, hi: int) -> int:
             best, lo = mid, mid + 1
         except torch.cuda.OutOfMemoryError:
             hi = mid - 1
+        for p in params:
+            p.grad.zero_()
         torch.cuda.empty_cache()
+    for p in params:
+        p.grad = None
+    torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     return best
 
@@ -383,6 +419,98 @@ def group_steps(rows, batches, effective_s: float) -> list[list[list[int]]]:
     return steps
 
 
+def speed_check(
+    model: torch.nn.Module,
+    *,
+    rows: Sequence[dict],
+    batches: list[list[int]],
+    collate: Callable[[list[dict]], Any],
+    loss_fn: Callable[[torch.nn.Module, Any], tuple[torch.Tensor, int]],
+    evaluate: Callable[[torch.nn.Module], dict],
+    val_rows: Sequence[dict],
+    gold_rows: Sequence[dict],
+    epochs: int,
+    monitor: GpuMonitor,
+    workers: int = 6,
+    n_micro: int = 10,
+) -> dict:
+    """Time the run before committing to it: forward+backward on `n_micro` real training
+    micro-batches (no optimizer step, so no weight moves), then one full val pass, which is also
+    the val WER before training. Projects the wall time of every epoch and the gold pass.
+
+    The micro-batches run twice and only the second pass is timed, so cudnn's per-shape kernel
+    search and worker start-up are excluded. Gradients stay allocated between micro-batches, as
+    they do under accumulation, so the memory reading is training's. BatchNorm running
+    statistics are restored after."""
+    bns = [m for m in model.modules() if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)]
+    saved = [{k: v.clone() for k, v in m.state_dict().items()} for m in bns]
+    sample = batches[:n_micro]
+    it = iter(loader(rows, sample + sample, collate, workers))
+
+    def run() -> tuple[float, float, int]:
+        audio = padded = 0.0
+        clips = 0
+        for _ in sample:
+            b = next(it)
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                loss, _ = loss_fn(model, b)
+            loss.backward()
+            model.zero_grad(set_to_none=False)
+            audio, padded = audio + b["seconds"], padded + b["padded_seconds"]
+            clips += len(b["lens"]) if "lens" in b else b["wav"].shape[0]
+        torch.cuda.synchronize()
+        return audio, padded, clips
+
+    model.train()
+    run()
+    monitor.window()
+    t0 = time.perf_counter()
+    audio, padded, clips = run()
+    train_dt = time.perf_counter() - t0
+    gpu = monitor.window()
+    model.zero_grad(set_to_none=True)
+    for m, s in zip(bns, saved, strict=True):
+        m.load_state_dict(s)
+
+    model.eval()
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        val = evaluate(model)
+    torch.cuda.synchronize()
+    val_dt = time.perf_counter() - t0
+    model.train()
+
+    secs = lambda rs: sum(duration(r) for r in rs)  # noqa: E731
+    epoch_s = secs(rows) / (audio / train_dt)
+    gold_s = val_dt * secs(gold_rows) / secs(val_rows)
+    rec = {
+        "train_x_realtime": audio / train_dt,
+        "train_ms_per_clip": 1000 * train_dt / clips,
+        "padding_waste": 1 - audio / padded,
+        **gpu,
+        "val_s": val_dt,
+        "val_ms_per_clip": 1000 * val_dt / len(val_rows),
+        **{f"val_before_{k}": v for k, v in val.items()},
+        "epoch_min": epoch_s / 60,
+        "projected_h": (epochs * (epoch_s + val_dt) + gold_s) / 3600,
+    }
+    print(
+        f"train: {rec['train_x_realtime']:.0f}x realtime = "
+        f"{rec['train_ms_per_clip']:.0f} ms per clip "
+        f"(forward+backward, {clips} clips), pad waste {rec['padding_waste']:.0%}, "
+        f"GPU {rec['gpu_util']:.0f}% util, {rec['gpu_mem_gib']:.1f} GiB\n"
+        f"val:   {val_dt:.0f} s for {len(val_rows)} clips = "
+        f"{rec['val_ms_per_clip']:.0f} ms per clip "
+        f"(batched decode); WER before training {val['wer']:.2f}, loops {val['loops']}\n"
+        f"projected: {rec['epoch_min']:.1f} min per epoch + {val_dt / 60:.1f} min val -> "
+        f"at most {rec['projected_h']:.2f} h for {epochs} epochs and gold "
+        "(early stopping can cut it)",
+        flush=True,
+    )
+    return rec
+
+
 def train(
     model: torch.nn.Module,
     *,
@@ -401,7 +529,8 @@ def train(
 
     `loss_fn` returns a *summed* loss and the number of units it sums over (clips for CTC, tokens
     for cross-entropy); gradients are divided by the step's total units, so accumulated
-    micro-batches of different sizes are weighted exactly."""
+    micro-batches of different sizes are weighted exactly. Count the units on the CPU (in
+    `collate`): an `int()` of a GPU tensor stalls the host once per micro-batch."""
     out = Path(cfg.out)
     out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(cfg.seed)
@@ -431,13 +560,11 @@ def train(
                     loss, units = loss_fn(model, batch)
                 loss.backward()
                 step_units += units
-                loss_log += float(loss.detach())
+                loss_log += loss.detach()  # stays on the GPU: no host sync per micro-batch
                 units_log += units
                 audio_log += batch["seconds"]
                 padded_log += batch["padded_seconds"]
-            for p in params:
-                if p.grad is not None:
-                    p.grad.div_(max(step_units, 1))
+            torch._foreach_div_([p.grad for p in params if p.grad is not None], max(step_units, 1))
             gnorm = torch.nn.utils.clip_grad_norm_(params, cfg.clip_norm)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
@@ -450,7 +577,7 @@ def train(
                     "step": step,
                     "epoch": epoch + 1,
                     "lr": optimizer.param_groups[0]["lr"],
-                    "loss": loss_log / max(units_log, 1),
+                    "loss": float(loss_log) / max(units_log, 1),
                     "grad_norm": float(gnorm),
                     "audio_x_realtime": audio_log / dt,
                     "padding_waste": 1 - audio_log / max(padded_log, 1e-9),

@@ -58,17 +58,33 @@ GPU_NOTE = """
 """
 
 SETUP_COMMON = r"""
+%pip install -q rapidfuzz
 import json
 import os
 import sys
 from pathlib import Path
 
+# Before torch touches CUDA: lets the allocator grow segments instead of fragmenting when batch
+# shapes vary (a fresh kernel only; the Omnilingual subprocess inherits it).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 IN_COLAB = "google.colab" in sys.modules
+# Secrets and the Drive consent popup only work from a cell run in the Colab UI. When cells are
+# driven from outside (the Colab MCP), run this cell by hand once. The token is then kept in the
+# hub's own token file on the VM (where `hf auth login` puts it), so a kernel restart needs no
+# click; the file goes when the runtime is deleted.
 if IN_COLAB:
     from google.colab import userdata
 
-    os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
-    if USE_DRIVE:
+    TOKEN_FILE = Path.home() / ".cache" / "huggingface" / "token"
+    if not os.environ.get("HF_TOKEN"):
+        os.environ["HF_TOKEN"] = (TOKEN_FILE.read_text().strip() if TOKEN_FILE.exists()
+                                  else userdata.get("HF_TOKEN"))
+    if not TOKEN_FILE.exists():
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_FILE.write_text(os.environ["HF_TOKEN"])
+        TOKEN_FILE.chmod(0o600)
+    if USE_DRIVE and not Path("/content/drive/MyDrive").exists():
         from google.colab import drive
 
         drive.mount("/content/drive")
@@ -103,6 +119,15 @@ for ax in axes:
 fig.tight_layout()
 plt.show()
 print(json.dumps(json.loads((OUT / "gold_metrics.json").read_text()), indent=1))
+"""
+
+SPEED_NOTE = """
+## Speed check (before committing to the run)
+
+This times forward+backward on 10 real training micro-batches, then one full batched val pass,
+and projects the whole run. The val pass doubles as the **val WER before training**, the baseline
+that fine-tuning has to beat. No optimizer step runs, so no weight moves. If the projection is
+too long, or GPU utilisation is low, stop here and fix it.
 """
 
 BAKEOFF_LINK = """
@@ -199,6 +224,7 @@ WINDOW = torch.hann_window(fe.n_fft, device="cuda")
 MEL = torch.from_numpy(np.asarray(fe.mel_filters)).to("cuda", torch.float32)  # (n_freq, n_mels)
 
 
+@torch.autocast("cuda", enabled=False)  # fp32 always: training calls this inside bf16 autocast
 def log_mel(wav: torch.Tensor) -> torch.Tensor:
     """(B, 480000) float32 on the GPU -> (B, 128, 3000), identical to WhisperFeatureExtractor."""
     spec = torch.stft(wav, fe.n_fft, fe.hop_length, window=WINDOW, return_complex=True)
@@ -237,19 +263,16 @@ longest_label = max(len(r["ids"]) for r in splits["train"])
 def probe_step(n: int) -> None:
     mel = log_mel(torch.randn(n, N_SAMPLES, device="cuda") * 0.1)
     labels = torch.randint(0, 50000, (n, longest_label), device="cuda")
-    try:
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            model(input_features=mel, labels=labels).loss.backward()
-    finally:
-        model.zero_grad(set_to_none=True)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        model(input_features=mel, labels=labels).loss.backward()
 
 
 model.train()
-max_items = ftkit.probe_max_items(probe_step, 1, 256)
+max_items = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
 MICRO = max(1, int(max_items * PROBE_FRACTION))
 print(f"largest micro-batch at 30 s x {longest_label} tokens: {max_items} clips -> training with {MICRO}")
 """),
-    md("## Train"),
+    md("## Batches, loss and decoding"),
     code(r"""
 def collate(rows):
     wav = torch.zeros(len(rows), N_SAMPLES, dtype=torch.int16)
@@ -258,15 +281,14 @@ def collate(rows):
         c = torch.from_numpy(store.clip(r).copy())
         wav[i, :len(c)] = c
         labels[i, :len(r["ids"])] = torch.tensor(r["ids"])
-    return {"wav": wav, "labels": labels, "seconds": sum(ftkit.duration(r) for r in rows),
-            "padded_seconds": 30.0 * len(rows)}
+    return {"wav": wav, "labels": labels, "tokens": sum(len(r["ids"]) for r in rows),
+            "seconds": sum(ftkit.duration(r) for r in rows), "padded_seconds": 30.0 * len(rows)}
 
 
 def loss_fn(model, b):
     mel = log_mel(b["wav"].cuda(non_blocking=True).float() / 32768.0)
     labels = b["labels"].cuda(non_blocking=True)
-    n_tokens = int((labels != -100).sum())
-    return model(input_features=mel, labels=labels).loss * n_tokens, n_tokens
+    return model(input_features=mel, labels=labels).loss * b["tokens"], b["tokens"]
 
 
 def transcribe(rows):
@@ -275,8 +297,9 @@ def transcribe(rows):
         c = store.clip_f32(r)
         wav[i, :len(c)] = c.cuda()
     with torch.autocast("cuda", dtype=torch.bfloat16):
+        # use_cache explicitly: model.config.use_cache is off for training
         out = model.generate(input_features=log_mel(wav), language=LANG, task="transcribe",
-                             max_new_tokens=440)
+                             max_new_tokens=440, use_cache=True)
     return tok.batch_decode(out, skip_special_tokens=True)
 
 
@@ -292,15 +315,27 @@ def save_best(model):
     fe.save_pretrained(OUT / "best")
 
 
+def make_batches(epoch):
+    return ftkit.bucket_batches(splits["train"], budget_s=30.0 * MICRO, max_items=MICRO, pad_to_s=30.0,
+                                shuffle=True, seed=epoch)
+
+
+monitor = ftkit.GpuMonitor().start()
+"""),
+    md(SPEED_NOTE),
+    code(r"""
+speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
+                          loss_fn=loss_fn, evaluate=evaluate, val_rows=splits["val"], gold_rows=splits["gold"],
+                          epochs=EPOCHS, monitor=monitor)
+(OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
+"""),
+    md("## Train"),
+    code(r"""
 cfg = ftkit.TrainConfig(name=RUN_NAME, out=str(OUT), epochs=EPOCHS, lr=LR, warmup_frac=WARMUP,
                         effective_s=EFFECTIVE_S, patience=2)
-monitor = ftkit.GpuMonitor().start()
-result = ftkit.train(
-    model, cfg=cfg, rows=splits["train"],
-    make_batches=lambda e: ftkit.bucket_batches(splits["train"], budget_s=30.0 * MICRO, max_items=MICRO,
-                                                pad_to_s=30.0, shuffle=True, seed=e),
-    collate=collate, loss_fn=loss_fn, evaluate=evaluate, save_best=save_best,
-    optimizer=optimizer, monitor=monitor)
+result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
+                     loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
+                     monitor=monitor)
 print("best val WER", result["best_val_wer"])
 """),
     md("## Gold" + BAKEOFF_LINK),
@@ -441,16 +476,13 @@ max_t = max(len(r["ids"]) for r in splits["train"])
 def probe_step(n):
     wav = torch.randn(n, max_len, device="cuda")
     targets = torch.randint(10, tokenizer.vocab_info.size, (n, max_t), device="cuda")
-    try:
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            loss = model(wav, BatchLayout(wav.shape, seq_lens=[max_len] * n, device=wav.device),
-                         targets, BatchLayout(targets.shape, seq_lens=[max_t] * n, device=wav.device))
-        loss.backward()
-    finally:
-        model.zero_grad(set_to_none=True)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        loss = model(wav, BatchLayout(wav.shape, seq_lens=[max_len] * n, device=wav.device),
+                     targets, BatchLayout(targets.shape, seq_lens=[max_t] * n, device=wav.device))
+    loss.backward()
 
 
-max_items = ftkit.probe_max_items(probe_step, 1, 256)
+max_items = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
 budget_s = max_items * max_len / ftkit.SR * C["probe_fraction"]
 print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s: {max_items} clips -> budget {budget_s:.0f} s "
       "of padded audio per micro-batch", flush=True)
@@ -464,16 +496,26 @@ def save_best(model):
         "then model.load_state_dict(torch.load(...)), and decode with ASRInferencePipeline(model=..., tokenizer=...).\n")
 
 
+def make_batches(epoch):
+    return ftkit.bucket_batches(splits["train"], budget_s=budget_s, max_items=256, pad_to_s=C["pad_to_s"],
+                                shuffle=True, seed=epoch)
+
+
+# Time the run before committing to it; the val pass is also the val WER before training.
+monitor = ftkit.GpuMonitor().start()
+speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
+                          loss_fn=loss_fn, evaluate=evaluate, val_rows=splits["val"], gold_rows=splits["gold"],
+                          epochs=C["epochs"], monitor=monitor, workers=C["workers"])
+(OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
+if C.get("speed_check_only"):
+    sys.exit(0)
+
 cfg = ftkit.TrainConfig(name=C["run_name"], out=str(OUT), epochs=C["epochs"], lr=C["lr"],
                         schedule="tristage", warmup_frac=0.1, effective_s=C["effective_s"],
                         patience=C["patience"], workers=C["workers"])
-monitor = ftkit.GpuMonitor().start()
-result = ftkit.train(
-    model, cfg=cfg, rows=splits["train"],
-    make_batches=lambda e: ftkit.bucket_batches(splits["train"], budget_s=budget_s, max_items=256,
-                                                pad_to_s=C["pad_to_s"], shuffle=True, seed=e),
-    collate=collate, loss_fn=loss_fn, evaluate=evaluate, save_best=save_best,
-    optimizer=optimizer, monitor=monitor)
+result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
+                     loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
+                     monitor=monitor)
 
 texts, compute = ftkit.transcribe_rows(splits["gold"], transcribe, budget_s=C["eval_budget_s"],
                                        max_items=128, pad_to_s=C["pad_to_s"])
@@ -531,6 +573,7 @@ CONFIG = {
     "probe_fraction": 0.9,
     "eval_budget_s": 1200.0,  # padded seconds per inference batch (no gradients, so larger)
     "workers": 6,
+    "speed_check_only": False,  # True: stop after the timing and projection, before training
 }
 """),
     md("## Setup"),
@@ -548,8 +591,10 @@ if not OMNI_PY.exists():
     code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
     code("%%writefile /content/ft/train_omni.py\n" + OMNI_TRAIN.strip("\n")),
     md(
-        "## Train\n\nThe script streams its log here: the probe result, then every 10 steps throughput, "
-        "padding waste and GPU utilisation, then val WER after each epoch and gold at the end."
+        "## Train\n\nThe script streams its log here: the probe result, then a speed check (10 timed "
+        "training micro-batches, one val pass that is also the val WER before training, and a projected "
+        "run time; set `speed_check_only` to stop there), then every 10 steps throughput, padding waste "
+        "and GPU utilisation, then val WER after each epoch and gold at the end."
     ),
     code(r"""
 CONFIG.update(out=str(OUT), ft=str(FT))
@@ -598,6 +643,13 @@ others needs Bodhan AI's written sign-off. Keep the weights private.
 
 **Choices.** Peak LR 1e-5, the same as the other two notebooks, so the comparison is about the
 models. Linear decay, 10% warmup, up to 6 epochs.
+
+**Decoding: greedy, plus a loop retry.** A clip whose greedy output repeats a 3-word sequence 5+
+times is decoded again, alone, with a repetition penalty, no repeated 6-token phrase and a
+length cap from its duration. The trigger reads only the model's own output (the idea of
+Whisper's compression-ratio fallback), so it is usable on any audio. The settings were fixed
+before scoring and never tuned; the Gold cell records the greedy-only score from the same run.
+Run 2026-09-12: gold 13.20% greedy -> 11.44% with the retry (7 loops -> 0); val unchanged at 7.60%.
 """
         + GPU_NOTE
     ),
@@ -695,16 +747,15 @@ def spec_augment(feats: torch.Tensor, lens: torch.Tensor) -> torch.Tensor:
 
 
 def features(wav: torch.Tensor, lens: torch.Tensor):
-    feats, flens = featurize(wav, lens)
+    feats, flens = featurize(wav, lens)  # fp32 even inside autocast: it disables autocast itself
     mask = (torch.arange(feats.size(2), device=feats.device)[None, :] < flens[:, None]).long()
     return feats, flens, mask
 
 
 def forward_loss(feats, mask, inp, lab):
     logits = model(input_features=feats, attention_mask=mask, decoder_input_ids=inp, use_cache=False).logits
-    loss = torch.nn.functional.cross_entropy(logits.float().flatten(0, 1), lab.flatten(), ignore_index=-100,
+    return torch.nn.functional.cross_entropy(logits.float().flatten(0, 1), lab.flatten(), ignore_index=-100,
                                              reduction="sum")
-    return loss, int((lab != -100).sum())
 
 
 longest = max(splits["train"], key=ftkit.duration)
@@ -716,21 +767,20 @@ def probe_step(n):
     wav = torch.randn(n, max_len, device="cuda") * 0.1
     feats, _, mask = features(wav, torch.full((n,), max_len, device="cuda"))
     inp = torch.randint(OFFSET, OFFSET + 6000, (n, max_t), device="cuda")
-    try:
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            loss, _ = forward_loss(feats, mask, inp, inp)
-        loss.backward()
-    finally:
-        model.zero_grad(set_to_none=True)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        loss = forward_loss(feats, mask, inp, inp)
+    loss.backward()
 
 
-max_items = ftkit.probe_max_items(probe_step, 1, 256)
+max_items = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
 BUDGET_S = max_items * max_len / ftkit.SR * PROBE_FRACTION
 print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_t} tokens: {max_items} clips -> "
       f"budget {BUDGET_S:.0f} s of padded audio per micro-batch")
 '''),
-    md("## Train"),
+    md("## Batches, loss and decoding"),
     code(r"""
+import math
+
 N_PROMPT = len(PROMPT)
 
 
@@ -747,6 +797,7 @@ def collate(rows):
         inp[i, :len(full) - 1] = torch.tensor(full[:-1])
         lab[i, N_PROMPT - 1:len(full) - 1] = torch.tensor(r["ids"])  # predict target + eos only
     return {"wav": wav, "lens": torch.tensor([len(c) for c in clips]), "inp": inp, "lab": lab,
+            "tokens": sum(len(r["ids"]) for r in rows),
             "seconds": sum(ftkit.duration(r) for r in rows), "padded_seconds": wav.numel() / ftkit.SR}
 
 
@@ -754,10 +805,11 @@ def loss_fn(model, b):
     wav = b["wav"].cuda(non_blocking=True).float() / 32768.0
     feats, flens, mask = features(wav, b["lens"].cuda(non_blocking=True))
     feats = spec_augment(feats, flens)
-    return forward_loss(feats, mask, b["inp"].cuda(non_blocking=True), b["lab"].cuda(non_blocking=True))
+    loss = forward_loss(feats, mask, b["inp"].cuda(non_blocking=True), b["lab"].cuda(non_blocking=True))
+    return loss, b["tokens"]
 
 
-def transcribe(rows):
+def transcribe(rows, **gen):
     clips = [store.clip_f32(r) for r in rows]
     wav = torch.zeros(len(rows), ftkit.pad_len(max(len(c) for c in clips), PAD_TO_S))
     for i, c in enumerate(clips):
@@ -766,15 +818,29 @@ def transcribe(rows):
     prompt = torch.tensor([PROMPT] * len(rows), device="cuda")
     with torch.autocast("cuda", dtype=torch.bfloat16):
         out = model.generate(input_features=feats, attention_mask=mask, decoder_input_ids=prompt,
-                             max_new_tokens=300, do_sample=False, num_beams=1,
-                             eos_token_id=EOS, pad_token_id=PAD)
+                             do_sample=False, num_beams=1, eos_token_id=EOS, pad_token_id=PAD,
+                             **{"max_new_tokens": 300, **gen})
     return [tk.decode(tk.strip_prompt_and_trim(o.tolist(), PROMPT)) for o in out]
+
+
+# Loop retry, fixed before scoring anything with it: greedy decoding occasionally sticks on a filler
+# ("अँ. अँ. अँ.") to the length limit. A global repetition ban would also hit real repeats the
+# references keep ("कोही छैन। कोही छैन"), so only a clip whose greedy output loops is decoded
+# again, alone, with a repetition penalty, no repeated 6-token phrase, and a length cap from its
+# duration (the densest training label is 12.6 tokens/s).
+MAX_TOKENS_PER_S = 13.0
+RETRY = {"repetition_penalty": 1.2, "no_repeat_ngram_size": 6}
+
+
+def retry_one(row):
+    cap = min(300, math.ceil(MAX_TOKENS_PER_S * ftkit.duration(row)))
+    return transcribe([row], max_new_tokens=cap, **RETRY)[0]
 
 
 def evaluate(model, rows=None):
     rows = rows or splits["val"]
-    texts, _ = ftkit.transcribe_rows(rows, transcribe, budget_s=EVAL_BUDGET_S, max_items=EVAL_ITEMS,
-                                     pad_to_s=PAD_TO_S)
+    texts, _ = ftkit.transcribe_rows(rows, ftkit.RetryLoops(transcribe, retry_one), budget_s=EVAL_BUDGET_S,
+                                     max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
     return score([r["text"] for r in rows], texts)
 
 
@@ -789,30 +855,79 @@ def save_best(model):
             shutil.copy(f, dst / f.name)
 
 
+def make_batches(epoch):
+    return ftkit.bucket_batches(splits["train"], budget_s=BUDGET_S, max_items=256, pad_to_s=PAD_TO_S,
+                                shuffle=True, seed=epoch)
+
+
+monitor = ftkit.GpuMonitor().start()
+"""),
+    md("""
+## One clip per call vs batched
+
+The bake-off decoded one clip per call (`asr(path)`), at about 1.4 s per clip (RTF 0.12). Here the
+same 16 val clips are decoded both ways, under the same bf16 autocast, so the only difference is
+batching. The cell reports the speed-up and whether the texts agree; the port's batched
+`generate` had never been run before.
+"""),
+    code(r"""
+import time
+
+sample = splits["val"][:16]
+model.eval()
+with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+    transcribe(sample)  # warm-up
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    single = [asr.transcribe(store.clip_f32(r), lang=LANG, mode=MODE, max_new_tokens=300) for r in sample]
+    torch.cuda.synchronize()
+    t1 = time.perf_counter()
+    batched = transcribe(sample)
+    torch.cuda.synchronize()
+    t2 = time.perf_counter()
+model.train()
+same = sum(a.strip() == b.strip() for a, b in zip(single, batched))
+print(f"one clip per call: {(t1 - t0) / len(sample):.2f} s per clip | batched: {1000 * (t2 - t1) / len(sample):.0f} ms "
+      f"per clip ({(t1 - t0) / (t2 - t1):.0f}x) | identical text on {same}/{len(sample)} clips, folded WER of "
+      f"batched against one-per-call {score(single, batched)['wer']:.2f}%")
+"""),
+    md(SPEED_NOTE),
+    code(r"""
+speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
+                          loss_fn=loss_fn, evaluate=evaluate, val_rows=splits["val"], gold_rows=splits["gold"],
+                          epochs=EPOCHS, monitor=monitor)
+(OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
+"""),
+    md("## Train"),
+    code(r"""
 cfg = ftkit.TrainConfig(name=RUN_NAME, out=str(OUT), epochs=EPOCHS, lr=LR, warmup_frac=WARMUP,
                         effective_s=EFFECTIVE_S, patience=2)
-monitor = ftkit.GpuMonitor().start()
-result = ftkit.train(
-    model, cfg=cfg, rows=splits["train"],
-    make_batches=lambda e: ftkit.bucket_batches(splits["train"], budget_s=BUDGET_S, max_items=256,
-                                                pad_to_s=PAD_TO_S, shuffle=True, seed=e),
-    collate=collate, loss_fn=loss_fn, evaluate=evaluate, save_best=save_best,
-    optimizer=optimizer, monitor=monitor)
+result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
+                     loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
+                     monitor=monitor)
 print("best val WER", result["best_val_wer"])
 """),
     md("## Gold" + BAKEOFF_LINK),
     code(r"""
 import shutil
 
-texts, compute = ftkit.transcribe_rows(splits["gold"], transcribe, budget_s=EVAL_BUDGET_S,
+decode = ftkit.RetryLoops(transcribe, retry_one)
+texts, compute = ftkit.transcribe_rows(splits["gold"], decode, budget_s=EVAL_BUDGET_S,
                                        max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
-gold = score([r["text"] for r in splits["gold"]], texts)
+refs = [r["text"] for r in splits["gold"]]
+gold = score(refs, texts)
 gold["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in splits["gold"])
-(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1))
+first = {sid: text for sid, text, _ in decode.log}  # the same run's greedy output, before any retry
+gold["greedy_only"] = score(refs, [first.get(r["segment_id"], t) for r, t in zip(splits["gold"], texts)])
+gold["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in decode.log]
+(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1, ensure_ascii=False))
 ftkit.write_hyps(OUT / "hyps" / f"{RUN_NAME}.jsonl", splits["gold"], texts, compute)
 if Path("/content/bakeoff/hyps").exists():
     shutil.copy(OUT / "hyps" / f"{RUN_NAME}.jsonl", "/content/bakeoff/hyps/")
-print(gold)
+print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_only", "retried")})
+print("greedy only:    ", gold["greedy_only"])
+for s, f, t in decode.log:
+    print(f"\n{s}\n  greedy: ...{f[-90:]}\n  retry:  ...{t[-90:]}")
 """),
     md("## Results"),
     code(RESULTS),

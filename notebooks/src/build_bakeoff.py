@@ -65,7 +65,8 @@ IN_COLAB = "google.colab" in sys.modules
 if IN_COLAB:
     from google.colab import userdata
 
-    os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
+    if not os.environ.get("HF_TOKEN"):  # secrets need a cell run in the Colab UI
+        os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
 WORK = Path("/content/bakeoff") if IN_COLAB else Path.cwd() / ".cache-bakeoff"
 HYPS, CLIPS = WORK / "hyps", WORK / "clips"
 HYPS.mkdir(parents=True, exist_ok=True)
@@ -261,8 +262,14 @@ def chars(text):
 REFERENCE_SYSTEMS = {"elevenlabs-scribe-v2": "Scribe (in ref)", "gemini-3.8-flash": "Gemini (in ref)",
                      "mai-transcribe-2": "MAI (in ref)"}
 gold_ids = {r["segment_id"] for r in GOLD}
+# The 04 fine-tune notebooks run in their own runtimes and leave their gold hypotheses on Drive.
+if IN_COLAB and not Path("/content/drive/MyDrive").exists():
+    from google.colab import drive
+
+    drive.mount("/content/drive")
+FT_HYPS = Path("/content/drive/MyDrive/nepanglish-asr").glob("*/hyps/*.jsonl")
 hyps = {}  # model -> {segment_id: (text, compute_s)}
-for path in sorted(HYPS.glob("*.jsonl")):
+for path in sorted([*HYPS.glob("*.jsonl"), *FT_HYPS]):
     rows = [json.loads(line) for line in path.open(encoding="utf-8")]
     hyps[path.stem] = {r["segment_id"]: (r["text"], r["compute_s"]) for r in rows}
 with open(DATA / "analytics" / "analytics.jsonl", encoding="utf-8") as fh:
