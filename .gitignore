@@ -41,5 +41,7 @@ backups/
 # EDA notebook: the ECAPA embedding and pitch cache, regenerated from the audio in ~20 min on a
 # 16-thread CPU.
 notebooks/.cache-diar/
+# Bake-off notebook, when run outside Colab: cut gold clips and cached hypotheses.
+notebooks/.cache-bakeoff/
 # Fine-tuning notebook: its own venv. Its outputs go to exports/finetune/, ignored above.
 notebooks/.venv-ft/

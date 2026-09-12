@@ -11,6 +11,11 @@
         "--console-level", "warning",
         "--isolated"
       ]
+    },
+    "colab-mcp": {
+      "command": "uvx",
+      "args": ["git+https://github.com/googlecolab/colab-mcp@v1.0.2"],
+      "timeout": 30000
     }
   }
 }
