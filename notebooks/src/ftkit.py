@@ -419,6 +419,13 @@ def group_steps(rows, batches, effective_s: float) -> list[list[list[int]]]:
     return steps
 
 
+def retry_note(val: dict) -> str:
+    """For an `evaluate` that wraps its decode in RetryLoops and reports the greedy score too."""
+    if "retried" not in val:
+        return ""
+    return f"  (greedy WER {val['greedy_wer']:.2f}, {val['retried']} retried)"
+
+
 def speed_check(
     model: torch.nn.Module,
     *,
@@ -502,7 +509,8 @@ def speed_check(
         f"GPU {rec['gpu_util']:.0f}% util, {rec['gpu_mem_gib']:.1f} GiB\n"
         f"val:   {val_dt:.0f} s for {len(val_rows)} clips = "
         f"{rec['val_ms_per_clip']:.0f} ms per clip "
-        f"(batched decode); WER before training {val['wer']:.2f}, loops {val['loops']}\n"
+        f"(batched decode); WER before training {val['wer']:.2f}, loops {val['loops']}"
+        f"{retry_note(val)}\n"
         f"projected: {rec['epoch_min']:.1f} min per epoch + {val_dt / 60:.1f} min val -> "
         f"at most {rec['projected_h']:.2f} h for {epochs} epochs and gold "
         "(early stopping can cut it)",
@@ -608,7 +616,8 @@ def train(
         improved = val["wer"] < best
         print(
             f"== epoch {epoch + 1}: val WER {val['wer']:.2f}  CER {val['cer']:.2f}  raw WER "
-            f"{val['raw_wer']:.2f}  loops {val['loops']}" + ("  (best)" if improved else ""),
+            f"{val['raw_wer']:.2f}  loops {val['loops']}{retry_note(val)}"
+            + ("  (best)" if improved else ""),
             flush=True,
         )
         (out / "history.json").write_text(json.dumps(history, indent=1))

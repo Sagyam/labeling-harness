@@ -163,6 +163,18 @@ script convention (Nepali in Devanagari, English in Latin) and stop the loops.
 - **SpecAugment on.** Whisper's own time masking, p = 0.05.
 - **One label dropped.** One training label exceeds the 448-token decoder window.
 
+**Decoding: greedy, plus the loop retry from 04c.** A clip whose greedy output repeats a 3-word
+sequence 5+ times is decoded again, alone, with repetition penalty 1.2, no repeated 6-token phrase
+and a length cap from its duration. The rule and settings are 04c's, unchanged, so the two models
+are compared under the same decoder. The cap is the one Whisper-specific number: the densest train
+label in Whisper tokens per second, computed from train. Whisper's own temperature fallback was
+not used, because it samples and so makes a score irreproducible. Val (model selection) uses the
+retry; the Gold cell records the greedy-only score from the same run.
+
+**Run 2026-09-13 (A100 40 GB).** Val 55.24% before training (113.19% greedy; 150 of 403 clips
+retried) -> 8.98% at epoch 5, the best and last epoch. Gold **14.62%** folded WER, CER 8.68%, 0
+loops, so the retry never fired and greedy is identical. Flex (04c) scored 11.44% on gold.
+
 **Run on an A100 runtime.** Before the first run, add the `HF_TOKEN` Colab secret. Nothing here
 needs Python 3.12; it runs in the default kernel.
 """
@@ -185,12 +197,19 @@ EVAL_BATCH = 64
     code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
     code(r"""
 sys.path.insert(0, str(FT))
+import warnings
+
 import numpy as np
 import torch
+import transformers
 from transformers import WhisperFeatureExtractor, WhisperForConditionalGeneration, WhisperTokenizerFast
 
 import ftkit
 
+# transformers' generate() and Whisper warn on every call (max_new_tokens vs max_length, deprecated
+# generation arguments); they are noise here and bury the training log. Errors still show.
+transformers.logging.set_verbosity_error()
+warnings.filterwarnings("ignore", module="transformers")
 ftkit.fast_cuda()
 DATA = ftkit.download_dataset()
 splits = ftkit.load_splits(DATA)
@@ -274,6 +293,9 @@ print(f"largest micro-batch at 30 s x {longest_label} tokens: {max_items} clips 
 """),
     md("## Batches, loss and decoding"),
     code(r"""
+import math
+
+
 def collate(rows):
     wav = torch.zeros(len(rows), N_SAMPLES, dtype=torch.int16)
     labels = torch.full((len(rows), max(len(r["ids"]) for r in rows)), -100, dtype=torch.long)
@@ -291,7 +313,7 @@ def loss_fn(model, b):
     return model(input_features=mel, labels=labels).loss * b["tokens"], b["tokens"]
 
 
-def transcribe(rows):
+def transcribe(rows, **gen):
     wav = torch.zeros(len(rows), N_SAMPLES, device="cuda")
     for i, r in enumerate(rows):
         c = store.clip_f32(r)
@@ -299,14 +321,35 @@ def transcribe(rows):
     with torch.autocast("cuda", dtype=torch.bfloat16):
         # use_cache explicitly: model.config.use_cache is off for training
         out = model.generate(input_features=log_mel(wav), language=LANG, task="transcribe",
-                             max_new_tokens=440, use_cache=True)
+                             do_sample=False, num_beams=1, use_cache=True, **{"max_new_tokens": 440, **gen})
     return tok.batch_decode(out, skip_special_tokens=True)
 
 
-def evaluate(model, rows=splits["val"]):
-    texts, _ = ftkit.transcribe_rows(rows, transcribe, budget_s=30.0 * EVAL_BATCH, max_items=EVAL_BATCH,
+# Loop retry, the same rule and settings as 04c, fixed before scoring anything with it: a clip whose
+# greedy output repeats a 3-word sequence 5+ times is decoded again, alone, with a repetition
+# penalty, no repeated 6-token phrase, and a length cap from its duration. Only the cap is
+# Whisper's own: its byte-level BPE spends ~2.3x Flex's tokens on Devanagari, so the cap is the
+# densest train label in Whisper tokens (text + end-of-text), ~31 per second.
+MAX_TOKENS_PER_S = math.ceil(max((len(r["ids"]) - 3) / ftkit.duration(r) for r in splits["train"]))
+RETRY = {"repetition_penalty": 1.2, "no_repeat_ngram_size": 6}
+print("retry length cap:", MAX_TOKENS_PER_S, "tokens per second")
+
+
+def retry_one(row):
+    cap = min(440, math.ceil(MAX_TOKENS_PER_S * ftkit.duration(row)))
+    return transcribe([row], max_new_tokens=cap, **RETRY)[0]
+
+
+def evaluate(model, rows=None):
+    rows = rows or splits["val"]
+    decode = ftkit.RetryLoops(transcribe, retry_one)
+    texts, _ = ftkit.transcribe_rows(rows, decode, budget_s=30.0 * EVAL_BATCH, max_items=EVAL_BATCH,
                                      pad_to_s=30.0)
-    return score([r["text"] for r in rows], texts)
+    refs = [r["text"] for r in rows]
+    first = {sid: text for sid, text, _ in decode.log}  # greedy output of the retried clips
+    greedy = score(refs, [first.get(r["segment_id"], t) for r, t in zip(rows, texts)])
+    return {**score(refs, texts), "retried": len(decode.log), "greedy_wer": greedy["wer"],
+            "greedy_loops": greedy["loops"]}
 
 
 def save_best(model):
@@ -342,15 +385,23 @@ print("best val WER", result["best_val_wer"])
     code(r"""
 import shutil
 
-texts, compute = ftkit.transcribe_rows(splits["gold"], transcribe, budget_s=30.0 * EVAL_BATCH,
+decode = ftkit.RetryLoops(transcribe, retry_one)
+texts, compute = ftkit.transcribe_rows(splits["gold"], decode, budget_s=30.0 * EVAL_BATCH,
                                        max_items=EVAL_BATCH, pad_to_s=30.0)
-gold = score([r["text"] for r in splits["gold"]], texts)
+refs = [r["text"] for r in splits["gold"]]
+gold = score(refs, texts)
 gold["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in splits["gold"])
-(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1))
+first = {sid: text for sid, text, _ in decode.log}  # the same run's greedy output, before any retry
+gold["greedy_only"] = score(refs, [first.get(r["segment_id"], t) for r, t in zip(splits["gold"], texts)])
+gold["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in decode.log]
+(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1, ensure_ascii=False))
 ftkit.write_hyps(OUT / "hyps" / f"{RUN_NAME}.jsonl", splits["gold"], texts, compute)
 if Path("/content/bakeoff/hyps").exists():
     shutil.copy(OUT / "hyps" / f"{RUN_NAME}.jsonl", "/content/bakeoff/hyps/")
-print(gold)
+print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_only", "retried")})
+print("greedy only:    ", gold["greedy_only"])
+for s, f, t in decode.log[:20]:
+    print(f"\n{s}\n  greedy: ...{f[-90:]}\n  retry:  ...{t[-90:]}")
 """),
     md("## Results"),
     code(RESULTS),
@@ -671,11 +722,18 @@ EVAL_BUDGET_S, EVAL_ITEMS = 1200.0, 96
     code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
     code(r'''
 sys.path.insert(0, str(FT))
+import warnings
+
 import torch
+import transformers
 from huggingface_hub import snapshot_download
 
 import ftkit
 
+# transformers' generate() warns on every call (max_new_tokens vs max_length); it is noise here and
+# buries the training log. Errors still show.
+transformers.logging.set_verbosity_error()
+warnings.filterwarnings("ignore", module="transformers")
 ftkit.fast_cuda()
 DATA = ftkit.download_dataset()
 splits = ftkit.load_splits(DATA)

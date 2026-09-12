@@ -1,7 +1,7 @@
 # Handoff: fine-tuning ASR on the Nepanglish corpus
 
-For the next agent picking this up. Last updated 2026-09-12, at the end of the session that ran
-04c. Read it top to bottom before touching a notebook; each warning below cost time to find.
+For the next agent picking this up. Last updated 2026-09-13, at the end of the session that ran
+04a. Read it top to bottom before touching a notebook; each warning below cost time to find.
 
 ## Where things stand
 
@@ -10,12 +10,14 @@ For the next agent picking this up. Last updated 2026-09-12, at the end of the s
 | 20 h corpus on the private HF dataset `Sagyam/nepanglish-asr` | done; training set is D76-clean (HF commit `6e904fe`) |
 | `03-asr-bakeoff.ipynb`: zero-shot scores on 706 gold clips | done; findings in its last cell |
 | `04c-finetune-indic-transcribe.ipynb` (Flex) | **run 2026-09-12**; results below |
-| `04a-finetune-whisper-turbo.ipynb` | written, **not run**; needs the loop retry first (next step 1) |
-| `04b-finetune-omnilingual-ctc.ipynb` | written, **not run** |
-| bake-off table with the fine-tuned models | **not done** (next step 3) |
+| `04a-finetune-whisper-turbo.ipynb` (Whisper-turbo) | **run 2026-09-13**, with the loop retry; results below |
+| `04b-finetune-omnilingual-ctc.ipynb` | written, **not run** (next step 1) |
+| bake-off table with the fine-tuned models | **not done** (next step 2) |
 
-All of this is on `master`: branch `finetune-04c-flex` was fast-forwarded into it on 2026-09-12.
-`master` is ahead of `origin/master`; nothing has been pushed.
+04c is on `master` (branch `finetune-04c-flex` was fast-forwarded into it on 2026-09-12). The 04a
+changes (loop retry, warnings silenced, results) are **uncommitted** in the working tree unless
+the owner has since asked for a commit. `master` is ahead of `origin/master`; nothing has been
+pushed.
 
 ### 04c result (Indic-Transcribe-Flex, `ne`, mixed mode, A100 40 GB)
 
@@ -47,7 +49,43 @@ All of this is on `master`: branch `finetune-04c-flex` was fast-forwarded into i
   Zero-shot Flex also looped on 4 gold clips, so give it the same retry before calling it the
   fine-tuning gain (next step 3).
 
-### What the numbers mean (measured this session)
+### 04a result (Whisper-large-v3-turbo, `ne`, A100 40 GB)
+
+| | zero-shot | fine-tuned, greedy | fine-tuned + loop retry |
+|---|---|---|---|
+| gold folded WER | 123% (bake-off, no retry) | **14.62%** | 14.62% (never fired) |
+| gold raw WER | | 17.72% | 17.72% |
+| gold CER | | 8.68% | 8.68% |
+| gold looping clips | 271 | 0 | 0 |
+| val folded WER | 113.19% before training | 8.98% | 8.98% |
+| val with the retry, before training | 55.24% (150 of 403 clips retried) | | |
+
+- **Flex wins.** On gold, 11.44% against 14.62% with the same decoder, and 13.20% against 14.62%
+  greedy. Clip by clip, Flex has fewer errors on 361 clips, Whisper on 163, and 182 tie. The gap
+  is in the podcasts: on the biggest episode (`stop_planning_your_entire_life…`, 2,555 words)
+  it is 14.7% against 21.3%. On the 1-speaker tech reviews both are within a point or two, and
+  Whisper is better on a few.
+- **Whisper's CER (8.68%) is close to Flex's (8.09% with retry, 9.40% greedy)**, while its WER is
+  3 points worse: more of its errors are near-misses in spelling than wrong words.
+- **Fine-tuning cured the loops.** 1 val clip looped after epoch 1 and none after that; on gold
+  the retry never fired. Zero-shot, the retry alone halves val WER (113% → 55%).
+- **Training.** 5 epochs, 410 steps; val by epoch 11.83 / 9.92 / 9.65 / 9.31 / 8.98. **Every
+  epoch improved, including the last**, while the linear schedule decayed to zero, so Whisper may
+  be under-trained next to Flex (which peaked at epoch 5 of 6). A longer run is a val-selected
+  experiment for later, not a reason to re-score gold now.
+- **Speed.** The probe fits only 6 clips per micro-batch (training uses 5), because the encoder
+  always takes 30 s. It still runs at ~195x realtime and 97–98% GPU utilisation, 34.6 GiB: about
+  5.5 min per epoch, and the whole run took ~40 min. Gradient checkpointing would only slow it.
+  Gold decodes at RTF 0.004.
+- **Retry length cap.** 31 Whisper tokens per second, computed in the notebook from the densest
+  train label (text + end-of-text). Whisper's byte-level BPE needs ~2.3x Flex's tokens on
+  Devanagari.
+- **Where the results are.** Drive, `MyDrive/nepanglish-asr/whisper-turbo-ft/`: `best/` (bf16
+  weights, tokenizer, feature extractor; loads with `WhisperForConditionalGeneration`),
+  `history.json`, `speed_check.json`, `config.json`, `gold_metrics.json` and
+  `hyps/whisper-turbo-ft.jsonl`.
+
+### What the numbers mean (measured for Flex, 2026-09-12)
 
 - **Error depends on the type of episode.** Gold WER (greedy):
   - tech reviews, 1 speaker (19 episodes, 12% of gold words): **3.5%**;
@@ -64,57 +102,49 @@ All of this is on `master`: branch `finetune-04c-flex` was fast-forwarded into i
 - **Val is 4 whole episodes held out from train.** It is small and noisy: two identical decodes
   differed by 0.3 points through bf16 numerics. It is still the only unseen-episode number.
 
-## The Colab notebook the owner has open (it is still running)
+## Every session starts from a fresh notebook and runtime
 
-When you arrive, the owner's Colab tab holds the **04c cells**, and its kernel is alive on an
-A100 40 GB with:
-- the fine-tuned epoch-5 model in `model`;
-- `splits`, `store`, `score`, `transcribe`, `retry_one`;
-- `texts`, the gold transcripts with the retry.
+**Connecting the Colab MCP opens a new, empty notebook, and the owner then shuts the old one
+down.** No kernel state survives from one session to the next, and nothing under `/content`
+either: no HF token, no Drive mount, no `/content/ft`, no `/content/bakeoff`. Only Drive persists.
+Never write a handoff that relies on a live kernel.
 
-Drive is mounted at `/content/drive`.
+At the start of a session:
+1. Connect, then check what the notebook's runtime actually has: a one-line cell printing
+   `nvidia-smi`, `uptime` and whether `/content/ft` exists.
+2. Add the cells of the notebook you are running, read from the built `.ipynb` in `notebooks/`.
+3. Run Config through the MCP, then **ask the owner to run the Setup cell by hand**. Secrets and
+   the Drive consent popup only work from the Colab UI.
+4. Write ftkit and check its md5 against `md5sum notebooks/src/ftkit.py`, then run the rest.
 
-- **Do not re-run the Train cell.** It retrains, and `save_best` overwrites `best/` on Drive.
-- **The kernel's `/content/ft/ftkit.py` (md5 `daac1653…`) predates a formatting-only commit**
-  (line wrapping in `speed_check`'s print, for ruff). Its behaviour is identical. Write the
-  committed version before running anything new, and its md5 will then match
-  `md5sum notebooks/src/ftkit.py`.
-- **The HF token is cached on this VM** in `~/.cache/huggingface/token`, where Setup put it.
-  - A *kernel restart* needs no owner click: run `os.kill(os.getpid(), 9)` in a cell, wait about
-    15 s, re-run Config and Setup through the MCP.
-  - A *new runtime* (a new VM) needs the owner to run the Setup cell by hand once. Secrets cannot
-    be read from cells the MCP runs: "Secrets can only be fetched when running from the Colab UI".
-- **To run 04a in this same runtime** (the cheapest path):
-  1. restart the kernel;
-  2. delete the 04c cells and add 04a's, read from `notebooks/04a-finetune-whisper-turbo.ipynb`;
-  3. run Config, then Setup, then the rest.
+Within one runtime, a kernel restart (`os.kill(os.getpid(), 9)`) needs no owner click: the token
+is cached in `~/.cache/huggingface/token`. Drive, however, may need remounting.
 
-  The GPU is freed by the restart, and the token and Drive carry over. Ask the owner first
-  whether they want to keep the 04c cells' logs (*File → Save a copy in Drive*). The results
-  themselves are already on Drive.
+**Reconnecting mid-session also loses the cells.** If the tools report "Unknown tool", reconnecting
+can give an empty notebook again. Re-check with `get_cells` before assuming anything is there.
+
+**If `run_code_cell` returns `{"outputs": []}` at once and the cell gets no execution count, the
+kernel is not running it.** On 2026-09-12 that happened after the owner's own run got stuck.
+Ask the owner to interrupt execution in the tab; nothing the MCP can do unsticks it.
 
 ## Next steps, in order
 
-1. **04a (Whisper-turbo): add the loop retry, then run it.** Zero-shot it looped on 271 of 706
-   gold clips.
-   - Either port 04c's `RetryLoops` wrapper, or use Whisper's own fallback in HF `generate`:
-     `temperature=(0.0, 0.2, 0.4, …)`, `compression_ratio_threshold` (~1.35 on tokens),
-     `logprob_threshold`.
-   - For a length cap, measure the densest train label in *Whisper* tokens per second first; 04c's
-     13/s is in Flex tokens.
-   - Record greedy-only and with-retry gold numbers from the same run, as 04c's Gold cell does.
-   - The GPU log-mel assert now runs with autocast disabled; if it fails, fix it before training.
-2. **04b (Omnilingual CTC).** Unchanged from the original plan; see its section below. CTC cannot
-   loop the way autoregressive decoding does, so it needs no retry.
-3. **Bake-off table.** The owner was asked whether the old bake-off runtime (zero-shot
-   transcripts in `/content/bakeoff/hyps`) is still alive, and never answered. **Ask again.**
-   - If it's gone, re-run 03's model cells. 03 still decodes Flex one clip per call (~1.4 s per
-     clip, ~17 min for gold); batching it the way 04c does would be much faster.
-   - Give zero-shot Flex the same loop retry for a like-for-like row.
-   - The Score cell now mounts Drive and also reads `MyDrive/nepanglish-asr/*/hyps/*.jsonl`, so
-     the fine-tuned transcripts are picked up automatically.
+1. **04b (Omnilingual CTC).** Unchanged from the original plan; see its section below. CTC cannot
+   loop the way autoregressive decoding does, so it needs no retry. Set `speed_check_only` first:
+   three of its calls have never run.
+2. **Bake-off table.** The zero-shot transcripts are **gone**: they were cached only in
+   `/content/bakeoff/hyps` on the bake-off's runtime, which was discarded (every session gets a
+   fresh runtime). Re-run 03's model cells, after these changes to `build_bakeoff.py`:
+   - put the hypothesis cache on Drive (e.g. `MyDrive/nepanglish-asr/bakeoff/hyps`), so it
+     survives the runtime. The Score cell also globs `nepanglish-asr/*/hyps/*.jsonl`, so exclude
+     the bake-off folder from that glob or each model is read twice;
+   - batch Flex the way 04c does (03 decodes one clip per call: ~1.4 s per clip, ~17 min for gold);
+   - give zero-shot Flex **and zero-shot Whisper** the same loop retry, for like-for-like rows. On
+     val the retry alone took zero-shot Whisper from 113% to 55%, so the old 123% gold row
+     overstates how far fine-tuning moved it.
+   - The fine-tuned transcripts on Drive are picked up automatically.
    - Report overall and by CMI tier; record it in the Findings cell via `build_bakeoff.py`.
-4. **Owner's data questions.** The analysis above answers these in part; the owner asked
+3. **Owner's data questions.** The analysis above answers these in part; the owner asked
    directly, so measure before advising.
    - **Will more data help?** A learning curve answers it: retrain on 25% and 50% of the train
      *episodes*, then score val and gold. That is about 25 min of A100 time. Val is the cleaner
@@ -129,7 +159,8 @@ Drive is mounted at `/content/drive`.
      - label it with the same pipeline;
      - more training data should be multi-speaker conversation; more tech reviews won't move
        the number.
-5. **Later, each measured on val first:** an LR sweep for the winner; beam search against greedy
+4. **Later, each measured on val first:** an LR sweep for the winner; a longer schedule for
+   Whisper (its val still improved at its last epoch); beam search against greedy
    (loops are mainly a greedy problem); a KenLM decoder for the CTC model; whether Omnilingual
    learns to write English in Latin script.
 
@@ -184,7 +215,9 @@ The official Colab MCP server is in `.mcp.json`, pinned to `googlecolab/colab-mc
   clips.
 - **One episode id starts with an invisible U+FE0F:**
   `️building_a_career_after_motherhood_the_challenges`. Copy it; don't retype it.
-- **The `max_new_tokens … max_length` warning from transformers is harmless noise.**
+- **transformers' warnings are silenced** in 04a's and 04c's import cell (logging at error level,
+  Python warnings from transformers ignored), at the owner's request: `generate` warned on every
+  call and buried the training log. Real errors still show.
 - **fold.py from the HF cache fails.** `normalize.py` resolves its config through the cache's
   symlinks, so `harness_scorer` copies `harness/` to a real directory first.
 
@@ -212,6 +245,8 @@ after all three have a baseline, and select on val, never on gold.
 - One label exceeds the 448-token decoder window and is dropped.
 - Its eval `generate` passes `use_cache=True` explicitly, because training switches the cache
   off in the model config.
+- Val and gold decode with 04c's loop retry; the length cap (31 Whisper tokens per second) is
+  computed from train in the decoding cell.
 
 ### 04b — Omnilingual CTC-1B v2
 
