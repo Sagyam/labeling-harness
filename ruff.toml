@@ -6,3 +6,5 @@ extend-exclude = ["*.ipynb"]
 [lint.per-file-ignores]
 # Scripts insert backend/ on sys.path before importing app modules.
 "scripts/*" = ["E402"]
+# Notebook builders embed whole notebook cells as strings: line length and typography are the cells'.
+"notebooks/src/build_*.py" = ["E501", "RUF001"]
