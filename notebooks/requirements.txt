@@ -1,20 +1,28 @@
-# Environment for notebooks/01-EDA.ipynb. Deliberately separate from backend/pyproject.toml:
-# the harness itself must not grow a pandas/matplotlib dependency (D43 keeps the runtime image
-# thin and hash-checked), and nothing here is imported by app code.
+# Environment for notebooks/EDA.ipynb. Deliberately separate from backend/pyproject.toml: the
+# harness itself must not grow a pandas/matplotlib/torch dependency (D43 keeps the runtime image
+# thin and hash-checked), and nothing here is imported by app code. `make env` builds it:
 #
 #   uv venv --python 3.13 notebooks/.venv
-#   VIRTUAL_ENV=notebooks/.venv uv pip install -r notebooks/requirements.txt
+#   VIRTUAL_ENV=notebooks/.venv uv pip install -r notebooks/requirements.txt \
+#       --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
 #   notebooks/.venv/bin/python -m ipykernel install --user \
 #       --name labeling-harness-eda --display-name "labeling-harness (EDA)"
 #
-# The notebook is written for a multicore CPU: joblib fans every heavy step out over
-# `joblib.cpu_count()` processes, with the numeric libraries pinned to one thread per worker.
+# CPU-only torch: the voice-print section runs on a 16-thread CPU. The speaker encoder is
+# speechbrain/spkrec-ecapa-voxceleb, chosen because it is UNGATED -- the pyannote diarization
+# pipelines are gated=auto on the Hub and need an accepted-conditions token this project does not
+# carry.
 pandas==3.0.5
 numpy==2.5.3
 scipy==1.18.1
+scikit-learn==1.8.0
 matplotlib==3.11.1
 joblib==1.6.0
 rapidfuzz==3.14.6
 PyYAML==6.0.3
+soundfile==0.13.1
+torch==2.9.1
+torchaudio==2.9.1
+speechbrain==1.1.1
 ipykernel==7.3.0
 jupyterlab==4.6.3

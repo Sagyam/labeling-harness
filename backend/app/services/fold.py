@@ -79,7 +79,7 @@ _VIRAMA = "्"
 
 #: Devanagari to ASCII, longest match first. Deliberately crude -- it feeds a skeleton and a
 #: similarity ratio, never a reader -- and it writes no inherent vowel, which a skeleton would
-#: drop anyway. Ported from 01-EDA section 8d so the notebook and the harness fold alike.
+#: drop anyway. Ported from the old 01-EDA notebook (section 8d, now in git history).
 _ROMAN = {
     "क्ष": "ksh", "त्र": "tr", "ज्ञ": "gy", "श्र": "shr",
     "ख": "kh", "घ": "gh", "छ": "ch", "झ": "jh", "ठ": "th", "ढ": "dh", "थ": "th", "ध": "dh",
