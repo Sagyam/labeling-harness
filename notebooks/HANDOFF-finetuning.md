@@ -74,6 +74,10 @@ A100 40 GB with:
 Drive is mounted at `/content/drive`.
 
 - **Do not re-run the Train cell.** It retrains, and `save_best` overwrites `best/` on Drive.
+- **The kernel's `/content/ft/ftkit.py` (md5 `daac1653…`) predates a formatting-only commit**
+  (line wrapping in `speed_check`'s print, for ruff). Its behaviour is identical. Write the
+  committed version before running anything new, and its md5 will then match
+  `md5sum notebooks/src/ftkit.py`.
 - **The HF token is cached on this VM** in `~/.cache/huggingface/token`, where Setup put it.
   - A *kernel restart* needs no owner click: run `os.kill(os.getpid(), 9)` in a cell, wait about
     15 s, re-run Config and Setup through the MCP.
