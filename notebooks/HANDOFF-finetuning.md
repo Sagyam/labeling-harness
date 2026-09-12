@@ -14,7 +14,8 @@ For the next agent picking this up. Last updated 2026-09-12, at the end of the s
 | `04b-finetune-omnilingual-ctc.ipynb` | written, **not run** |
 | bake-off table with the fine-tuned models | **not done** (next step 3) |
 
-Work is on branch `finetune-04c-flex` (not merged).
+All of this is on `master`: branch `finetune-04c-flex` was fast-forwarded into it on 2026-09-12.
+`master` is ahead of `origin/master`; nothing has been pushed.
 
 ### 04c result (Indic-Transcribe-Flex, `ne`, mixed mode, A100 40 GB)
 
@@ -261,5 +262,5 @@ after all three have a baseline, and select on val, never on gold.
   an accuracy.
 - **The dataset is private** because the audio is YouTube content. Never make the HF repo, any
   audio, or the Flex-derived weights public.
-- **Git.** Commit only when the owner asks, and on a branch. Current branch:
-  `finetune-04c-flex`.
+- **Git.** Commit only when the owner asks, and on a new branch cut from `master`. Merge into
+  `master` only when asked; the owner merged `finetune-04c-flex`. Push only when asked.
