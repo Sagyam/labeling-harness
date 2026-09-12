@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
 from app.models import AnnotationTask, Episode, Segment, SegmentLabel
-from app.services.export import ExportError, export_dataset
+from app.services.export import ExportError, GoldLeakError, export_dataset
 from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.labeling import Decision, record_decision
@@ -113,6 +113,46 @@ def test_a_test_segment_never_appears_in_the_training_export(
     }
     exported = {r["segment_id"] for r in read_jsonl(result.data_path)}
     assert exported & test_ids == set()
+
+
+def _segment(session: Session, external_id: str) -> Segment:
+    return session.scalars(sa.select(Segment).where(Segment.external_id == external_id)).one()
+
+
+def test_a_train_clip_sharing_audio_with_gold_is_left_out_and_listed(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """D76: gold stays unseen at the level of the audio, not just the clip id."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    # exp_ep000_0001 is exported and ends at 15.63 s; its neighbour becomes gold 0.13 s early.
+    overlapping_gold = _segment(db_session, "exp_ep000_0002")
+    overlapping_gold.pot, overlapping_gold.start_time = "gold", 15.5
+    # exp_ep001_0001 ends at 12.76 s; a gold clip starting exactly there only touches it.
+    touching_gold = _segment(db_session, "exp_ep001_0002")
+    touching_gold.pot, touching_gold.start_time = "gold", 12.76
+    db_session.flush()
+
+    result = export_dataset(db_session, kind="training", output_root=tmp_path / "out")
+    exported = {r["segment_id"] for r in read_jsonl(result.data_path)}
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+    assert "exp_ep000_0001" not in exported
+    assert "exp_ep001_0001" in exported
+    assert manifest["excluded_for_gold_overlap"] == ["exp_ep000_0001"]
+    assert manifest["row_count"] == len(exported)
+
+
+def test_a_gold_clip_reaching_the_training_query_stops_the_export(
+    db_session: Session, tmp_path: Path, storage, settings: Settings, monkeypatch
+) -> None:
+    """If the split rule ever stops sending gold to ``test``, nothing is written for a trainer."""
+    import app.services.export as export_module
+
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    monkeypatch.setattr(export_module, "effective_split_sql", lambda: Episode.split)
+    with pytest.raises(GoldLeakError, match="gold clip"):
+        export_dataset(db_session, kind="training", output_root=tmp_path / "out")
+    assert not (tmp_path / "out" / "training" / "training.jsonl").exists()
 
 
 def test_training_export_excludes_unusable_and_uncertain(

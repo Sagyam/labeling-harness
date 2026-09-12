@@ -2,7 +2,8 @@
 
 Four export kinds, each writing a manifest alongside the data:
 
-1. ``training`` -- train and val splits, approved labels only.
+1. ``training`` -- train and val splits, approved labels only; never a gold clip, nor a clip
+   sharing any audio with one (D76).
 2. ``gold`` -- test split only, retaining the seed system per segment.
 3. ``analytics`` -- everything labeled, including word-level fields where they were imported.
 4. ``error_mining`` -- ``uncertain`` and ``unusable_audio``, for pipeline debugging.
@@ -64,6 +65,10 @@ class GoldPurityError(ExportError):
     """A gold-pot row is not what the gold pot promises."""
 
 
+class GoldLeakError(ExportError):
+    """A gold clip reached an export a model trains on."""
+
+
 @dataclass(frozen=True)
 class ExportKind:
     """Declarative definition of one export kind."""
@@ -73,6 +78,8 @@ class ExportKind:
     dispositions: tuple[str, ...]
     include_words: bool = False
     include_hypotheses: bool = False
+    #: A model is trained on this kind, so no row may be a gold clip or share audio with one (D76).
+    clear_of_gold: bool = False
 
 
 EXPORT_KINDS: dict[str, ExportKind] = {
@@ -80,6 +87,7 @@ EXPORT_KINDS: dict[str, ExportKind] = {
         name="training",
         splits=("train", "val"),
         dispositions=("accepted_unchanged", "edited"),
+        clear_of_gold=True,
     ),
     "gold": ExportKind(
         name="gold",
@@ -273,6 +281,26 @@ def _write_episode_audio(
     return written
 
 
+def _gold_spans(session: Session) -> dict[int, list[tuple[float, float]]]:
+    """Every gold clip's time span by episode, labeled or not: its audio is gold either way."""
+    spans: dict[int, list[tuple[float, float]]] = {}
+    for episode_id, start, end in session.execute(
+        sa.select(Segment.episode_id, Segment.start_time, Segment.end_time).where(
+            Segment.pot == "gold"
+        )
+    ):
+        spans.setdefault(episode_id, []).append((start, end))
+    return spans
+
+
+def _overlaps_gold(segment: Segment, spans: dict[int, list[tuple[float, float]]]) -> bool:
+    """Whether any of ``segment``'s audio is also in a gold clip. Touching edges do not count."""
+    return any(
+        segment.start_time < end and start < segment.end_time
+        for start, end in spans.get(segment.episode_id, ())
+    )
+
+
 def export_dataset(
     session: Session,
     *,
@@ -323,6 +351,8 @@ def export_dataset(
     #: Keyed by external id, which is also the filename, so a duplicate is a no-op rather than a
     #: second copy of the same recording.
     episode_audio: dict[str, str] = {}
+    #: Train-side rows left out because a gold clip holds part of their audio (D76).
+    gold_overlap: list[str] = []
 
     if version is not None:
         current = latest_labels_subquery()
@@ -349,6 +379,27 @@ def export_dataset(
             query = query.where(Episode.external_id == episode)
 
         rows = list(session.execute(query))
+
+        # A model trained on this export is scored on gold, so gold must stay unseen at the level
+        # of the audio, not just the clip id (D76). A gold clip cannot get here -- it exports as
+        # `test` -- so one that does means the split rule was broken, and the export stops rather
+        # than hand it to a trainer. A train clip whose padding runs into a gold clip is dropped:
+        # trimming it would leave a transcript that no longer matches its audio.
+        if definition.clear_of_gold:
+            leaked = [segment.external_id for segment, _ in rows if segment.pot == "gold"]
+            if leaked:
+                raise GoldLeakError(
+                    f"{len(leaked)} gold clip(s) selected for a {kind} export, first"
+                    f" {leaked[0]!r}; a model trained on it would be scored on its training data"
+                )
+            spans = _gold_spans(session)
+            kept = []
+            for segment, label in rows:
+                if _overlaps_gold(segment, spans):
+                    gold_overlap.append(segment.external_id)
+                else:
+                    kept.append((segment, label))
+            rows = kept
 
         # Resolve every seed system in one query. Fetching them per row cost two round trips each
         # -- the hypothesis, then its lazy-loaded system -- on the one path built for bulk output.
@@ -462,6 +513,8 @@ def export_dataset(
             for run in sorted(runs, key=lambda r: r.id)
         ],
     }
+    if definition.clear_of_gold:
+        manifest["excluded_for_gold_overlap"] = gold_overlap
     manifest_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",

@@ -106,12 +106,17 @@ def settings(tmp_path: Path):
     The ingest work root is redirected into the test's temporary directory: the API writes an
     uploaded file there before the pipeline starts, and tests that stub out the pipeline never
     reach the cleanup, so the real ``data/ingest_work`` would slowly fill with test uploads.
+    The export root is redirected for a worse reason: ``POST /export`` writes there, and the
+    real ``./exports`` holds the published dataset, which a fixture export silently replaces.
     """
     from app.config import load_settings
 
     loaded = load_settings()
     return loaded.model_copy(
-        update={"ingest": loaded.ingest.model_copy(update={"work_root": tmp_path / "ingest_work"})}
+        update={
+            "ingest": loaded.ingest.model_copy(update={"work_root": tmp_path / "ingest_work"}),
+            "export": loaded.export.model_copy(update={"output_root": tmp_path / "exports"}),
+        }
     )
 
 

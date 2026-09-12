@@ -2150,3 +2150,27 @@ single-threaded or under-utilized multi-core hosts:
 **Reversal:** Replace `IngestionManager` with simple synchronous runs; set `intra_op_num_threads = 1`
 and single-threaded list comprehension in `extract_clips`.
 
+
+## D76 — A training row never holds gold audio
+
+Amends D71 without reversing it: gold stays chosen per clip, and the line between gold and
+training is drawn at the **audio**, not the clip id. The `training` export (the only kind with
+`clear_of_gold`) drops any train or val clip whose time span overlaps a gold clip's in the same
+episode, lists the dropped ids in the manifest as `excluded_for_gold_overlap`, and raises
+`GoldLeakError` -- writing nothing -- if a gold clip ever reaches its query at all.
+
+**Why.** Clip ids were already disjoint, because a gold clip exports as `test`. Audio was not.
+Measured on the 2026-09-12 export: 4 train clips shared 0.05-0.18 s (0.4 s in total) with a gold
+clip, through the padding VAD puts around each cut. That is a fragment of the benchmark inside
+the training data. Trimming the train clip would leave a transcript that no longer matches its
+audio, so it is dropped.
+
+**What this does not fix, on purpose.** 36 of 42 episodes still put clips on both sides, so a
+gold clip's speaker, topic and neighbouring sentences are in training (D71's stated cost, still
+counted by `episode_spans_pots`). Episode- or voice-level gold was measured and declined for
+now: making gold whole episodes would take 19.0 of the 19.76 train hours out of training. The
+owner's plan is to add voices that never appear in gold as the corpus grows, which gives a
+speaker-held-out test without emptying the training set.
+
+**Reversal:** delete `clear_of_gold`, `_gold_spans` and the manifest field. Doing so puts gold
+audio back into training exports.
