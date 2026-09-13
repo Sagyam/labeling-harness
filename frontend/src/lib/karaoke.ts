@@ -17,7 +17,7 @@
  * inheriting spans from a transcript it has nothing to do with.
  */
 
-import type { Hypothesis, HypothesisWord } from '@/types'
+import type { Hypothesis, HypothesisWord, SpeakerTurn } from '@/types'
 
 /** Word position given to text the annotator wrote; it belongs to no seed word. */
 export const WRITTEN_IN = -1
@@ -161,4 +161,37 @@ export function karaokeWords(
     start_time: verbatim.words![index].start_time,
     end_time: verbatim.words![index].end_time,
   }))
+}
+
+/** Who is speaking a karaoke word, and whether anyone is talking over it. */
+export interface WordVoice {
+  /** The diarized speaker's display number, or null when unknown or when two voices collide. */
+  speaker: number | null
+  /** Two or more people talking at the word's midpoint (D77, D78). */
+  overlap: boolean
+}
+
+/**
+ * Give every word the voice speaking at its midpoint.
+ *
+ * The midpoint rather than the whole span, because word spans and turn boundaries come from
+ * different systems and routinely disagree by a few tens of milliseconds at the edges; the
+ * middle of a word is where both agree it is being said. A word inside two speakers' turns, or
+ * inside the overlap detector's spans, is crosstalk: it keeps no single speaker. Untimed words
+ * get no voice at all -- colouring one would claim a timing nobody measured.
+ */
+export function wordVoices(
+  words: Pick<HypothesisWord, 'start_time' | 'end_time'>[],
+  turns: SpeakerTurn[],
+  overlapSpans: [number, number][] | null,
+): WordVoice[] {
+  return words.map((word) => {
+    if (word.start_time === null || word.end_time === null) return { speaker: null, overlap: false }
+    const mid = (word.start_time + word.end_time) / 2
+    const speaking = new Set(turns.filter((t) => t.start <= mid && mid < t.end).map((t) => t.speaker))
+    const detected = (overlapSpans ?? []).some(([start, end]) => start <= mid && mid < end)
+    const overlap = speaking.size > 1 || detected
+    const speaker = speaking.size === 1 ? [...speaking][0] : null
+    return { speaker, overlap }
+  })
 }

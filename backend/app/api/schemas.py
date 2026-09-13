@@ -59,6 +59,15 @@ class LabelOut(BaseModel):
     created_at: dt.datetime
 
 
+class SpeakerTurnOut(BaseModel):
+    """One speaker's stretch of a clip, clip-relative. ``speaker`` is a display number, stable
+    across the episode (1 = most talk time); turns of different speakers may overlap (D78)."""
+
+    speaker: int
+    start: float
+    end: float
+
+
 class SegmentOut(BaseModel):
     """A segment with everything the editor needs."""
 
@@ -83,6 +92,13 @@ class SegmentOut(BaseModel):
     hypotheses: list[HypothesisOut] = Field(default_factory=list)
     scores: ScoresOut | None = None
     latest_label: LabelOut | None = None
+    #: Clip-relative stretches with two or more voices at once (D77). ``[]`` is measured and
+    #: clean; None was never measured.
+    overlap_spans: list[list[float]] | None = None
+    #: Who spoke when inside the clip, from the episode's newest imported diarization (D78).
+    #: Empty when the episode has none.
+    speaker_turns: list[SpeakerTurnOut] = Field(default_factory=list)
+    diarization_model: str | None = None
 
 
 class QueueRowOut(BaseModel):

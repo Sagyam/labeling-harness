@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
+import type { WordVoice } from '@/lib/karaoke'
 import { cn } from '@/lib/utils'
 import type { HypothesisWord } from '@/types'
 
@@ -20,7 +21,26 @@ interface KaraokeTranscriptProps {
   contestedPositions?: ReadonlySet<number>
   /** Called instead of seeking when a disputed word is clicked. */
   onPickContested?: (position: number, anchor: HTMLElement) => void
+  /** Who speaks each word and whether it is overlapped, aligned with `words` (D77, D78). */
+  voices?: WordVoice[]
   className?: string
+}
+
+/** Speaker tints and swatches, categorical slots 1-4 in fixed order; a fifth voice reuses slot 1. */
+const SPEAKER_TINT = ['bg-speaker-1/15', 'bg-speaker-2/15', 'bg-speaker-3/20', 'bg-speaker-4/20']
+const SPEAKER_SWATCH = ['bg-speaker-1', 'bg-speaker-2', 'bg-speaker-3', 'bg-speaker-4']
+const slot = (speaker: number) => (speaker - 1) % SPEAKER_TINT.length
+
+/** A speaker number never travels on colour alone: its swatch sits beside the text "S2". */
+function SpeakerTag({ speaker }: { speaker: number }) {
+  return (
+    <span
+      title={`Speaker ${speaker}`}
+      className="inline-flex select-none items-center gap-1 self-center font-mono text-[10px] text-muted-foreground"
+    >
+      <span className={cn('size-1.5 rounded-full', SPEAKER_SWATCH[slot(speaker)])} />S{speaker}
+    </span>
+  )
 }
 
 /** How much the word being spoken grows at its peak. */
@@ -51,6 +71,7 @@ export function KaraokeTranscript({
   onSeekWord,
   contestedPositions,
   onPickContested,
+  voices,
   className,
 }: KaraokeTranscriptProps) {
   const spanRefs = useRef<(HTMLSpanElement | null)[]>([])
@@ -67,6 +88,25 @@ export function KaraokeTranscript({
     () => words.map((w) => w.start_time !== null && w.end_time !== null),
     [words],
   )
+
+  // A tag goes before the first word of each run by one speaker. Overlapped and unknown words do
+  // not break a run: a backchannel inside someone's turn is not a change of speaker.
+  const { tagged, present, anyOverlap } = useMemo(() => {
+    const tags = new Set<number>()
+    const speakers = new Set<number>()
+    let last: number | null = null
+    ;(voices ?? []).forEach((voice, index) => {
+      if (voice.speaker === null) return
+      speakers.add(voice.speaker)
+      if (voice.speaker !== last) tags.add(index)
+      last = voice.speaker
+    })
+    return {
+      tagged: tags,
+      present: [...speakers].sort((a, b) => a - b),
+      anyOverlap: (voices ?? []).some((v) => v.overlap),
+    }
+  }, [voices])
 
   const paint = useCallback(
     (time: number, elapsedMs: number) => {
@@ -152,59 +192,84 @@ export function KaraokeTranscript({
   if (words.length === 0) return null
 
   return (
-    <div
-      className={cn(
-        'flex flex-wrap items-baseline gap-x-1.5 gap-y-2 p-3 font-devanagari text-lg leading-loose',
-        className,
+    <div className={className}>
+      {(present.length > 0 || anyOverlap) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pt-2 text-[11px] text-muted-foreground">
+          {present.map((speaker) => (
+            <span key={speaker} className="inline-flex items-center gap-1">
+              <span className={cn('size-2 rounded-full', SPEAKER_SWATCH[slot(speaker)])} />
+              Speaker {speaker}
+            </span>
+          ))}
+          {anyOverlap && (
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block h-2.5 w-4 rounded-sm outline-1 outline-dashed outline-warning" />
+              overlapped speech
+            </span>
+          )}
+        </div>
       )}
-    >
-      {words.map((word, index) => {
-        const isContested = contestedPositions?.has(word.position) ?? false
-        const activate = (anchor: HTMLElement) => {
-          if (isContested && onPickContested) onPickContested(word.position, anchor)
-          else if (timed[index]) onSeekWord(word.start_time as number)
-        }
-        return (
-          <span
-            key={`${word.position}-${index}`}
-            ref={(el) => {
-              spanRefs.current[index] = el
-            }}
-            role={timed[index] || isContested ? 'button' : undefined}
-            tabIndex={timed[index] || isContested ? 0 : undefined}
-            onClick={(e) => activate(e.currentTarget)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                activate(e.currentTarget)
-              }
-            }}
-            title={
-              timed[index]
-                ? `${(word.start_time as number).toFixed(2)}s - ${(word.end_time as number).toFixed(2)}s${
-                    isContested ? ' - the other systems heard this differently' : ''
-                  }`
-                : 'no timing reported'
-            }
-            data-contested={isContested ? '' : undefined}
-            className={cn(
-              'inline-block origin-bottom text-muted-foreground',
-              // Colour only; `transform` is written every frame from the loop above.
-              'transition-[color,opacity] duration-100 ease-out',
-              (timed[index] || isContested) && 'cursor-pointer hover:text-foreground',
-              // Words already sung stay readable; the active one is the only lit word.
-              'data-[state=sung]:text-foreground/70',
-              'data-[state=active]:font-semibold data-[state=active]:text-info',
-              // A disputed word keeps its underline whether or not it is lit.
-              'data-[contested]:underline data-[contested]:decoration-warning',
-              'data-[contested]:decoration-wavy data-[contested]:underline-offset-4',
-              !timed[index] && 'opacity-40',
-            )}
-          >
-            {word.word}
-          </span>
-        )
-      })}
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-2 p-3 font-devanagari text-lg leading-loose">
+        {words.map((word, index) => {
+          const voice = voices?.[index]
+          const isContested = contestedPositions?.has(word.position) ?? false
+          const activate = (anchor: HTMLElement) => {
+            if (isContested && onPickContested) onPickContested(word.position, anchor)
+            else if (timed[index]) onSeekWord(word.start_time as number)
+          }
+          return (
+            <span key={`${word.position}-${index}`} className="contents">
+              {tagged.has(index) && voice?.speaker != null && <SpeakerTag speaker={voice.speaker} />}
+              <span
+                ref={(el) => {
+                  spanRefs.current[index] = el
+                }}
+                role={timed[index] || isContested ? 'button' : undefined}
+                tabIndex={timed[index] || isContested ? 0 : undefined}
+                onClick={(e) => activate(e.currentTarget)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    activate(e.currentTarget)
+                  }
+                }}
+                title={
+                  timed[index]
+                    ? `${(word.start_time as number).toFixed(2)}s - ${(word.end_time as number).toFixed(2)}s${
+                        voice?.speaker != null ? ` - Speaker ${voice.speaker}` : ''
+                      }${voice?.overlap ? ' - overlapped speech' : ''}${
+                        isContested ? ' - the other systems heard this differently' : ''
+                      }`
+                    : 'no timing reported'
+                }
+                data-contested={isContested ? '' : undefined}
+                data-overlap={voice?.overlap ? '' : undefined}
+                className={cn(
+                  'inline-block origin-bottom text-muted-foreground',
+                  // Colour only; `transform` is written every frame from the loop above.
+                  'transition-[color,opacity] duration-100 ease-out',
+                  (timed[index] || isContested) && 'cursor-pointer hover:text-foreground',
+                  // Words already sung stay readable; the active one is the only lit word.
+                  'data-[state=sung]:text-foreground/70',
+                  'data-[state=active]:font-semibold data-[state=active]:text-info',
+                  // A disputed word keeps its underline whether or not it is lit.
+                  'data-[contested]:underline data-[contested]:decoration-warning',
+                  'data-[contested]:decoration-wavy data-[contested]:underline-offset-4',
+                  // Who is speaking: a tint behind the word, never its text colour, so the sung
+                  // and active states read the same for every speaker.
+                  voice?.speaker != null && ['rounded-sm px-0.5', SPEAKER_TINT[slot(voice.speaker)]],
+                  // Crosstalk: a dashed outline, distinct from the contested word's wavy underline.
+                  'data-[overlap]:rounded-sm data-[overlap]:outline-1 data-[overlap]:outline-dashed',
+                  'data-[overlap]:outline-offset-1 data-[overlap]:outline-warning',
+                  !timed[index] && 'opacity-40',
+                )}
+              >
+                {word.word}
+              </span>
+            </span>
+          )
+        })}
+      </div>
     </div>
   )
 }

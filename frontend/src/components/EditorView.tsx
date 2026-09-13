@@ -32,7 +32,7 @@ import { Separator } from '@/components/ui/separator'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, resolveUrl } from '@/services/api'
-import { karaokeWords, stripEdgePunctuation } from '@/lib/karaoke'
+import { karaokeWords, stripEdgePunctuation, wordVoices } from '@/lib/karaoke'
 import { cn } from '@/lib/utils'
 import type { Dispute, PeaksPayload, PotName, Task } from '@/types'
 
@@ -95,6 +95,12 @@ export function EditorView({
   const karaoke = useMemo(
     () => karaokeWords(text, seedWords, segment.hypotheses),
     [text, seedWords, segment.hypotheses],
+  )
+  // Who speaks each of those words, from the episode's imported diarization, and where voices
+  // collide, from the overlap detector (D77, D78). Empty turns leave every word uncoloured.
+  const voices = useMemo(
+    () => wordVoices(karaoke, segment.speaker_turns ?? [], segment.overlap_spans ?? null),
+    [karaoke, segment.speaker_turns, segment.overlap_spans],
   )
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -442,6 +448,7 @@ export function EditorView({
             <div className="border-t">
               <KaraokeTranscript
                 words={karaoke}
+                voices={voices}
                 resetKey={task.id}
                 audioRef={audioRef}
                 onSeekWord={(time) => seek(time, true)}

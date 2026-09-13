@@ -116,6 +116,19 @@ export interface Segment {
   hypotheses: Hypothesis[]
   scores: Scores | null
   latest_label: Label | null
+  /** Clip-relative stretches with two or more voices at once (D77); null = never measured. */
+  overlap_spans: [number, number][] | null
+  /** Who spoke when inside the clip, from the episode's newest imported diarization (D78). */
+  speaker_turns: SpeakerTurn[]
+  diarization_model: string | null
+}
+
+/** One speaker's stretch of a clip, clip-relative. Numbers are stable across the episode. */
+export interface SpeakerTurn {
+  /** 1 = the voice with the most talk time in the episode. */
+  speaker: number
+  start: number
+  end: number
 }
 
 export interface QueueReason {

@@ -747,3 +747,42 @@ def test_an_unknown_pot_or_segment_is_refused(client: TestClient, imported_episo
     segment_id = client.get("/queue").json()[0]["segment_id"]
     assert client.post(f"/segments/{segment_id}/pot", json={"pot": "test"}).status_code == 422
     assert client.post("/segments/999999/pot", json={"pot": "gold"}).status_code == 404
+
+
+# --- speaker turns and overlap in the editor payload (D77, D78) ----------------------------------
+
+
+def test_a_task_carries_its_clips_speaker_turns_and_overlap(
+    client: TestClient, imported_episode: str, db_session: Session
+) -> None:
+    from app.services.diarization_import import import_diarization
+
+    before = client.get("/tasks/next").json()["segment"]
+    assert before["speaker_turns"] == []
+    assert before["diarization_model"] is None
+    assert before["overlap_spans"] is None  # never measured is not "clean"
+
+    start, end = before["start_time"], before["end_time"]
+    turns = [
+        [start - 1.0, start + 2.0, "SPEAKER_00"],  # 3 s of talk
+        [start + 1.5, end + 5.0, "SPEAKER_01"],  # the longer voice is Speaker 1
+    ]
+    import_diarization(
+        db_session,
+        {imported_episode: {"turns": turns}},
+        model="pyannote/speaker-diarization-community-1",
+        source="d.json",
+        actor="test",
+    )
+    segment = db_session.get(Segment, before["id"])
+    segment.overlap_spans_jsonb = [[1.5, 2.0]]
+    db_session.flush()
+
+    after = client.get("/tasks/next").json()["segment"]  # the same task, resumed
+    assert after["id"] == before["id"]
+    assert after["diarization_model"] == "pyannote/speaker-diarization-community-1"
+    assert after["speaker_turns"] == [
+        {"speaker": 2, "start": 0.0, "end": 2.0},
+        {"speaker": 1, "start": 1.5, "end": round(end - start, 3)},
+    ]
+    assert after["overlap_spans"] == [[1.5, 2.0]]

@@ -143,6 +143,12 @@
     --warning-foreground: oklch(0.985 0.002 197.1);
     --info: oklch(0.52 0.13 250);
     --info-foreground: oklch(0.985 0.002 197.1);
+    /* Speaker identity on the karaoke line (D78): the validated categorical slots 1-4, in fixed
+       order. Used as tints and swatches only; the text beside them stays in text tokens. */
+    --speaker-1: #2a78d6;
+    --speaker-2: #eb6834;
+    --speaker-3: #1baf7a;
+    --speaker-4: #eda100;
 }
 
 .dark {
@@ -152,6 +158,10 @@
     --warning-foreground: oklch(0.2 0.03 78);
     --info: oklch(0.72 0.12 248);
     --info-foreground: oklch(0.18 0.03 248);
+    --speaker-1: #3987e5;
+    --speaker-2: #d95926;
+    --speaker-3: #199e70;
+    --speaker-4: #c98500;
 }
 
 @theme inline {
@@ -163,6 +173,10 @@
     --color-warning-foreground: var(--warning-foreground);
     --color-info: var(--info);
     --color-info-foreground: var(--info-foreground);
+    --color-speaker-1: var(--speaker-1);
+    --color-speaker-2: var(--speaker-2);
+    --color-speaker-3: var(--speaker-3);
+    --color-speaker-4: var(--speaker-4);
 }
 
 @layer base {

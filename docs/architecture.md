@@ -462,7 +462,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Triage | `components/TriageView.tsx` | Dense keyboard-first list over `/queue`; one keystroke per decision |
 | Editor | `components/EditorView.tsx` | Waveform, playback, transcript editing, hypothesis switching, live diff |
 | Waveform | `components/Waveform.tsx` | Draws the precomputed peaks; click to seek, playhead follows audio |
-| Karaoke line | `components/KaraokeTranscript.tsx` | Lights and grows the spoken word from `hypothesis_words` spans; click a word to play it |
+| Karaoke line | `components/KaraokeTranscript.tsx` | Lights and grows the spoken word from `hypothesis_words` spans; click a word to play it. Words are tinted by diarized speaker (numbered, with an `S1`/`S2` tag at each change) and overlapped words get a dashed outline (D77, D78) |
 | Dispute panel | `components/DisputePopover.tsx` | What the other systems heard at a disputed moment; plays it, and swaps the word in one click |
 | Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |

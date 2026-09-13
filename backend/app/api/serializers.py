@@ -11,8 +11,10 @@ from app.api.schemas import (
     QueueRowOut,
     ScoresOut,
     SegmentOut,
+    SpeakerTurnOut,
 )
 from app.models import AnnotationTask, AsrHypothesis, Segment
+from app.services.diarization_import import segment_speaker_turns
 from app.services.labeling import latest_label
 
 
@@ -57,8 +59,11 @@ def serialize_hypothesis(hypothesis: AsrHypothesis) -> HypothesisOut:
 
 
 def serialize_segment(session: Session, segment: Segment) -> SegmentOut:
-    """Serialize a segment with hypotheses, scores and its current label."""
+    """Serialize a segment with hypotheses, scores, its current label and who spoke when."""
     label = latest_label(session, segment.id)
+    diarization_model, turns = segment_speaker_turns(
+        session, episode_id=segment.episode_id, start=segment.start_time, end=segment.end_time
+    )
     return SegmentOut(
         id=segment.id,
         external_id=segment.external_id,
@@ -104,6 +109,9 @@ def serialize_segment(session: Session, segment: Segment) -> SegmentOut:
             if label
             else None
         ),
+        overlap_spans=segment.overlap_spans_jsonb,
+        speaker_turns=[SpeakerTurnOut(**turn) for turn in turns],
+        diarization_model=diarization_model,
     )
 
 

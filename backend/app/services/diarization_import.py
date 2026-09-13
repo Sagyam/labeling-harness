@@ -183,6 +183,35 @@ def current_run(session: Session, episode_id: int) -> DiarizationRun | None:
     ).first()
 
 
+def segment_speaker_turns(
+    session: Session, *, episode_id: int, start: float, end: float
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """The newest run's model and its turns inside ``[start, end]``, clip-relative and numbered.
+
+    Two small queries: the current run, then only the turns that touch the clip, which the
+    ``(run_id, start_time)`` index serves.
+    """
+    run = session.execute(
+        sa.select(DiarizationRun.id, DiarizationRun.model, DiarizationRun.speakers_jsonb)
+        .where(DiarizationRun.episode_id == episode_id)
+        .order_by(DiarizationRun.id.desc())
+        .limit(1)
+    ).first()
+    if run is None:
+        return None, []
+    rows = session.execute(
+        sa.select(SpeakerTurn.start_time, SpeakerTurn.end_time, SpeakerTurn.speaker)
+        .where(
+            SpeakerTurn.run_id == run.id,
+            SpeakerTurn.start_time < end,
+            SpeakerTurn.end_time > start,
+        )
+        .order_by(SpeakerTurn.start_time, SpeakerTurn.id)
+    ).all()
+    turns = [(float(a), float(b), str(s)) for a, b, s in rows]
+    return run.model, clip_speaker_turns(turns, run.speakers_jsonb, start=start, end=end)
+
+
 def clip_speaker_turns(
     turns: Sequence[Turn], speakers: Sequence[str], *, start: float, end: float
 ) -> list[dict[str, Any]]:
