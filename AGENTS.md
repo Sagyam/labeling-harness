@@ -16,7 +16,7 @@ docs/            architecture, decisions, manifest contract
 notebooks/       EDA, ASR bake-off (03), fine-tuning (04a-c); generated from notebooks/src/
 ```
 
-ASR fine-tuning in progress: start at [notebooks/HANDOFF-finetuning.md](notebooks/HANDOFF-finetuning.md).
+ASR fine-tuning in progress: start at [roadmap.md](roadmap.md).
 
 Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
 formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they
