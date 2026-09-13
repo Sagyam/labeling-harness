@@ -144,6 +144,8 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
   - `hyps/indic-transcribe-flex-ft.jsonl`: cached hypotheses in bake-off format.
   - `eval/{val,gold}.jsonl`, `eval/metrics.json`: the same weights under the standard decoder
     (greedy + cap + retry), from the Phase 2 run. The files are per-clip text in bake-off format.
+- **Diarization:** `diarization/diarization.json`. It holds pyannote community-1 for all 42
+  episodes: overlapping and exclusive turns, and per-speaker embeddings.
 - **Flex learning curve (Phase 2):** `flex-learning-curve/f{25,50}-d0/`
   - `best/` weights, `history.json`, `subset.json` (the episodes it trained on), `eval/`.
   - `f75-d0/` holds only a stopped run's `subset.json` and log; it has no weights and no `eval/`.
@@ -171,6 +173,54 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
   - 2-speaker podcasts (15 episodes): **13.5% WER**.
   - 3-speaker podcast (`on_air_with_sanjay_796`): **22.2% WER**.
 - **Long Tail:** The median episode WER is **4.6%**. The worst 10% of clips hold **46% of all errors**.
+
+### Crosstalk explains the podcast errors; speaking rate and CMI do not (2026-09-13)
+- **Method.**
+  - Diarization with overlap detection on all 42 whole episodes: pyannote
+    `speaker-diarization-community-1`, at the declared speaker count, 17 min on an A100.
+  - Its output is on Drive at `diarization/diarization.json`.
+  - Clip-level features for all 1,109 gold and val clips, joined to Flex's per-clip errors
+    (standard decoder, 2026-09-12 weights). The analysis code was discarded.
+- **Speaker attribution is reliable except where it matters most.**
+  - pyannote and the EDA's ECAPA voice prints are independent systems. They agree on who is
+    talking in 97.3% of 41,285 three-second windows in multi-speaker episodes.
+  - They agree on 99.2% of the windows pyannote calls single-speaker (82% of windows).
+  - The disagreements sit in the other 18%: turn changes and overlap.
+- **Crosstalk is common inside clips.**
+  - In multi-speaker episodes, 25% of clips contain some overlap and 27% have two speakers
+    talking ≥ 0.5 s each.
+  - Overlap is 2.1% of clip time overall and up to 10% in `on_air_with_sanjay_796`, the
+    3-speaker episode.
+
+  | overlap share of clip (podcasts) | clips | WER % [episode 95% CI] | share of errors |
+  |---|---|---|---|
+  | none | 747 | 9.01 [7.42, 11.53] | 50% |
+  | 0–5% | 143 | 12.59 [10.23, 16.56] | 24% |
+  | 5–15% | 77 | 17.81 [14.21, 20.18] | 19% |
+  | > 15% | 26 | 24.29 [16.78, 27.91] | 8% |
+
+- **Within an episode** (Poisson with episode fixed effects and episode-clustered SEs), the error
+  rate ratios are:
+  - **1.49 [1.32, 1.69] per 10 points of overlap share;**
+  - 1.22 [1.00, 1.50] for a clip with two speakers;
+  - 1.28 [1.15, 1.41] per 10 points of filler share;
+  - speaking rate 1.01 [0.93, 1.11] and CMI 1.06 [0.98, 1.14], i.e. no effect. That matches the
+    EDA.
+
+  Together the factors explain 14–17% of clip-level deviance.
+- **What overlap does:** deletions go from 1.6 to 8.3 per 100 words and substitutions from 6.0
+  to 12.9. Near-miss spellings stay flat (~1.5), so these are real misrecognitions and dropped
+  words, not scoring artefacts.
+- **Counterfactual:** if overlap clips had the no-overlap error rate, gold would be ~8.8% instead
+  of 11.53%, and val 6.9% instead of 7.57%. That is the largest lever measured so far.
+- **Not everything.** Across the 16 podcast episodes, overlap and WER correlate at only Spearman
+  0.39. `ep_447` is at 20.7% WER with 1.8% overlap, so episode- or speaker-level effects remain.
+- **Caveats.**
+  - The overlap detector has not been checked by ear.
+  - In overlap the fused reference is at its least reliable: whose words, and are backchannels
+    kept? Some "deletions" may be reference choices.
+  - Single-host episodes were diarized with one speaker, so they have no overlap by
+    construction.
 
 ### The Anatomy of Autoregressive Loops
 - Greedy decoding gets stuck in positive-feedback absorbing states when cross-attention has low energy (speaker pauses or filler hesitations like `अँ`, `उम्`) or during natural reduplication (`mixed-mixed`, `खोज्दै खोज्दै`, `21, 21`).
