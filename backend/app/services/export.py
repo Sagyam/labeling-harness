@@ -206,6 +206,10 @@ def _record(
         "policy_version": version.policy_version,
         "split": effective_split(segment.pot, segment.episode.split),
         "code_switch_density": segment.scores.code_switch_density if segment.scores else None,
+        #: Clip-relative stretches of crosstalk (D77): a per-clip covariate like code-mixing, so a
+        #: result can be reported with and without it. ``[]`` is measured and clean, null is
+        #: never measured.
+        "overlap_spans": segment.overlap_spans_jsonb,
     }
     if kind.include_hypotheses:
         record["speaker_id"] = segment.speaker_id

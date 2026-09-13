@@ -388,6 +388,14 @@ Four export kinds, each writing `manifest.json` next to the data:
 3. **analytics** — includes word-level fields where hypothesis words were imported, episode metadata (speaker role and gender, and the episode topic — never a name or a dialect, D56), and automatically generates `timestamp_verification_report.json`. That report compares two independent timing sources — Scribe's own word spans against the forced aligner's spans over Gemini's transcript — on the tokens both agree were said, reporting agreement tolerances (<= 25 ms, <= 50 ms, <= 100 ms) and flagging divergence (> 200 ms) for human review (D33).
 4. **error_mining** — `uncertain` and `unusable_audio` dispositions, for pipeline debugging.
 
+Every row of every kind carries the clip's per-clip covariates next to its text:
+- `verification_tier`;
+- `episode_spans_pots`;
+- `code_switch_density`;
+- `overlap_spans`: its clip-relative crosstalk, `[]` when measured clean and null when never
+  measured (D77). A result can then be reported with and without overlapped clips instead of
+  dropping them.
+
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:
 the same inputs and filters produce byte-identical output.

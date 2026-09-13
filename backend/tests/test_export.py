@@ -505,3 +505,21 @@ def test_normalization_is_idempotent_across_exports(
     first = export_dataset(db_session, kind="analytics", output_root=tmp_path / "a")
     second = export_dataset(db_session, kind="analytics", output_root=tmp_path / "b")
     assert first.data_path.read_bytes() == second.data_path.read_bytes()
+
+
+def test_every_kind_carries_overlap_spans_as_measured(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Overlap is a per-clip covariate like code-mixing, on every row of every kind (D77): a
+    gold result can be reported with and without crosstalk. ``[]`` and null stay distinct."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    segments = db_session.scalars(sa.select(Segment).order_by(Segment.id)).all()
+    segments[0].overlap_spans_jsonb = [[1.0, 1.8]]
+    segments[1].overlap_spans_jsonb = []
+    db_session.flush()
+    expected = {s.external_id: s.overlap_spans_jsonb for s in segments}
+    for kind in ("training", "gold", "analytics"):
+        result = export_dataset(db_session, kind=kind, output_root=tmp_path / f"ov_{kind}")
+        for row in read_jsonl(result.data_path):
+            assert "overlap_spans" in row
+            assert row["overlap_spans"] == expected[row["segment_id"]]
