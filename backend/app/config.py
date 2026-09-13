@@ -361,6 +361,21 @@ class FusionSettings(BaseModel):
     max_depth: int = Field(default=2, ge=0)
 
 
+class DiarizationSettings(BaseModel):
+    """The serverless GPU diarizer ingest sends each episode to (D79)."""
+
+    model_config = _STRICT
+
+    enabled: bool = False
+    endpoint_url: str = ""
+    #: Per read; a long episode is kept alive by Modal's 150 s redirects, not by this.
+    timeout_seconds: float = Field(default=300.0, ge=1.0)
+    #: Modal proxy-auth token, ``wk-...`` and ``ws-...`` joined by a dot. A secret: env only.
+    auth_token: str = ""
+    #: Recorded on every diarization run.
+    model: str = "pyannote/speaker-diarization-community-1"
+
+
 class Settings(BaseSettings):
     """Root settings object, assembled from YAML then overlaid with environment variables."""
 
@@ -395,6 +410,7 @@ class Settings(BaseSettings):
     export: ExportSettings = Field(default_factory=ExportSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     fusion: FusionSettings = Field(default_factory=FusionSettings)
+    diarization: DiarizationSettings = Field(default_factory=DiarizationSettings)
 
 
 class LlmRoute(BaseModel):

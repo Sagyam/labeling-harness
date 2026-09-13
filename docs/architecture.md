@@ -226,7 +226,8 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
 1. **Normalize** — FFmpeg two-pass `loudnorm` to 16 kHz mono FLAC with linear normalization,
    avoiding dynamic AGC gain pumping between words. The downsample runs through libsoxr, whose
    stopband is steep enough that content above 8 kHz is discarded rather than folded back into the
-   clip as alias (D39).
+   clip as alias (D39). The normalised episode also goes to the remote GPU diarizer here, which
+   works while the next stages do (D79, "Speaker turns" below).
 2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns padded by 150 ms, bounded to 2.0 s–20.0 s,
    snapping long-turn subdivisions to low-energy pauses with a 15 ms raised-cosine edge fade so
    slices do not click. The same pass measures **overlapped speech** over the whole episode with
@@ -251,8 +252,8 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
    conflict and the rule flags below. Disagreement is the mean over every *pair* of recognisers,
    never the fused text; code-mixing is measured on the fused text where there is one, because it
    is the only transcript that follows the script policy.
-6. **Import and build** — segments, hypotheses, scores and queue tasks are written in one pass, so
-   "Start Annotating" works the moment the job finishes.
+6. **Import and build** — segments, hypotheses, scores, the diarizer's speaker turns and queue
+   tasks are written in one pass, so "Start Annotating" works the moment the job finishes.
 
 ### Fusion windows
 
@@ -349,12 +350,18 @@ halfway leaves the work it already did.
 The manifest importer (below) remains the other, equal-status way in: an upstream GPU pipeline can
 still produce `export_<episode_id>/` and `scripts/import_manifest.py` will ingest it.
 
-### Speaker turns (imported, never computed)
+### Speaker turns (diarized remotely, never in-process)
 
-Who spoke when is not an ingest stage. `notebooks/05-diarize.ipynb` runs pyannote
-`speaker-diarization-community-1` over the retained episode audio on a GPU and writes one JSON file;
-`scripts/import_diarization.py` stores it as one `diarization_runs` row per episode with its
-`speaker_turns` (D78). Runs are append-only and checksum-keyed; the newest per episode is current.
+Who spoke when comes from pyannote `speaker-diarization-community-1`, run on a Modal L4 GPU behind
+a web endpoint (`scripts/modal_diarize.py`, D79). Right after stage 1, ingest sends the whole
+normalised episode FLAC there on a background thread with the declared speaker count, carries on
+with stages 2-5, and collects the answer at stage 6, where it is stored as one `diarization_runs`
+row with its `speaker_turns` (D78). A failure is a warning, not a stage failure: the episode lands
+with uncoloured words. The endpoint needs a Modal proxy-auth token
+(`HARNESS_DIARIZATION__AUTH_TOKEN`), and a request past 150 s is carried by Modal's 303 redirects,
+which the client follows. `scripts/diarize_episode.py` runs the same call for episodes already
+imported; `scripts/import_diarization.py` still takes a file diarized anywhere else. Runs are
+append-only and checksum-keyed; the newest per episode is current.
 The editor asks for the current run's turns inside the clip, clip-relative, with speakers numbered by
 talk time across the episode, and colours each timed word by the speaker talking at its midpoint.
 
@@ -419,10 +426,9 @@ the same inputs and filters produce byte-identical output.
 | `POST /tasks/bulk-accept` | Accept many tasks in one transaction |
 | `POST /translit` | Latin token → ranked Devanagari candidates |
 | `POST /translit/choice` | Record the chosen form for the correction memory |
-| `POST /ingest` | Upload an episode's audio; starts the pipeline, returns a job id |
+| `POST /ingest` | Upload an episode's audio with its own metadata; queues the job, returns its id and queue position |
 | `GET /ingest` | Inspect queue status: running job, upcoming queue, bot backlog, and past jobs |
-| `POST /ingest/youtube` | Ingest from a YouTube URL; the server fetches the audio itself |
-| `POST /ingest/youtube/batch` | Queue multiple YouTube URLs for batch ingestion |
+| `POST /ingest/youtube` | Ingest from a YouTube URL with its own metadata; the server fetches the audio itself |
 | `POST /ingest/youtube/probe` | Read a video's metadata; downloads nothing and creates no job |
 | `POST /ingest/{id}/retry` | Requeue a failed, aborted, or backlogged ingestion job |
 | `POST /ingest/retry-all` | Batch retry all jobs matching a status filter (e.g. `backlog`, `failed`) |

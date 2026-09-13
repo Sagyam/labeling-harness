@@ -2118,6 +2118,9 @@ seed and could be kept.
 
 ## D75 — Ingest Queue, Bot Detection Backlog, and 8-Core Multithreading
 
+> **Batch URL submission is removed by D80**: one video at a time, each with its own metadata,
+> into the same queue.
+
 To scale video ingestion to ~50 hours in 48 hours, the ingestion pipeline separates job
 submission from execution through an in-memory and disk-persisted FIFO queue with rich
 inspection endpoints, automatic quarantine of YouTube bot verification challenges, batch
@@ -2232,6 +2235,10 @@ changes.
 
 ## D78 — Speaker turns are imported from a diarizer run after export, not computed by the harness
 
+> **Where and when the diarizer runs is superseded by D79**: ingest calls it on a Modal GPU for
+> every new episode, and the Colab notebook is gone. The tables, the import and the editor are
+> unchanged.
+
 Two new tables hold who spoke when:
 - `diarization_runs`: one diarization of one episode, with its model, source file, a checksum,
   and the speakers ordered by talk time;
@@ -2268,3 +2275,96 @@ index, ~2.5 MB for today's corpus.
 
 **Reversal:** drop the two tables (the migration's `downgrade`), the import script and the notebook.
 Without turns the editor falls back to uncoloured words, as it was before.
+
+## D79 — Ingest diarizes every new episode on a remote GPU
+
+Right after stage 1, ingest sends the whole normalised episode FLAC to pyannote's
+`speaker-diarization-community-1` on a Modal L4 (`scripts/modal_diarize.py`), on a background
+thread. It collects the answer at stage 6 and stores it as the episode's first D78 run. New
+episodes get speaker colours the moment they land. `scripts/diarize_episode.py` makes the same
+call for episodes already imported. `notebooks/05-diarize.ipynb` is deleted: a Colab runtime, a
+Drive mount, a manual import, and colours that lagged every ingest by however long it took
+someone to rerun them.
+
+**What this reverses, and what it keeps.** D58 and D78 kept the diarizer out of ingest. The part
+of that which mattered stays: nothing heavy runs in the harness process. No torch (D32), no model
+download, no GPU, and the backend adds one HTTP call. What changes is the trigger: ingest now asks
+for the run instead of waiting for someone to make it. The model, pyannote version (4.0.7),
+output shape and speaker-count rule are the notebook's, so D78's 97.3% agreement with the ECAPA
+voice prints still describes these runs.
+
+**A heads-up, never a stage failure** (as overlap detection is, D77). If the service is down,
+refuses, times out or returns something the importer rejects, the job logs a warning and the
+episode completes with uncoloured words. The import runs in a savepoint, so a bad answer cannot
+roll back the clips imported beside it. `diarization.enabled: false` turns it off.
+
+**The declared speaker count is passed as `num_speakers`, as the notebook did.** Left to choose,
+pyannote split a 20-minute monologue into 8 speakers, one with 96.5% of the talk and seven
+sharing the rest. Given `num_speakers=1`, it returned one. The count is the ingest form's speaker
+rows, sent as `speaker_count` and stored in the episode metadata apart from `speakers`. A row whose
+gender and age were left blank never reaches `speakers` but is still a voice to find, and counting
+`speakers` would tell pyannote too few, which is worse than letting it guess: it has to merge two
+people. The form allows eight rows, and `speakers` in the manifest schema was raised from four to
+match, since web ingest imports through it. With the speaker section left closed, the episode
+declares nothing and pyannote counts for itself, stray speakers and all. Episodes from before
+`speaker_count` fall back to the size of `speakers`.
+
+A speaker pyannote is told to find but never hears gets a NaN embedding, which crosses HTTP as
+`null`. Such a speaker loses its vector, not the run: the endpoint sends `null` for the row and the
+importer drops any vector that is not all finite numbers.
+
+**Checked on three YouTube videos, left to choose:**
+
+| video | declared | found | audio | wall time | turns | overlap |
+|---|---|---|---|---|---|---|
+| monologue | 1 | 8 (one voice has 96.5% of talk) | 20.3 min | 68 s, cold | 72 | 0.5 s |
+| dialogue | 2 | 2 (88% / 12%) | 10.7 min | 22 s | 211 | 1.1 s |
+| group | 5 | 5 | 21.7 min | 45 s | 943 | 202 s |
+
+Warm, it takes about 2 s of wall time per minute of audio, upload included, and a cold start adds
+about 25-30 s. A 105-minute file (the three concatenated twice, `num_speakers=5`) took 213 s and
+found 5 speakers.
+
+**Two things the endpoint needs that are easy to lose:**
+- **Proxy auth.** The URL is `<workspace>--<app>-<class>-<method>.modal.run`, easy to guess, and
+  an open endpoint would let anyone spend GPU time. The endpoint sets `requires_proxy_auth`, and
+  ingest sends a Modal proxy token (`HARNESS_DIARIZATION__AUTH_TOKEN`, env only per D3). Without
+  it the call is a 401 and a warning.
+- **Redirects.** Modal answers any request still running after 150 s with a 303 to a result URL,
+  which blocks for up to another 150 s. httpx does not follow redirects by default, so every
+  episode over about 75 minutes would have failed. The client follows up to 20, which is 50
+  minutes. The 105-minute check above went through one 303.
+
+**Every call is a cold start, on purpose.** Modal bills a container from start-up to shutdown,
+including the idle `scaledown_window` it waits in for another request. Ingest's next request comes
+minutes later, after the episode has transcribed, so a warm container is never reused. The window
+is 2 s, Modal's minimum, and the GPU stops as soon as it answers.
+
+**Cost.** About 25 s of cold start plus about 2 minutes per hour of audio. At $0.000222/s for the
+L4, plus 6-10% for CPU and memory, that is about 3.5 cents per hour of audio. With the old 120 s
+window it was about 6.5, and Modal's billing report for the runs above agreed with that. Modal's
+free $30 a month covers the whole corpus several times over. Upload is the FLAC, about 2 MB per
+minute. Storage is D78's.
+
+**Reversal:** set `diarization.enabled: false`. Episodes then land without turns until someone runs
+`scripts/diarize_episode.py` or imports a file with `scripts/import_diarization.py`. Delete the
+Modal app with `modal app stop nepanglish-diarization`. No schema changed.
+
+## D80 — Each queued video carries its own metadata; batch submission is gone
+
+The ingest form's submit button stays enabled while another episode ingests. A new job waits its
+turn in D75's FIFO queue, and the button says "Add to queue" when anything is running or waiting.
+After a submit, the form clears for the next video. A job that starts at once takes over the
+monitor; one that waits leaves it on the running job. The button used to be disabled for the
+whole of the running ingest, because one flag meant both "request in flight" and "watched job
+still running". Now it means only the first.
+
+`POST /ingest/youtube/batch` and the batch tab are removed. A batch took a list of URLs with one
+show, genre and topic for all of them, and no speakers, so every video in it was diarized with a
+guessed speaker count. Speakers differ per episode, which is why the batch never fit how episodes
+arrive. Queueing one video at a time, each with its own form, does what the batch was for without
+the shared metadata. `POST /ingest/retry-all`, which requeues backlogged jobs, is not batch
+submission and stays.
+
+**Reversal:** restore the endpoint and tab from git. Its jobs would again be diarized without a
+declared speaker count.

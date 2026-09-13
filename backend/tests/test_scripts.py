@@ -150,3 +150,54 @@ def test_import_script_imports_a_fixture_export(
     assert "DRY RUN" in capsys.readouterr().out
     assert script.main([str(root)]) == 0
     assert "cli_ep000" in capsys.readouterr().out
+
+
+def test_diarize_script_stores_a_run_and_reports_what_it_could_not_do(
+    cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import sqlalchemy as sa
+    from sqlalchemy.orm import Session
+
+    from app.models import DiarizationRun, Episode
+    from app.storage.local import LocalFilesystemStorage
+
+    storage = LocalFilesystemStorage(root=tmp_path / "objects")
+    key = storage.put_bytes("episodes/cli_diar/audio.flac", b"flac bytes")
+    with Session(cli) as session:
+        session.add_all(
+            [
+                Episode(
+                    external_id="cli_diar",
+                    audio_object_key=key,
+                    metadata_jsonb={"speakers": {"host": {}, "guest": {}}},
+                ),
+                Episode(external_id="cli_no_audio"),
+            ]
+        )
+        session.commit()
+
+    sent: dict[str, Any] = {}
+
+    def fake_diarize(audio, *, num_speakers, settings):
+        sent.update(audio=audio, num_speakers=num_speakers)
+        return {
+            "turns": [[0.0, 1.0, "SPEAKER_00"], [1.0, 2.0, "SPEAKER_01"]],
+            "labels": ["SPEAKER_00", "SPEAKER_01"],
+        }
+
+    script = load("diarize_episode")
+    monkeypatch.setattr(script, "build_storage", lambda settings: storage)
+    monkeypatch.setattr(script, "diarize_audio", fake_diarize)
+
+    assert script.main(["cli_diar", "cli_no_audio", "cli_missing"]) == 1
+    out = capsys.readouterr().out
+    assert sent == {"audio": b"flac bytes", "num_speakers": 2}, "declared speakers by default"
+    assert "cli_diar: 2 speakers (asked 2), 2 turns, stored" in out
+    assert "cli_no_audio: no retained audio" in out
+    assert "cli_missing: not found" in out
+    with Session(cli) as session:
+        assert session.scalar(sa.select(sa.func.count()).select_from(DiarizationRun)) == 1
+
+    assert script.main(["cli_diar", "--num-speakers", "3"]) == 0
+    assert sent["num_speakers"] == 3
+    assert "unchanged, already stored" in capsys.readouterr().out

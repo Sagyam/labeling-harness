@@ -1,8 +1,9 @@
-"""Import speaker turns from a diarization run made outside the harness (D78).
+"""Store speaker turns from a diarizer run over the whole episode audio (D78, D79).
 
-The harness does not diarize (D58). A diarizer runs over the retained episode audio on a GPU --
-pyannote's ``speaker-diarization-community-1`` today -- and writes one JSON file for many
-episodes::
+The diarizer never runs in the harness process (D58). pyannote's
+``speaker-diarization-community-1`` runs on a GPU -- the Modal service ingest calls
+(:mod:`app.services.diarization`), or anywhere else -- and its answer has this shape, one entry
+per episode::
 
     {"<episode_id>": {"turns": [[start, end, "SPEAKER_00"], ...],
                       "labels": ["SPEAKER_00", ...],            # optional
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -93,12 +95,28 @@ def parse_diarization(payload: dict[str, Any]) -> dict[str, EpisodeDiarization]:
         vectors, labels = entry.get("embeddings"), entry.get("labels")
         if vectors and labels and len(vectors) == len(labels):
             embeddings = {
-                str(label): [float(x) for x in vector]
-                for label, vector in zip(labels, vectors, strict=True)
-                if vector is not None
+                str(label): vector
+                for label, raw_vector in zip(labels, vectors, strict=True)
+                if (vector := _finite_vector(raw_vector)) is not None
             }
         parsed[str(episode_id)] = EpisodeDiarization(turns, speakers, embeddings)
     return parsed
+
+
+def _finite_vector(raw: Any) -> list[float] | None:
+    """One speaker's embedding, or ``None`` when it is missing or not all finite numbers.
+
+    pyannote gives a speaker it was told to find but heard no speech from a NaN embedding, and
+    NaN crosses HTTP as ``null``. Embeddings are optional, so such a speaker loses its vector,
+    never the run's turns (D79).
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    try:
+        vector = [float(x) for x in raw]
+    except (TypeError, ValueError):
+        return None
+    return vector if all(math.isfinite(x) for x in vector) else None
 
 
 def import_diarization(

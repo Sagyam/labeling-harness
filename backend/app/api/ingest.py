@@ -9,7 +9,6 @@ import re
 import shutil
 import time
 import unicodedata
-import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_config, get_object_storage, get_session_factory, require_auth
 from app.config import Settings
 from app.services.ingest import manager
-from app.services.speaker_meta import strip_speaker_pii
+from app.services.speaker_meta import MAX_SPEAKERS, strip_speaker_pii
 from app.services.youtube import (
     InvalidYouTubeUrl,
     VideoInfo,
@@ -65,8 +64,14 @@ def _slugify(text: str) -> str:
     return slug[:50].strip("_") or f"ep_{int(time.time())}"
 
 
-def _episode_metadata(genre: str, topic: str, speakers_json: str) -> dict[str, Any]:
+def _episode_metadata(
+    genre: str, topic: str, speakers_json: str, speaker_count: int = 0
+) -> dict[str, Any]:
     """Build the episode's free-form metadata from the form's optional fields.
+
+    ``speaker_count`` is the number of speaker rows on the form, kept apart from ``speakers``
+    because a row whose demographics were left blank is not sent there but is still a person the
+    diarizer must find (D79).
 
     The speaker block is run through the allowlist here as well as at the importer. The importer
     is the guarantee; this is so a name pasted into `speakers_json` by a hand-rolled client is
@@ -81,6 +86,8 @@ def _episode_metadata(genre: str, topic: str, speakers_json: str) -> dict[str, A
         # A malformed speaker block loses the metadata, never the ingest.
         with contextlib.suppress(Exception):
             metadata["speakers"] = json.loads(speakers_json)
+    if speaker_count > 0:
+        metadata["speaker_count"] = speaker_count
     return strip_speaker_pii(metadata)
 
 
@@ -103,15 +110,7 @@ class YouTubeIngestIn(YouTubeProbeIn):
     genre: str = ""
     topic: str = ""
     speakers_json: str = ""
-
-
-class YouTubeBatchIngestIn(BaseModel):
-    """A list of YouTube URLs to batch enqueue."""
-
-    urls: list[str] = Field(min_length=1, max_length=100)
-    show_id: str = "podcast"
-    genre: str = ""
-    topic: str = ""
+    speaker_count: int = Field(default=0, ge=0, le=MAX_SPEAKERS)
 
 
 class RetryAllIn(BaseModel):
@@ -211,7 +210,7 @@ async def start_youtube_ingestion(
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    metadata = _episode_metadata(body.genre, body.topic, body.speakers_json)
+    metadata = _episode_metadata(body.genre, body.topic, body.speakers_json, body.speaker_count)
 
     job = manager.create_job(
         episode_id=final_episode_id,
@@ -242,58 +241,6 @@ async def start_youtube_ingestion(
     }
 
 
-@router.post("/youtube/batch", status_code=status.HTTP_202_ACCEPTED)
-async def start_youtube_batch_ingest(
-    body: YouTubeBatchIngestIn,
-    settings: Settings = Depends(get_config),
-    storage: ObjectStorage = Depends(get_object_storage),
-    session_factory: Callable[[], Session] = Depends(get_session_factory),
-) -> dict[str, Any]:
-    """Queue multiple YouTube URLs in batch."""
-    queued: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-
-    for raw_url in body.urls:
-        url_str = raw_url.strip()
-        if not url_str:
-            continue
-        try:
-            info = _probe_or_http_error(url_str, settings)
-            title = info.title
-            ep_id = _slugify(title)
-            work_dir = (
-                settings.ingest.work_root / f"{ep_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
-            )
-            work_dir.mkdir(parents=True, exist_ok=True)
-            metadata = _episode_metadata(body.genre, body.topic, "")
-            job = manager.create_job(
-                episode_id=ep_id,
-                show_id=body.show_id.strip() or "podcast",
-                title=title,
-                work_dir=work_dir,
-                source_url=canonical_url(url_str),
-                metadata=metadata,
-            )
-            ahead = manager.submit(job, session_factory, storage, settings)
-            queued.append(
-                {
-                    "job_id": job.job_id,
-                    "episode_id": job.episode_id,
-                    "title": job.title,
-                    "queue_position": ahead,
-                }
-            )
-        except Exception as exc:
-            errors.append({"url": url_str, "error": str(exc)})
-
-    return {
-        "total": len(body.urls),
-        "queued": queued,
-        "queued_count": len(queued),
-        "errors": errors,
-    }
-
-
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def start_ingestion(
     file: UploadFile = File(...),
@@ -303,6 +250,7 @@ async def start_ingestion(
     genre: str = Form(""),
     topic: str = Form(""),
     speakers_json: str = Form(""),
+    speaker_count: int = Form(0, ge=0, le=MAX_SPEAKERS),
     settings: Settings = Depends(get_config),
     storage: ObjectStorage = Depends(get_object_storage),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
@@ -334,7 +282,7 @@ async def start_ingestion(
     with open(dest_audio_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    metadata = _episode_metadata(genre, topic, speakers_json)
+    metadata = _episode_metadata(genre, topic, speakers_json, speaker_count)
 
     job = manager.create_job(
         episode_id=final_episode_id,

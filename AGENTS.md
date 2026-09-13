@@ -13,9 +13,10 @@ frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
 docs/            architecture, decisions, manifest contract
-notebooks/       EDA, ASR bake-off (03), fine-tuning (04a-c; generated from notebooks/src/),
-                 diarization for the speaker colours (05, run on Colab)
+notebooks/       EDA, ASR bake-off (03), fine-tuning (04a-c; generated from notebooks/src/)
 ```
+
+Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
 
 ASR fine-tuning in progress: start at [roadmap.md](roadmap.md).
 
@@ -143,7 +144,7 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   pipeline segments before it transcribes, so a clip almost always holds one speaker. Do not turn
   the flag back on expecting speaker identity — `spk:0` in one hypothesis was never `spk:0` in
   another, and neither is `segments.speaker_id`. Speaker identity comes from a full-episode
-  diarization run *after* export and imported into `speaker_turns` (D78), joined by time. Rows
+  diarization on a remote GPU, stored in `speaker_turns` (D78, D79) and joined by time. Rows
   ingested before D52 still carry labels; do not join on them.
 - Gemini runs on **Vertex AI**, not AI Studio, via `app/llm/vertex.py` (D39). Auth is one API key
   (`VERTEX_API_KEY`, restricted to `aiplatform.googleapis.com`) sent as an `x-goog-api-key`

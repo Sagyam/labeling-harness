@@ -58,6 +58,16 @@ def test_embeddings_are_keyed_by_label() -> None:
     assert parsed["ep"].embeddings == {"A": [0.1, 0.2], "B": [0.3, 0.4]}
 
 
+@pytest.mark.parametrize("silent", [[None, None], [float("nan"), 0.2], None, [], "x"])
+def test_a_speaker_without_a_usable_embedding_loses_it_not_the_run(silent) -> None:
+    """Told to find three voices on audio with two, pyannote embeds the third as NaN, which
+    arrives over HTTP as null. The turns are what matter; that one vector is dropped (D79)."""
+    turns = [[0.0, 1.0, "A"], [1.0, 2.0, "B"], [2.0, 3.0, "C"]]
+    parsed = parse_diarization(payload("ep", turns, embeddings=[[0.1], silent, [0.3]]))
+    assert parsed["ep"].embeddings == {"A": [0.1], "C": [0.3]}
+    assert len(parsed["ep"].turns) == 3
+
+
 @pytest.mark.parametrize(
     "turns",
     [

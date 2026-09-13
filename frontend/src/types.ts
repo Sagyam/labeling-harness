@@ -401,25 +401,8 @@ export interface YouTubeIngestIn {
   genre?: string
   topic?: string
   speakers_json?: string
-}
-
-export interface YouTubeBatchIngestIn {
-  urls: string[]
-  show_id?: string
-  genre?: string
-  topic?: string
-}
-
-export interface YouTubeBatchIngestOut {
-  total?: number
-  queued: Array<{
-    job_id: string
-    episode_id: string
-    title: string
-    queue_position: number
-  }>
-  queued_count: number
-  errors: Array<{ url: string; error: string }>
+  /** Speaker rows on the form, blank ones included; 0 lets the diarizer count (D79). */
+  speaker_count?: number
 }
 
 export interface EpisodeSummary {

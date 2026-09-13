@@ -244,11 +244,11 @@ class SegmentScore(Base):
 
 
 class DiarizationRun(Base):
-    """One imported diarization of one episode: who spoke when, from a tool run after export.
+    """One diarization of one episode: who spoke when, over the whole episode audio.
 
-    Diarization is not computed by the harness (D58). A serious diarizer runs over the retained
-    episode audio elsewhere -- on a GPU, re-run whenever it improves -- and its turns are imported
-    here (D78). Runs are append-only like hypotheses: a newer run for the same episode supersedes
+    Diarization is not computed in the harness process (D58). pyannote runs on a remote GPU --
+    called by ingest for each new episode (D79), or run elsewhere and imported (D78). Runs are
+    append-only like hypotheses: a newer run for the same episode supersedes
     an older one without deleting it, and "current" means the newest run per episode.
     """
 

@@ -130,3 +130,12 @@ fusion:
   carryover_seconds: 300          # the fuser's own earlier output shown before them
   max_window_segments: 250        # cap on targets per request, whatever their duration
   max_depth: 2                    # halvings a failing window gets before its clips stay unfused
+
+# Speaker turns for the karaoke colours (D79): pyannote on a Modal GPU, deployed from
+# scripts/modal_diarize.py. Ingest sends each episode there; a failure costs only the colours.
+diarization:
+  enabled: true
+  endpoint_url: "https://sagyam--nepanglish-diarization-diarizer-diarize.modal.run"
+  timeout_seconds: 300
+  auth_token: ""        # HARNESS_DIARIZATION__AUTH_TOKEN -- Modal proxy token, "<wk-id>.<ws-secret>"
+  model: pyannote/speaker-diarization-community-1

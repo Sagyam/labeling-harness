@@ -20,10 +20,16 @@
       "description": "The whole episode's audio, relative to the manifest root. Optional: a pipeline that exports only clips stays valid, and the episode then has nothing for a post-export diarizer to run on (D62).",
       "type": ["string", "null"]
     },
+    "speaker_count": {
+      "description": "How many people talk in the episode, as declared on the ingest form: one per speaker row, whether or not its demographics were filled in. The diarizer is told to find exactly this many voices (D79).",
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 8
+    },
     "speakers": {
-      "description": "Per-speaker facts, one to four speakers, keyed by speaker id. Both the field names and the closed-vocabulary values are enforced at import: anything else is dropped rather than rejected, names and dialects included (D56, D58).",
+      "description": "Per-speaker facts, one to eight speakers, keyed by speaker id. Both the field names and the closed-vocabulary values are enforced at import: anything else is dropped rather than rejected, names and dialects included (D56, D58).",
       "type": "object",
-      "maxProperties": 4,
+      "maxProperties": 8,
       "additionalProperties": {
         "type": "object",
         "properties": {

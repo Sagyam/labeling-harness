@@ -29,6 +29,10 @@ from typing import Any
 #: on, and both are typed by a human because neither can be inferred from the audio (D58).
 ALLOWED_SPEAKER_FIELDS = frozenset({"role", "gender", "age_bracket"})
 
+#: How many speakers one episode may declare: rows on the ingest form, and ``maxProperties`` of
+#: ``speakers`` in ``episode.schema.json``. Raised from four so a panel episode fits (D79).
+MAX_SPEAKERS = 8
+
 #: Closed vocabularies, for the same reason the topic taxonomy is closed (D57): a stratification
 #: variable spelled three different ways is three variables. A value outside these is dropped
 #: exactly like an unknown field -- the form only ever sends these, so anything else came from an

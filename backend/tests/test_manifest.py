@@ -139,3 +139,15 @@ def test_validate_segment_accepts_missing_optional_fields() -> None:
 def test_validate_episode_accepts_unknown_extra_keys() -> None:
     """Upstream may add fields; the harness keeps them rather than failing."""
     validate_episode({"episode_id": "e1", "future_field": {"a": 1}}, source="test")
+
+
+def test_an_episode_may_declare_up_to_eight_speakers() -> None:
+    """The ingest form allows eight rows, and web ingest imports through this schema (D79)."""
+    speakers = {f"spk{i}": {"role": "guest"} for i in range(8)}
+    validate_episode({"episode_id": "ep", "speakers": speakers, "speaker_count": 8}, source="t")
+
+    with pytest.raises(ManifestError, match="speakers"):
+        speakers["spk8"] = {"role": "guest"}
+        validate_episode({"episode_id": "ep", "speakers": speakers}, source="t")
+    with pytest.raises(ManifestError, match="speaker_count"):
+        validate_episode({"episode_id": "ep", "speaker_count": 9}, source="t")

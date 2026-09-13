@@ -28,7 +28,6 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { api } from '@/services/api'
 import type {
@@ -37,7 +36,6 @@ import type {
   IngestJobStatus,
   IngestLogEntry,
   IngestQueueResponse,
-  YouTubeBatchIngestOut,
   YouTubeProbe,
 } from '@/types'
 
@@ -63,7 +61,7 @@ const DOWNLOAD_STAGE = {
 
 const ALLOWED_EXTENSIONS = ['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg']
 
-type SourceTab = 'file' | 'youtube' | 'batch_youtube'
+type SourceTab = 'file' | 'youtube'
 
 /** How long to sit on a keystroke before asking the backend what the URL points at. */
 const PROBE_DEBOUNCE_MS = 500
@@ -76,8 +74,8 @@ const SCRAM_ARM_TIMEOUT_MS = 8000
 /** The show id a form starts on, before a probe offers the channel name instead. */
 const DEFAULT_SHOW_ID = 'nepanglish'
 
-/** How many speakers one episode may declare. Beyond four, a form is the wrong instrument. */
-const MAX_SPEAKERS = 4
+/** How many speakers one episode may declare; the backend's MAX_SPEAKERS and the manifest schema agree (D79). */
+const MAX_SPEAKERS = 8
 
 type SpeakerDraft = { gender: string; ageBracket: string }
 
@@ -233,11 +231,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
   const [isProbing, setIsProbing] = useState<boolean>(false)
   const [probeError, setProbeError] = useState<string | null>(null)
 
-  // YouTube batch source state
-  const [batchUrlsText, setBatchUrlsText] = useState<string>('')
-  const [isSubmittingBatch, setIsSubmittingBatch] = useState<boolean>(false)
-  const [batchResult, setBatchResult] = useState<YouTubeBatchIngestOut | null>(null)
-
   // Sociolinguistic metadata state
   const [showSociolinguistics, setShowSociolinguistics] = useState<boolean>(false)
   const [genre, setGenre] = useState<string>('podcast')
@@ -302,13 +295,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
     return () => window.clearInterval(interval)
   }, [jobId])
 
-  const parsedBatchUrls = useMemo(() => {
-    return batchUrlsText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('#'))
-  }, [batchUrlsText])
-
   const addSpeaker = () =>
     setSpeakers((current) =>
       current.length >= MAX_SPEAKERS ? current : [...current, emptySpeaker()],
@@ -331,6 +317,62 @@ export function IngestView({ onComplete }: IngestViewProps) {
       if (speaker.gender || speaker.ageBracket) payload[`spk${index}`] = fields
     })
     return Object.keys(payload).length > 0 ? JSON.stringify(payload) : ''
+  }
+
+  // Every row is a voice the diarizer must find, filled in or not. With the section closed the
+  // episode declares nothing and the diarizer counts for itself (D79).
+  const speakerCount = showSociolinguistics ? speakers.length : 0
+
+  // Whether a new job would wait behind another, which is what the submit button says.
+  const queueBusy = Boolean(queueData?.running) || (queueData?.counts.upcoming ?? 0) > 0
+
+  /** Clear the form for the next video. The queue and the monitor are left alone. */
+  const resetForm = () => {
+    setSelectedFile(null)
+    setYoutubeUrl('')
+    setProbe(null)
+    setProbeError(null)
+    setIsProbing(false)
+    titleIsAnnotatorsRef.current = false
+    setShowId(DEFAULT_SHOW_ID)
+    showIdIsAnnotatorsRef.current = false
+    setEpisodeTitle('')
+    setEpisodeId('')
+    setIsManualEpisodeId(false)
+    setGenre('podcast')
+    setTopic('')
+    setSpeakers([emptySpeaker()])
+    setShowSociolinguistics(false)
+  }
+
+  /** Stop watching a job. The next poll attaches to whatever the server is running. */
+  const detachMonitor = () => {
+    rememberJob(null)
+    setJobStatus(null)
+    setLogs([])
+    setDiscarded([])
+    setCompletedSummary(null)
+  }
+
+  /**
+   * A job was accepted. A job that starts at once takes over the monitor; one that waits behind
+   * another leaves the monitor on the running job and the form open for the next video.
+   */
+  const afterQueued = (res: { job_id: string; title: string; queue_position?: number }, source: SourceTab) => {
+    const ahead = res.queue_position ?? 0
+    resetForm()
+    fetchQueue(true)
+    if (ahead === 0) {
+      detachMonitor()
+      setJobSource(source)
+      rememberJob(res.job_id)
+      setMainView('queue')
+      toast.info(`Ingestion started for '${res.title}'`)
+    } else {
+      toast.success(`Queued '${res.title}'`, {
+        description: `${ahead} ahead of it. Add the next video, or watch the queue.`,
+      })
+    }
   }
 
   const handleTitleChange = (val: string) => {
@@ -378,9 +420,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
     }
 
     setIsSubmitting(true)
-    setLogs([])
-    setDiscarded([])
-    setCompletedSummary(null)
 
     const formData = new FormData()
     formData.append('file', selectedFile)
@@ -390,17 +429,14 @@ export function IngestView({ onComplete }: IngestViewProps) {
     formData.append('genre', genre.trim())
     formData.append('topic', topic.trim())
     formData.append('speakers_json', buildSpeakersJson())
+    formData.append('speaker_count', String(speakerCount))
 
     try {
-      const res = await api.startIngest(formData)
-      setJobSource('file')
-      rememberJob(res.job_id)
-      setMainView('queue')
-      fetchQueue(true)
-      toast.info(`Ingestion queued for '${res.title}'`)
+      afterQueued(await api.startIngest(formData), 'file')
     } catch (err: any) {
-      setIsSubmitting(false)
       toast.error(err.message || 'Failed to start ingestion')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -411,9 +447,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
     }
 
     setIsSubmitting(true)
-    setLogs([])
-    setDiscarded([])
-    setCompletedSummary(null)
 
     try {
       const res = await api.startYouTubeIngest({
@@ -424,43 +457,13 @@ export function IngestView({ onComplete }: IngestViewProps) {
         genre: genre.trim(),
         topic: topic.trim(),
         speakers_json: buildSpeakersJson(),
+        speaker_count: speakerCount,
       })
-      setJobSource('youtube')
-      rememberJob(res.job_id)
-      setMainView('queue')
-      fetchQueue(true)
-      toast.info(`Ingestion queued for '${res.title}'`)
+      afterQueued(res, 'youtube')
     } catch (err: any) {
-      setIsSubmitting(false)
       toast.error(err.message || 'Failed to start ingestion')
-    }
-  }
-
-  const handleStartBatchYoutube = async () => {
-    if (parsedBatchUrls.length === 0) {
-      toast.warning('Please paste at least one YouTube URL')
-      return
-    }
-
-    setIsSubmittingBatch(true)
-    try {
-      const res = await api.startYouTubeBatchIngest({
-        urls: parsedBatchUrls,
-        show_id: showId.trim() || 'podcast',
-        genre: genre.trim(),
-        topic: topic.trim(),
-      })
-      setBatchResult(res)
-      toast.success(`Queued ${res.queued_count} of ${parsedBatchUrls.length} videos`)
-      fetchQueue(true)
-      if (res.errors.length === 0) {
-        setBatchUrlsText('')
-        setMainView('queue')
-      }
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to queue batch videos')
     } finally {
-      setIsSubmittingBatch(false)
+      setIsSubmitting(false)
     }
   }
 
@@ -543,7 +546,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
         setJobStatus((prev) =>
           prev ? { ...prev, status: 'completed', stage: 'complete', progress: 100 } : prev,
         )
-        setIsSubmitting(false)
         toast.success('Ingestion complete', { description: 'The episode is ready for annotation.' })
         fetchQueue(true)
         unsubscribe?.()
@@ -553,7 +555,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
       } else if (evt.type === 'aborted') {
         setCompletedSummary(evt.summary)
         setJobStatus((prev) => (prev ? { ...prev, status: 'aborted' } : prev))
-        setIsSubmitting(false)
         setScramArmed(false)
         setIsScramming(false)
         toast.warning('Run scrammed', {
@@ -566,7 +567,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
         setJobStatus((prev) =>
           prev ? { ...prev, status: 'backlog', stage: 'backlog', error: evt.error } : prev,
         )
-        setIsSubmitting(false)
         toast.warning('Quarantined to Backlog', {
           description: evt.reason || 'YouTube challenge encountered. Queue continues.',
         })
@@ -577,7 +577,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
         setJobStatus((prev) =>
           prev ? { ...prev, status: 'failed', stage: 'failed', error: evt.error } : prev,
         )
-        setIsSubmitting(false)
         toast.error(`Ingestion error: ${evt.error}`)
         fetchQueue(true)
         unsubscribe?.()
@@ -598,7 +597,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
           status.status === 'aborted' ||
           status.status === 'backlog'
 
-        setIsSubmitting(!finished)
         if (finished) {
           setLogs(status.logs || [])
           setCompletedSummary(status.summary ?? null)
@@ -627,35 +625,9 @@ export function IngestView({ onComplete }: IngestViewProps) {
     }
   }, [logs])
 
-  const resetForNextRun = () => {
-    if (isSubmitting && !window.confirm('Ingestion is still running. Start a new one anyway?')) {
-      return
-    }
-    rememberJob(null)
-    setJobStatus(null)
-    setIsSubmitting(false)
-    setSelectedFile(null)
-    setYoutubeUrl('')
-    setProbe(null)
-    setProbeError(null)
-    setIsProbing(false)
-    titleIsAnnotatorsRef.current = false
-    setShowId(DEFAULT_SHOW_ID)
-    showIdIsAnnotatorsRef.current = false
-    setEpisodeTitle('')
-    setEpisodeId('')
-    setGenre('podcast')
-    setTopic('')
-    setSpeakers([emptySpeaker()])
-    setShowSociolinguistics(false)
-    setLogs([])
-    setDiscarded([])
-    setCompletedSummary(null)
-  }
-
   const handleStartAnnotating = () => {
-    const target = jobStatus?.episode_id || episodeId || 'new'
-    resetForNextRun()
+    const target = jobStatus?.episode_id || 'new'
+    detachMonitor()
     onComplete(target)
   }
 
@@ -866,7 +838,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
               )}
             >
               <RiAddLine className="size-4" />
-              New Ingestion (+ Batch)
+              New Ingestion
             </button>
           </div>
         </div>
@@ -993,7 +965,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
                         Start annotating
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={resetForNextRun}>
+                    <Button variant="outline" size="sm" onClick={detachMonitor}>
                       Detach monitor
                     </Button>
                   </div>
@@ -1470,7 +1442,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
           </div>
         )}
 
-        {/* ----------------- TAB: NEW INGESTION (+ BATCH) ----------------- */}
+        {/* ----------------- TAB: NEW INGESTION ----------------- */}
         {mainView === 'new' && (
           <div className="flex flex-col gap-6">
             <Tabs value={sourceTab} onValueChange={(value) => setSourceTab(value as SourceTab)}>
@@ -1478,10 +1450,6 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 <TabsTrigger value="youtube">
                   <RiYoutubeLine className="size-4" />
                   Single YouTube URL
-                </TabsTrigger>
-                <TabsTrigger value="batch_youtube">
-                  <RiListCheck2 className="size-4 text-primary" />
-                  Batch YouTube URLs (High Volume)
                 </TabsTrigger>
                 <TabsTrigger value="file">
                   <RiUploadCloud2Line className="size-4" />
@@ -1601,108 +1569,25 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 </div>
               </TabsContent>
 
-              {/* 3. Batch YouTube URLs (High Volume) */}
-              <TabsContent value="batch_youtube">
-                <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold">Bulk URL Queue (Up to 100 videos)</div>
-                      <div className="text-xs text-muted-foreground">
-                        Paste one YouTube URL per line. Perfect for 50+ hours ingestion sprints.
-                      </div>
-                    </div>
-                    <span className="rounded-full bg-primary/10 px-2.5 py-1 font-mono text-xs font-semibold text-primary">
-                      {parsedBatchUrls.length} valid URL{parsedBatchUrls.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
-
-                  <Textarea
-                    className="min-h-36 font-mono text-xs p-3 rounded border"
-                    placeholder={`https://www.youtube.com/watch?v=dQw4w9WgXcQ\nhttps://youtu.be/abc12345678\nhttps://www.youtube.com/watch?v=zyx98765432`}
-                    value={batchUrlsText}
-                    onChange={(e) => setBatchUrlsText(e.target.value)}
-                  />
-
-                  {batchResult && (
-                    <div className="rounded border bg-muted/30 p-3 text-xs">
-                      <div className="font-semibold text-foreground">
-                        Batch Enqueued: {batchResult.queued_count} videos
-                      </div>
-                      {batchResult.errors.length > 0 && (
-                        <div className="mt-2 text-destructive">
-                          <div>Failed URLs ({batchResult.errors.length}):</div>
-                          <ul className="list-disc pl-4 mt-1 font-mono text-[11px]">
-                            {batchResult.errors.map((err, i) => (
-                              <li key={i}>
-                                {err.url}: {err.error}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
             </Tabs>
 
-            {/* Single Video Metadata (when not batch) */}
-            {sourceTab !== 'batch_youtube' ? (
-              <div className="flex flex-col gap-4">
-                <Field>
-                  <FieldLabel htmlFor="episode-title">Episode title</FieldLabel>
-                  <Input
-                    id="episode-title"
-                    placeholder="e.g. Episode 42: AI in Kathmandu"
-                    value={episodeTitle}
-                    onChange={(e) => handleTitleChange(e.target.value)}
-                  />
-                </Field>
+            {/* Episode metadata: every video carries its own */}
+            <div className="flex flex-col gap-4">
+              <Field>
+                <FieldLabel htmlFor="episode-title">Episode title</FieldLabel>
+                <Input
+                  id="episode-title"
+                  placeholder="e.g. Episode 42: AI in Kathmandu"
+                  value={episodeTitle}
+                  onChange={(e) => handleTitleChange(e.target.value)}
+                />
+              </Field>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="show-id">Show ID</FieldLabel>
-                    <Input
-                      id="show-id"
-                      placeholder="podcast"
-                      value={showId}
-                      onChange={(e) => handleShowIdChange(e.target.value)}
-                    />
-                  </Field>
-
-                  <Field>
-                    <div className="flex items-center justify-between gap-2">
-                      <FieldLabel htmlFor="episode-id">Episode ID (slug)</FieldLabel>
-                      <Button
-                        variant="link"
-                        size="xs"
-                        className="h-auto px-0"
-                        onClick={() => {
-                          setIsManualEpisodeId(!isManualEpisodeId)
-                          if (isManualEpisodeId) setEpisodeId(slugify(episodeTitle))
-                        }}
-                      >
-                        {isManualEpisodeId ? 'Auto-generate' : 'Custom'}
-                      </Button>
-                    </div>
-                    <Input
-                      id="episode-id"
-                      className="font-mono"
-                      placeholder="ep_42_ai_in_kathmandu"
-                      value={episodeId}
-                      readOnly={!isManualEpisodeId}
-                      onChange={(e) => setEpisodeId(e.target.value)}
-                    />
-                  </Field>
-                </div>
-              </div>
-            ) : (
-              /* Batch Shared Metadata */
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
-                  <FieldLabel htmlFor="batch-show-id">Show ID for batch</FieldLabel>
+                  <FieldLabel htmlFor="show-id">Show ID</FieldLabel>
                   <Input
-                    id="batch-show-id"
+                    id="show-id"
                     placeholder="podcast"
                     value={showId}
                     onChange={(e) => handleShowIdChange(e.target.value)}
@@ -1710,16 +1595,31 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 </Field>
 
                 <Field>
-                  <FieldLabel htmlFor="batch-genre">Genre / Category</FieldLabel>
+                  <div className="flex items-center justify-between gap-2">
+                    <FieldLabel htmlFor="episode-id">Episode ID (slug)</FieldLabel>
+                    <Button
+                      variant="link"
+                      size="xs"
+                      className="h-auto px-0"
+                      onClick={() => {
+                        setIsManualEpisodeId(!isManualEpisodeId)
+                        if (isManualEpisodeId) setEpisodeId(slugify(episodeTitle))
+                      }}
+                    >
+                      {isManualEpisodeId ? 'Auto-generate' : 'Custom'}
+                    </Button>
+                  </div>
                   <Input
-                    id="batch-genre"
-                    placeholder="e.g. podcast_interview"
-                    value={genre}
-                    onChange={(e) => setGenre(e.target.value)}
+                    id="episode-id"
+                    className="font-mono"
+                    placeholder="ep_42_ai_in_kathmandu"
+                    value={episodeId}
+                    readOnly={!isManualEpisodeId}
+                    onChange={(e) => setEpisodeId(e.target.value)}
                   />
                 </Field>
               </div>
-            )}
+            </div>
 
             {/* Sociolinguistics & Speaker Metadata Toggle */}
             <div className="rounded-lg border bg-card p-3">
@@ -1766,6 +1666,10 @@ export function IngestView({ onComplete }: IngestViewProps) {
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-foreground">
                         Speakers ({speakers.length} of {MAX_SPEAKERS})
+                        <span className="ml-1.5 font-normal text-muted-foreground">
+                          · the diarizer looks for exactly {speakers.length}{' '}
+                          {speakers.length === 1 ? 'voice' : 'voices'}, blank rows included
+                        </span>
                       </span>
                       <Button
                         type="button"
@@ -1836,31 +1740,25 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 ⚡ 8 cores parallel processing on worker thread
               </span>
 
-              {sourceTab === 'batch_youtube' ? (
-                <Button
-                  disabled={isSubmittingBatch || parsedBatchUrls.length === 0}
-                  onClick={handleStartBatchYoutube}
-                  className="gap-2"
-                >
-                  {isSubmittingBatch ? <Spinner className="size-4" /> : <RiListCheck2 className="size-4" />}
-                  {isSubmittingBatch
-                    ? 'Enqueueing batch…'
-                    : `Enqueue ${parsedBatchUrls.length} YouTube Videos`}
-                </Button>
-              ) : (
-                <Button
-                  disabled={
-                    isSubmitting ||
-                    !episodeTitle.trim() ||
-                    (sourceTab === 'file' ? !selectedFile : !probe || isProbing)
-                  }
-                  onClick={sourceTab === 'file' ? handleStartIngestion : handleStartYoutubeIngestion}
-                  className="gap-2"
-                >
-                  {isSubmitting ? <Spinner className="size-4" /> : <RiUploadCloud2Line className="size-4" />}
-                  {isSubmitting ? 'Starting…' : 'Start Ingestion'}
-                </Button>
-              )}
+              {/* Enabled while another job runs: a new one simply waits its turn in the queue. */}
+              <Button
+                disabled={
+                  isSubmitting ||
+                  !episodeTitle.trim() ||
+                  (sourceTab === 'file' ? !selectedFile : !probe || isProbing)
+                }
+                onClick={sourceTab === 'file' ? handleStartIngestion : handleStartYoutubeIngestion}
+                className="gap-2"
+              >
+                {isSubmitting ? (
+                  <Spinner className="size-4" />
+                ) : queueBusy ? (
+                  <RiListCheck2 className="size-4" />
+                ) : (
+                  <RiUploadCloud2Line className="size-4" />
+                )}
+                {isSubmitting ? 'Sending…' : queueBusy ? 'Add to queue' : 'Start ingestion'}
+              </Button>
             </div>
           </div>
         )}

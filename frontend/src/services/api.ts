@@ -33,8 +33,6 @@ import {
   PotPanel,
   SegmentPotOut,
   IngestQueueResponse,
-  YouTubeBatchIngestIn,
-  YouTubeBatchIngestOut,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -192,7 +190,13 @@ export const api = {
 
   startIngest: async (
     formData: FormData
-  ): Promise<{ job_id: string; status: string; episode_id: string; title: string }> => {
+  ): Promise<{
+    job_id: string
+    status: string
+    episode_id: string
+    title: string
+    queue_position: number
+  }> => {
     const url = resolveUrl('/ingest')
     const res = await fetch(url, {
       method: 'POST',
@@ -230,6 +234,7 @@ export const api = {
     episode_id: string
     title: string
     source_url: string
+    queue_position: number
   }> => {
     return request('/ingest/youtube', {
       method: 'POST',
@@ -299,15 +304,6 @@ export const api = {
 
   clearPastIngest: (): Promise<{ cleared_count: number }> => {
     return request('/ingest/clear-past', { method: 'POST' })
-  },
-
-  startYouTubeBatchIngest: (
-    body: YouTubeBatchIngestIn
-  ): Promise<YouTubeBatchIngestOut> => {
-    return request<YouTubeBatchIngestOut>('/ingest/youtube/batch', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
   },
 
   listEpisodes: (): Promise<EpisodeSummary[]> => {

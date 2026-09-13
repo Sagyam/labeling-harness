@@ -151,7 +151,8 @@ backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-ver
 backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
 backend/.venv/bin/python scripts/report_status.py    [--format html]
 backend/.venv/bin/python scripts/backfill_overlap.py [--episode show-a_ep012] [--force]
-backend/.venv/bin/python scripts/import_diarization.py diarization.json   # from notebooks/05-diarize.ipynb
+backend/.venv/bin/python scripts/diarize_episode.py  show-a_ep012 [--num-speakers 2]   # on the Modal GPU
+backend/.venv/bin/python scripts/import_diarization.py diarization.json   # turns made elsewhere
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 ```
 
@@ -179,6 +180,7 @@ Secrets come from the environment only, never from YAML:
 | `HARNESS_ALIGNER_MODEL_DIR` | Where the aligner model is kept; the container uses `/app/data/models` |
 | `VERTEX_API_KEY` | Vertex AI key, restricted to `aiplatform.googleapis.com`; carries Gemini 3.5 Transcribe and 3.8 Flash |
 | `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | Project the Vertex calls bill and quota against, and the region serving them (`global`) |
+| `HARNESS_DIARIZATION__AUTH_TOKEN` | Modal proxy token for the diarizer, `<wk-id>.<ws-secret>` (`modal workspace proxy-tokens create`); without it ingest skips speaker turns |
 
 `ingest.youtube.cookies_file` points at a Netscape-format cookie jar, for videos YouTube declines
 to serve anonymously. It is a path in YAML because it is not itself a secret; the file it names is,

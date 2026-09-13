@@ -72,9 +72,9 @@ def test_role_is_free_text_because_it_describes_the_recording_not_the_corpus() -
     assert cleaned["speakers"]["spk0"] == {"role": "co-host"}
 
 
-def test_four_speakers_are_kept() -> None:
-    """The form allows up to four; nothing downstream may assume two."""
-    speakers = {f"spk{i}": {"gender": "male"} for i in range(4)}
+def test_eight_speakers_are_kept() -> None:
+    """The form allows up to eight; nothing downstream may assume two."""
+    speakers = {f"spk{i}": {"gender": "male"} for i in range(8)}
     assert strip_speaker_pii({"speakers": speakers})["speakers"] == speakers
 
 
@@ -105,3 +105,15 @@ def test_the_input_is_not_mutated() -> None:
     original = {"speakers": {"spk0": {"name": "Sushant", "role": "host"}}}
     strip_speaker_pii(original)
     assert original == {"speakers": {"spk0": {"name": "Sushant", "role": "host"}}}
+
+
+def test_the_speaker_cap_is_the_schemas() -> None:
+    """The form, the API and the manifest schema must agree, or a full form fails at import."""
+    import json
+
+    from app.services.manifest import SCHEMA_DIR
+    from app.services.speaker_meta import MAX_SPEAKERS
+
+    schema = json.loads((SCHEMA_DIR / "episode.schema.json").read_text())
+    assert schema["properties"]["speakers"]["maxProperties"] == MAX_SPEAKERS
+    assert schema["properties"]["speaker_count"]["maximum"] == MAX_SPEAKERS

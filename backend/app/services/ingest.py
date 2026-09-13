@@ -51,6 +51,8 @@ from app.llm.transcription import (
 )
 from app.llm.vertex import VertexClient
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
+from app.services.diarization import declared_speaker_count, diarize_audio
+from app.services.diarization_import import import_diarization
 from app.services.forced_align import ForcedAligner, align_text
 from app.services.fusion_stage import FUSION_KIND, fuse_records
 from app.services.importer import import_manifest
@@ -1222,6 +1224,39 @@ def _halted(job: IngestJob, *, segments_detected: int = 0, segments_transcribed:
     return True
 
 
+def _import_speaker_turns(
+    job: IngestJob,
+    session: Session,
+    future: concurrent.futures.Future[dict[str, Any] | None],
+    settings: Settings,
+) -> None:
+    """Store the remote diarizer's answer as the episode's first diarization run (D79).
+
+    Like overlap detection, a heads-up rather than a stage: a service that failed or is still
+    running after the timeout is logged, and the episode completes with uncoloured words. The
+    savepoint keeps a failed import from taking the manifest import down with it.
+    """
+    try:
+        result = future.result(timeout=settings.diarization.timeout_seconds)
+        if not result:
+            return
+        with session.begin_nested():
+            report = import_diarization(
+                session,
+                {job.episode_id: result},
+                model=settings.diarization.model,
+                source=settings.diarization.endpoint_url,
+                actor="ingest",
+            )
+    except Exception as exc:
+        job.log(f"Diarization skipped: {type(exc).__name__}: {exc}", "warn")
+        return
+    job.log(
+        f"Diarization: {report.turns_inserted} speaker turns, "
+        f"{len(result.get('labels') or [])} speakers"
+    )
+
+
 def _detect_overlap(
     job: IngestJob,
     detector: OverlapDetector | None,
@@ -1282,6 +1317,19 @@ def _run_stages(
 
     if _halted(job):
         return
+
+    # Speaker turns come from a GPU diarizer over the whole episode (D79). It runs remotely while
+    # the stages below transcribe, and is collected at import; a failure costs the colours only.
+    diarize_future: concurrent.futures.Future[dict[str, Any] | None] | None = None
+    if settings.diarization.enabled and settings.diarization.endpoint_url:
+        num_speakers = declared_speaker_count(job.metadata)
+        job.log(f"Diarizing the episode remotely (speakers: {num_speakers or 'auto'})...")
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        diarize_future = executor.submit(
+            diarize_audio, norm_flac, num_speakers=num_speakers, settings=settings
+        )
+        # The submitted call still runs to completion; this only lets its thread go when it does.
+        executor.shutdown(wait=False)
 
     # Stage 2: Silero VAD Segmentation
     try:
@@ -1662,6 +1710,9 @@ def _run_stages(
                 f"Database import: {import_report.segments_inserted} segments, "
                 f"{import_report.clips_uploaded} clips uploaded to storage"
             )
+
+            if diarize_future is not None:
+                _import_speaker_turns(job, session, diarize_future, settings)
 
             # Nothing stands between import and the queue any more: the episode drew its train/val
             # split at import, and gold is chosen per clip by hand from the queue itself (D71).

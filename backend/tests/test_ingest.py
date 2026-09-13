@@ -375,6 +375,27 @@ def test_api_ingest_start_and_status(
     assert "logs" in st_data
 
 
+def test_an_upload_carries_the_forms_speaker_count(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wav_path = make_test_audio(tmp_path / "upload.wav", duration_seconds=3.0)
+    # Not queued: the shared worker could pick the job up after this test's stubs are gone, and a
+    # real pipeline would commit the episode outside the test's transaction.
+    monkeypatch.setattr(manager, "submit", lambda job, *args, **kwargs: 0)
+
+    with open(wav_path, "rb") as f:
+        response = client.post(
+            "/ingest",
+            data={"episode_title": "Panel", "episode_id": "api_panel", "speaker_count": "5"},
+            files={"file": ("upload.wav", f, "audio/wav")},
+        )
+
+    assert response.status_code == 202
+    job = manager.get_job(response.json()["job_id"])
+    assert job is not None
+    assert job.metadata["speaker_count"] == 5
+
+
 def test_api_ingest_unsupported_format_rejected(client: TestClient) -> None:
     dummy = io.BytesIO(b"not an audio file")
     response = client.post(
@@ -1521,43 +1542,6 @@ def test_retry_and_cancel_endpoints_api(
     manager.reset()
 
 
-def test_youtube_batch_ingest_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.services.ingest.run_pipeline", lambda *args, **kwargs: None)
-    manager.reset()
-    from app.services.youtube import VideoInfo
-
-    def fake_probe(url: str, settings=None):
-        vid = url.split("=")[-1] if "=" in url else "vid123"
-        return VideoInfo(
-            video_id=vid,
-            url=url,
-            title=f"Title {vid}",
-            duration_seconds=300.0,
-            uploader="Channel",
-        )
-
-    monkeypatch.setattr("app.api.ingest.probe", fake_probe)
-
-    resp = client.post(
-        "/ingest/youtube/batch",
-        json={
-            "urls": [
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                "https://www.youtube.com/watch?v=abc12345678",
-            ],
-            "show_id": "test_show",
-            "topic": "tech_gadgets",
-        },
-    )
-    assert resp.status_code == 202
-    data = resp.json()
-    assert data["total"] == 2
-    assert len(data["queued"]) == 2
-    assert data["errors"] == []
-    _drain()
-    manager.reset()
-
-
 # --- overlapped speech at ingest (D77) --------------------------------------------------------
 
 
@@ -1632,3 +1616,89 @@ def test_a_failing_overlap_detector_never_fails_the_ingest(
     assert job.status == "completed"
     assert all(s.overlap_spans_jsonb is None for s in segments)
     assert any("onnx exploded" in item.message for item in job.logs)
+
+
+# --- Remote diarization (D79) ------------------------------------------------------------
+
+
+def _diarizing(settings):
+    return settings.model_copy(
+        update={
+            "diarization": settings.diarization.model_copy(
+                update={"enabled": True, "endpoint_url": "https://example.modal.run"}
+            )
+        }
+    )
+
+
+def test_the_diarizers_turns_become_the_episodes_first_run(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.models import DiarizationRun
+
+    sent: dict = {}
+
+    def fake_diarize(audio, *, num_speakers, settings):
+        sent.update(path=audio, num_speakers=num_speakers)
+        return {
+            "turns": [[0.0, 3.0, "SPEAKER_00"], [2.5, 6.0, "SPEAKER_01"]],
+            "labels": ["SPEAKER_00", "SPEAKER_01"],
+            "embeddings": None,
+        }
+
+    monkeypatch.setattr("app.services.ingest.diarize_audio", fake_diarize)
+    job = _pipeline_job(tmp_path, "diarized", seconds=6.0)
+    job.metadata = {"speakers": {"host": {"gender": "male"}, "guest": {"gender": "female"}}}
+
+    run_pipeline(job, lambda: db_session, object_storage, _diarizing(settings))
+
+    assert job.status == "completed", job.error
+    assert sent["num_speakers"] == 2, "the declared speaker count is passed on"
+    assert sent["path"].name.endswith("_normalized.flac"), "the whole episode, not a clip"
+    ep = db_session.scalar(sa.select(Episode).where(Episode.external_id == job.episode_id))
+    run = db_session.scalar(sa.select(DiarizationRun).where(DiarizationRun.episode_id == ep.id))
+    assert run is not None
+    assert run.source == "https://example.modal.run"
+    assert [(t.start_time, t.end_time, t.speaker) for t in run.turns] == [
+        (0.0, 3.0, "SPEAKER_00"),
+        (2.5, 6.0, "SPEAKER_01"),
+    ]
+
+
+def test_a_failing_diarizer_never_fails_the_ingest(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.models import DiarizationRun
+
+    def broken(audio, *, num_speakers, settings):
+        raise RuntimeError("GPU on fire")
+
+    monkeypatch.setattr("app.services.ingest.diarize_audio", broken)
+    job = _pipeline_job(tmp_path, "undiarized", seconds=6.0)
+
+    run_pipeline(job, lambda: db_session, object_storage, _diarizing(settings))
+
+    assert job.status == "completed", job.error
+    assert any("GPU on fire" in item.message and item.level == "warn" for item in job.logs)
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(DiarizationRun)) == 0
+    ep = db_session.scalar(sa.select(Episode).where(Episode.external_id == job.episode_id))
+    assert db_session.scalars(sa.select(Segment).where(Segment.episode_id == ep.id)).all()
+
+
+def test_a_malformed_diarization_leaves_the_imported_episode_intact(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bad answer is reported, and the clips imported beside it stay."""
+    monkeypatch.setattr(
+        "app.services.ingest.diarize_audio",
+        lambda audio, *, num_speakers, settings: {"turns": [[5.0, 1.0, "SPEAKER_00"]]},
+    )
+    job = _pipeline_job(tmp_path, "malformed", seconds=6.0)
+
+    run_pipeline(job, lambda: db_session, object_storage, _diarizing(settings))
+
+    assert job.status == "completed", job.error
+    assert any("ends before it starts" in item.message for item in job.logs)
+    ep = db_session.scalar(sa.select(Episode).where(Episode.external_id == job.episode_id))
+    assert db_session.scalars(sa.select(AnnotationTask)).all(), "the queue was still built"
+    assert ep is not None

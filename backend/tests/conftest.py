@@ -112,6 +112,8 @@ def settings(tmp_path: Path):
     reach the cleanup, so the real ``data/ingest_work`` would slowly fill with test uploads.
     The export root is redirected for a worse reason: ``POST /export`` writes there, and the
     real ``./exports`` holds the published dataset, which a fixture export silently replaces.
+    Diarization is switched off because it is a paid GPU call to a live endpoint; tests that
+    need turns inject a stand-in for ``diarize_audio``.
     """
     from app.config import load_settings
 
@@ -120,6 +122,7 @@ def settings(tmp_path: Path):
         update={
             "ingest": loaded.ingest.model_copy(update={"work_root": tmp_path / "ingest_work"}),
             "export": loaded.export.model_copy(update={"output_root": tmp_path / "exports"}),
+            "diarization": loaded.diarization.model_copy(update={"enabled": False}),
         }
     )
 

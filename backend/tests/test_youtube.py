@@ -479,6 +479,11 @@ def probed(monkeypatch: pytest.MonkeyPatch):
     return _install
 
 
+def _never_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the job out of the shared queue: its worker could outlive this test's stubs."""
+    monkeypatch.setattr(manager, "submit", lambda job, *args, **kwargs: 0)
+
+
 def video(**overrides: Any) -> VideoInfo:
     base = {
         "video_id": VIDEO_ID,
@@ -629,6 +634,50 @@ def test_a_speaker_name_posted_to_the_endpoint_never_reaches_the_job(
     job = manager.get_job(response.json()["job_id"])
     assert job is not None
     assert job.metadata == {"topic": "tech_gadgets", "speakers": {"spk0": {"role": "host"}}}
+
+
+@pytest.mark.db
+def test_the_forms_speaker_count_includes_rows_left_blank(
+    client: TestClient, probed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three rows, one filled in: the diarizer must still look for three voices (D79)."""
+    probed(video())
+    _never_queue(monkeypatch)
+
+    response = client.post(
+        "/ingest/youtube",
+        json={
+            "url": f"https://youtu.be/{VIDEO_ID}",
+            "speakers_json": json.dumps({"spk0": {"role": "host", "gender": "male"}}),
+            "speaker_count": 3,
+        },
+    )
+
+    assert response.status_code == 202
+    job = manager.get_job(response.json()["job_id"])
+    assert job is not None
+    assert job.metadata["speaker_count"] == 3
+    assert job.metadata["speakers"] == {"spk0": {"role": "host", "gender": "male"}}
+
+
+@pytest.mark.db
+@pytest.mark.parametrize(("count", "status"), [(8, 202), (9, 422), (-1, 422)])
+def test_an_episode_declares_at_most_eight_speakers(
+    client: TestClient, probed, monkeypatch: pytest.MonkeyPatch, count: int, status: int
+) -> None:
+    probed(video())
+    _never_queue(monkeypatch)
+    response = client.post(
+        "/ingest/youtube", json={"url": f"https://youtu.be/{VIDEO_ID}", "speaker_count": count}
+    )
+    assert response.status_code == status
+
+
+@pytest.mark.db
+def test_there_is_no_batch_endpoint(client: TestClient) -> None:
+    """Every video carries its own speakers, so metadata shared across a batch was always wrong."""
+    response = client.post("/ingest/youtube/batch", json={"urls": [f"https://youtu.be/{VIDEO_ID}"]})
+    assert response.status_code in (404, 405)
 
 
 def test_probe_bot_challenge_raises_youtube_bot_detected(
