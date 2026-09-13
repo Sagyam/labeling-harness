@@ -19,14 +19,13 @@ rather than a clean failure.
 
 from __future__ import annotations
 
-import hashlib
 import os
-import tempfile
 from pathlib import Path
 
-import httpx
+import httpx  # noqa: F401 -- the tests patch ``aligner_model.httpx.stream``
 
 from app.utils.logging import get_logger
+from app.utils.model_fetch import fetch_pinned
 
 logger = get_logger(__name__)
 
@@ -53,44 +52,16 @@ def download_disabled() -> bool:
     return os.environ.get(DISABLE_ENV, "").strip().lower() in ("1", "true", "yes")
 
 
-def _digest(path: Path) -> str:
-    sha = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
-
-
 def _fetch(remote: str, destination: Path, expected_sha: str, timeout: float) -> None:
-    """Stream one file into place, atomically, or leave nothing behind.
-
-    The download lands on a temporary file beside the destination and is renamed only after its
-    digest matches, so an interrupted transfer can never be mistaken for a usable model on the
-    next run.
-    """
-    url = f"https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REVISION}/{remote}"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=destination.parent, suffix=".part")
-    temp_path = Path(temp_name)
-    os.close(handle)
-
-    try:
-        with httpx.stream("GET", url, follow_redirects=True, timeout=timeout) as response:
-            response.raise_for_status()
-            with temp_path.open("wb") as out:
-                for chunk in response.iter_bytes(1 << 20):
-                    out.write(chunk)
-
-        actual = _digest(temp_path)
-        if actual != expected_sha:
-            raise ValueError(f"digest mismatch for {remote}: expected {expected_sha}, got {actual}")
-        temp_path.replace(destination)
-        # mkstemp creates 0600, and in the container this lands in a bind mount owned by root:
-        # left alone, the file the host cannot read is also one the host cannot delete.
-        destination.chmod(0o644)
-    except BaseException:
-        temp_path.unlink(missing_ok=True)
-        raise
+    """Stream one aligner file into place, atomically, or leave nothing behind."""
+    fetch_pinned(
+        repo=MODEL_REPO,
+        revision=MODEL_REVISION,
+        remote=remote,
+        destination=destination,
+        expected_sha=expected_sha,
+        timeout=timeout,
+    )
 
 
 def ensure_aligner_model(
