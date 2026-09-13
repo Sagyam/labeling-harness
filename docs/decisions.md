@@ -2229,3 +2229,42 @@ read. The threshold is a setting.
 **Reversal:** drop `speaker_overlap` from `INFO_FLAGS` and the overlap pass from ingest.
 Downgrade the migration to drop the column. Nothing ranked on the flag, so no queue or label
 changes.
+
+## D78 — Speaker turns are imported from a diarizer run after export, not computed by the harness
+
+Two new tables hold who spoke when:
+- `diarization_runs`: one diarization of one episode, with its model, source file, a checksum,
+  and the speakers ordered by talk time;
+- `speaker_turns`: the run's episode-relative turns, which may overlap.
+
+`scripts/import_diarization.py` loads them from the JSON that `notebooks/05-diarize.ipynb`
+writes, running pyannote's `speaker-diarization-community-1` over the retained episode audio on a
+GPU. The editor uses the newest run of the clip's episode to colour each word by its speaker.
+
+**This is D58's plan, carried out.** D58 took diarization out of ingest and said a serious tool
+should run after export, against the full episode, and be re-run when it improves. That is what
+this is. The harness stores the result and never runs the diarizer: no torch, no embeddings in
+the ingest path, no new stage. D52's "full-episode pass, joined by time" is the same design: a
+word's episode time is `segment.start_time + word.start_time`.
+
+**Why it can be trusted now.** pyannote and the EDA's ECAPA voice prints are independent systems.
+They agree on who is talking in 97.3% of 41,285 three-second windows across the 16 multi-speaker
+episodes, and in 99.2% of the windows pyannote calls single-speaker. The disagreements sit in turn
+changes and overlap, which the editor marks separately (D77).
+
+**Runs are append-only, like hypotheses.** A newer diarization of an episode is a new run, and the
+older one stays. "Current" is the newest run per episode. The same file imported twice is a no-op,
+keyed by a checksum over the model and the turns. Episodes in the file that the harness does not
+hold are reported and skipped, so one file can serve several databases.
+
+**Speaker numbers, not names.** A run's labels (`SPEAKER_00`) mean nothing outside that run, and
+diarization cannot say which voice is the declared host. The editor shows "Speaker 1, 2, ..." in
+talk-time order, which is stable across every clip of the episode. `segments.speaker_id` is
+untouched and still `spk0` (D56, D58). Per-speaker embeddings are stored with the run, so voices can
+be linked across episodes later; nothing reads them yet.
+
+**Cost.** About 1,000 turns per hour of audio: roughly 100 KB per hour in Postgres including the
+index, ~2.5 MB for today's corpus.
+
+**Reversal:** drop the two tables (the migration's `downgrade`), the import script and the notebook.
+Without turns the editor falls back to uncoloured words, as it was before.

@@ -241,3 +241,65 @@ class SegmentScore(Base):
     imported_at: Mapped[dt.datetime] = utc_now_column()
 
     segment: Mapped[Segment] = relationship(back_populates="scores")
+
+
+class DiarizationRun(Base):
+    """One imported diarization of one episode: who spoke when, from a tool run after export.
+
+    Diarization is not computed by the harness (D58). A serious diarizer runs over the retained
+    episode audio elsewhere -- on a GPU, re-run whenever it improves -- and its turns are imported
+    here (D78). Runs are append-only like hypotheses: a newer run for the same episode supersedes
+    an older one without deleting it, and "current" means the newest run per episode.
+    """
+
+    __tablename__ = "diarization_runs"
+    __table_args__ = (
+        UniqueConstraint("episode_id", "checksum"),
+        Index("ix_diarization_runs_episode_id", "episode_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The diarizer that produced the turns, e.g. ``pyannote/speaker-diarization-community-1``.
+    model: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Where the turns came from (a file name), for provenance only.
+    source: Mapped[str | None] = mapped_column(Text)
+    #: SHA-256 over the model and the episode's turns; re-importing the same run is a no-op.
+    checksum: Mapped[str] = mapped_column(String(80), nullable=False)
+    #: The run's speaker labels, most talk time first. A label's position is its display number,
+    #: so the dominant voice (usually the host) is "Speaker 1" in every clip of the episode.
+    speakers_jsonb: Mapped[list[str]] = mapped_column(JsonB, nullable=False)
+    #: Per-speaker voice embeddings as reported by the diarizer, keyed by label, when it gave any.
+    #: Kept so voices can be linked across episodes later; nothing reads them yet.
+    embeddings_jsonb: Mapped[dict[str, list[float]] | None] = mapped_column(JsonB)
+    created_at: Mapped[dt.datetime] = utc_now_column()
+
+    turns: Mapped[list[SpeakerTurn]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", order_by="SpeakerTurn.start_time"
+    )
+
+
+class SpeakerTurn(Base):
+    """One speaker talking from ``start_time`` to ``end_time``, **episode-relative** seconds.
+
+    Turns of different speakers may overlap: that is crosstalk, and it is kept rather than
+    resolved to one voice.
+    """
+
+    __tablename__ = "speaker_turns"
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="end_after_start"),
+        Index("ix_speaker_turns_run_start", "run_id", "start_time"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("diarization_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    speaker: Mapped[str] = mapped_column(String(64), nullable=False)
+    start_time: Mapped[float] = mapped_column(Float, nullable=False)
+    end_time: Mapped[float] = mapped_column(Float, nullable=False)
+
+    run: Mapped[DiarizationRun] = relationship(back_populates="turns")

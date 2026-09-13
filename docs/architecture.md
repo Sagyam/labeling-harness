@@ -64,6 +64,8 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `asr_hypotheses` | Immutable imported transcripts, one per (segment, system) |
 | `hypothesis_words` | Optional word-level timings, languages and scripts; times are **clip-relative** (D26) |
 | `segment_scores` | Imported agreement scores and rule flags, one row per segment |
+| `diarization_runs` | One imported diarization of one episode: model, checksum, speakers by talk time (D78) |
+| `speaker_turns` | A run's episode-relative turns; turns of different speakers may overlap |
 
 ### Annotation
 
@@ -346,6 +348,15 @@ halfway leaves the work it already did.
 
 The manifest importer (below) remains the other, equal-status way in: an upstream GPU pipeline can
 still produce `export_<episode_id>/` and `scripts/import_manifest.py` will ingest it.
+
+### Speaker turns (imported, never computed)
+
+Who spoke when is not an ingest stage. `notebooks/05-diarize.ipynb` runs pyannote
+`speaker-diarization-community-1` over the retained episode audio on a GPU and writes one JSON file;
+`scripts/import_diarization.py` stores it as one `diarization_runs` row per episode with its
+`speaker_turns` (D78). Runs are append-only and checksum-keyed; the newest per episode is current.
+The editor asks for the current run's turns inside the clip, clip-relative, with speakers numbered by
+talk time across the episode, and colours each timed word by the speaker talking at its midpoint.
 
 ### Known gaps
 

@@ -151,6 +151,7 @@ backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-ver
 backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
 backend/.venv/bin/python scripts/report_status.py    [--format html]
 backend/.venv/bin/python scripts/backfill_overlap.py [--episode show-a_ep012] [--force]
+backend/.venv/bin/python scripts/import_diarization.py diarization.json   # from notebooks/05-diarize.ipynb
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 ```
 

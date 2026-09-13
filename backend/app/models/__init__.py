@@ -9,10 +9,12 @@ from app.models.annotation import (
 from app.models.content import (
     AsrHypothesis,
     AsrSystem,
+    DiarizationRun,
     Episode,
     HypothesisWord,
     Segment,
     SegmentScore,
+    SpeakerTurn,
 )
 from app.models.ops import AuditLog, LlmRequest, TranslitCacheEntry
 from app.models.provenance import ImportRun
@@ -23,6 +25,7 @@ __all__ = [
     "AsrHypothesis",
     "AsrSystem",
     "AuditLog",
+    "DiarizationRun",
     "Episode",
     "HypothesisWord",
     "ImportRun",
@@ -31,5 +34,6 @@ __all__ = [
     "Segment",
     "SegmentLabel",
     "SegmentScore",
+    "SpeakerTurn",
     "TranslitCacheEntry",
 ]
