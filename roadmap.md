@@ -33,13 +33,18 @@ Focus exclusively on the winning architecture before touching secondary models o
      - **The standard is free.** `greedy+cap+retry` equals 04c's decoder: 11.53 vs 11.51, Δ +0.02
        [+0.00, +0.06]. The cap only stops a looping clip at 13 tokens/s of audio instead of
        300 tokens.
-     - **The cap is not in the code yet; add it with Phase 2's notebook.** It is a
-       `LogitsProcessor` passed to `generate`:
+     - **The cap is still not in the code; add it with the next notebook.** Phase 2 built it and
+       verified it, then its code was discarded with the experiment. It is a logits processor
+       passed to `generate`:
        - Each clip's cap is `min(300, ceil(13 × seconds))` tokens.
        - Once a row's generated length (`input_ids.shape[1]` minus the 10-token prompt) reaches its
          cap, set that row's scores to −inf except end-of-text.
        - Under beam search, row `r` belongs to clip `r // num_beams`.
        - The retry already caps its single-clip decode with `max_new_tokens`.
+       - A plain class with `__call__(input_ids, scores)` in a `transformers.LogitsProcessorList`
+         works with the Flex port's `generate`. On the A100, every clip of a batch stopped at
+         exactly its own cap.
+       - On the 2026-09-12 weights it reproduced gold 11.53% and val 7.57%.
      - **What earns its keep is the retry.** Greedy 13.31 → 11.51 by decoding 8 looping clips a
        second time.
      - **Global anti-repetition makes greedy worse:** repetition penalty 1.2 +1.11 points (202
@@ -60,6 +65,37 @@ Determine empirically whether data volume or distribution diversity is the bottl
 3. Compare against the 100% (18.3 h) baseline on the held-out **Val set** (4 unseen episodes).
    - If Val WER scales steeply ($12\% \to 9.5\% \to 7.6\%$), volume helps.
    - If Val WER is flat ($8.1\% \to 7.8\% \to 7.6\%$), the current distribution is saturated.
+4. **Stopped 2026-09-13 with one draw's 25% and 50% points.** The owner judged the answer clear:
+   **more hours of the same distribution do not help.** Go to Phase 3.
+   - **Design.** The experiment code was discarded after the run at the owner's request.
+     - Whole episodes are drawn per genre (podcast / tech review), each to the nearest fraction
+       of its hours in a seeded order. Within a draw the subsets nest: 25 ⊂ 50 ⊂ 75 ⊂ 100.
+     - Every point gets the full run's optimizer steps: its subset repeats within each epoch.
+     - Each run keeps its best epoch by val.
+     - Decision rule, fixed before the runs: a val gain from 50% to 100% of ≥ 1.0 means volume
+       helps; < 0.5 means saturated.
+     - Draw 1 and both 75% points were not run.
+
+     | point | hours | val WER | gold WER |
+     |---|---|---|---|
+     | 25%, draw 0 | 4.6 | 7.61 | 12.07 |
+     | 50%, draw 0 | 9.3 | 7.45 | 11.84 |
+     | 100% (2026-09-12 weights) | 18.3 | 7.57 | 11.53 |
+
+   - **Val is flat**, within the ~0.3 run-to-run noise. The rule reads −0.12 for 50%→100%:
+     saturated.
+   - **Gold falls ~0.25 per doubling.** Part of that gain is gold episodes entering training,
+     which new episodes would not give.
+   - **Paired gold test, 25%→50%.**
+     - Clips whose episode stays unseen gain +0.24 [−0.29, +0.77] from doubling the hours.
+     - Clips whose episode joins training gain +0.87 [+0.37, +1.42].
+     - So an episode's own speakers are worth +0.62 [−0.16, +1.39] beyond the hours. That points
+       at Phase 3 (new speakers), but the interval includes zero.
+   - **Caveats.**
+     - One draw only, so the spread between draws is unmeasured.
+     - Val is 83% one podcast.
+     - The curve is flat for this distribution (27 recurring voices, one tech-review host). That is
+       why new gold must be new speakers.
 
 ### Phase 3: Clean Gold Pot + Reallocate Current Gold to Train
 Fix episode/speaker leakage by constructing an uncompromised test benchmark:
@@ -106,6 +142,11 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
   - `best/`: bf16 weights loadable with `IndicTranscribe` (Private — Indic Open Model License v1.0).
   - `gold_metrics.json`: complete scores, greedy vs. retry metrics, and before/after text of all retried clips.
   - `hyps/indic-transcribe-flex-ft.jsonl`: cached hypotheses in bake-off format.
+  - `eval/{val,gold}.jsonl`, `eval/metrics.json`: the same weights under the standard decoder
+    (greedy + cap + retry), from the Phase 2 run. The files are per-clip text in bake-off format.
+- **Flex learning curve (Phase 2):** `flex-learning-curve/f{25,50}-d0/`
+  - `best/` weights, `history.json`, `subset.json` (the episodes it trained on), `eval/`.
+  - `f75-d0/` holds only a stopped run's `subset.json` and log; it has no weights and no `eval/`.
 - **Flex decoder search (Phase 1):** `flex-decoding/`
   - `arms/<gold|val>/<arm>.jsonl`: per-clip text and error counts for every decoder (standard: `greedy+cap+retry`; best but not adopted: `beam4+cap+rp1.1+retry`).
   - `summary.json`: the results table, paired deltas and noise floor. Its `pick` field holds the rule's choice, which the owner overrode.
