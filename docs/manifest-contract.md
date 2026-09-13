@@ -65,7 +65,8 @@ export_<episode_id>/
     "code_switch_density": 0.42
   },
   "flags": ["repeated_ngram"],
-  "vad_spans": [[0.12, 3.40], [3.90, 7.05]]
+  "vad_spans": [[0.12, 3.40], [3.90, 7.05]],
+  "overlap_spans": [[5.10, 5.92]]
 }
 ```
 
@@ -93,6 +94,10 @@ Rules:
   this clip as `[[start, end], ...]`. It is the only timing in the manifest a transcriber did not
   produce, which is what lets `missed_speech` tell "no system wrote anything here" apart from
   "there was nothing to write". Omit it and that flag simply never fires (D55).
+- `overlap_spans` is optional and clip-relative too: the stretches where two or more people talk
+  at once, as `[[start, end], ...]`. `[]` means the clip was measured and is clean, and it is
+  stored as `[]`; omitting the key means it was never measured. Enough of it raises the
+  `speaker_overlap` heads-up, which is never scored (D77).
 - Clips are **16 kHz mono FLAC**. Reject WAV or MP3 clips at import with a clear error — the source
   is already lossy and re-encoding the exact audio you will train on is not acceptable. The original
   episode file is archived separately and is not needed by the harness.

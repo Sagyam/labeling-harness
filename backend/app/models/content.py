@@ -110,6 +110,10 @@ class Segment(Base):
     #: "no system wrote anything here" be told apart from "there was nothing to write" (D55).
     #: Null for anything imported before the spans were recorded.
     vad_spans_jsonb: Mapped[list[list[float]] | None] = mapped_column(JsonB)
+    #: Clip-relative stretches where two or more people talk at once, as ``[[start, end], ...]``,
+    #: from the overlap detector (D77). ``[]`` means measured and clean; null means never measured
+    #: -- the two must not be conflated, because only the first is evidence of a clean clip.
+    overlap_spans_jsonb: Mapped[list[list[float]] | None] = mapped_column(JsonB)
 
     pipeline_status: Mapped[str] = mapped_column(String(16), nullable=False, default="imported")
     #: ``gold`` or ``train``, chosen for this one clip by hand (D71). Every move writes an

@@ -251,6 +251,8 @@ class QueueSettings(BaseModel):
     min_speaking_rate_wps: float = 0.3
     repeated_ngram_size: int = 4
     repeated_ngram_threshold: int = 3
+    #: Seconds of overlapped speech in a clip that raise the ``speaker_overlap`` heads-up (D77).
+    overlap_flag_min_seconds: float = 0.5
 
 
 class TranslitSettings(BaseModel):

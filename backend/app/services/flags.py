@@ -25,6 +25,12 @@ ALL_FLAGS: tuple[str, ...] = (
     "missed_speech",
 )
 
+#: Flags raised for the annotator's attention and nothing else. They are shown and exported like
+#: any flag but are deliberately outside :data:`ALL_FLAGS`, so ``rule_flag_score`` never counts
+#: them: overlapped speech is a fact about the audio, not evidence that the transcript is wrong,
+#: and ranking, gating or dropping clips on it would bias the corpus toward single speakers (D77).
+INFO_FLAGS: tuple[str, ...] = ("speaker_overlap",)
+
 #: Share of a clip's detected speech that no system placed a word over before it is suspicious.
 #: Generous on purpose: the VAD pads turns by 150 ms and word spans do not cover breath or
 #: hesitation, so a small uncovered remainder is normal rather than evidence of a dropped phrase.
@@ -100,11 +106,27 @@ def _uncovered_speech_fraction(
     return max(0.0, 1.0 - heard / speech)
 
 
+def overlap_flag_raised(
+    overlap_spans: Sequence[Sequence[float]] | None, settings: Settings | None = None
+) -> bool:
+    """Whether a clip's overlapped speech adds up to ``queue.overlap_flag_min_seconds``.
+
+    The one rule behind ``speaker_overlap``, shared by import and the backfill so a clip gets the
+    same answer whichever way its spans arrived.
+    """
+    if not overlap_spans:
+        return False
+    settings = settings or get_settings()
+    overlapped = sum(max(0.0, float(end) - float(start)) for start, end in overlap_spans)
+    return overlapped >= settings.queue.overlap_flag_min_seconds
+
+
 def compute_flags(
     *,
     duration_seconds: float,
     hypotheses: Sequence[FlagHypothesis],
     vad_spans: Sequence[tuple[float, float]] | None = None,
+    overlap_spans: Sequence[tuple[float, float]] | None = None,
     settings: Settings | None = None,
 ) -> list[str]:
     """Compute the rule flags for one segment.
@@ -115,10 +137,13 @@ def compute_flags(
         vad_spans: Clip-relative speech detected by the VAD, when the segment carries it.
             Without it ``missed_speech`` cannot fire, which is what keeps segments imported
             before the spans existed from all looking defective.
+        overlap_spans: Clip-relative stretches where two or more people talk at once, when the
+            overlap detector ran. ``speaker_overlap`` fires when they add up to
+            ``queue.overlap_flag_min_seconds``.
         settings: Thresholds; defaults to the loaded configuration.
 
     Returns:
-        Sorted, de-duplicated flag names drawn from :data:`ALL_FLAGS`.
+        Sorted, de-duplicated flag names drawn from :data:`ALL_FLAGS` and :data:`INFO_FLAGS`.
     """
     settings = settings or get_settings()
     cfg = settings.queue
@@ -154,6 +179,9 @@ def compute_flags(
         uncovered = _uncovered_speech_fraction(vad_spans, hypotheses)
         if uncovered is not None and uncovered > MISSED_SPEECH_FRACTION:
             raised.add("missed_speech")
+
+    if overlap_flag_raised(overlap_spans, settings):
+        raised.add("speaker_overlap")
 
     if len(hypotheses) > 1:
         ratios = [_devanagari_ratio(h.text) for h in hypotheses if h.text.strip()]

@@ -81,6 +81,15 @@
         "minItems": 2,
         "maxItems": 2
       }
+    },
+    "overlap_spans": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "array",
+        "items": {"type": "number"},
+        "minItems": 2,
+        "maxItems": 2
+      }
     }
   },
   "additionalProperties": true

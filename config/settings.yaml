@@ -89,6 +89,7 @@ queue:
   min_speaking_rate_wps: 0.3
   repeated_ngram_size: 4
   repeated_ngram_threshold: 3
+  overlap_flag_min_seconds: 0.5  # overlapped speech in a clip that raises the speaker_overlap heads-up (D77)
 
 translit:
   provider_order:

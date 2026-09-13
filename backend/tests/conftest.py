@@ -22,6 +22,10 @@ from sqlalchemy.orm import Session
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEST_DB_URL = "postgresql+psycopg://harness:harness@localhost:5432/harness_test"
 
+# The suite never downloads the overlap detector: an ingest that finds no model leaves its clips
+# unmeasured, which is a supported state. Tests that need detections inject a stand-in.
+os.environ.setdefault("HARNESS_OVERLAP_NO_DOWNLOAD", "1")
+
 
 def test_database_url() -> str:
     """URL of the throwaway database the suite runs against."""

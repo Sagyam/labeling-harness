@@ -500,6 +500,8 @@ def import_manifest(
                 pipeline_status="imported",
                 import_run_id=run.id,
                 vad_spans_jsonb=record.get("vad_spans") or None,
+                # ``[]`` survives as ``[]``: measured and clean is not the same as never measured.
+                overlap_spans_jsonb=record.get("overlap_spans"),
             )
             session.add(segment)
             session.flush()
@@ -527,6 +529,9 @@ def import_manifest(
                 ],
                 vad_spans=[(float(a), float(b)) for a, b in (record.get("vad_spans") or [])]
                 or None,
+                overlap_spans=[
+                    (float(a), float(b)) for a, b in (record.get("overlap_spans") or [])
+                ],
                 settings=settings,
             )
             session.add(

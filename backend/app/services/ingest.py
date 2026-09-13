@@ -54,6 +54,7 @@ from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.forced_align import ForcedAligner, align_text
 from app.services.fusion_stage import FUSION_KIND, fuse_records
 from app.services.importer import import_manifest
+from app.services.overlap import OverlapDetector, spans_within
 from app.services.queue_builder import build_queue
 from app.services.silero_vad import (
     SileroVAD,
@@ -1097,6 +1098,7 @@ def run_pipeline(
     settings: Settings | None = None,
     *,
     keep_work_dir: bool = False,
+    overlap_detector: OverlapDetector | None = None,
 ) -> None:
     """Run all 5 stages synchronously inside background worker thread.
 
@@ -1108,6 +1110,8 @@ def run_pipeline(
         keep_work_dir: Retain the scratch directory after the run, for debugging. It holds the
             uploaded source, the normalized FLAC and every extracted clip, all of which are
             already persisted elsewhere by the time the run finishes.
+        overlap_detector: Finds overlapped speech in the episode (D77). Defaults to the ONNX
+            detector, which fetches its model on first use; without one, clips go unmeasured.
     """
     settings = settings or get_settings()
     storage = storage or build_storage(settings)
@@ -1115,7 +1119,7 @@ def run_pipeline(
     try:
         if job.audio_path is None and not _fetch_source_audio(job, settings):
             return
-        _run_stages(job, session_factory, storage, settings)
+        _run_stages(job, session_factory, storage, settings, overlap_detector)
     finally:
         if not keep_work_dir:
             shutil.rmtree(job.work_dir, ignore_errors=True)
@@ -1218,11 +1222,37 @@ def _halted(job: IngestJob, *, segments_detected: int = 0, segments_transcribed:
     return True
 
 
+def _detect_overlap(
+    job: IngestJob,
+    detector: OverlapDetector | None,
+    audio: Any,
+    sample_rate: int,
+) -> list[tuple[float, float]] | None:
+    """Overlapped speech over the whole episode, or ``None`` when it could not be measured.
+
+    A heads-up for the annotator, not a stage the episode depends on (D77): a missing model or a
+    failure is logged and the clips simply go unmeasured.
+    """
+    try:
+        detector = detector if detector is not None else OverlapDetector()
+        spans = detector.detect(audio, sample_rate)
+    except Exception as exc:
+        job.log(f"Overlap detection skipped: {type(exc).__name__}: {exc}")
+        return None
+    if spans is None:
+        job.log("Overlap detection skipped: no model available")
+        return None
+    seconds = sum(end - start for start, end in spans)
+    job.log(f"Detected {seconds:.1f}s of overlapped speech in {len(spans)} stretches")
+    return spans
+
+
 def _run_stages(
     job: IngestJob,
     session_factory: Callable[[], Session],
     storage: ObjectStorage,
     settings: Settings,
+    overlap_detector: OverlapDetector | None = None,
 ) -> None:
     """The five pipeline stages. Every failure is reported through ``job.fail`` and returns.
 
@@ -1264,6 +1294,8 @@ def _run_stages(
 
         slices = segment_audio_to_slices(turns, duration, audio=audio_data, sample_rate=sr)
         job.log(f"Partitioned into {len(slices)} bounded utterances (2.0s - 20.0s)")
+
+        overlap = _detect_overlap(job, overlap_detector, audio_data, sr)
 
         clips_dir = job.work_dir / "clips"
         segments = extract_clips(
@@ -1478,6 +1510,13 @@ def _run_stages(
                         "clip_path": seg.clip_rel_path,
                         "clip_checksum": seg.clip_checksum,
                         "vad_spans": speech_spans_within(turns, seg.start_time, seg.end_time),
+                        # Absent, not empty, when the detector did not run: never measured is not
+                        # the same as measured and clean (D77).
+                        **(
+                            {"overlap_spans": spans_within(overlap, seg.start_time, seg.end_time)}
+                            if overlap is not None
+                            else {}
+                        ),
                         "hypotheses": hypotheses,
                         "scores": {
                             "cmi": analysis.cmi,

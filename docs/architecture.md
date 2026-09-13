@@ -59,7 +59,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 |---|---|
 | `import_runs` | One row per import invocation, with counts and status |
 | `episodes` | Episode metadata plus the **frozen** train/val/test split |
-| `segments` | Time span, clip and peaks object keys, `pipeline_status`, VAD speech spans |
+| `segments` | Time span, clip and peaks object keys, `pipeline_status`, VAD speech spans, overlapped-speech spans (D77) |
 | `asr_systems` | One row per upstream ASR system |
 | `asr_hypotheses` | Immutable imported transcripts, one per (segment, system) |
 | `hypothesis_words` | Optional word-level timings, languages and scripts; times are **clip-relative** (D26) |
@@ -189,7 +189,16 @@ outside the list is stored on the segment but contributes nothing to the score.
 system over it (D55). It is the one flag that does not read a transcript: `segments.vad_spans_jsonb`
 is the only timing in the schema that a transcriber did not produce, so it is what separates "no
 system wrote anything here" from "there was nothing to write". It cannot fire on a segment with no
-stored spans, or on one where no system reported word timings. The importer
+stored spans, or on one where no system reported word timings.
+
+`speaker_overlap` is outside that vocabulary on purpose (`INFO_FLAGS`, D77). It fires when a
+clip's `segments.overlap_spans_jsonb` adds up to `queue.overlap_flag_min_seconds` (0.5 s) of two or
+more people talking at once, and it is a heads-up for the annotator only: it is shown as a chip and
+exported, but `rule_flag_score` never counts it, so it moves no clip in the queue, gates nothing
+and excludes nothing. Crosstalk explains a large share of the podcast errors, and ranking or
+dropping on it would bias the corpus toward single speakers.
+
+The importer
 computes them itself, over every hypothesis of the segment, and unions the result with whatever
 `flags` the manifest carried: `flags_jsonb = sorted(received | computed)`. That is the one place
 the harness does not simply store what it receives.
@@ -218,7 +227,12 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
    clip as alias (D39).
 2. **Segment** — Silero VAD (ONNX, CPU) cuts on speech turns padded by 150 ms, bounded to 2.0 s–20.0 s,
    snapping long-turn subdivisions to low-energy pauses with a 15 ms raised-cosine edge fade so
-   slices do not click.
+   slices do not click. The same pass measures **overlapped speech** over the whole episode with
+   pyannote's segmentation-3.0 in ONNX (`app/services/overlap.py`, ~25 s of CPU per hour of
+   audio, D77) and gives each clip its clip-relative share. The model is fetched on first use,
+   pinned and digest-checked; without it, or if it fails, the clips are simply left unmeasured.
+   Episodes imported before it existed are measured by `scripts/backfill_overlap.py` from their
+   retained audio.
 3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip,
    producing one ASR system per route, in the order the routes are written. Transcribers for a
    segment run concurrently via a worker pool with a shared `httpx.Client` for HTTP connection

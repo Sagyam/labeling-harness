@@ -1556,3 +1556,79 @@ def test_youtube_batch_ingest_endpoint(client: TestClient, monkeypatch: pytest.M
     assert data["errors"] == []
     _drain()
     manager.reset()
+
+
+# --- overlapped speech at ingest (D77) --------------------------------------------------------
+
+
+class _StubOverlap:
+    """Stands in for :class:`OverlapDetector`: fixed episode-relative spans, or a failure."""
+
+    def __init__(self, spans=None, *, error: Exception | None = None) -> None:
+        self.spans, self.error, self.calls = spans, error, 0
+
+    def detect(self, audio, sample_rate):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.spans
+
+
+def _ingest_with(
+    db_session: Session, object_storage, settings, tmp_path: Path, detector, name: str
+):
+    job = IngestJob(
+        job_id=f"test-job-{name}",
+        episode_id=f"ov_{name}",
+        show_id="podcast",
+        title="Overlap Test Episode",
+        audio_path=make_test_audio(tmp_path / f"{name}.wav", duration_seconds=6.0),
+        work_dir=tmp_path / f"work_{name}",
+    )
+    run_pipeline(
+        job,
+        session_factory=lambda: db_session,
+        storage=object_storage,
+        settings=settings,
+        overlap_detector=detector,
+    )
+    assert job.error is None, job.error
+    episode = db_session.scalar(sa.select(Episode).where(Episode.external_id == f"ov_{name}"))
+    segments = db_session.scalars(sa.select(Segment).where(Segment.episode_id == episode.id)).all()
+    return job, sorted(segments, key=lambda s: s.start_time)
+
+
+def test_overlap_is_detected_once_per_episode_and_stored_per_clip(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    detector = _StubOverlap(spans=[(0.5, 1.5)])
+    job, segments = _ingest_with(db_session, object_storage, settings, tmp_path, detector, "found")
+    assert detector.calls == 1
+    assert all(s.overlap_spans_jsonb is not None for s in segments)
+    first = segments[0]
+    assert first.start_time <= 0.5
+    expected = [
+        [round(0.5 - first.start_time, 3), round(min(1.5, first.end_time) - first.start_time, 3)]
+    ]
+    assert first.overlap_spans_jsonb == expected
+    assert "speaker_overlap" in first.scores.flags_jsonb
+    assert any("overlap" in item.message.lower() for item in job.logs)
+
+
+def test_without_an_overlap_model_clips_are_left_unmeasured(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    _, segments = _ingest_with(
+        db_session, object_storage, settings, tmp_path, _StubOverlap(spans=None), "absent"
+    )
+    assert all(s.overlap_spans_jsonb is None for s in segments)
+
+
+def test_a_failing_overlap_detector_never_fails_the_ingest(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    detector = _StubOverlap(error=RuntimeError("onnx exploded"))
+    job, segments = _ingest_with(db_session, object_storage, settings, tmp_path, detector, "broken")
+    assert job.status == "completed"
+    assert all(s.overlap_spans_jsonb is None for s in segments)
+    assert any("onnx exploded" in item.message for item in job.logs)

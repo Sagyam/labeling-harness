@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from app.config import load_settings
-from app.services.flags import ALL_FLAGS, FlagHypothesis, compute_flags, rule_flag_score
+from app.services.flags import (
+    ALL_FLAGS,
+    INFO_FLAGS,
+    FlagHypothesis,
+    compute_flags,
+    rule_flag_score,
+)
 
 SETTINGS = load_settings()
 
@@ -101,7 +107,7 @@ def test_flags_are_sorted_and_unique() -> None:
 
 def test_every_flag_is_declared() -> None:
     result = flags(duration=0.2, hypotheses=[hyp("")])
-    assert set(result) <= set(ALL_FLAGS)
+    assert set(result) <= set(ALL_FLAGS) | set(INFO_FLAGS)
 
 
 def test_rule_flag_score_is_the_fraction_of_flags_raised() -> None:
@@ -182,3 +188,40 @@ def test_without_word_spans_the_flag_cannot_fire() -> None:
 
 def test_missed_speech_is_part_of_the_flag_vocabulary() -> None:
     assert "missed_speech" in ALL_FLAGS
+
+
+# --- speaker overlap: a heads-up, never a ranking signal (D77) ---------------------------------
+
+
+def overlap_flags(spans: list[tuple[float, float]] | None) -> list[str]:
+    return compute_flags(
+        duration_seconds=10.0, hypotheses=[hyp()], overlap_spans=spans, settings=SETTINGS
+    )
+
+
+def test_overlap_at_the_threshold_raises_the_heads_up() -> None:
+    threshold = SETTINGS.queue.overlap_flag_min_seconds
+    assert "speaker_overlap" in overlap_flags([(2.0, 2.0 + threshold)])
+
+
+def test_overlap_below_the_threshold_raises_nothing() -> None:
+    threshold = SETTINGS.queue.overlap_flag_min_seconds
+    assert "speaker_overlap" not in overlap_flags([(2.0, 2.0 + threshold / 2)])
+
+
+def test_overlap_adds_up_across_spans() -> None:
+    half = SETTINGS.queue.overlap_flag_min_seconds / 2 + 0.01
+    assert "speaker_overlap" in overlap_flags([(1.0, 1.0 + half), (5.0, 5.0 + half)])
+
+
+def test_unmeasured_or_absent_overlap_cannot_raise_the_flag() -> None:
+    assert "speaker_overlap" not in overlap_flags(None)
+    assert "speaker_overlap" not in overlap_flags([])
+
+
+def test_the_overlap_flag_is_a_heads_up_and_never_scored() -> None:
+    """Overlap is a warning for the annotator, not a reason to rank, gate or drop a clip."""
+    assert "speaker_overlap" in INFO_FLAGS
+    assert "speaker_overlap" not in ALL_FLAGS
+    assert rule_flag_score(["speaker_overlap"]) == 0.0
+    assert rule_flag_score(["too_short", "speaker_overlap"]) == rule_flag_score(["too_short"])

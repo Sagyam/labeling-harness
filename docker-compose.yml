@@ -57,6 +57,7 @@ services:
       # fetched once. Set HARNESS_ALIGNER_NO_DOWNLOAD=1 to keep the old skip-spans mode.
       HARNESS_ALIGNER_MODEL_DIR: /app/data/models
       HARNESS_ALIGNER_NO_DOWNLOAD: ${HARNESS_ALIGNER_NO_DOWNLOAD:-}
+      HARNESS_OVERLAP_NO_DOWNLOAD: ${HARNESS_OVERLAP_NO_DOWNLOAD:-}
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
     volumes:

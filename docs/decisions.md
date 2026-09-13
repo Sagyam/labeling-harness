@@ -2174,3 +2174,58 @@ speaker-held-out test without emptying the training set.
 
 **Reversal:** delete `clear_of_gold`, `_gold_spans` and the manifest field. Doing so puts gold
 audio back into training exports.
+
+## D77 — Overlapped speech is measured at ingest and raised as a heads-up, never scored
+
+Every clip now carries `segments.overlap_spans_jsonb`: the clip-relative stretches where two or
+more people talk at once. A clip with at least `queue.overlap_flag_min_seconds` (0.5 s) of it
+gets the `speaker_overlap` flag. The flag is a chip in the editor and a field in the export, and
+nothing else: it is listed in `INFO_FLAGS`, outside `ALL_FLAGS`, so `rule_flag_score` never
+counts it, and no gate, pot rule or export filter reads it.
+
+**Why measure it.** Crosstalk is the largest error factor found in the corpus (roadmap §3,
+2026-09-13). Within an episode, each 10 points of a clip's overlap share multiplies Flex's error
+rate by 1.49 [1.32, 1.69]. Podcast WER is 9.0% on clips without overlap and 24.3% above 15%,
+mostly dropped words. Speaking rate and code-mixing show no effect once the episode is held
+fixed. A number that large belongs next to CMI and speaking rate in every evaluation, and in
+front of the annotator on the clip it affects.
+
+**Why a heads-up and not a ranking signal.** Overlap is a property of the audio, not evidence
+that the transcript is wrong. Scoring it would push overlapped clips up the queue for no reason
+the annotator can act on. Gating or dropping them would bias the corpus toward single speakers
+and flatter every WER computed on it, which the owner called cheating. So the clips stay in
+every pot and every export, and the flag tells the annotator where the audio is hardest and
+where the seed, fused from recognisers that each followed one voice, is least reliable.
+
+**Why detection runs locally, when D58 took diarization out of ingest.** D58 removed a
+clustering diarizer: speaker *identity* from voice embeddings, 80-90% correct and expensive.
+Overlap *detection* needs no identity. pyannote's segmentation model alone says how many local
+speakers are active in each ~17 ms frame. The embedding and clustering steps, which cost 97% of
+pyannote's CPU time, only link those local speakers into episode-wide identities. So this runs:
+- **cheaply:** about 25 s of CPU per hour of audio on four threads, inside the VAD stage that
+  already holds the episode in memory;
+- **without torch (D32):** `app/services/overlap.py` ports pyannote's `speaker_count` to numpy
+  and onnxruntime, over the public MIT export `onnx-community/pyannote-segmentation-3.0`. The
+  graph is fetched on first use, pinned to a commit and digest-checked, as the aligner is (D42);
+- **faithfully:** on a 10-minute podcast excerpt the port matched pyannote 4.0.7's speaker count
+  from `speaker-diarization-community-1` on all 35,552 frames, with the same 7.7 s of overlap.
+  Speaker identity still does not come from ingest.
+
+**`[]` is not null.** An empty list is a clip the detector read and found clean; null is a clip
+nobody measured. The importer keeps them apart, unlike `vad_spans` (D55), because an evaluation
+that reads overlap must not count unmeasured clips as clean ones. A missing model or a detector
+failure leaves the clips null and the episode completes.
+
+**Already-imported episodes** are measured by `scripts/backfill_overlap.py` from the episode audio
+retained under D62. It writes one `audit_logs` row per episode. It updates the stored flags, and
+the `flags` list in open tasks' reasons, where the editor reads its chips. It does not rebuild the
+queue: the flag is not scored, and an episode-scoped rebuild would re-draw that episode's audit
+sample.
+
+**Why 0.5 s.** 25% of podcast clips have some overlap and 14% have half a second or more. Below
+that the overlap is mostly a clipped backchannel, and a chip on every fourth clip stops being
+read. The threshold is a setting.
+
+**Reversal:** drop `speaker_overlap` from `INFO_FLAGS` and the overlap pass from ingest.
+Downgrade the migration to drop the column. Nothing ranked on the flag, so no queue or label
+changes.

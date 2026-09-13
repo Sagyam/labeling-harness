@@ -497,3 +497,47 @@ def test_the_database_refuses_an_unknown_system_kind(db_session: Session) -> Non
     db_session.add(AsrSystem(system_id="odd", kind="oracle"))
     with pytest.raises(IntegrityError):
         db_session.flush()
+
+
+# --- overlapped speech (D77) -------------------------------------------------------------
+
+
+def test_overlap_spans_are_stored_and_raise_the_heads_up(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Three states: spans that add up to the threshold, measured-and-none, and never measured.
+    ``[]`` and ``None`` must not collapse into each other: only the first is a clean clip."""
+    root = build_export_fixture(tmp_path / "export_ov", episode_id="ov_ep", segments=3, systems=2)
+    path = root / "segments.jsonl"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    records[0]["overlap_spans"] = [[1.0, 2.0]]
+    records[1]["overlap_spans"] = []
+    records[2].pop("overlap_spans", None)
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in records), encoding="utf-8")
+
+    run_import(db_session, root, storage, settings)
+
+    def segment(record: dict) -> Segment:
+        return db_session.scalars(
+            sa.select(Segment).where(Segment.external_id == record["segment_id"])
+        ).one()
+
+    overlapped, clean, unmeasured = (segment(r) for r in records)
+    assert overlapped.overlap_spans_jsonb == [[1.0, 2.0]]
+    assert "speaker_overlap" in overlapped.scores.flags_jsonb
+    assert clean.overlap_spans_jsonb == []
+    assert "speaker_overlap" not in clean.scores.flags_jsonb
+    assert unmeasured.overlap_spans_jsonb is None
+    assert "speaker_overlap" not in unmeasured.scores.flags_jsonb
+
+
+def test_malformed_overlap_spans_are_rejected(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    root = build_export_fixture(tmp_path / "export_ovx", episode_id="ovx_ep", segments=1, systems=2)
+    path = root / "segments.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["overlap_spans"] = [[1.0]]
+    path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ImportError_):
+        run_import(db_session, root, storage, settings)
