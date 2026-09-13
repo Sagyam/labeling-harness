@@ -453,11 +453,13 @@ for name in ("train", "val"):
     kept = []
     for r in splits[name]:
         ids = encode(normalize(r["text"]))
-        if (UNK is None or not bool((ids == UNK).any())) and len(ids) < ftkit.duration(r) * FRAMES_PER_S:
+        # fairseq2's BatchLayout rejects a zero-length target, so a clip whose text is empty (one
+        # 2 s train clip with no speech) cannot train.
+        if (UNK is None or not bool((ids == UNK).any())) and 0 < len(ids) < ftkit.duration(r) * FRAMES_PER_S:
             r["ids"] = ids.tolist()
             kept.append(r)
-    print(f"{name}: dropped {len(splits[name]) - len(kept)} clip(s) with an unknown character or an "
-          "impossible CTC alignment", flush=True)
+    print(f"{name}: dropped {len(splits[name]) - len(kept)} clip(s) with an unknown character, an empty "
+          "target or an impossible CTC alignment", flush=True)
     splits[name] = kept
 
 # The official recipe always freezes the convolutional feature extractor (recipe.py).
