@@ -121,6 +121,13 @@ topic and speaker, the distribution of English mixed in and how far apart the sh
 two pots against their targets, which episode records have unfilled or off-taxonomy fields, and a
 sortable row per show and per episode. Everything is derived on read; nothing is stored.
 
+**Models** (`8`) is for iterating on the ASR fine-tune. After a 04c run, copy its `harness/`
+folder from Drive to `data/models/asr/<slug>/` and press **Rescan**. The page scores the model's
+gold and val transcripts against the current labels (the notebook's numbers, no GPU needed) and
+lists the clips it got wrong, worst first. For each clip you can play it with crosstalk shaded on
+the waveform and read the folded diff, where every coloured mark is one counted error. Click a
+genre or crosstalk bar to filter; `j`/`k` walk the clips, `Space` plays and `r` replays.
+
 ### Keyboard
 
 | Triage | | Editor | |
@@ -153,6 +160,7 @@ backend/.venv/bin/python scripts/report_status.py    [--format html]
 backend/.venv/bin/python scripts/backfill_overlap.py [--episode show-a_ep012] [--force]
 backend/.venv/bin/python scripts/diarize_episode.py  show-a_ep012 [--num-speakers 2]   # on the Modal GPU
 backend/.venv/bin/python scripts/import_diarization.py diarization.json   # turns made elsewhere
+backend/.venv/bin/python scripts/import_models.py    [data/models/asr/flex-ft]   # fine-tuned models (D83)
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 ```
 

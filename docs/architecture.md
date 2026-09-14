@@ -20,7 +20,8 @@ backend/app/
   models/          SQLAlchemy ORM models -- one module per concept group
   schemas/         JSON Schema for the manifest (episode.schema.json, segment.schema.json)
   services/        ingest pipeline (audio, silero_vad, analysis, youtube), importer, peaks,
-                   scoring, queue builder, labeling, corpus, export, reporting
+                   scoring, queue builder, labeling, corpus, export, reporting,
+                   model_eval / model_import / model_browse (fine-tuned models, D83)
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
   llm/             base (retry, dry-run, request log), openrouter, elevenlabs, and the
@@ -66,6 +67,18 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `segment_scores` | Imported agreement scores and rule flags, one row per segment |
 | `diarization_runs` | One imported diarization of one episode: model, checksum, speakers by talk time (D78) |
 | `speaker_turns` | A run's episode-relative turns; turns of different speakers may overlap |
+
+### Fine-tuned models (D83)
+
+| Table | Purpose |
+|---|---|
+| `asr_models` | One fine-tuned model per `data/models/asr/<slug>/` folder; the notebook's `model_card.json` kept whole |
+| `model_eval_runs` | One import of a model's `gold.jsonl` or `val.jsonl`: decoder, `fold_version`, metrics (WER + episode CI, raw WER, CER, loops, by genre, by crosstalk, skipped clips); sha256-keyed |
+| `model_eval_clips` | Per clip: the model's text, a snapshot of the reference it was scored against, folded/raw/char counts, loop flag, overlap share at import |
+
+The model's text never enters `asr_hypotheses`, so it cannot reach disagreement, the queue or an
+export. The harness never runs a model: the notebook transcribes on a GPU and the page scores the
+text with `fold.py`, exactly as the notebook does.
 
 ### Annotation
 
@@ -447,6 +460,11 @@ the same inputs and filters produce byte-identical output.
 | `GET /export/history` | List previous exported dataset artifacts on disk |
 | `GET /costs` | Aggregate AI inference cost report across ElevenLabs, OpenRouter, and Google |
 | `GET /costs/requests` | Filterable, paginated audit ledger of all external AI requests and incurred spend |
+| `GET /models` | Fine-tuned models with every imported run and its metrics (D83) |
+| `GET /models/{slug}` | One model, its card and runs |
+| `POST /models/rescan` | Import every folder under `models.root` (default `data/models/asr/`); all or nothing, 422 on a bad folder |
+| `GET /model-runs/{id}/clips` | A run's clips; `sort` (errors, wer, deletions, insertions, substitutions, duration, overlap), `order`, `genre`, `overlap`, `loops_only`, `min_errors`, `offset`, `limit` |
+| `GET /model-runs/{id}/clips/{segment_id}` | One clip with the folded alignment ops behind its counts |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
 `annotation_events` row carrying the client-reported elapsed time, and an `audit_logs` entry.
@@ -479,6 +497,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodeManagerModal.tsx` | Browse episodes and segments, delete either |
+| Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns, and the clips worst first with audio and the folded diff (D83) |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
 
 Audio is never decoded in the browser to draw a waveform (D8), and clips are streamed from

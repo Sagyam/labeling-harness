@@ -2407,3 +2407,61 @@ against the labels, not written on every task forever.
 
 **Reversal:** restore `LegacyQueueWeights`, `LegacyInputs`, `_legacy_reason`, the `legacy`
 argument of `priority_score` and the `_seed_outvoted` helper from git (D54/D74 record the weights).
+
+## D83 — Fine-tuned models are scored in the harness from the notebook's text, never run in it
+
+A **Models** page lists every fine-tuned model with its gold and val scores and, mainly, the clips
+it got wrong, worst first: play the clip, read the folded diff, filter by genre, crosstalk or
+loops. The fine-tuning notebook (04c) writes `OUT/harness/`: `model_card.json` plus per-clip
+`gold.jsonl` and `val.jsonl` from the best weights. The owner copies that folder to
+`data/models/asr/<slug>/`, and `POST /models/rescan` (or `scripts/import_models.py`) imports it.
+Three tables hold the result: `asr_models`, `model_eval_runs` (one per imported file) and
+`model_eval_clips`.
+
+**The harness scores text; it does not run the model.** The option was CPU inference of an int8
+ONNX export on the owner's machine. It was declined for scoring, for two reasons:
+- **Speed.** The notebook transcribes gold at ~630x realtime on the A100. The same 2.3 h on an
+  8-core CPU is an unmeasured estimate of 10–30 min per run.
+- **It is a different model.** Quantization shifts WER by an unmeasured amount, likely near the
+  ~0.3-point run-to-run noise. CPU-scored runs would not compare like-for-like with the bf16
+  numbers in `roadmap.md`.
+
+So no inference happens here, nothing is routed through `llm_routes.yaml`, and invariant 6 is not
+touched. A future mic playground that does run a model locally needs its own decision.
+
+**Scoring is the notebook's scoring**, so the page and the roadmap cannot disagree:
+- WER is `fold.word_errors`, folded and raw, pooled over words;
+- CER is over folded tokens, with Latin lower-cased;
+- a loop is a 3-word run repeated 5 or more times (`ftkit.harness_scorer`, `ftkit.is_loop`);
+- references are the current labels, normalized exactly as the export normalizes them.
+
+On the 2026-09-12 Flex output this reproduces 11.53% folded / 14.52% raw / 8.07% CER on gold and
+7.57% on val.
+
+A run also carries a WER interval from resampling whole episodes, and breakdowns by genre and by
+the roadmap's crosstalk buckets. Clicking a breakdown bar filters the clips. The clip's diff is
+drawn from the backend's alignment ops, so every mark is one counted error. The editor's raw
+`DiffViewer` would mark `टिम`/`team`.
+
+**Separate tables, never `asr_hypotheses`.** A fine-tuned model is not a recogniser of the ingest
+pipeline. Its text must not reach disagreement, the queue or an export, and keeping it out by
+table is sturdier than a new `asr_systems.kind` every query must remember to filter.
+
+**A run is a snapshot.** Each clip keeps the reference text it was scored against, with the
+label's id, and the clip's overlap share at import. Labels are append-only and gold changes by
+hand (D71), so a run stays reproducible after a relabel. The page warns when `fold_version` has
+changed since import.
+
+**What is refused and what is skipped:**
+- **Refused:** the same file twice is a no-op (sha256). A file naming clips the harness does not
+  hold is refused whole, because it was made from another dataset.
+- **Skipped and counted on the run:** clips that have left the split since the notebook ran, and
+  clips whose current label carries no transcript. Nothing is silently scored as gold that is no
+  longer gold.
+
+**Cost.** About 1,100 clip rows per model (gold + val), ~1 MB with texts. Import takes ~13 s,
+mostly fold alignment.
+
+**Reversal:** drop the three tables (the migration's `downgrade`), `app/api/asr_models.py`, the
+`model_*` services, `scripts/import_models.py`, the Models view and 04c's harness-folder cell.
+Nothing else reads them.

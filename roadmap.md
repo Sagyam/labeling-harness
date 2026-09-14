@@ -134,6 +134,10 @@ and the bake-off notebook (`03`) were removed 2026-09-14.
 | **Whisper-large-v3-turbo** | Fine-tuned, greedy | 14.62% | 17.72% | 8.68% | 0 | 5 epochs (still improving) |
 | **Omnilingual CTC-1B v2**| Fine-tuned (partial)| ~16.6% (val)| — | — | 0 | Stopped at epoch 6 |
 
+Every model from here on should also go to the harness's **Models** page (D83): 04c writes
+`OUT/harness/` (card plus gold/val transcripts), which is copied to `data/models/asr/<slug>/`. The
+page reproduces this table's numbers and lists each model's worst clips with audio and the diff.
+
 ### Where Model Weights and Artefacts Live (Google Drive)
 All trained weights and evaluation logs persist on Google Drive under `MyDrive/nepanglish-asr/`:
 - **Flex:** `indic-transcribe-flex-ft/`
