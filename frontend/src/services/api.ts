@@ -32,6 +32,12 @@ import {
   PotName,
   SegmentPotOut,
   IngestQueueResponse,
+  AsrModel,
+  ClipQuery,
+  ModelClipDetail,
+  ModelClipPage,
+  ModelRescanOut,
+  Segment,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -381,5 +387,30 @@ export const api = {
     if (params?.offset !== undefined) query.set('offset', String(params.offset))
     const qStr = query.toString()
     return request<CostRequestsResponse>(`/costs/requests${qStr ? `?${qStr}` : ''}`)
+  },
+
+  getSegment: (segmentId: number): Promise<Segment> => {
+    return request<Segment>(`/segments/${segmentId}`)
+  },
+
+  getModels: (): Promise<AsrModel[]> => {
+    return request<AsrModel[]>('/models')
+  },
+
+  rescanModels: (): Promise<ModelRescanOut> => {
+    return request<ModelRescanOut>('/models/rescan', { method: 'POST' })
+  },
+
+  getRunClips: (runId: number, query: ClipQuery = {}): Promise<ModelClipPage> => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && value !== '') params.set(key, String(value))
+    }
+    const qStr = params.toString()
+    return request<ModelClipPage>(`/model-runs/${runId}/clips${qStr ? `?${qStr}` : ''}`)
+  },
+
+  getRunClip: (runId: number, segmentId: number): Promise<ModelClipDetail> => {
+    return request<ModelClipDetail>(`/model-runs/${runId}/clips/${segmentId}`)
   },
 }

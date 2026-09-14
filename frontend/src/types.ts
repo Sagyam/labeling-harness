@@ -819,3 +819,128 @@ export interface SegmentPotOut {
   pot: PotName
   changed: boolean
 }
+
+// --- Fine-tuned models (D83) ------------------------------------------------------------------
+
+/** One slice of a run: how many clips, their pooled WER, and their share of the run's errors. */
+export interface ModelBreakdown {
+  clips: number
+  wer: number
+  share_of_errors: number
+}
+
+/** A run's numbers, as `app.services.model_eval.summarize` computed them at import. */
+export interface ModelRunMetrics {
+  clips: number
+  episodes: number
+  ref_words: number
+  errors: number
+  /** Folded WER, percent. */
+  wer: number
+  /** 95% interval from resampling whole episodes; null with one episode. */
+  wer_ci: [number, number] | null
+  raw_wer: number
+  cer: number
+  loops: number
+  by_genre: Record<string, ModelBreakdown>
+  by_overlap: Record<string, ModelBreakdown>
+  /** Clips in the file that were not scored: left the split, or no transcript to score against. */
+  skipped?: { not_in_split: number; no_reference: number }
+}
+
+export interface ModelEvalRun {
+  id: number
+  split: 'gold' | 'val' | string
+  decoder: string | null
+  fold_version: string
+  clip_count: number
+  metrics: ModelRunMetrics
+  source: string | null
+  created_at: string
+}
+
+export interface AsrModel {
+  id: number
+  slug: string
+  name: string
+  description: string | null
+  architecture: string | null
+  trained_at: string | null
+  card: Record<string, unknown>
+  runs: ModelEvalRun[]
+}
+
+export interface ModelRescanOut {
+  models: string[]
+  runs_created: number
+  runs_unchanged: number
+  skipped: number
+}
+
+export type OverlapBucket = 'none' | '0-5%' | '5-15%' | '>15%' | 'unmeasured'
+
+export type ClipSort =
+  | 'errors'
+  | 'wer'
+  | 'deletions'
+  | 'insertions'
+  | 'substitutions'
+  | 'duration'
+  | 'overlap'
+
+export interface ModelClip {
+  /** Harness segment id: `/segments/{id}`, its audio and peaks. */
+  segment_id: number
+  external_id: string
+  episode_external_id: string
+  genre: string
+  duration_seconds: number
+  overlap_share: number | null
+  overlap_bucket: OverlapBucket
+  ref_words: number
+  errors: number
+  substitutions: number
+  deletions: number
+  insertions: number
+  wer: number
+  raw_errors: number
+  raw_ref_words: number
+  char_errors: number
+  ref_chars: number
+  is_loop: boolean
+  ref_text: string
+  hyp_text: string
+}
+
+export interface ModelClipPage {
+  total: number
+  offset: number
+  limit: number
+  rows: ModelClip[]
+}
+
+/** One step of the folded word alignment. `fold` and `merge` are matches, not errors. */
+export interface AlignOp {
+  kind: 'match' | 'fold' | 'merge' | 'sub' | 'del' | 'ins'
+  ref: string[]
+  hyp: string[]
+  similarity: number
+}
+
+export interface ModelClipDetail extends ModelClip {
+  ops: AlignOp[]
+  fold_version: string
+  /** The fold rules changed since import, so the ops may not add up to the stored counts. */
+  fold_version_changed: boolean
+}
+
+export interface ClipQuery {
+  sort?: ClipSort
+  order?: 'asc' | 'desc'
+  genre?: string
+  overlap?: OverlapBucket
+  loops_only?: boolean
+  min_errors?: number
+  offset?: number
+  limit?: number
+}

@@ -54,6 +54,10 @@ const NAVIGATION: Shortcut[] = [
   ['Switch to Analytics dashboard', ['4']],
   ['Switch to Dataset Export', ['5']],
   ['Switch to Cost Tracker', ['6']],
+  ['Switch to Ingest', ['7']],
+  ['Switch to Models', ['8']],
+  ['Models: next / previous clip', ['j', 'k']],
+  ['Models: play or pause / replay the clip', ['Space', 'r']],
   ['Toggle shortcuts reference', ['?']],
 ]
 

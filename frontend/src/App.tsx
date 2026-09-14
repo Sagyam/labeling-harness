@@ -8,6 +8,7 @@ import { EpisodesView } from '@/components/EpisodesView'
 import { ExportView } from '@/components/ExportView'
 import { Header, type HeaderMode } from '@/components/Header'
 import { IngestView } from '@/components/IngestView'
+import { ModelsView } from '@/components/ModelsView'
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
 import { TriageView } from '@/components/TriageView'
 import { api } from '@/services/api'
@@ -33,7 +34,9 @@ export default function App() {
     const hash = window.location.hash.replace('#', '')
     const target = modeParam || hash
     if (
-      ['triage', 'editor', 'episodes', 'analytics', 'export', 'costs', 'ingest'].includes(target)
+      ['triage', 'editor', 'episodes', 'analytics', 'export', 'costs', 'ingest', 'models'].includes(
+        target,
+      )
     ) {
       return target as HeaderMode
     }
@@ -435,6 +438,9 @@ export default function App() {
       } else if (e.key === '7') {
         e.preventDefault()
         setActiveMode('ingest')
+      } else if (e.key === '8') {
+        e.preventDefault()
+        setActiveMode('models')
       }
     }
     window.addEventListener('keydown', handleGlobalKeyDown)
@@ -478,6 +484,8 @@ export default function App() {
         <CostTrackerView />
       ) : activeMode === 'ingest' ? (
         <IngestView onComplete={handleIngestComplete} />
+      ) : activeMode === 'models' ? (
+        <ModelsView />
       ) : activeMode === 'editor' && currentTask ? (
         <EditorView
           task={currentTask}

@@ -1,5 +1,6 @@
 import {
   RiBarChartBoxLine,
+  RiCpuLine,
   RiEditLine,
   RiFolderDownloadLine,
   RiFolderMusicLine,
@@ -26,6 +27,7 @@ export type HeaderMode =
   | 'export'
   | 'costs'
   | 'ingest'
+  | 'models'
 
 interface HeaderProps {
   stats: StatsResponse | null
@@ -86,6 +88,7 @@ export function Header({
     { id: 'analytics', label: 'Analytics', icon: RiBarChartBoxLine },
     { id: 'export', label: 'Export', icon: RiFolderDownloadLine },
     { id: 'costs', label: 'Cost Tracker', icon: RiMoneyDollarCircleLine },
+    { id: 'models', label: 'Models', icon: RiCpuLine },
   ]
 
   return (
@@ -139,15 +142,19 @@ export function Header({
                 key={item.id}
                 type="button"
                 onClick={() => onChangeMode(item.id)}
+                title={item.label}
+                aria-label={item.label}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all',
+                  'flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all',
                   isActive
                     ? 'bg-background text-foreground shadow-xs font-semibold'
                     : 'text-muted-foreground hover:bg-background/50 hover:text-foreground',
                 )}
               >
                 <Icon className="size-3.5" />
-                <span>{item.label}</span>
+                {/* Eight views do not fit beside the stats on a narrower screen, so there the
+                    inactive ones show only their icon; the label is still the tooltip. */}
+                <span className={isActive ? '' : 'hidden min-[1760px]:inline'}>{item.label}</span>
                 {item.count !== undefined && item.count > 0 && (
                   <span
                     className={cn(
