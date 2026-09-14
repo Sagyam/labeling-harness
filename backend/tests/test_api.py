@@ -710,7 +710,6 @@ def test_a_clip_is_put_in_gold_and_taken_back_out(
     assert response.json()["pot"] == "gold"
     assert response.json()["changed"] is True
     assert client.get(f"/segments/{segment_id}").json()["pot"] == "gold"
-    assert client.get("/pots").json()["buckets"]["gold"]["segments"] == 1
 
     response = client.post(f"/segments/{segment_id}/pot", json={"pot": "train"})
     assert response.json() == {

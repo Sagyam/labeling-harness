@@ -441,7 +441,6 @@ the same inputs and filters produce byte-identical output.
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
 | `GET /stats/report` | Pipeline status: pots, coverage, verification mix, agreement, accept-rate trend |
 | `GET /stats/inventory` | Corpus inventory: hours by every recorded dimension, gaps, and ranked sourcing recommendations (D69) |
-| `GET /pots` | What each pot holds and what the gold pot does not cover; moves nothing |
 | `POST /segments/{id}/pot` | Put one clip in gold or take it out (D71); 409 for a screened clip |
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |

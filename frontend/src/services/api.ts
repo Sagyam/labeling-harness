@@ -30,7 +30,6 @@ import {
   CostReportResponse,
   CostRequestsResponse,
   PotName,
-  PotPanel,
   SegmentPotOut,
   IngestQueueResponse,
 } from '../types'
@@ -334,8 +333,6 @@ export const api = {
 
   /** What the corpus contains, what it is missing, and what to record next (D69). */
   getInventory: (): Promise<CorpusInventory> => request<CorpusInventory>('/stats/inventory'),
-
-  getPots: (): Promise<PotPanel> => request<PotPanel>('/pots'),
 
   /** Put one clip in gold, or take it back out (D71). A screened clip is refused with 409. */
   setSegmentPot: (segmentId: number, pot: PotName, reason?: string): Promise<SegmentPotOut> =>

@@ -1,4 +1,4 @@
-"""The two pots: what each holds, and moving one clip into or out of gold (D71)."""
+"""Moving one clip into or out of gold (D71)."""
 
 from __future__ import annotations
 
@@ -6,32 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_config, get_session, require_auth
-from app.api.schemas import PotStatusOut, SegmentPotIn, SegmentPotOut
+from app.api.schemas import SegmentPotIn, SegmentPotOut
 from app.config import Settings
 from app.models import Segment
-from app.services.pots import PotError, pot_status, set_segment_pot
+from app.services.pots import PotError, set_segment_pot
 
 router = APIRouter(tags=["pots"], dependencies=[Depends(require_auth)])
-
-
-@router.get("/pots", response_model=PotStatusOut)
-def get_pots(
-    session: Session = Depends(get_session),
-    settings: Settings = Depends(get_config),
-) -> PotStatusOut:
-    """What each pot currently holds, and what the gold pot does not yet cover. A pure read."""
-    status = pot_status(session, settings=settings)
-    return PotStatusOut(
-        gold_target_hours=status.gold_target_hours,
-        train_target_hours=status.train_target_hours,
-        buckets=status.buckets,
-        gold_episodes_spanning_pots=status.gold_episodes_spanning_pots,
-        gold_segments_in_spanning_episodes=status.gold_segments_in_spanning_episodes,
-        gold_coverage=status.gold_coverage,
-        corpus_coverage=status.corpus_coverage,
-        gold_coverage_gaps=status.gold_coverage_gaps,
-        coverage_complete=status.coverage_complete,
-    )
 
 
 @router.post("/segments/{segment_id}/pot", response_model=SegmentPotOut)

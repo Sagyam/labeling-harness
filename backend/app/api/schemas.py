@@ -453,19 +453,3 @@ class SegmentPotOut(BaseModel):
     external_id: str
     pot: str
     changed: bool
-
-
-class PotStatusOut(BaseModel):
-    """What each pot holds right now."""
-
-    gold_target_hours: float
-    train_target_hours: float
-    #: ``{gold|train|val|unassigned: {episodes, segments, hours, labeled_hours}}``. Gold by clip.
-    buckets: dict[str, dict[str, float]] = Field(default_factory=dict)
-    #: Episodes with clips on both sides of the train/test line, and the gold clips they hold.
-    gold_episodes_spanning_pots: int = 0
-    gold_segments_in_spanning_episodes: int = 0
-    gold_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
-    corpus_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
-    gold_coverage_gaps: dict[str, list[str]] = Field(default_factory=dict)
-    coverage_complete: bool = False
