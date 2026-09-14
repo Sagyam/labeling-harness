@@ -1179,10 +1179,9 @@ remembered.
 output is the subject of the corpus's headline claim — that a Nepali-configured recogniser deletes
 the English half. The dump is the record that claim rests on.
 
-**`app/llm/script_restore.py` stays** even though nothing routes to it now. Any recogniser that
-transliterates English into Devanagari and cannot be told not to needs exactly this repair, and
-another one is being evaluated. Keeping it is a decision, not an oversight; delete it if that
-evaluation ends without needing it.
+**`app/llm/script_restore.py` stayed** even though nothing routes to it now (kept per D51;
+*deleted in D81*). Any recogniser that transliterates English into Devanagari and cannot be told
+not to needs exactly this repair, and another one is being evaluated.
 
 **Evidence is two episodes and three speakers.** Both are pilot data.
 
@@ -1321,7 +1320,7 @@ indistinguishable from random (p = 0.188). The time-aligned signal is what moved
 annotator, one seed system. That is enough to choose a direction and not enough to settle
 parameters. The superseded formula is computed and written to `reason_jsonb.legacy` on every task,
 so the first full run adjudicates on its own data. `queue.legacy_weights` exists only for that and
-deliberately does not sum to 1.
+deliberately does not sum to 1. (The recorded score was removed in D82, before that run happened.)
 
 **Reversal:** restore the old weights in `config/settings.yaml` and `QueueWeights`, and read the
 legacy components back out of `reason_jsonb`. Nothing stored changes shape, and re-running the
@@ -2039,8 +2038,8 @@ fused hypotheses already imported stay (hypotheses are immutable) and can be ign
 ## D73 — Scribe is fed to the fuser raw; script restoration comes off the seed route
 
 Supersedes D65's script restoration. `asr_scribe_v2` loses `restore_script_route`, and the
-`script_restore` route leaves `config/llm_routes.yaml`. `app/llm/script_restore.py` stays in the
-tree, as D51 kept it, for a recogniser whose word spans must survive a respelling.
+`script_restore` route leaves `config/llm_routes.yaml`. (`app/llm/script_restore.py` stayed in
+the tree, as D51 kept it, until D81 deleted it.)
 
 D65's argument was the seed: Scribe's `क्याप्टन` for Captain was what the annotator had to retype,
 and a one-token-in, one-token-out rewrite kept every span. Neither holds now. The seed is the fused
@@ -2051,14 +2050,16 @@ the question the fuser is there to settle. It also cost one call per clip. Scrib
 English no longer inflates disagreement either -- D74's comparison is script-folded.
 
 **Reversal:** put `restore_script_route: script_restore` back on the Scribe block and restore the
-route from git. Restored hypotheses would then feed the fuser again, which is the double vote above.
+route and `app/llm/script_restore.py` from git (the module is gone since D81). Restored hypotheses
+would then feed the fuser again, which is the double vote above.
 
 ## D74 — The fused transcript is the seed, and the queue looks for what fusion got catastrophically wrong
 
 The seed -- what the editor opens with -- is the newest fused hypothesis, for every clip,
 **gold included**. The priority score is rebuilt around it, hazard gates make a clip
 unscreenable, and every comparison goes through a new script-folding normalizer
-(`app/services/fold.py`, `fold-v1`). D67's formula is kept only as a recorded `legacy` score.
+(`app/services/fold.py`, `fold-v1`). D67's formula is kept only as a recorded `legacy` score
+(removed in D82).
 
 **The old score cannot follow the seed.** `seed_outvoted`, `seed_orphan_rate` and `roman_gap`
 measure how far the seed is from the recognisers. A transcript built to reconcile them is near
@@ -2113,8 +2114,8 @@ right, aligns fine, agrees with at most one recogniser, and passes everything ab
 instruction forbids it, and the harness cannot check.
 
 **Reversal:** `select_seed_hypothesis` back to the strongest recogniser, and the D67 weights back
-into `queue.weights` (they are still in `queue.legacy_weights`). The gates are independent of the
-seed and could be kept.
+into `queue.weights` (from git; the legacy plumbing was removed in D82). The gates are independent
+of the seed and could be kept.
 
 ## D75 — Ingest Queue, Bot Detection Backlog, and 8-Core Multithreading
 
@@ -2368,3 +2369,41 @@ submission and stays.
 
 **Reversal:** restore the endpoint and tab from git. Its jobs would again be diarized without a
 declared speaker count.
+
+## D81 — script_restore.py is deleted, not kept
+
+D51 removed the composite Vertex recogniser and kept `app/llm/script_restore.py` in the tree
+"for a recogniser whose spans must survive a respelling"; D73 removed the only route to it. The
+evaluation D51 pointed at is over: the two recognisers that might have needed it are either gone
+or no longer used, the fuser (D74) writes the script policy itself, and nothing in
+`config/llm_routes.yaml` sets `restore_script_route`. The module had zero production callers and
+one test asserting the hook stayed unset.
+
+The module, the `restore_script_route` hook on `LlmRoute`, `test_script_restore.py` and the
+restoration branch in `transcribe()` are deleted. Keeping dead-but-wired code so a *future*
+recogniser can lean on it was costing more comprehension than the copy-paste its return would
+cost: the whole step is one commit in git history.
+
+**Reversal:** restore `app/llm/script_restore.py`, `restore_script_route` on `LlmRoute`, the
+`_maybe_restore` branch in `app/llm/transcription.py`, and their tests from git, then set
+`restore_script_route` on whichever route needs it.
+
+## D82 — The recorded D67 legacy score is deleted
+
+D67's queue formula measured the seed against the recognisers. D74 made the seed the fused
+transcript, which was *built* from the recognisers, so every D67 term is structurally zero there
+and the recorded `reason_jsonb.legacy` numbers read as quality while measuring nothing (the exact
+failure AGENTS.md warns about). D74 kept the computation anyway, "so the first labelled run can
+compare what each formula would have surfaced" — but the comparison can never be informative on
+fused-seed clips, which is all of them, and it was kept costing code on every queue build:
+`LegacyInputs`, `_legacy_reason`, `LegacyQueueWeights`, `queue.legacy_weights` and the `_seed_outvoted`
+consensus computation.
+
+No labelled run has adjudicated on it. The formula is in git history, D67 is intact, and bringing
+it back is one commit if a run ever wants it — but then it should be computed once, offline,
+against the labels, not written on every task forever.
+
+`reason_jsonb` loses the `legacy` key; everything else about the payload is unchanged.
+
+**Reversal:** restore `LegacyQueueWeights`, `LegacyInputs`, `_legacy_reason`, the `legacy`
+argument of `priority_score` and the `_seed_outvoted` helper from git (D54/D74 record the weights).
