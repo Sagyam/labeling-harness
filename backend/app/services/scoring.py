@@ -18,9 +18,7 @@ them, so it would score near zero on that by construction and read as quality. T
 and "how hard is this audio", which the recognisers' disagreement among themselves still answers
 honestly, because none of them sees another's output.
 
-The weights are provisional; nothing verified has been scored against them yet. The D67 formula
-travels alongside under ``legacy``, measured against the recogniser the old queue would have
-seeded with, so the first labelled run can compare what each would have surfaced.
+The weights are provisional; nothing verified has been scored against them yet.
 """
 
 from __future__ import annotations
@@ -37,17 +35,6 @@ GATE_OFFSET = 1.0
 
 
 @dataclass(frozen=True)
-class LegacyInputs:
-    """D67's inputs, measured against the recogniser the old queue would have chosen."""
-
-    seed_outvoted: float | None = None
-    seed_orphan_rate: float | None = None
-    roman_gap: float | None = None
-    avg_logprob: float | None = None
-    flags: Sequence[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
 class ScoreInputs:
     """Everything the formula reads. A missing value means zero and is reported as unmeasured."""
 
@@ -58,24 +45,6 @@ class ScoreInputs:
     avg_logprob: float | None
     flags: Sequence[str] = field(default_factory=list)
     hazards: Sequence[str] = field(default_factory=list)
-
-    @staticmethod
-    def legacy(
-        *,
-        seed_outvoted: float | None = None,
-        seed_orphan_rate: float | None = None,
-        roman_gap: float | None = None,
-        avg_logprob: float | None = None,
-        flags: Sequence[str] = (),
-    ) -> LegacyInputs:
-        """Build the comparison payload for :func:`priority_score`."""
-        return LegacyInputs(
-            seed_outvoted=seed_outvoted,
-            seed_orphan_rate=seed_orphan_rate,
-            roman_gap=roman_gap,
-            avg_logprob=avg_logprob,
-            flags=list(flags),
-        )
 
 
 @dataclass(frozen=True)
@@ -89,7 +58,6 @@ class ScoreResult:
     hazards: list[str] = field(default_factory=list)
     hazard_details: dict[str, str] = field(default_factory=dict)
     unmeasured: list[str] = field(default_factory=list)
-    legacy: dict[str, Any] | None = None
 
     @property
     def priority(self) -> float:
@@ -98,7 +66,7 @@ class ScoreResult:
 
     def as_reason(self) -> dict[str, Any]:
         """The payload stored in ``annotation_tasks.reason_jsonb``."""
-        reason: dict[str, Any] = {
+        return {
             "score": round(self.score, 9),
             "components": {k: round(v, 9) for k, v in self.components.items()},
             "weights": dict(self.weights),
@@ -108,9 +76,6 @@ class ScoreResult:
             "hazard_details": dict(self.hazard_details),
             "unmeasured": list(self.unmeasured),
         }
-        if self.legacy is not None:
-            reason["legacy"] = self.legacy
-        return reason
 
 
 def _clamp(value: float | None, low: float = 0.0, high: float = 1.0) -> float:
@@ -131,32 +96,11 @@ def normalize_low_confidence(avg_logprob: float | None, *, floor: float) -> floa
     return _clamp(float(avg_logprob) / floor)
 
 
-def _legacy_reason(inputs: LegacyInputs, settings: Settings) -> dict[str, Any]:
-    """D67's score, recorded but never used to rank."""
-    weights = settings.queue.legacy_weights
-    components = {
-        "seed_outvoted": _clamp(inputs.seed_outvoted),
-        "seed_orphan_rate": _clamp(inputs.seed_orphan_rate),
-        "roman_gap": _clamp(inputs.roman_gap),
-        "low_confidence": normalize_low_confidence(
-            inputs.avg_logprob, floor=settings.queue.logprob_floor
-        ),
-        "rule_flag_score": rule_flag_score(inputs.flags),
-    }
-    weight_map = {name: float(getattr(weights, name)) for name in components}
-    return {
-        "score": round(sum(v * weight_map[k] for k, v in components.items()), 9),
-        "components": {k: round(v, 9) for k, v in components.items()},
-        "weights": weight_map,
-    }
-
-
 def priority_score(
     inputs: ScoreInputs,
     *,
     settings: Settings | None = None,
     hazard_details: Mapping[str, str] | None = None,
-    legacy: LegacyInputs | None = None,
 ) -> ScoreResult:
     """Score one clip for the review queue.
 
@@ -165,7 +109,6 @@ def priority_score(
             that fired.
         settings: Weight and threshold overrides.
         hazard_details: ``{gate: words}`` for the tooltip.
-        legacy: D67's inputs; recorded beside the score, never ranking.
 
     Returns:
         The score in 0-1, its breakdown, and the gates. Sort on :attr:`ScoreResult.priority`.
@@ -203,5 +146,4 @@ def priority_score(
         hazards=list(inputs.hazards),
         hazard_details=dict(hazard_details or {}),
         unmeasured=unmeasured,
-        legacy=_legacy_reason(legacy, settings) if legacy is not None else None,
     )

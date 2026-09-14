@@ -116,27 +116,6 @@ def test_an_unmeasured_acoustic_gap_is_marked_as_such() -> None:
     assert "acoustic_gap" in reason["unmeasured"]
 
 
-def test_the_legacy_score_travels_alongside_for_comparison() -> None:
-    result = priority_score(
-        inputs(),
-        settings=SETTINGS,
-        legacy=ScoreInputs.legacy(
-            seed_outvoted=1.0, seed_orphan_rate=0.5, roman_gap=0.0, avg_logprob=0.0, flags=[]
-        ),
-    )
-    legacy = result.as_reason()["legacy"]
-    assert set(legacy["components"]) == {
-        "seed_outvoted",
-        "seed_orphan_rate",
-        "roman_gap",
-        "low_confidence",
-        "rule_flag_score",
-    }
-    weights = SETTINGS.queue.legacy_weights
-    assert legacy["score"] == pytest.approx(weights.seed_outvoted + 0.5 * weights.seed_orphan_rate)
-    assert result.score == 0.0
-
-
 # --- low confidence --------------------------------------------------------------------------
 
 

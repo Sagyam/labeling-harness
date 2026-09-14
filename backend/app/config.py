@@ -190,22 +190,6 @@ class QueueWeights(BaseModel):
         return self
 
 
-class LegacyQueueWeights(BaseModel):
-    """D67's formula, recorded beside the live score and never ranking (the D54 pattern).
-
-    Measured against the recogniser the old queue would have seeded with, as if fusion did not
-    exist, so the first labelled run can compare which clips each formula would have surfaced.
-    """
-
-    model_config = _STRICT
-
-    seed_outvoted: float = 0.30
-    seed_orphan_rate: float = 0.30
-    roman_gap: float = 0.20
-    low_confidence: float = 0.125
-    rule_flag_score: float = 0.075
-
-
 class HazardSettings(BaseModel):
     """Thresholds for the fused-seed hazard gates (D74). Any gate that fires makes a clip
     unscreenable and puts it at the top of the queue; the thresholds are where that happens."""
@@ -236,7 +220,6 @@ class QueueSettings(BaseModel):
     model_config = _STRICT
 
     weights: QueueWeights = Field(default_factory=QueueWeights)
-    legacy_weights: LegacyQueueWeights = Field(default_factory=LegacyQueueWeights)
     hazards: HazardSettings = Field(default_factory=HazardSettings)
     audit_sample_rate: float = 0.05
     audit_seed: int = 1234

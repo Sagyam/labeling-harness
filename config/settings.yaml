@@ -65,12 +65,6 @@ queue:
     acoustic_gap: 0.15           # fused text against the aligner's own reading; uncalibrated
     low_confidence: 0.10         # Scribe avg_logprob -- how hard the audio is
     rule_flag_score: 0.05
-  legacy_weights:                # D67, recorded beside the live score only (D54 pattern)
-    seed_outvoted: 0.30
-    seed_orphan_rate: 0.30
-    roman_gap: 0.20
-    low_confidence: 0.125
-    rule_flag_score: 0.075
   hazards:                       # any gate: unscreenable, and above every ungated clip (D74)
     invention_run: 3             # consecutive fused words no recogniser heard
     dropped_run: 3               # consecutive words two recognisers heard and fusion lacks

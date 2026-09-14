@@ -51,14 +51,6 @@ def test_queue_row_carries_everything_triage_needs(
         "rule_flag_score",
     }
     assert "hazards" in row["reason"]
-    # The superseded formula rides along unweighted, so the first full run can compare (D54).
-    assert set(row["reason"]["legacy"]["components"]) == {
-        "seed_outvoted",
-        "seed_orphan_rate",
-        "roman_gap",
-        "low_confidence",
-        "rule_flag_score",
-    }
 
 
 def test_queue_respects_limit_and_offset(client: TestClient, imported_episode: str) -> None:

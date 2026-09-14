@@ -175,8 +175,7 @@ Any gate makes a clip unscreenable and lifts it above every clip without one. Th
 | `unfused` | no fused text; the seed fell back to a recogniser |
 
 The words behind each gate travel in `reason_jsonb.hazard_details` and show in the triage tooltip.
-D67's formula is still computed, against the recogniser the old queue would have seeded with, and
-recorded under `reason_jsonb.legacy`; it ranks nothing.
+(D67's superseded score is gone — see D82.)
 
 ### Rule flags (computed at import)
 

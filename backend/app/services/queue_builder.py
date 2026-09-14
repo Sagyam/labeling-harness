@@ -18,14 +18,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import Settings, get_settings
 from app.models import AnnotationTask, AsrHypothesis, AsrSystem, Episode, Segment, SegmentScore
 from app.models.enums import ACTIVE_TASK_STATUSES
-from app.services.consensus import (
-    ConsensusHypothesis,
-    ConsensusWord,
-    build_slots,
-    seed_outvoted_fraction,
-)
 from app.services.hazards import FusionEvidence, assess
-from app.services.lexical import lexical_signals
 from app.services.scoring import ScoreInputs, priority_score
 from app.utils.logging import get_logger
 
@@ -88,29 +81,6 @@ def select_seed_hypothesis(hypotheses: list[AsrHypothesis]) -> AsrHypothesis | N
     return strongest_recogniser(hypotheses)
 
 
-def _seed_outvoted(segment: Segment, seed: AsrHypothesis | None) -> float | None:
-    """D67's speech-time term, over the recognisers only, for the recorded legacy score."""
-    if seed is None:
-        return None
-    hypotheses = [
-        ConsensusHypothesis(
-            system_id=h.system.system_id,
-            words=[
-                ConsensusWord(
-                    position=w.position, word=w.word_raw, start=w.start_time, end=w.end_time
-                )
-                for w in h.words
-            ],
-        )
-        for h in segment.hypotheses
-        if not _is_fusion(h)
-    ]
-    slots = build_slots(hypotheses)
-    if not slots:
-        return None
-    return seed_outvoted_fraction(slots, seed_system_id=seed.system.system_id)
-
-
 def _neighbour_texts(session: Session, episode_ids: set[int]) -> dict[int, list[str]]:
     """``{segment_id: recogniser texts of the clips just before and after it}``.
 
@@ -165,11 +135,6 @@ def _score_for(
     flags = list(scores.flags_jsonb or []) if scores else []
     scribe_logprob = next((h.avg_logprob for h in recognisers if h.avg_logprob is not None), None)
 
-    fallback = strongest_recogniser(list(segment.hypotheses))
-    orphan_rate, latin_gap = lexical_signals(
-        fallback.text_raw if fallback else None,
-        [h.text_raw for h in recognisers if fallback is None or h.id != fallback.id],
-    )
     result = priority_score(
         ScoreInputs(
             unsupported_rate=report.unsupported_rate if fused is not None else None,
@@ -182,13 +147,6 @@ def _score_for(
         ),
         settings=settings,
         hazard_details=report.details,
-        legacy=ScoreInputs.legacy(
-            seed_outvoted=_seed_outvoted(segment, fallback),
-            seed_orphan_rate=orphan_rate,
-            roman_gap=latin_gap,
-            avg_logprob=fallback.avg_logprob if fallback else None,
-            flags=flags,
-        ),
     )
     return result.priority, result.as_reason()
 

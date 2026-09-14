@@ -95,26 +95,6 @@ def test_every_task_carries_a_priority_and_a_reason(
         assert task.reason_jsonb["score"] + offset == pytest.approx(task.priority_score)
 
 
-def test_the_superseded_score_is_recorded_but_does_not_rank(
-    db_session: Session, tmp_path: Path, storage, settings: Settings
-) -> None:
-    """D67 travels alongside, measured against the recogniser the old queue would have used."""
-    import_fixture(db_session, tmp_path, storage, settings, segments=6, with_fusion=True)
-    build_queue(db_session, settings=settings)
-    for task in tasks(db_session):
-        legacy = task.reason_jsonb["legacy"]
-        assert set(legacy["components"]) == {
-            "seed_outvoted",
-            "seed_orphan_rate",
-            "roman_gap",
-            "low_confidence",
-            "rule_flag_score",
-        }
-        assert task.reason_jsonb["score"] == pytest.approx(
-            sum(task.reason_jsonb["contributions"].values())
-        )
-
-
 # --- a fused seed (D74) ------------------------------------------------------------------------
 
 
