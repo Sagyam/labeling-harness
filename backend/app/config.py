@@ -468,12 +468,6 @@ class LlmRoute(BaseModel):
     #: Fill this route's word spans with the local CTC forced aligner (D32). For a transcriber
     #: that returns no timestamps of its own; a route that reports them keeps what it reported.
     forced_align: bool = False
-    #: Name of the text route that puts this route's transcript back into mixed script (D41).
-    #: Set only on a recogniser that writes everything in one script and cannot be told not to.
-    #: The rewrite preserves the token count exactly, so each restored word keeps the span the
-    #: recogniser measured for it -- this is not forced alignment and must not be confused with
-    #: ``forced_align``.
-    restore_script_route: str | None = None
     #: Ask this route's provider for a speaker label per word. Only a transcriber that offers
     #: diarization honours it; the rest ignore it and their words keep a null speaker, which is
     #: the honest value for "not diarized". Labels are clip-local -- ``spk:0`` in one clip is

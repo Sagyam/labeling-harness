@@ -158,7 +158,8 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   `generationConfig.audioTranscriptionConfig` (`diarization`, `wordTimestamp`, `languageCodes` —
   the other spellings are deprecated).
 - **If another Vertex recogniser is ever configured, this is what was learned from the last one**
-  (removed in D51, and `app/llm/script_restore.py` is kept for it). It accepted no steering at
+  (removed in D51; `app/llm/script_restore.py` was kept for it and then deleted in D81). It
+  accepted no steering at
   all: a `systemInstruction` was a hard 400, a text part was accepted and ignored, and
   `customVocabulary` returned 200 and then silently suppressed `speakerLabel` entirely. Because
   nothing could be told to it, it **transliterated English into Devanagari** (`active` →

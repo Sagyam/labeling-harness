@@ -177,10 +177,9 @@ def test_the_committed_transcribers_name_their_provider_and_api() -> None:
     assert "asr_gemini_composite" not in routes, (
         "the composite recogniser was removed in D51; it deleted the dependent variable"
     )
-    # D73: raw Scribe feeds the fuser, which writes the script policy itself. `script_restore.py`
-    # stays in the tree (D51) for a recogniser whose spans must survive a respelling.
-    assert scribe.restore_script_route is None
-    assert "script_restore" not in routes
+    assert "script_restore" not in routes, (
+        "script_restore.py was deleted after D73; the fuser writes the script policy now"
+    )
 
     fusion = routes["fuse_transcript"]
     assert (fusion.provider, fusion.api) == ("vertex", "chat")

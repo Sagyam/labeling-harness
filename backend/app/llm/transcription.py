@@ -13,13 +13,11 @@ That set is smaller than it looks. Only a general chat model reading the clip --
 actually follows the policy. Every dedicated speech recogniser configured here ignores it, each
 in its own way: Scribe has no prompt field, MAI-Transcribe-2 accepts a `prompt` and discards it,
 and Gemini 3.5 Transcribe refuses prose outright. So a `transcription` route is sent its language
-code and nothing else, and the two that write English in Devanagari are corrected afterwards --
-by the script-restore step, or not at all (D48).
+code and nothing else (D48).
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,7 +30,6 @@ from app.config import LlmRoute, LlmRoutes
 from app.llm.base import AsrResult, LlmRouteNotConfigured
 from app.llm.elevenlabs import ElevenLabsClient
 from app.llm.openrouter import OpenRouterClient
-from app.llm.script_restore import restore_script
 from app.llm.vertex import VertexClient
 from app.utils.logging import get_logger
 
@@ -86,86 +83,6 @@ def disagreement_excluded_system_ids(config: LlmRoutes) -> frozenset[str]:
     )
 
 
-def _restore_script(
-    session: Session,
-    result: AsrResult,
-    *,
-    restore_route: str,
-    routes: LlmRoutes,
-    client: httpx.Client | None,
-    dry_run: bool | None,
-) -> AsrResult:
-    """Put a single-script transcript back into mixed script, keeping every span (D41).
-
-    The recogniser decided what was said and when; this only decides how it is spelled. One
-    restored token per recognised token, so each word keeps the span the recogniser measured --
-    no re-alignment, and `forced_align` stays off for this route (D33).
-
-    The original Devanagari is kept in `metadata`, which becomes the hypothesis's
-    `metadata_jsonb`. It is provenance only: it is never scored, never compared and never
-    exported as a transcript.
-    """
-    if not result.words:
-        return result
-
-    tokens = [str(w["word"]) for w in result.words]
-    if len(tokens) != len(result.text.split()):
-        # The restored text is rebuilt from the spans, so a word list that does not cover the
-        # transcript would silently truncate it. Vertex returns them 1:1; say so loudly if that
-        # ever stops being true rather than shipping a short transcript.
-        logger.warning(
-            "restore_script_token_text_mismatch",
-            route=restore_route,
-            words=len(tokens),
-            text_tokens=len(result.text.split()),
-        )
-    tokens_meta = {"script_restore_text_tokens": len(result.text.split())}
-    restored, meta = restore_script(
-        session, tokens, route=restore_route, config=routes, client=client, dry_run=dry_run
-    )
-    words = [{**word, "word": new} for word, new in zip(result.words, restored, strict=True)]
-    return replace(
-        result,
-        text=" ".join(restored),
-        words=words,
-        metadata={
-            **(result.metadata or {}),
-            "text_devanagari": result.text,
-            **tokens_meta,
-            **meta,
-        },
-    )
-
-
-def _maybe_restore(
-    session: Session,
-    result: AsrResult,
-    *,
-    route_config: LlmRoute,
-    routes: LlmRoutes,
-    client: httpx.Client | None,
-    dry_run: bool | None,
-) -> AsrResult:
-    """Apply script restoration if this route asks for it, whichever vendor produced the result.
-
-    Restoration used to hang off the Vertex branch alone, because D41's composite was the only
-    route that needed it. It is a property of the *transcript* rather than of the vendor: any
-    recogniser that spells English phonetically in Devanagari produces text the corpus policy
-    ("English in Latin, Nepali in Devanagari") rejects, and the seed route is where that costs
-    the most, since the seed is what the annotator edits.
-    """
-    if not route_config.restore_script_route:
-        return result
-    return _restore_script(
-        session,
-        result,
-        restore_route=route_config.restore_script_route,
-        routes=routes,
-        client=client,
-        dry_run=dry_run,
-    )
-
-
 def transcribe(
     session: Session,
     audio_path: Path | str,
@@ -207,17 +124,9 @@ def transcribe(
     dedicated = route_config.api == "transcription"
 
     if route_config.provider == "elevenlabs":
-        result = ElevenLabsClient(session, config=routes, client=client).transcribe(
+        return ElevenLabsClient(session, config=routes, client=client).transcribe(
             audio_path,
             route=route,
-            dry_run=dry_run,
-        )
-        return _maybe_restore(
-            session,
-            result,
-            route_config=route_config,
-            routes=routes,
-            client=client,
             dry_run=dry_run,
         )
     if route_config.provider == "vertex":
@@ -232,14 +141,7 @@ def transcribe(
             prompt=None if dedicated else prompt,
             dry_run=dry_run,
         )
-        return _maybe_restore(
-            session,
-            result,
-            route_config=route_config,
-            routes=routes,
-            client=client,
-            dry_run=dry_run,
-        )
+        return result
     return OpenRouterClient(session, config=routes, client=client).transcribe(
         audio_path,
         route=route,

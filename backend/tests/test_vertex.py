@@ -594,7 +594,7 @@ def test_the_recogniser_is_never_sent_a_thinking_config(db_session: Session, cli
 
 def _text_routes(**overrides) -> LlmRoutes:
     config = routes()
-    config.routes["script_restore"] = LlmRoute(
+    config.routes["text_chat"] = LlmRoute(
         provider="vertex",
         api="chat",
         model="gemini-3.8-flash",
@@ -611,7 +611,7 @@ def test_a_text_route_completes_through_vertex(db_session: Session) -> None:
     client = make_client(
         db_session, _ok(_generate_content_body('["a"]'), seen), config=_text_routes()
     )
-    result = client.complete("script_restore", [{"role": "user", "content": "hi"}])
+    result = client.complete("text_chat", [{"role": "user", "content": "hi"}])
     assert result.text == '["a"]'
     body = json.loads(seen[0].content)
     assert body["contents"] == [{"role": "user", "parts": [{"text": "hi"}]}]
@@ -625,7 +625,7 @@ def test_a_system_message_becomes_a_system_instruction(db_session: Session) -> N
     make_client(
         db_session, _ok(_generate_content_body("ok"), seen), config=_text_routes()
     ).complete(
-        "script_restore",
+        "text_chat",
         [{"role": "system", "content": "be terse"}, {"role": "user", "content": "hi"}],
     )
     body = json.loads(seen[0].content)
@@ -639,7 +639,7 @@ def test_a_withheld_completion_raises_rather_than_returning_empty_text(db_sessio
     somewhere far away from the cause, which is exactly how D44 went wrong."""
     client = make_client(db_session, _ok(_blocked_body()), config=_text_routes())
     with pytest.raises(LlmRequestFailed, match="finishReason=SAFETY"):
-        client.complete("script_restore", [{"role": "user", "content": "hi"}])
+        client.complete("text_chat", [{"role": "user", "content": "hi"}])
 
 
 @pytest.mark.db
@@ -649,7 +649,7 @@ def test_a_text_route_can_turn_thinking_off(db_session: Session) -> None:
         db_session,
         _ok(_generate_content_body("ok"), seen),
         config=_text_routes(reasoning_enabled=False),
-    ).complete("script_restore", [{"role": "user", "content": "hi"}])
+    ).complete("text_chat", [{"role": "user", "content": "hi"}])
     gen = json.loads(seen[0].content)["generationConfig"]
     assert gen["thinkingConfig"] == {"thinkingBudget": 0}
 
@@ -670,7 +670,7 @@ def test_thinking_tokens_are_billed_as_output(db_session: Session) -> None:
         },
     }
     result = make_client(db_session, _ok(body), config=_text_routes()).complete(
-        "script_restore", [{"role": "user", "content": "hi"}]
+        "text_chat", [{"role": "user", "content": "hi"}]
     )
     assert result.completion_tokens == 1000
     assert result.estimated_cost_usd == calculate_vertex_cost(
@@ -685,7 +685,7 @@ def test_a_thinking_budget_is_sent_as_a_number(db_session: Session) -> None:
         db_session,
         _ok(_generate_content_body("ok"), seen),
         config=_text_routes(reasoning_enabled=True, thinking_budget=24576),
-    ).complete("script_restore", [{"role": "user", "content": "hi"}])
+    ).complete("text_chat", [{"role": "user", "content": "hi"}])
     gen = json.loads(seen[0].content)["generationConfig"]
     assert gen["thinkingConfig"] == {"thinkingBudget": 24576}
 

@@ -15,7 +15,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from app.config import LlmRoute, LlmRoutes, load_llm_routes
+from app.config import LlmRoute, LlmRoutes
 from app.llm.base import LlmRouteNotConfigured
 from app.llm.transcription import (
     ASR_PROMPT,
@@ -337,9 +337,6 @@ def _vertex_routes(**route_kwargs) -> LlmRoutes:
         routes={
             **routes().routes,
             "asr_vertex": LlmRoute(provider="vertex", **route_kwargs),
-            "script_restore": LlmRoute(
-                provider="openrouter", api="chat", model="google/gemini-3.8-flash"
-            ),
         },
     )
 
@@ -420,48 +417,6 @@ def test_a_dedicated_recogniser_gets_no_steering_at_all(
     assert config["wordTimestamp"] is True
 
 
-def test_a_composite_route_restores_script_and_keeps_every_span(
-    db_session: Session, clip, recorder
-) -> None:
-    """The recogniser decides what and when; the restore decides only how it is spelled (D41)."""
-    config = _vertex_routes(
-        api="transcription",
-        model="gemini-3.5-transcribe-preview",
-        system_id="gemini-composite",
-        restore_script_route="script_restore",
-    )
-    plain = transcribe(
-        db_session,
-        clip,
-        route="asr_vertex",
-        config=_vertex_routes(api="transcription", model="gemini-3.5-transcribe-preview"),
-    )
-    restored = transcribe(db_session, clip, route="asr_vertex", config=config)
-
-    assert plain.words is not None and restored.words is not None
-    assert restored.text == "Gemini भन्छ"
-    assert [w["word"] for w in restored.words] == ["Gemini", "भन्छ"]
-    # Same count, same spans, same speaker -- only the spelling moved.
-    assert len(restored.words) == len(plain.words)
-    assert [(w["start"], w["end"], w["speaker"]) for w in restored.words] == [
-        (w["start"], w["end"], w["speaker"]) for w in plain.words
-    ]
-
-
-def test_the_composite_keeps_the_devanagari_as_metadata_not_as_a_hypothesis(
-    db_session: Session, clip, recorder
-) -> None:
-    """Curiosity only: it must never reach `text`, and so never the comparison or the queue."""
-    config = _vertex_routes(
-        api="transcription",
-        model="gemini-3.5-transcribe-preview",
-        restore_script_route="script_restore",
-    )
-    result = transcribe(db_session, clip, route="asr_vertex", config=config)
-    assert (result.metadata or {})["text_devanagari"] == "गुगल भन्छ"
-    assert "गुगल" not in result.text
-
-
 def test_a_route_without_a_restore_route_is_left_alone(db_session: Session, clip, recorder) -> None:
     config = _vertex_routes(api="transcription", model="gemini-3.5-transcribe-preview")
     result = transcribe(db_session, clip, route="asr_vertex", config=config)
@@ -488,119 +443,7 @@ def test_the_policy_forbids_transliteration_in_both_directions() -> None:
     assert SCRIPT_POLICY in ASR_PROMPT
 
 
-# --- script restoration on the seed route (D65) -------------------------------------------
-
-
-@pytest.fixture
-def scribe_recorder(monkeypatch):
-    """Scribe with real word spans, plus a restore endpoint that romanizes one known token."""
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if "elevenlabs" in str(request.url):
-            return httpx.Response(
-                200,
-                json={
-                    "text": "हाम्रो टिम राम्रो",
-                    "words": [
-                        {"text": "हाम्रो", "start": 0.0, "end": 0.4},
-                        {"text": "टिम", "start": 0.4, "end": 0.8},
-                        {"text": "राम्रो", "start": 0.8, "end": 1.2},
-                    ],
-                },
-            )
-        if "chat/completions" in str(request.url):
-            body = json.loads(request.content)
-            sent = json.loads(body["messages"][0]["content"].split("TOKENS:")[1])
-            return httpx.Response(
-                200,
-                json={
-                    "model": "google/gemini-3.8-flash",
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps(
-                                    ["team" if t == "टिम" else t for t in sent],
-                                    ensure_ascii=False,
-                                )
-                            }
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 20, "completion_tokens": 6, "cost": 1e-05},
-                },
-            )
-        raise AssertionError(f"unexpected request {request.url}")
-
-    mock = httpx.Client(transport=httpx.MockTransport(handler))
-    monkeypatch.setattr("app.llm.base.ProviderClient._get_client", lambda self: mock)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("ELEVEN_LABS_API_KEY", "test-key")
-    return seen
-
-
-def _scribe_routes(**route_kwargs) -> LlmRoutes:
-    table = routes()
-    return routes(
-        routes={
-            **table.routes,
-            "asr_scribe_v2": table.routes["asr_scribe_v2"].model_copy(update=route_kwargs),
-            "script_restore": LlmRoute(
-                provider="openrouter", api="chat", model="google/gemini-3.8-flash"
-            ),
-        }
-    )
-
-
-def test_the_seed_route_romanizes_english_written_in_devanagari(
-    db_session: Session, clip, scribe_recorder
-) -> None:
-    """Scribe spells English loanwords phonetically; the corpus policy wants them in Latin.
-
-    This is the automation of an edit made 67 times by hand in the first episode.
-    """
-    config = _scribe_routes(restore_script_route="script_restore")
-    result = transcribe(db_session, clip, route="asr_scribe_v2", config=config)
-    assert result.text == "हाम्रो team राम्रो"
-
-
-def test_restoring_the_seed_keeps_every_word_span(
-    db_session: Session, clip, scribe_recorder
-) -> None:
-    """One token out per token in, so each word keeps the span Scribe measured (D41)."""
-    plain = transcribe(db_session, clip, route="asr_scribe_v2", config=_scribe_routes())
-    restored = transcribe(
-        db_session,
-        clip,
-        route="asr_scribe_v2",
-        config=_scribe_routes(restore_script_route="script_restore"),
-    )
-    assert plain.words is not None and restored.words is not None
-    assert len(restored.words) == len(plain.words)
-    assert [(w["start"], w["end"]) for w in restored.words] == [
-        (w["start"], w["end"]) for w in plain.words
-    ]
-
-
-def test_the_original_devanagari_is_kept_as_provenance(
-    db_session: Session, clip, scribe_recorder
-) -> None:
-    """What the recogniser actually said survives the rewrite, as metadata not as a transcript."""
-    config = _scribe_routes(restore_script_route="script_restore")
-    result = transcribe(db_session, clip, route="asr_scribe_v2", config=config)
-    assert (result.metadata or {})["text_devanagari"] == "हाम्रो टिम राम्रो"
-
-
-def test_a_seed_route_without_a_restore_route_is_untouched(
-    db_session: Session, clip, scribe_recorder
-) -> None:
-    result = transcribe(db_session, clip, route="asr_scribe_v2", config=_scribe_routes())
-    assert result.text == "हाम्रो टिम राम्रो"
-    assert result.metadata is None
-
-
 def test_the_shipped_scribe_route_is_raw() -> None:
-    """The seed is fused text now, so the respelling moved to the fuser (D73). Scribe feeds it as
-    heard: restoring first would give the fuser a second, dependent Scribe vote."""
-    table = load_llm_routes()
-    assert table.routes["asr_scribe_v2"].restore_script_route is None
+    """The seed is fused text now (D73), and script_restore.py is gone. Scribe feeds the fuser
+    as heard."""
+    assert "restore_script_route" not in LlmRoute.model_fields

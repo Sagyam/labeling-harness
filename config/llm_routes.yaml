@@ -42,10 +42,10 @@ routes:
     # be wrong -- `spk:0` in one hypothesis is not `spk:0` in another. Speaker identity is a
     # full-episode problem and belongs to a stage that runs before segmentation, not to a flag.
     diarize: false
-    # No `restore_script_route` since D73. Scribe still spells English phonetically in Devanagari
-    # (क्याप्टन for Captain), but the seed is the fused transcript now, and the fuser writes the
-    # script policy itself -- so restoring Scribe first bought one extra call per clip and a second
-    # Scribe vote in the fuser's input. Raw Scribe is the independent reading the fuser needs.
+    # Scribe still spells English phonetically in Devanagari (क्याप्टन for Captain), but the seed
+    # is the fused transcript now, and the fuser writes the script policy itself (D73) -- so
+    # restoring Scribe first bought one extra call per clip and a second Scribe vote in the
+    # fuser's input. Raw Scribe is the independent reading the fuser needs.
 
   # Microsoft MAI-Transcribe 2 via OpenRouter's /audio/transcriptions endpoint. A dedicated
   # speech recogniser with native support for multilingual code-switching. Replaces Gemini Flash
@@ -83,8 +83,8 @@ routes:
     forced_align: true
     # Thinking OFF here too (D45). Measured over 35 clips of 20s: a mean 895 thought tokens
     # against 88 tokens of transcript -- 91% of billed output, ~170k thought tokens per hour of
-    # audio -- and `thinkingBudget: 0` takes that to zero with the transcript unchanged. Unlike
-    # `script_restore` this route has no `max_tokens`, so nothing was making the spend visible.
+    # audio -- and `thinkingBudget: 0` takes that to zero with the transcript unchanged. This
+    # route has no `max_tokens`, so nothing was making the spend visible.
     reasoning_enabled: false
 
   # Topic labelling (D57), not transcription -- the name has no `asr_` prefix, so it never becomes
