@@ -185,6 +185,9 @@ MODEL_ID = "bodhan-ai/indic-transcribe-flex"
 LANG, MODE = "ne", "mixed"
 USE_DRIVE = True
 EPOCHS, LR, WARMUP = 6, 1e-5, 0.1
+# Shown on the harness's Models page (D83). Say what is different about this run.
+MODEL_NAME = "Indic-Transcribe-Flex FT"
+MODEL_DESCRIPTION = "04c full fine-tune, standard settings."
 EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
 PAD_TO_S = 1.0
 PROBE_FRACTION = 0.9
@@ -456,6 +459,46 @@ print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_on
 print("greedy only:    ", gold["greedy_only"])
 for s, f, t in decode.log:
     print(f"\n{s}\n  greedy: ...{f[-90:]}\n  retry:  ...{t[-90:]}")
+"""),
+    md("""
+## Harness model folder
+
+Everything the harness's **Models** page needs to show this run (D83): the model card, plus gold
+and val transcripts from the best weights under the same decoder. No weights: the page scores
+text, it never runs the model. Copy `OUT/harness/` from Drive to the harness checkout as
+`data/models/asr/<slug>/` (the folder name becomes the model's id), then press **Rescan** on the
+Models page. The harness scores the text against its *current* labels, so a clip relabeled since
+this export is scored against the new label.
+"""),
+    code(r"""
+import datetime as dt
+
+HARNESS = OUT / "harness"
+val_decode = ftkit.RetryLoops(transcribe, retry_one)
+val_texts, val_compute = ftkit.transcribe_rows(splits["val"], val_decode, budget_s=EVAL_BUDGET_S,
+                                               max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
+ftkit.write_hyps(HARNESS / "gold.jsonl", splits["gold"], texts, compute)
+ftkit.write_hyps(HARNESS / "val.jsonl", splits["val"], val_texts, val_compute)
+evals = [h for h in result["history"] if "val_wer" in h]
+export = json.loads((DATA / "training" / "manifest.json").read_text())
+card = {
+    "name": MODEL_NAME,
+    "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+    "description": MODEL_DESCRIPTION,
+    "architecture": "Canary-style enc-dec: 32L conformer + 24L transformer decoder, 1.2B",
+    "base_model": MODEL_ID,
+    "decoder": "greedy+retry",
+    "run_name": RUN_NAME,
+    "epochs": EPOCHS,
+    "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
+    "lr": LR,
+    "val_wer": result["best_val_wer"],
+    "gold_wer": gold["wer"],
+    "train_export": {k: export.get(k) for k in ("exported_at", "git_commit", "row_count",
+                                                "normalization_version", "label_version")},
+}
+(HARNESS / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
+print(f"val {score([r['text'] for r in splits['val']], val_texts)['wer']:.2f}% | wrote", HARNESS)
 """),
     md("## Results"),
     code(RESULTS),
