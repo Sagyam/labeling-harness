@@ -43,18 +43,6 @@ from app.config import HazardSettings
 from app.services.fold import align, fold_tokens, romanized
 from app.services.normalize import Ruleset
 
-GATES = (
-    "unfused",
-    "invention",
-    "dropped",
-    "seam_bleed",
-    "length_outlier",
-    "emptied",
-    "speech_over_silence",
-    "unaligned",
-    "fuser_uncertain",
-)
-
 
 @dataclass(frozen=True)
 class FusionEvidence:
