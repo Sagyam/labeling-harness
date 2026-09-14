@@ -374,7 +374,7 @@ def test_a_url_job_downloads_before_stage_one_and_records_where_it_came_from(
     db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The audio arrives by download instead of upload; everything downstream is unchanged."""
-    from tests.test_ingest import make_test_audio
+    from tests.ingest_support import make_test_audio
 
     source = make_test_audio(tmp_path / "yt_source.wav", duration_seconds=6.0)
 
