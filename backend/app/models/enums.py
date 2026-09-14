@@ -44,6 +44,11 @@ SYSTEM_KINDS: Final[tuple[str, ...]] = ("asr", "fusion")
 #: * ``screened``  -- accepted on the disagreement signal without listening.
 #:
 #: Gold-pot segments may only be ``verified``; the API refuses anything else.
+#: The clips a fine-tuned model's run was scored on (D83): the gold pot, or the val split of the
+#: train pot. Gold is the benchmark; val is the held-out set the notebook selects epochs on.
+EvalSplit = Literal["gold", "val"]
+EVAL_SPLITS: Final[tuple[str, ...]] = ("gold", "val")
+
 VerificationTier = Literal["verified", "screened"]
 VERIFICATION_TIERS: Final[tuple[str, ...]] = ("verified", "screened")
 

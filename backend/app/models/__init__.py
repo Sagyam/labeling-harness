@@ -16,6 +16,7 @@ from app.models.content import (
     SegmentScore,
     SpeakerTurn,
 )
+from app.models.evaluation import AsrModel, ModelEvalClip, ModelEvalRun
 from app.models.ops import AuditLog, LlmRequest, TranslitCacheEntry
 from app.models.provenance import ImportRun
 
@@ -23,6 +24,7 @@ __all__ = [
     "AnnotationEvent",
     "AnnotationTask",
     "AsrHypothesis",
+    "AsrModel",
     "AsrSystem",
     "AuditLog",
     "DiarizationRun",
@@ -31,6 +33,8 @@ __all__ = [
     "ImportRun",
     "LabelVersion",
     "LlmRequest",
+    "ModelEvalClip",
+    "ModelEvalRun",
     "Segment",
     "SegmentLabel",
     "SegmentScore",
