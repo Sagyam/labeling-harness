@@ -283,7 +283,9 @@ class ModelsSettings(BaseModel):
 
     model_config = _STRICT
 
-    root: Path = Path("./data/models/asr")
+    #: ``validate_default``: this key is not in settings.yaml, and pydantic skips validators on
+    #: defaults, which would leave it relative to the working directory rather than the repo.
+    root: Path = Field(default=Path("./data/models/asr"), validate_default=True)
 
     @field_validator("root")
     @classmethod

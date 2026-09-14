@@ -284,3 +284,14 @@ def test_no_route_asks_for_speaker_labels() -> None:
     """
     routes = load_llm_routes().routes
     assert {name for name, route in routes.items() if route.diarize} == set()
+
+
+def test_the_models_root_defaults_to_an_absolute_path_under_the_repo() -> None:
+    """Not in settings.yaml, so the default is what the container uses. A relative default would
+    resolve against the process's working directory (``/app/backend`` in the image), not the
+    bind-mounted ``/app/data`` (D83)."""
+    from app.config import REPO_ROOT
+
+    root = load_settings().models.root
+    assert root.is_absolute()
+    assert root == REPO_ROOT / "data" / "models" / "asr"
