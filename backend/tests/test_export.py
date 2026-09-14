@@ -12,13 +12,13 @@ from sqlalchemy.orm import Session
 from app.config import Settings, load_settings
 from app.models import AnnotationTask, Episode, Segment, SegmentLabel
 from app.services.export import ExportError, GoldLeakError, export_dataset
-from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.labeling import Decision, record_decision
 from app.services.normalize import load_ruleset
 from app.services.queue_builder import build_queue
 from app.storage.local import LocalFilesystemStorage
 from app.utils.hashing import sha256_file
+from tests.fixtures import build_export_fixture
 
 pytestmark = pytest.mark.db
 

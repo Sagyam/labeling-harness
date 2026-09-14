@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
 from app.models import AnnotationTask, AuditLog, Episode, Segment
-from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.overlap_backfill import backfill_overlap
 from app.services.queue_builder import build_queue
 from app.storage.local import LocalFilesystemStorage
+from tests.fixtures import build_export_fixture
 
 pytestmark = pytest.mark.db
 

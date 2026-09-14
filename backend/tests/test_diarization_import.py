@@ -17,9 +17,9 @@ from app.services.diarization_import import (
     import_diarization,
     parse_diarization,
 )
-from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.storage.local import LocalFilesystemStorage
+from tests.fixtures import build_export_fixture
 
 MODEL = "pyannote/speaker-diarization-community-1"
 

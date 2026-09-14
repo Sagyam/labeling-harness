@@ -10,9 +10,9 @@ import json
 from pathlib import Path
 
 from app.services.audio import probe
-from app.services.fixtures import build_export_fixture
 from app.services.manifest import read_manifest
 from app.utils.hashing import sha256_file
+from tests.fixtures import build_export_fixture
 
 
 def test_fixture_produces_a_readable_manifest(tmp_path: Path) -> None:

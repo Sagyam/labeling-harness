@@ -17,11 +17,11 @@ from sqlalchemy.orm import Session
 from app.config import Settings, load_settings
 from app.models import AnnotationTask, Episode, SegmentLabel
 from app.services.export import GoldPurityError, export_dataset
-from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.labeling import Decision, LabelingError, record_decision
 from app.services.queue_builder import build_queue
 from app.storage.local import LocalFilesystemStorage
+from tests.fixtures import build_export_fixture
 
 pytestmark = pytest.mark.db
 

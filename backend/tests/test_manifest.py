@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services.fixtures import build_export_fixture
 from app.services.manifest import ManifestError, read_manifest, validate_episode, validate_segment
+from tests.fixtures import build_export_fixture
 
 
 @pytest.fixture

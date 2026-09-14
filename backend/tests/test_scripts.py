@@ -137,8 +137,8 @@ def test_import_script_rejects_a_missing_export_directory(
 def test_import_script_imports_a_fixture_export(
     cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from app.services.fixtures import build_export_fixture
     from app.storage.local import LocalFilesystemStorage
+    from tests.fixtures import build_export_fixture
 
     script = load("import_manifest")
     monkeypatch.setattr(

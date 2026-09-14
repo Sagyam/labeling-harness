@@ -20,9 +20,9 @@ from app.models import (
     Segment,
     SegmentScore,
 )
-from app.services.fixtures import build_export_fixture
 from app.services.importer import ClipChangedError, ImportError_, import_manifest
 from app.storage.local import LocalFilesystemStorage
+from tests.fixtures import build_export_fixture
 
 pytestmark = pytest.mark.db
 

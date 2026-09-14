@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 from app.config import load_settings
 from app.models import TranslitCacheEntry
 from app.translit.base import TranslitProvider
-from app.translit.mock import StaticTranslitProvider
 from app.translit.offline import OfflineTranslitProvider
 from app.translit.remote import GoogleInputToolsProvider
 from app.translit.service import TransliterationService
+from tests.translit_mock import StaticTranslitProvider
 
 DEVANAGARI = range(0x0900, 0x0980)
 

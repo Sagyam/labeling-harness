@@ -11,11 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models import Episode
-from app.services.fixtures import build_export_fixture
 from app.services.importer import import_manifest
 from app.services.labeling import Decision, record_decision
 from app.services.queue_builder import build_queue
 from app.storage.local import LocalFilesystemStorage
+from tests.fixtures import build_export_fixture
 
 pytestmark = pytest.mark.db
 
