@@ -224,6 +224,33 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
   - Single-host episodes were diarized with one speaker, so they have no overlap by
     construction.
 
+### CPU inference is realtime in bf16; dynamic int8 breaks Flex (2026-09-15)
+
+- **Setup.** Base Flex, which has the same architecture and speed as the fine-tune. It ran on the
+  owner's Ryzen 7 7700X with 8 threads, plain PyTorch and the KV cache, over 10 gold clips (117 s,
+  2.5–20 s each). The experiment code was discarded after the run.
+
+  | variant | RTF | ms/token | WER (base model) |
+  |---|---|---|---|
+  | fp32 | 0.41 | 54 | 21.8% |
+  | **bf16** | **0.18** | **23** | **21.8%** (8/10 texts identical to fp32) |
+  | dynamic int8, per-tensor | 0.11 | 15 | 96.7%, 4 loops |
+  | dynamic int8, per-channel | 0.11 | 15 | 112.5%, 2 loops |
+
+- **Decoding is the cost.** The encoder takes ~0.015 s per second of audio. Nepanglish runs about
+  8 tokens per second of speech, and each token re-reads the 24 decoder layers, which is
+  memory-bound.
+- **bf16 is fast on this CPU.** Zen 4 has bf16 instructions, so bf16 is 2.3x fp32. The model card's
+  "bf16 is slower on CPU" holds only on CPUs without them.
+- **Dynamic int8 quantizes activations, and Flex cannot take it.** Besides the loops, the output
+  lost the mixed-script convention: English came out in Devanagari.
+- **Weight-only int8** (`notebooks/src/cpukit.py`) keeps activations in bf16. On a full-size Flex
+  with random weights it decodes at 16.5 vs 24.5 ms/token (1.5x), i.e. about RTF 0.12 on the 7700X.
+  Its accuracy is unmeasured; 04c's CPU export section measures it on each new model and exports
+  int8 only if val WER stays within +0.3 of bf16.
+- **Live use.** Flex is not a streaming model. Cut the microphone at pauses (Silero VAD) and
+  transcribe each utterance: a 5 s sentence returns in about 1 s in bf16.
+
 ### The Anatomy of Autoregressive Loops
 - Greedy decoding gets stuck in positive-feedback absorbing states when cross-attention has low energy (speaker pauses or filler hesitations like `अँ`, `उम्`) or during natural reduplication (`mixed-mixed`, `खोज्दै खोज्दै`, `21, 21`).
 - The audio in these clips is clean. When forced past the repeated token using a mild repetition penalty (`repetition_penalty=1.2`), the decoder snaps back to cross-attention and transcribes the rest of the clip with near-zero errors.
@@ -242,6 +269,8 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
 
 - **Edit sources, not notebooks:** Notebooks are generated from `notebooks/src/`:
   - `ftkit.py`: shared training kit embedded via `%%writefile`.
+  - `cpukit.py`: weight-only int8 for the CPU export, embedded via `%%writefile` and copied into
+    `OUT/cpu/` (load with `cpukit.load_int8`).
   - `build_finetune.py`: builds notebook 04c (`python notebooks/src/build_finetune.py`).
 - **Batch probe gradient buffer:** The batch probe must keep gradients allocated (`probe_max_items`). Probing without the gradient buffer measures activations without the ~4.8 GB optimizer/grad buffer and causes out-of-memory errors during accumulated training.
 - **CUDA memory allocator:** Setup must set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before torch is imported to avoid fragmentation across variable sequence lengths.

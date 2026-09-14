@@ -7,6 +7,7 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
+CPUKIT = (HERE / "cpukit.py").read_text()
 OUT_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent
 
 
@@ -502,6 +503,109 @@ print(f"val {score([r['text'] for r in splits['val']], val_texts)['wer']:.2f}% |
 """),
     md("## Results"),
     code(RESULTS),
+    md("""
+## CPU export: quantize, benchmark, export
+
+The target is a CPU at a desk, not this GPU: transcribing a microphone live, and later the harness.
+**What was measured locally (Ryzen 7 7700X, 8 threads, 2026-09-15)**, base Flex on 10 gold clips:
+- fp32 runs at RTF 0.41 and bf16 at RTF 0.18, with the same WER (21.8%). bf16 is realtime and
+  free, and `best/` already stores bf16, so it is the CPU model if nothing else passes.
+- PyTorch's **dynamic int8** (activations quantized too) broke the model: WER 97-113%, loops, and
+  English written in Devanagari. It is not tried here.
+- **Weight-only int8** (`cpukit.py`: int8 weights with one scale per output channel, bf16
+  activations) decodes 1.5x faster than bf16 on a full-size Flex (16.5 vs 24.5 ms/token, random
+  weights). Decoding is memory-bound, so halving the weight bytes is where CPU speed comes from.
+
+**What this section measures** is the part that was not measured locally: what int8 costs in
+accuracy on *this* model.
+1. **Accuracy, on the GPU.** The trained model is quantized in place (this is its last use) and
+   val and gold are decoded with the same decoder as above. The int8 arithmetic is dequantized on
+   the GPU, so the numbers carry over to the CPU kernel.
+2. **Rule, fixed before any run:** export int8 if its val WER is within **+0.3** of bf16 (the
+   run-to-run noise) and it loops no more often. Otherwise the CPU model is `best/` in bf16.
+3. **Speed, on this VM's CPU.** The same `CPU_TIMING_CLIPS` val clips are timed for each variant.
+   Colab's CPU is not your machine (it may lack bf16 instructions entirely), so only the ratio
+   between variants means anything. Measure the absolute speed where the model will run.
+4. **Export.** An accepted int8 model goes to `OUT/cpu/` (~1.3 GB against 2.5 GB, with its code
+   and `cpukit.py`; load it with `cpukit.load_int8`). `cpu_bench.json` holds every number, and the
+   harness model card gets a `cpu` block.
+
+ONNX is not needed: plain PyTorch bf16 is already realtime on the target CPU.
+"""),
+    code("%%writefile /content/ft/cpukit.py\n" + CPUKIT),
+    code(r"""
+import cpukit
+
+CPU_TIMING_CLIPS = 8   # val clips timed on this VM's CPU; accuracy uses all of val and gold on the GPU
+MAX_WER_COST = 0.3     # points of val WER int8 may cost against bf16 (the run-to-run noise)
+
+val_refs, gold_refs = [r["text"] for r in splits["val"]], [r["text"] for r in splits["gold"]]
+bf16_scores = {"val": score(val_refs, val_texts), "gold": score(gold_refs, texts)}
+cpukit.quantize_(model, dtype=torch.float32)  # in place: the GPU copy is not needed after this
+int8_texts = {}
+for name, rows in (("val", splits["val"]), ("gold", splits["gold"])):
+    int8_texts[name], _ = ftkit.transcribe_rows(rows, ftkit.RetryLoops(transcribe, retry_one),
+                                                budget_s=EVAL_BUDGET_S, max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
+int8_scores = {"val": score(val_refs, int8_texts["val"]), "gold": score(gold_refs, int8_texts["gold"])}
+same = sum(a == b for a, b in zip(val_texts, int8_texts["val"]))
+accept = (int8_scores["val"]["wer"] <= bf16_scores["val"]["wer"] + MAX_WER_COST
+          and int8_scores["val"]["loops"] <= bf16_scores["val"]["loops"])
+for name in ("val", "gold"):
+    print(f"{name}: bf16 {bf16_scores[name]['wer']:.2f}% ({bf16_scores[name]['loops']} loops) | "
+          f"int8 {int8_scores[name]['wer']:.2f}% ({int8_scores[name]['loops']} loops)")
+print(f"int8 text identical to bf16 on {same}/{len(val_texts)} val clips ->",
+      "EXPORT int8" if accept else "int8 rejected; the CPU model is best/ in bf16")
+"""),
+    code(r"""
+import subprocess
+
+step = max(1, len(splits["val"]) // CPU_TIMING_CLIPS)
+timing_rows = sorted(splits["val"], key=ftkit.duration)[::step][:CPU_TIMING_CLIPS]
+clips = [(r["segment_id"], torch.as_tensor(store.clip_f32(r)).float().cpu()) for r in timing_rows]
+threads = os.cpu_count()
+torch.set_num_threads(threads)
+cpu_name = subprocess.run("lscpu | sed -n 's/^Model name: *//p'", shell=True, capture_output=True,
+                          text=True).stdout.strip()
+cpu_flags = open("/proc/cpuinfo").read()
+host = {"cpu": cpu_name, "threads": threads, "avx512_bf16": "avx512_bf16" in cpu_flags,
+        "amx_bf16": "amx_bf16" in cpu_flags}
+print(host)
+
+timing = {}
+cpu_asr = IndicTranscribe.from_pretrained(str(OUT / "best"), device="cpu", dtype=torch.bfloat16)
+timing["bf16"] = cpukit.time_clips(cpu_asr, clips, lang=LANG, mode=MODE)
+if accept:
+    names = cpukit.quantize_(cpu_asr.model)
+    cpukit.save_int8(cpu_asr.model, names, OUT / "best", OUT / "cpu")
+    del cpu_asr
+    cpu_asr = cpukit.load_int8(OUT / "cpu")  # time what was written, not what is in memory
+    timing["int8"] = cpukit.time_clips(cpu_asr, clips, lang=LANG, mode=MODE)
+del cpu_asr
+for variant, t in timing.items():
+    print(f"{variant}: RTF {t['rtf']:.3f}, {t['ms_per_token']:.1f} ms/token over {t['audio_s']} s of audio")
+
+bench = {
+    "variant": "int8-weight-only" if accept else "bf16",
+    "export": "cpu/" if accept else "best/",
+    "rule": f"int8 if val WER <= bf16 + {MAX_WER_COST} and no more loops",
+    "scores": {"bf16": bf16_scores, "int8": int8_scores},
+    "int8_identical_val_texts": same,
+    "timing_host": host,
+    "timing": {v: {k: x for k, x in t.items() if k != "texts"} for v, t in timing.items()},
+}
+(OUT / "cpu_bench.json").write_text(json.dumps(bench, indent=1))
+card = json.loads((HARNESS / "model_card.json").read_text())
+card["cpu"] = {
+    "variant": bench["variant"],
+    "export": bench["export"],
+    "val_wer_bf16": bf16_scores["val"]["wer"],
+    "val_wer_int8": int8_scores["val"]["wer"],
+    "timing_host": host["cpu"],
+    "rtf": {v: t["rtf"] for v, t in timing.items()},
+}
+(HARNESS / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
+print("wrote", OUT / "cpu_bench.json", "and the card's cpu block")
+"""),
 ]
 
 
