@@ -212,24 +212,6 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 - Anything reaching HTML output (episode titles, transcripts) comes from an upstream manifest or a
   model. Escape it.
 
-## Do not build
-
-The corpus is small; the archive behind it is roughly 2,400 hours. Do not build these, and do not
-architect around them either — just avoid decisions that would make them expensive later.
-
-| Deferred | Keep the door open by |
-|---|---|
-| Job queue / worker pool | Import and queue-build stay pure functions over a batch |
-| Table partitioning | Keep `hypothesis_words` writes batched and its foreign keys clean |
-| Multi-annotator, IAA, adjudication | `segment_labels` carries `annotator`; rows stay append-only |
-| LLM-assisted policy checks | The client and `llm_requests` already exist; fusion (D72) is the one LLM that writes text a label starts from |
-| Word-level language editing | `hypothesis_words` schema is retained; no UI |
-| In-app annotation guidelines, policy linter | `policy_version` is stored on every label |
-| Auth and user management | The optional bearer-token hook is already in the API layer |
-| Parquet export | JSONL is written today; pyarrow is not worth ~100 MB at this corpus size |
-
-If one of these becomes necessary it is a new piece of work with its own verification criteria, not
-a retrofit.
 
 ## Documentation
 
