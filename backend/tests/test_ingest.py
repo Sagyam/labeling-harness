@@ -349,7 +349,7 @@ def test_api_ingest_start_and_status(
 ) -> None:
     wav_path = make_test_audio(tmp_path / "upload.wav", duration_seconds=3.0)
     monkeypatch.setattr(
-        "app.services.ingest.run_pipeline",
+        "app.services.ingest.pipeline.run_pipeline",
         lambda job, *args: job.set_progress("normalizing", 20.0),
     )
 
@@ -653,7 +653,7 @@ def test_a_traversing_episode_id_cannot_escape_the_work_root(
     """The id names a directory the pipeline later deletes, so it must be sanitised."""
     captured: dict[str, Path] = {}
     monkeypatch.setattr(
-        "app.services.ingest.run_pipeline",
+        "app.services.ingest.pipeline.run_pipeline",
         lambda job, *args: captured.update(work_dir=job.work_dir),
     )
     wav_path = make_test_audio(tmp_path / "traverse.wav", duration_seconds=3.0)
@@ -941,7 +941,7 @@ def test_concurrent_transcription_fails_job_cleanly_on_asr_error(
     def failing_transcribe(*args, **kwargs):
         raise RuntimeError("ASR upstream service unavailable")
 
-    monkeypatch.setattr("app.services.ingest.transcribe", failing_transcribe)
+    monkeypatch.setattr("app.services.ingest.pipeline.transcribe", failing_transcribe)
 
     run_pipeline(
         job,
@@ -979,7 +979,7 @@ def _pipeline_job(tmp_path: Path, name: str, *, seconds: float = 45.0) -> Ingest
 
 def _failing_transcribe(should_fail, *, route_to_fail: str = "asr_gemini_flash"):
     """Wrap the real ``transcribe`` so one route raises on the clips ``should_fail`` picks."""
-    from app.services import ingest as ingest_module
+    from app.services.ingest import pipeline as ingest_module
 
     real = ingest_module.transcribe
 
@@ -1001,7 +1001,7 @@ def test_a_refused_clip_is_discarded_and_the_episode_still_lands(
     """
     job = _pipeline_job(tmp_path, "kept")
     monkeypatch.setattr(
-        "app.services.ingest.transcribe",
+        "app.services.ingest.pipeline.transcribe",
         _failing_transcribe(lambda name: name.endswith("_00000.flac")),
     )
 
@@ -1026,7 +1026,7 @@ def test_a_discarded_segment_is_reported_with_its_blame_in_the_summary(
 ) -> None:
     job = _pipeline_job(tmp_path, "summary")
     monkeypatch.setattr(
-        "app.services.ingest.transcribe",
+        "app.services.ingest.pipeline.transcribe",
         _failing_transcribe(lambda name: name.endswith("_00000.flac")),
     )
     run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
@@ -1044,7 +1044,9 @@ def test_an_episode_where_every_segment_is_refused_fails_loudly(
 ) -> None:
     """Nothing survived, so there is no episode to import -- and no pretending otherwise."""
     job = _pipeline_job(tmp_path, "allgone", seconds=6.0)
-    monkeypatch.setattr("app.services.ingest.transcribe", _failing_transcribe(lambda name: True))
+    monkeypatch.setattr(
+        "app.services.ingest.pipeline.transcribe", _failing_transcribe(lambda name: True)
+    )
     run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
 
     assert job.status == "failed"
@@ -1058,7 +1060,7 @@ def test_the_progress_bar_still_reaches_every_segment_when_some_are_discarded(
     """A discard bumps the same counter a success does, or the bar stalls short of the end."""
     job = _pipeline_job(tmp_path, "progress")
     monkeypatch.setattr(
-        "app.services.ingest.transcribe",
+        "app.services.ingest.pipeline.transcribe",
         _failing_transcribe(lambda name: name.endswith("_00000.flac")),
     )
     run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
@@ -1074,7 +1076,7 @@ def test_a_discard_is_emitted_to_subscribers_as_it_happens(
     job = _pipeline_job(tmp_path, "sse")
     seen: list[dict] = []
     monkeypatch.setattr(
-        "app.services.ingest.transcribe",
+        "app.services.ingest.pipeline.transcribe",
         _failing_transcribe(lambda name: name.endswith("_00000.flac")),
     )
     monkeypatch.setattr(job, "_emit", lambda event: seen.append(event))
@@ -1147,7 +1149,7 @@ def test_scram_mid_run_stops_dispatching_inference(
     )
 
     calls: list[str] = []
-    real_transcribe = __import__("app.services.ingest", fromlist=["transcribe"]).transcribe
+    real_transcribe = __import__("app.services.ingest.pipeline", fromlist=["transcribe"]).transcribe
 
     def counting_transcribe(session, audio_path, **kwargs):
         calls.append(str(audio_path))
@@ -1155,7 +1157,7 @@ def test_scram_mid_run_stops_dispatching_inference(
         job.scram(reason="test mid-run")
         return real_transcribe(session, audio_path, **kwargs)
 
-    monkeypatch.setattr("app.services.ingest.transcribe", counting_transcribe)
+    monkeypatch.setattr("app.services.ingest.pipeline.transcribe", counting_transcribe)
     # One segment at a time, so "no clip after the press" is an exact count rather than a count
     # plus whatever the pool already had in flight.
     serial_settings = settings.model_copy(
@@ -1284,7 +1286,7 @@ def test_queued_jobs_run_one_at_a_time_in_submission_order(
             running -= 1
         job.status = "completed"
 
-    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", fake_pipeline)
 
     jobs = [_queued_job(f"queued_{n}", tmp_path) for n in range(4)]
     positions = [manager.submit(job, lambda: None, None, settings) for job in jobs]
@@ -1309,7 +1311,7 @@ def test_a_job_scrammed_while_still_queued_never_runs(
         release.wait(timeout=5.0)
         job.status = "completed"
 
-    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", fake_pipeline)
 
     first = _queued_job("scram_first", tmp_path)
     second = _queued_job("scram_second", tmp_path)
@@ -1334,7 +1336,7 @@ def test_a_crashing_job_does_not_stop_the_queue(
             raise RuntimeError("boom")
         job.status = "completed"
 
-    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", fake_pipeline)
 
     crasher = _queued_job("crash_me", tmp_path)
     survivor = _queued_job("crash_survivor", tmp_path)
@@ -1356,7 +1358,7 @@ def test_the_queue_endpoint_lists_what_is_waiting(
         release.wait(timeout=5.0)
         job.status = "completed"
 
-    monkeypatch.setattr("app.services.ingest.run_pipeline", fake_pipeline)
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", fake_pipeline)
 
     first = _queued_job("listed_first", tmp_path)
     second = _queued_job("listed_second", tmp_path)
@@ -1429,7 +1431,7 @@ def test_every_clip_is_imported_with_a_fused_hypothesis(
     from app.models import AsrHypothesis, AsrSystem
 
     monkeypatch.setattr(
-        "app.services.ingest._fusion_completer", lambda session, routes, route: _echo_first
+        "app.services.ingest.fusion._fusion_completer", lambda session, routes, route: _echo_first
     )
     job = _run(db_session, object_storage, settings, tmp_path, "web_fuse")
 
@@ -1452,7 +1454,7 @@ def test_a_fuser_that_blows_up_never_fails_the_episode(
     def broken(session, routes, route):
         raise RuntimeError("vertex is on fire")
 
-    monkeypatch.setattr("app.services.ingest._fusion_completer", broken)
+    monkeypatch.setattr("app.services.ingest.fusion._fusion_completer", broken)
     job = _run(db_session, object_storage, settings, tmp_path, "web_fuse_broken")
 
     assert job.status == "completed"
@@ -1485,7 +1487,7 @@ def test_queue_rich_snapshot_api(client: TestClient, tmp_path: Path) -> None:
 def test_retry_and_cancel_endpoints_api(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("app.services.ingest.run_pipeline", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", lambda *args, **kwargs: None)
     manager.reset()
     work_dir = tmp_path / "retry_ep"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1646,7 +1648,7 @@ def test_the_diarizers_turns_become_the_episodes_first_run(
             "embeddings": None,
         }
 
-    monkeypatch.setattr("app.services.ingest.diarize_audio", fake_diarize)
+    monkeypatch.setattr("app.services.ingest.pipeline.diarize_audio", fake_diarize)
     job = _pipeline_job(tmp_path, "diarized", seconds=6.0)
     job.metadata = {"speakers": {"host": {"gender": "male"}, "guest": {"gender": "female"}}}
 
@@ -1673,7 +1675,7 @@ def test_a_failing_diarizer_never_fails_the_ingest(
     def broken(audio, *, num_speakers, settings):
         raise RuntimeError("GPU on fire")
 
-    monkeypatch.setattr("app.services.ingest.diarize_audio", broken)
+    monkeypatch.setattr("app.services.ingest.pipeline.diarize_audio", broken)
     job = _pipeline_job(tmp_path, "undiarized", seconds=6.0)
 
     run_pipeline(job, lambda: db_session, object_storage, _diarizing(settings))
@@ -1690,7 +1692,7 @@ def test_a_malformed_diarization_leaves_the_imported_episode_intact(
 ) -> None:
     """A bad answer is reported, and the clips imported beside it stay."""
     monkeypatch.setattr(
-        "app.services.ingest.diarize_audio",
+        "app.services.ingest.pipeline.diarize_audio",
         lambda audio, *, num_speakers, settings: {"turns": [[5.0, 1.0, "SPEAKER_00"]]},
     )
     job = _pipeline_job(tmp_path, "malformed", seconds=6.0)

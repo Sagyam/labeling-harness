@@ -386,7 +386,7 @@ def test_a_url_job_downloads_before_stage_one_and_records_where_it_came_from(
             on_progress(100.0, "[download] 100% of 1.00MiB in 00:01")
         return target
 
-    monkeypatch.setattr("app.services.ingest.download_audio", fake_download)
+    monkeypatch.setattr("app.services.ingest.pipeline.download_audio", fake_download)
 
     job = IngestJob(
         job_id="yt-job-001",
@@ -417,7 +417,7 @@ def test_a_failed_download_fails_the_job_without_running_a_stage(
     def boom(*args: Any, **kwargs: Any) -> Path:
         raise YouTubeUnavailable("yt-dlp download failed: Video unavailable")
 
-    monkeypatch.setattr("app.services.ingest.download_audio", boom)
+    monkeypatch.setattr("app.services.ingest.pipeline.download_audio", boom)
 
     job = IngestJob(
         job_id="yt-job-002",
@@ -472,7 +472,7 @@ def probed(monkeypatch: pytest.MonkeyPatch):
         # The pipeline now runs from the ingestion queue's worker thread, so it is the service
         # module's name that has to be replaced, not the API module's.
         monkeypatch.setattr(
-            "app.services.ingest.run_pipeline",
+            "app.services.ingest.pipeline.run_pipeline",
             lambda job, *args: job.set_progress("downloading", 0.0),
         )
 
@@ -722,7 +722,7 @@ def test_pipeline_bot_detection_moves_job_to_backlog(
     def _fail_bot(*args, **kwargs):
         raise YouTubeBotDetected("Sign in to confirm you're not a bot")
 
-    monkeypatch.setattr("app.services.ingest.download_audio", _fail_bot)
+    monkeypatch.setattr("app.services.ingest.pipeline.download_audio", _fail_bot)
 
     # run_pipeline directly
     run_pipeline(job, lambda: None, None, settings)
