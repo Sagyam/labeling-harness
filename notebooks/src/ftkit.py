@@ -1,10 +1,9 @@
-"""Shared fine-tuning kit for the Nepanglish ASR notebooks (04a, 04b, 04c).
+"""Shared fine-tuning kit for the Nepanglish ASR notebook (04c).
 
 Everything that is not model-specific: the dataset held in RAM, duration-bucketed batches, the
-harness scorer, a GPU utilisation monitor, a batch-size probe and one training loop. Each notebook
-writes this file out, so the Omnilingual script (which runs in a separate Python 3.12
-environment) imports exactly the same code as the main kernel. Keep it importable on Python 3.10+
-with numpy 1.x or 2.x.
+harness scorer, a GPU utilisation monitor, a batch-size probe and one training loop. The notebook
+writes this file out, so it imports exactly the same code as the main kernel. Keep it importable
+on Python 3.10+ with numpy 1.x or 2.x.
 
 How the GPU is kept busy:
   * audio is decoded once into RAM as int16; a clip is a slice, so no disk I/O in the loop;
@@ -256,7 +255,7 @@ def transcribe_rows(
 def write_hyps(
     path: Path, rows: Sequence[dict], texts: Sequence[str], compute: Sequence[float]
 ) -> None:
-    """The bake-off's hypothesis-cache format, so its scoring cell can include the result."""
+    """The hypothesis-cache format the bake-off comparisons used, so the result can join them."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for r, text, c in zip(rows, texts, compute, strict=True):

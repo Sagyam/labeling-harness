@@ -111,10 +111,8 @@ Fix episode/speaker leakage by constructing an uncompromised test benchmark:
 - Benchmark the optimized Flex model against standard open Nepali/Indic ASR baselines and datasets.
 - Report folded and raw WER side-by-side with 95% bootstrap confidence intervals.
 
-### Phase 5: Revisit Secondary Models (Whisper-turbo & Omnilingual)
-Once the performance ceiling is established with Flex:
-- Give **Whisper-large-v3-turbo** a longer training schedule (it was still improving at epoch 5) and beam search decoding.
-- Evaluate whether **Omnilingual CTC-1B v2** can be salvaged with a KenLM language model decoder.
+Whisper-turbo and Omnilingual CTC will not be fine-tuned further; their notebooks (`04a`, `04b`)
+and the bake-off notebook (`03`) were removed 2026-09-14.
 
 ---
 
@@ -240,8 +238,7 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
 
 - **Edit sources, not notebooks:** Notebooks are generated from `notebooks/src/`:
   - `ftkit.py`: shared training kit embedded via `%%writefile`.
-  - `build_finetune.py`: builds notebooks 04a, 04b, 04c (`python notebooks/src/build_finetune.py`).
-  - `build_bakeoff.py`: builds 03.
+  - `build_finetune.py`: builds notebook 04c (`python notebooks/src/build_finetune.py`).
 - **Batch probe gradient buffer:** The batch probe must keep gradients allocated (`probe_max_items`). Probing without the gradient buffer measures activations without the ~4.8 GB optimizer/grad buffer and causes out-of-memory errors during accumulated training.
 - **CUDA memory allocator:** Setup must set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before torch is imported to avoid fragmentation across variable sequence lengths.
 - **Flex tokenization offset:** Targets are SentencePiece IDs offset by 1,152 special tokens. `।` maps to `.`, Devanagari digits to Latin digits, and ZWJ/ZWNJ are stripped.

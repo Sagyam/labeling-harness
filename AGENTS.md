@@ -13,7 +13,7 @@ frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
 docs/            architecture, decisions, manifest contract
-notebooks/       EDA, ASR bake-off (03), fine-tuning (04a-c; generated from notebooks/src/)
+notebooks/       EDA and fine-tuning (04c, Indic-Transcribe; generated from notebooks/src/)
 ```
 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
