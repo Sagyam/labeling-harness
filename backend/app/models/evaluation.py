@@ -129,5 +129,8 @@ class ModelEvalClip(Base):
     is_loop: Mapped[bool] = mapped_column(Boolean, nullable=False)
     #: GPU seconds the notebook spent on this clip, when it recorded them.
     compute_s: Mapped[float | None] = mapped_column(Float)
+    #: Fraction of the clip in crosstalk when the run was imported (D77); null = never measured.
+    #: Kept with the run so filtering clips by it agrees with the run's overlap breakdown.
+    overlap_share: Mapped[float | None] = mapped_column(Float)
 
     run: Mapped[ModelEvalRun] = relationship(back_populates="clips")

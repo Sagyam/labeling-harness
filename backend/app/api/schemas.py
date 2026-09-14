@@ -453,3 +453,91 @@ class SegmentPotOut(BaseModel):
     external_id: str
     pot: str
     changed: bool
+
+
+class ModelEvalRunOut(BaseModel):
+    """One import of a fine-tuned model's gold or val transcripts, as scored then (D83)."""
+
+    id: int
+    split: str
+    decoder: str | None = None
+    fold_version: str
+    clip_count: int
+    #: ``wer``, ``wer_ci``, ``raw_wer``, ``cer``, ``loops``, ``by_genre``, ``by_overlap``,
+    #: ``skipped`` -- see :func:`app.services.model_eval.summarize`.
+    metrics: dict[str, Any]
+    source: str | None = None
+    created_at: dt.datetime
+
+
+class AsrModelOut(BaseModel):
+    """One fine-tuned model and every run imported for it, oldest first."""
+
+    id: int
+    slug: str
+    name: str
+    description: str | None = None
+    architecture: str | None = None
+    trained_at: dt.datetime | None = None
+    card: dict[str, Any] = Field(default_factory=dict)
+    runs: list[ModelEvalRunOut] = Field(default_factory=list)
+
+
+class ModelRescanOut(BaseModel):
+    """What a rescan of the model folders did."""
+
+    models: list[str]
+    runs_created: int
+    runs_unchanged: int
+    skipped: int
+
+
+class ModelClipOut(BaseModel):
+    """One clip of a run. ``segment_id`` is the harness id, for ``/segments/{id}`` and audio."""
+
+    segment_id: int
+    external_id: str
+    episode_external_id: str
+    genre: str
+    duration_seconds: float
+    overlap_share: float | None = None
+    overlap_bucket: str
+    ref_words: int
+    errors: int
+    substitutions: int
+    deletions: int
+    insertions: int
+    wer: float
+    raw_errors: int
+    raw_ref_words: int
+    char_errors: int
+    ref_chars: int
+    is_loop: bool
+    ref_text: str
+    hyp_text: str
+
+
+class ModelClipPageOut(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    rows: list[ModelClipOut]
+
+
+class AlignOpOut(BaseModel):
+    """One step of the folded word alignment: ``match``, ``fold``, ``merge``, ``sub``, ``del`` or
+    ``ins``. ``fold`` is one word in two scripts and ``merge`` one word split in two -- both are
+    matches, not errors."""
+
+    kind: str
+    ref: list[str]
+    hyp: list[str]
+    similarity: float
+
+
+class ModelClipDetailOut(ModelClipOut):
+    ops: list[AlignOpOut]
+    fold_version: str
+    #: The fold rules changed since the run was imported, so ``ops`` may not add up to the
+    #: stored counts.
+    fold_version_changed: bool

@@ -92,6 +92,7 @@ def upgrade() -> None:
         sa.Column("char_errors", sa.Integer(), nullable=False),
         sa.Column("is_loop", sa.Boolean(), nullable=False),
         sa.Column("compute_s", sa.Float(), nullable=True),
+        sa.Column("overlap_share", sa.Float(), nullable=True),
         sa.ForeignKeyConstraint(
             ["run_id"],
             ["model_eval_runs.id"],

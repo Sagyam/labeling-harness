@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
     )
 
     from app.api import (
+        asr_models,
         costs,
         episodes,
         export,
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
         export,
         costs,
         pots,
+        asr_models,
     ):
         app.include_router(module.router)
 

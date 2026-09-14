@@ -251,6 +251,7 @@ def _import_run(
                 ref_text=reference,
                 hyp_text=row["text"],
                 compute_s=row["compute_s"],
+                overlap_share=share,
                 **vars(score),
             )
         )

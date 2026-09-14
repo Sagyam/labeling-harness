@@ -113,7 +113,8 @@ def settings(tmp_path: Path):
     The export root is redirected for a worse reason: ``POST /export`` writes there, and the
     real ``./exports`` holds the published dataset, which a fixture export silently replaces.
     Diarization is switched off because it is a paid GPU call to a live endpoint; tests that
-    need turns inject a stand-in for ``diarize_audio``.
+    need turns inject a stand-in for ``diarize_audio``. The model folder root is redirected so
+    ``POST /models/rescan`` never imports the owner's real fine-tuned models.
     """
     from app.config import load_settings
 
@@ -123,6 +124,7 @@ def settings(tmp_path: Path):
             "ingest": loaded.ingest.model_copy(update={"work_root": tmp_path / "ingest_work"}),
             "export": loaded.export.model_copy(update={"output_root": tmp_path / "exports"}),
             "diarization": loaded.diarization.model_copy(update={"enabled": False}),
+            "models": loaded.models.model_copy(update={"root": tmp_path / "models"}),
         }
     )
 
@@ -162,3 +164,11 @@ def imported_episode(db_session: Session, object_storage, settings, tmp_path: Pa
     build_queue(db_session, settings=settings, audit_sample_rate=0.0)
     db_session.flush()
     return "api_ep001"
+
+
+@pytest.fixture
+def model_corpus(db_session: Session, tmp_path: Path, settings) -> dict[str, str]:
+    """Four labelled clips for the fine-tuned model tests: 0-2 gold, 3 train (D83)."""
+    from tests.model_support import label_corpus
+
+    return label_corpus(db_session, tmp_path, settings)
