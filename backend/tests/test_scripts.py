@@ -201,3 +201,18 @@ def test_diarize_script_stores_a_run_and_reports_what_it_could_not_do(
     assert script.main(["cli_diar", "--num-speakers", "3"]) == 0
     assert sent["num_speakers"] == 3
     assert "unchanged, already stored" in capsys.readouterr().out
+
+
+def test_models_script_imports_one_folder_and_refuses_a_bad_card(
+    cli, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    good, bad = tmp_path / "flex-ft", tmp_path / "broken"
+    good.mkdir()
+    bad.mkdir()
+    (good / "model_card.json").write_text(json.dumps({"name": "Flex FT"}), encoding="utf-8")
+    (bad / "model_card.json").write_text("{}", encoding="utf-8")
+    script = load("import_models")
+    assert script.main([str(good)]) == 0
+    assert "1 model(s); 0 run(s) imported" in capsys.readouterr().out
+    assert script.main([str(bad)]) == 1
+    assert "refused" in capsys.readouterr().out

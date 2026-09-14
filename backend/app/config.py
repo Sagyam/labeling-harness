@@ -274,6 +274,23 @@ class ExportSettings(BaseModel):
         return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
+class ModelsSettings(BaseModel):
+    """Where fine-tuned model folders are read from (D83).
+
+    Inside ``data/`` on purpose: it is gitignored -- fine-tuned Flex weights and their outputs
+    are private under the Indic Open Model License -- and bind-mounted into the backend container.
+    """
+
+    model_config = _STRICT
+
+    root: Path = Path("./data/models/asr")
+
+    @field_validator("root")
+    @classmethod
+    def _absolute(cls, value: Path) -> Path:
+        return value if value.is_absolute() else (REPO_ROOT / value).resolve()
+
+
 class YouTubeSettings(BaseModel):
     """Fetching an episode's audio straight from a YouTube URL, via yt-dlp.
 
@@ -391,6 +408,7 @@ class Settings(BaseSettings):
     translit: TranslitSettings = Field(default_factory=TranslitSettings)
     labels: LabelSettings = Field(default_factory=LabelSettings)
     export: ExportSettings = Field(default_factory=ExportSettings)
+    models: ModelsSettings = Field(default_factory=ModelsSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     fusion: FusionSettings = Field(default_factory=FusionSettings)
     diarization: DiarizationSettings = Field(default_factory=DiarizationSettings)
