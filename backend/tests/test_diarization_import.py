@@ -6,14 +6,13 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import load_settings
 from app.models import AuditLog, DiarizationRun, Episode
 from app.services.diarization_import import (
     DiarizationError,
     clip_speaker_turns,
-    current_run,
     import_diarization,
     parse_diarization,
 )
@@ -110,13 +109,24 @@ def episode(db_session: Session, tmp_path: Path) -> Episode:
 TURNS = [[0.0, 3.0, "SPEAKER_00"], [2.5, 6.0, "SPEAKER_01"]]
 
 
+def _newest_run(session: Session, episode_id: int) -> DiarizationRun | None:
+    """The newest run of an episode, turns loaded, or None."""
+    return session.scalars(
+        sa.select(DiarizationRun)
+        .options(selectinload(DiarizationRun.turns))
+        .where(DiarizationRun.episode_id == episode_id)
+        .order_by(DiarizationRun.id.desc())
+        .limit(1)
+    ).first()
+
+
 @pytest.mark.db
 def test_a_run_is_stored_for_a_known_episode(db_session: Session, episode: Episode) -> None:
     report = import_diarization(
         db_session, payload("dz_ep", TURNS), model=MODEL, source="d.json", actor="test"
     )
     assert report.runs_created == 1
-    run = current_run(db_session, episode.id)
+    run = _newest_run(db_session, episode.id)
     assert run is not None and run.model == MODEL and run.source == "d.json"
     assert [(t.speaker, t.start_time, t.end_time) for t in run.turns] == [
         ("SPEAKER_00", 0.0, 3.0),
@@ -151,10 +161,10 @@ def test_importing_the_same_run_twice_is_a_no_op(db_session: Session, episode: E
 @pytest.mark.db
 def test_a_newer_run_supersedes_without_deleting(db_session: Session, episode: Episode) -> None:
     import_diarization(db_session, payload("dz_ep", TURNS), model=MODEL, source=None, actor="t")
-    first = current_run(db_session, episode.id)
+    first = _newest_run(db_session, episode.id)
     newer = [[0.0, 2.0, "SPEAKER_00"], [2.0, 6.0, "SPEAKER_01"]]
     import_diarization(db_session, payload("dz_ep", newer), model=MODEL, source=None, actor="t")
-    second = current_run(db_session, episode.id)
+    second = _newest_run(db_session, episode.id)
     assert second.id != first.id
     assert [t.end_time for t in second.turns] == [2.0, 6.0]
     assert db_session.get(DiarizationRun, first.id) is not None

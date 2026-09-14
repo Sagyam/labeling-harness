@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.models import AuditLog, DiarizationRun, Episode, SpeakerTurn
 
@@ -188,17 +188,6 @@ def import_diarization(
         report.turns_inserted += len(diarization.turns)
     session.flush()
     return report
-
-
-def current_run(session: Session, episode_id: int) -> DiarizationRun | None:
-    """The newest diarization run of an episode, turns loaded, or ``None``."""
-    return session.scalars(
-        sa.select(DiarizationRun)
-        .options(selectinload(DiarizationRun.turns))
-        .where(DiarizationRun.episode_id == episode_id)
-        .order_by(DiarizationRun.id.desc())
-        .limit(1)
-    ).first()
 
 
 def segment_speaker_turns(
