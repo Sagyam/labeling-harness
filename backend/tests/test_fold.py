@@ -101,7 +101,8 @@ class TestSpellingKey:
         assert spelling_key("गर्") == spelling_key("गर")
 
     def test_latin_is_lowercased_without_apostrophes(self) -> None:
-        assert spelling_key("Don't") == "dont"
+        assert spelling_key("O'Neil") == "oneil"
+        assert spelling_key("Don't") == "donot"  # a contraction is expanded first
 
 
 class TestFoldTokens:
@@ -160,6 +161,171 @@ class TestAlign:
         assert result.insertions == 1
         assert result.rate == 1.0
         assert word_errors("", "", ruleset=ruleset).rate == 0.0
+
+
+class TestFillers:
+    def test_hesitations_are_dropped_from_both_texts(self, ruleset: Ruleset) -> None:
+        assert fold_tokens("अँ यो uh राम्रो, Mm छ उम्", ruleset) == ["यो", "राम्रो", "छ"]
+        result = word_errors("यो uh राम्रो छ", "अँ यो राम्रो um छ", ruleset=ruleset)
+        assert result.errors == 0
+        assert result.ref_words == 3
+
+    def test_a_missed_filler_is_not_an_error(self, ruleset: Ruleset) -> None:
+        assert word_errors("hmm ठिक छ", "ठिक छ", ruleset=ruleset).errors == 0
+
+    def test_a_word_that_looks_like_a_filler_is_kept(self, ruleset: Ruleset) -> None:
+        # हम् is a hum; हम without the virama is Hindi "we". उहुँ is a "no", not a hesitation.
+        assert fold_tokens("हम् हम उहुँ", ruleset) == ["हम", "उहुँ"]
+
+
+class TestNumbers:
+    @pytest.mark.parametrize(
+        ("digits", "words"),
+        [
+            ("15", "पन्ध्र"),
+            ("१५", "fifteen"),
+            ("२६", "छब्बिस"),  # the short-i spelling
+            ("45", "पैँतालीस"),
+            ("6", "छ"),
+            ("0", "zero"),
+            ("5000", "पाँचहजार"),  # two words joined by a merge
+            ("2009", "twothousandnine"),
+            ("2014", "twentyfourteen"),  # read as a year
+            ("1979", "nineteenseventynine"),
+            ("150000", "लाखपचासहजार"),  # "lakh" alone is one lakh
+            ("5000को", "पाँचहजारको"),  # the suffix must agree
+            ("1st", "first"),
+            ("2nd", "दोस्रो"),
+        ],
+    )
+    def test_digits_match_the_number_spelled_out(self, digits: str, words: str) -> None:
+        assert same_word(digits, words)
+        assert same_word(words, digits)
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            ("one", "एक"),  # two languages, no digits: a different word was said
+            ("पाँच", "five"),
+            ("45", "fiftyfour"),
+            ("fortyfive", "4005"),  # not a year: the second half must be 10-99
+            ("5000को", "पाँचहजारमा"),
+            ("1st", "one"),  # an ordinal is not a cardinal
+            ("15", "16"),
+        ],
+    )
+    def test_different_numbers_stay_different(self, left: str, right: str) -> None:
+        assert not same_word(left, right)
+
+    def test_digit_groups_are_one_number(self, ruleset: Ruleset) -> None:
+        assert fold_tokens("5,000 र 1,00,000", ruleset) == ["5000", "र", "100000"]
+
+    @pytest.mark.parametrize(
+        ("reference", "hypothesis"),
+        [
+            ("पाँच हजार रुपैयाँ", "5,000 रुपैयाँ"),
+            ("40,000 को phone", "चालिस हजारको phone"),  # two words against two words
+            ("in two thousand nine", "in 2009"),  # three words against one
+            ("twenty percent", "20%"),
+        ],
+    )
+    def test_a_number_written_either_way_is_not_an_error(
+        self, ruleset: Ruleset, reference: str, hypothesis: str
+    ) -> None:
+        assert word_errors(reference, hypothesis, ruleset=ruleset).errors == 0
+        assert word_errors(hypothesis, reference, ruleset=ruleset).errors == 0
+
+
+class TestContractions:
+    @pytest.mark.parametrize(
+        ("contracted", "expanded"),
+        [
+            ("you're right", "you are right"),
+            ("I'm fine", "I am fine"),
+            ("I've seen", "I have seen"),
+            ("we'll go", "we will go"),
+            ("don't know", "do not know"),
+            ("can't say", "cannot say"),
+            ("it's good", "it is good"),
+            ("gonna go", "going to go"),
+            ("wanna go", "want to go"),
+        ],
+    )
+    def test_a_contraction_matches_its_expansion(
+        self, ruleset: Ruleset, contracted: str, expanded: str
+    ) -> None:
+        assert word_errors(contracted, expanded, ruleset=ruleset).errors == 0
+        assert word_errors(expanded, contracted, ruleset=ruleset).errors == 0
+
+    def test_a_possessive_is_not_expanded(self) -> None:
+        # Only pronouns take 's as "is": John's stays one word, and still matches Johns.
+        assert spelling_key("John's") == spelling_key("Johns")
+
+
+class TestColloquialVariants:
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            ("होइन", "हैन"),
+            ("भएको", "भाको"),
+            ("भएको", "भको"),
+            ("गएको", "गाको"),
+            ("आएको", "आको"),
+            ("गर्नुभएको", "गर्नुभाको"),
+            ("गरिरहेको", "गरिराको"),  # progressive
+            ("गरिराखेको", "गरिराको"),
+            ("भइरहेछ", "भइराछ"),
+            ("गरिदियो", "गर्दियो"),  # benefactive
+            ("भइदिएला", "भइदेला"),
+            ("गर्या", "गरेको"),
+            ("भन्या", "भनेको"),
+            ("गर्नुहोस्", "गर्नुस्"),
+            ("हुनुपऱ्यो", "हुनपऱ्यो"),
+            ("गर्नुको", "गर्नको"),
+            ("सम्पन्न", "संपन्न"),  # nasal consonant against anusvara
+            ("घण्टा", "घंटा"),
+            ("कत्तिको", "कतिको"),
+            ("मज्जाले", "मजाले"),
+            ("आफैँले", "आफैले"),
+            ("सबैभन्दा", "सबभन्दा"),
+            ("रहेछ", "रैछ"),
+            ("भयो", "भो"),
+            ("खै", "खोइ"),
+            ("पहिले", "पहिला"),
+            ("रुपैयाँ", "रुपियाँ"),
+            ("अलि", "अलिक"),
+            ("हुँदैन", "हुन्न"),
+            ("मात्र", "मात्रै"),  # the emphatic particle
+            ("एकदम", "एकदमै"),
+        ],
+    )
+    def test_colloquial_spellings_of_one_word_are_the_same_word(
+        self, left: str, right: str
+    ) -> None:
+        assert same_word(left, right)
+        assert same_word(right, left)
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            ("क्या", "केको"),  # Hindi "what" is not "of what"
+            ("गर्दिन", "गरिदिन"),  # "I don't do" is not "to do for"
+            ("भन्ने", "भने"),
+            ("गरूँ", "गरौँ"),  # "let me do" and "let's do"
+            ("छौँ", "छौ"),
+            ("अलिकति", "अलि"),
+        ],
+    )
+    def test_different_words_stay_different(self, left: str, right: str) -> None:
+        assert not same_word(left, right)
+
+
+class TestTokens:
+    def test_a_lone_quote_mark_is_not_a_word(self, ruleset: Ruleset) -> None:
+        assert fold_tokens("उसले ' हो ' भन्यो", ruleset) == ["उसले", "हो", "भन्यो"]
+
+    def test_a_three_way_spacing_split_is_not_an_error(self, ruleset: Ruleset) -> None:
+        assert word_errors("X Y Z", "XYZ", ruleset=ruleset).errors == 0
 
 
 class TestSimilarity:

@@ -2100,6 +2100,8 @@ half of every system's substitutions were respellings of these kinds. The owner 
 cost: a WER computed this way cannot see a wrong script, and it erases the loanword/English
 distinction in the metric. Labels are never rewritten by it; the D64 table still decides exported
 spelling. Report raw and folded WER side by side, named by `fold_version()`.
+*(Superseded in part by D84: fold-v2 also drops fillers and folds numbers, contractions and
+colloquial Nepali.)*
 
 **Gold is seeded by fusion too, and that is a real cost the owner chose.** D63 rotated gold's seed
 across recognisers so the benchmark was not anchored to one of them. Gold labels will now lean
@@ -2465,3 +2467,74 @@ mostly fold alignment.
 **Reversal:** drop the three tables (the migration's `downgrade`), `app/api/asr_models.py`, the
 `model_*` services, `scripts/import_models.py`, the Models view and 04c's harness-folder cell.
 Nothing else reads them.
+
+## D84 — fold-v2: fillers dropped, numbers, contractions and colloquial Nepali folded
+
+`fold.py` was studied against the errors it still charged on the Flex fine-tune's gold and val
+output (3,767 errors). Five kinds of respelling were being counted as recognition errors, and
+the owner asked for the most aggressive fold of each. `fold-v2` adds them:
+
+| rule (leave-one-out) | gold | val |
+|---|---|---|
+| **Fillers are dropped** from both texts before alignment (`अँ`, `उम्`, `uh`, `um`, `hmm`, `mhm`...) | −0.59 | −1.26 |
+| **Colloquial Nepali** in one form: `हैन`/`होइन`, `भाको`/`भएको`, `गरिराको`/`गरिरहेको`, `गर्दियो`/`गरिदियो`, `गर्या`/`गरेको`, `गर्नुस्`/`गर्नुहोस्`, `संपन्न`/`सम्पन्न`, `मात्रै`/`मात्र`... | −0.75 | −0.23 |
+| **Numbers**: digits match the number spelled out in either language (`15`/`पन्ध्र`/`fifteen`, `5,000`/`पाँच हजार`, `2009`/`two thousand nine`, `1st`/`first`); `%` is `percent` | −0.36 | −0.29 |
+| **English contractions** match their expansion (`you're`/`you are`, `gonna`/`going to`) | −0.19 | −0.25 |
+| **Merges up to three words a side** when the joined words are one spelling or one number | −0.10 | −0.08 |
+
+Flex (2026-09-12 weights, standard decoder): gold **11.53 → 9.65%**, val **7.57 → 5.59%**, gold
+CER 8.07 → 7.62% (CER changes only through dropped fillers, quote marks and digit groups). The
+recognisers on the same 706 gold clips, measured against the export's references: Scribe 13.11 →
+11.40, MAI 11.99 → 10.21, Gemini 11.96 → 9.66. Every system gains 1.7–2.3 points and **Flex's
+lead over Gemini disappears** (9.65 against 9.66): part of what fold-v1 charged was noise that
+hurt Gemini more.
+
+**Fillers are dropped, not folded.** Folding their spellings into one class gained a third as
+much. Dropping follows Whisper's normalizer and NIST's optionally deletable hesitations: a missed
+or extra `uh` is not a recognition error. Labels still keep fillers verbatim, and the model is
+still trained on them; only the metric ignores them. `हम्` is a filler and Hindi `हम` is not, so
+the test runs before the spelling key strips the virama. `उहुँ` and `अहँ` ("no") are answers and
+stay.
+
+**Colloquial forms are rules, not a list.** Most are productive (every verb has a `-इरहे-`/`-इरा-`
+progressive), so they are rewrites of the spelling key. Each was run over the corpus's 20,777
+word types, and every group it joined was read. That audit threw out two rules and narrowed two:
+- **Rejected: medial nasal marks.** They join real words: `भाडा`/`भांडा` (rent/utensils),
+  `बास`/`बांस`, `आउला`/`आउँला`.
+- **Rejected: gemination.** `भन्ने`/`भने` are different words.
+- **Narrowed:** `-या` → `-एको` needs two letters before it, because `क्या` ("what") became
+  `केको` ("of what").
+- **Narrowed:** the benefactive `-इदि-` skips a final `-दिन`, because `गर्दिन` ("I don't do") is
+  not `गरिदिन`.
+
+On the Flex output the rules joined 202 pairs; all were read and all were one word.
+The emphatic `ै` forms (`मात्रै`, `एकदमै`) are audible, and are in by the owner's choice.
+
+**Numbers need digits on one side.** `one` and `एक` are two languages. A speaker said one of them,
+so a number word never matches a number word in the other language. `छ` ("is") matches `6` by
+sound, which is the same trade the cross-script rule already makes.
+
+**Wider merges are exact only.** Merging up to 3×3 by sound took gold to 9.86% on its own, and
+the merges were junk: `थाहा नै रहेनछ` against `Thane नै रहेछ`. Beyond two words against one, the
+joined text must have one spelling key or be one number.
+
+**fold-v1 over-folds, and that was kept.** The study also found fold-v1 hiding real errors:
+- **Swallowed neighbours.** A long word absorbs a neighbouring particle or filler inside the
+  cross-script slack: `type को`/`type`, `information को`/`information`, `Nepal`/`नेपालको`.
+- **Translations and unrelated short words.** The short-word rule matches `and`/`अनि`, `So`/`हो`,
+  `You`/`यो`, `to`/`जो`.
+
+A suffix-aware check and an inherent-`a`-only short-word rule removed these, measured at +1.08
+gold / +0.81 val. The owner chose to keep fold-v1's leniency, so every fold-v2 number still
+includes it. It is the next place to look if the metric reads too kind.
+
+**Cost.** Alignment takes ~40% longer (1,109 clips: 12.3 → 17.5 s), almost all from the wider
+merges. The rules live in `fold.py`, not in `config/`, so the dataset's `harness/` copy the notebook
+scores with stays one file. Every stored score from before is a fold-v1 number:
+- the roadmap's tables;
+- the Models page's imported run, which warns, and which a rescan will not rescore, because the
+  import dedupes on the file's sha256;
+- queue scores computed at ingest.
+
+**Reversal:** revert `fold.py` to fold-v1; nothing is stored under the new rules except numbers
+that name `fold-v2`.

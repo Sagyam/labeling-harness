@@ -13,23 +13,42 @@ or hypothesis text is changed by it. The D64 table in ``normalize.py`` is still 
 exported spelling; folding sits on top of it and is only ever consulted when two texts are
 compared -- by the fusion hazard gates, by the queue score, and by any WER this corpus reports.
 
-Three rules, in the order they are tried on a pair of words:
+Before any word is compared, the text is split into words with the D64 table applied, and three
+kinds of token leave it: punctuation (a lone ``'`` used as a quote mark included), digit-group
+commas (``5,000`` is one number), and **fillers** -- the hesitations and hums in :data:`FILLERS`.
+Fillers are dropped from both texts, as Whisper's normalizer drops them and NIST scoring makes
+them optionally deletable: a filler carries no word, and which of `अँ`, ``uh`` and ``um`` a
+transcriber wrote, or whether they wrote one at all, is not what a WER is for. ``%`` becomes the
+word ``percent``.
 
-1. **Spelling.** Both words are reduced to a spelling key -- the D64 table applied, NFC, Latin
-   lowercased, and the Devanagari distinctions Nepali writers do not hold consistently folded
-   away: vowel length (ि/ी, ु/ू), chandrabindu against anusvara, nukta, a word-final virama, and
-   the script of the digits. Equal keys are the same word.
-2. **Across scripts, by sound.** When one word is Latin and the other Devanagari (or a Latin stem
+Four rules, in the order they are tried on a pair of words:
+
+1. **Spelling.** Both words are reduced to a spelling key -- NFC, Latin lowercased, and the
+   Devanagari distinctions Nepali writers do not hold consistently folded away: vowel length
+   (ि/ी, ु/ू), chandrabindu against anusvara, nukta, a word-final virama, a nasal consonant
+   against anusvara (`सम्पन्न`/`संपन्न`), and the script of the digits. The key also expands English
+   contractions (``you're`` is ``youare``, so it matches ``you are`` through a merge) and writes
+   colloquial Nepali in one form (:data:`_COLLOQUIAL_WORDS`, :data:`_COLLOQUIAL`): `हैन`/`होइन`,
+   `भाको`/`भएको`, `गरिराको`/`गरिरहेको`, `गर्दियो`/`गरिदियो`, `गर्या`/`गरेको`. Equal keys are the same
+   word.
+2. **Numbers.** Digits match the number spelled out in either language -- `15`, `पन्ध्र` and
+   ``fifteen``; `5,000` and `पाँच हजार`; `2009` and ``two thousand nine`` -- provided any suffix
+   agrees (``40,000 को`` and `चालिस हजारको`). One side must be written in digits: ``one`` and `एक`
+   are two languages, and a speaker said one of them.
+3. **Across scripts, by sound.** When one word is Latin and the other Devanagari (or a Latin stem
    carrying a Devanagari suffix, ``phoneमा``), both are reduced to a coarse consonant skeleton and
    compared. This is the rule that makes `एक्टिभ` and ``active`` one word.
-3. **Never by sound within one script.** `गर्नु` and `गर्ने` share a skeleton and are different
+4. **Never by sound within one script.** `गर्नु` and `गर्ने` share a skeleton and are different
    words -- an infinitive and a participle. Matching Devanagari against Devanagari on sound would
-   erase exactly the grammar a WER is supposed to see, so rule 2 is only ever applied across
-   scripts.
+   erase exactly the grammar a WER is supposed to see, so rule 3 is only ever applied across
+   scripts. The colloquial table is the only same-script equivalence, and every entry in it was
+   checked against the corpus vocabulary for words it would wrongly join.
 
-Alignment also accepts a zero-cost merge of two adjacent words on one side against one word on the
-other, which is how a spacing difference (`गर्नुभयो` / `गर्नु भयो`, ``Facebook`` / `फेस बुक`) stops
-costing two errors.
+Alignment also accepts zero-cost merges, which is how a spacing difference (`गर्नुभयो` /
+`गर्नु भयो`, ``Facebook`` / `फेस बुक`) stops costing two errors. Two words may merge against one by
+any of the rules above; wider merges, up to three words a side, only when the joined words have
+the same spelling key or are the same number (``two thousand nine`` / `2009`). Wider merges by
+sound were tried and matched unrelated phrases.
 
 The cost, accepted deliberately: a WER computed here cannot see a wrong script. A system that
 writes ``Captain`` as `क्याप्टन` scores the same as one that follows the policy. The script policy
@@ -47,7 +66,7 @@ from functools import lru_cache
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 
 #: Bumped whenever a rule below changes what counts as the same word.
-FOLD_VERSION = "fold-v1"
+FOLD_VERSION = "fold-v2"
 
 #: Romanized forms (vowels kept) are accepted as one word at or below this normalized distance.
 #: The EDA notebook swept 0.25-0.6; this is the conservative end that still catches inflection.
@@ -56,6 +75,9 @@ CROSS_SCRIPT_THRESHOLD = 0.34
 MIN_SKELETON = 2
 #: Below this romanized length, compare whole romanized strings rather than skeletons.
 SHORT_TOKEN = 4
+#: The most adjacent words, on either side, that alignment will join into one (``two thousand
+#: nine`` / `2009`).
+MAX_MERGE = 3
 
 _DEV = re.compile(r"[ऀ-ॿ]")
 _LATIN = re.compile(r"[A-Za-z]")
@@ -120,6 +142,96 @@ _CONSONANT_CLASS = str.maketrans(
     }
 )  # fmt: skip
 _REPEATS = re.compile(r"(.)\1+")
+
+#: Hesitations and hums, dropped before alignment. Matched after NFC, lowercasing and apostrophe
+#: removal but *before* the spelling key, which would strip the virama that separates the hum
+#: हम् from Hindi हम ("we"). उहुँ ("no") and अहँ ("no") are answers, not fillers, and stay.
+FILLERS = frozenset(
+    {"अँ", "अं", "अ", "उम्", "अम्", "हम्", "हुम्", "उहुम्", "अह",
+     "uh", "uhh", "um", "umm", "uhm", "er", "erm", "hmm", "hm", "mm", "mmm", "mhm"}
+)  # fmt: skip
+_DIGIT_GROUP = re.compile(r"(?<=\d),(?=\d)")
+
+#: English contractions, written as the words they stand for so that a merge matches the
+#: expansion. ``'s`` is only ``is`` after these pronouns: ``John's`` is a possessive.
+_CONTRACTED_WORDS = {
+    "gonna": "goingto", "wanna": "wantto", "gotta": "gotto", "gimme": "giveme",
+    "lemme": "letme", "kinda": "kindof", "sorta": "sortof", "outta": "outof",
+    "dunno": "donotknow", "let's": "letus", "can't": "cannot", "won't": "willnot",
+}  # fmt: skip
+_CONTRACTION = re.compile(r"([a-z]+)'(m|re|ve|ll|s)|([a-z]+)n't")
+_CONTRACTION_TAILS = {"m": "am", "re": "are", "ve": "have", "ll": "will", "s": "is"}
+_IS_PRONOUNS = frozenset(
+    {"it", "that", "there", "what", "he", "she", "here", "where", "who", "how"}
+)
+
+#: Colloquial Nepali spellings of one word, as whole spelling keys: the second form is the one
+#: the key keeps. Emphatic ै forms (`मात्रै`) are here by the owner's choice (D84) -- the particle
+#: is audible, but it does not change the word.
+_COLLOQUIAL_WORDS = {
+    "हैन": "होइन", "भो": "भयो", "खोइ": "खै", "पहिला": "पहिले", "पहिलाको": "पहिलेको",
+    "रुपियाँ": "रुपैयाँ", "बुवा": "बुबा", "बिहा": "बिहे", "जवाब": "जवाफ", "गलती": "गल्ती",
+    "अलिक": "अलि", "हुन्न": "हुँदैन", "भको": "भएको", "नभको": "नभएको", "कस्ले": "कसले",
+    "हजुरबा": "हजुरबुबा", "मात्रै": "मात्र", "एकदमै": "एकदम", "ठ्याक्कै": "ठ्याक्क",
+    "भर्खरै": "भर्खर",
+}  # fmt: skip
+_C = "[क-ह]"
+#: Colloquial Nepali, rewritten inside a spelling key. Each rule is productive -- it covers every
+#: verb, not a list of them -- and each was run over the corpus vocabulary to check that the only
+#: words it joins are spellings of one word (D84).
+_COLLOQUIAL = tuple(
+    (re.compile(pattern), repl)
+    for pattern, repl in (
+        # Progressive: गरिरहेको, गरिराखेको -> गरिराको.
+        (r"(?<=[िइ])र(?:हे|ाखे)", "रा"),
+        # Perfect participle: भएको -> भाको, गएका -> गाका, पाएको -> पाको, आएको -> आको.
+        (rf"(?<={_C})एक(?=[ोा])", "ाक"),
+        (r"(?<=[ाआ])एक(?=[ोा])", "क"),
+        # Benefactive: गरिदियो -> गर्दियो. Not a final -दिन, where गर्दिन is "I don't do".
+        (rf"(?<={_C})िदि(?!न$)", "्दि"),
+        (r"दिए(?=क[ोा]|ला)", "दे"),
+        # Western participle: गर्या -> गरेको. Two letters before it, so क्या ("what") is spared.
+        (rf"(?<=.{_C})्या$", "ेको"),
+        # Polite imperative and infinitive: गर्नुहोस् -> गर्नुस्, हुनुपर्छ -> हुनपर्छ, गर्नुको -> गर्नको.
+        (r"नुहोस$", "नुस"),
+        (r"नु(?=प[रऱ]|को$)", "न"),
+        # A nasal consonant before its own class is an anusvara: सम्पन्न -> संपन्न, घण्टा -> घंटा.
+        (r"ङ्(?=[कखगघ])|ञ्(?=[चछजझ])|ण्(?=[टठडढ])|न्(?=[तथदध])|म्(?=[पफबभ])", "ं"),
+        # Emphatic gemination and doublets: कत्तिको -> कतिको, मज्जाले -> मजाले, आफैँले -> आफैले.
+        (r"^(क|त्य|य|उ|ज)त्ति", r"\1ति"),
+        (r"^मज्जा", "मजा"),
+        (r"^आफैं", "आफै"),
+        (r"^सब(?=भंदा|ले$)", "सबै"),  # after the nasal rule has made भन्दा भंदा
+        (r"रैछ", "रहेछ"),
+    )
+)
+
+#: Number words, by value. Nepali has a distinct word for every number below a hundred.
+_NUMBER_WORDS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90, "hundred": 100, "thousand": 1000,
+    "lakh": 10**5, "million": 10**6, "crore": 10**7, "billion": 10**9,
+    **{word: value for value, word in enumerate((  # noqa: SIM905 -- a hundred words read best as prose
+        "शून्य एक दुई तीन चार पाँच छ सात आठ नौ दस एघार बाह्र तेह्र चौध पन्ध्र सोह्र सत्र अठार "
+        "उन्नाइस बीस एक्काइस बाइस तेइस चौबीस पच्चीस छब्बीस सत्ताइस अट्ठाइस उनन्तीस तीस एकतीस "
+        "बत्तीस तेत्तीस चौँतीस पैँतीस छत्तीस सैँतीस अठतीस उनन्चालीस चालीस एकचालीस बयालीस "
+        "त्रिचालीस चवालीस पैँतालीस छयालीस सतचालीस अठचालीस उनन्चास पचास एकाउन्न बाउन्न त्रिपन्न "
+        "चउन्न पचपन्न छपन्न सन्ताउन्न अन्ठाउन्न उनन्साठी साठी एकसट्ठी बयसट्ठी त्रिसट्ठी चौसट्ठी "
+        "पैँसट्ठी छयसट्ठी सतसट्ठी अठसट्ठी उनन्सत्तरी सत्तरी एकहत्तर बहत्तर त्रिहत्तर चौहत्तर "
+        "पचहत्तर छयहत्तर सतहत्तर अठहत्तर उनासी असी एकासी बयासी त्रियासी चौरासी पचासी छयासी सतासी "
+        "अठासी उनान्नब्बे नब्बे एकानब्बे बयानब्बे त्रियानब्बे चौरानब्बे पन्चानब्बे छयानब्बे "
+        "सन्तानब्बे अन्ठानब्बे उनान्सय"
+    ).split())},
+    "सय": 100, "हजार": 1000, "लाख": 10**5, "करोड": 10**7, "अर्ब": 10**9,
+}  # fmt: skip
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
+    "eighth": 8, "ninth": 9, "tenth": 10, "पहिलो": 1, "दोस्रो": 2, "तेस्रो": 3, "चौथो": 4,
+}  # fmt: skip
+_MULTIPLIERS = frozenset({1000, 10**5, 10**6, 10**7, 10**9})
 
 
 @dataclass(frozen=True)
@@ -195,26 +307,143 @@ def fold_version(ruleset: Ruleset | None = None) -> str:
 
 
 def fold_tokens(text: str | None, ruleset: Ruleset | None = None) -> list[str]:
-    """Split text into comparable words: D64 table applied, punctuation and danda removed.
+    """Split text into comparable words: D64 table applied, punctuation, danda and fillers removed.
 
     Words keep their original spelling and case; everything else about comparison happens in
     :func:`spelling_key` and :func:`same_word`. A Latin stem carrying a Devanagari suffix
-    (``phoneमा``) stays one word, as it was written.
+    (``phoneमा``) stays one word, as it was written. Digit groups are joined (``5,000`` is
+    ``5000``) and ``%`` is the word ``percent``.
     """
     if not text:
         return []
     text = unicodedata.normalize("NFC", text).translate(_JOINERS)
     text = normalize_text(text, ruleset or _default_ruleset()) or ""
-    return _NON_WORD.sub(" ", text).split()
+    text = _DIGIT_GROUP.sub("", text).replace("%", " percent ")
+    return [
+        token
+        for token in _NON_WORD.sub(" ", text).split()
+        if not is_filler(token) and spelling_key(token)
+    ]
+
+
+def is_filler(token: str) -> bool:
+    """Whether the token is a hesitation or hum from :data:`FILLERS`."""
+    return unicodedata.normalize("NFC", token).lower().replace("'", "") in FILLERS
 
 
 @lru_cache(maxsize=65536)
 def spelling_key(token: str) -> str:
     """The word with every spelling distinction this corpus does not hold consistently removed."""
+    key = _orthographic_key(token)
+    if _DEV.search(key):
+        key = _COLLOQUIAL_KEYS.get(key, key)
+        for pattern, repl in _COLLOQUIAL:
+            key = pattern.sub(repl, key)
+        key = _COLLOQUIAL_KEYS.get(key, key)
+    return key
+
+
+def _orthographic_key(token: str) -> str:
+    """Folding that is about the script, not the dialect: everything but :data:`_COLLOQUIAL`."""
     text = unicodedata.normalize("NFC", token).translate(_JOINERS).translate(_DEV_DIGITS)
     text = unicodedata.normalize("NFD", text).translate(_DEV_FOLD)
-    text = unicodedata.normalize("NFC", text).lower().replace("'", "")
-    return text.removesuffix(_VIRAMA)
+    text = unicodedata.normalize("NFC", text).lower()
+    if not _DEV.search(text):
+        text = _expand_contraction(text)
+    return text.replace("'", "").removesuffix(_VIRAMA)
+
+
+def _expand_contraction(word: str) -> str:
+    if word in _CONTRACTED_WORDS:
+        return _CONTRACTED_WORDS[word]
+    match = _CONTRACTION.fullmatch(word)
+    if not match:
+        return word
+    stem, tail, negated = match.groups()
+    if negated:
+        return negated + "not"
+    if tail == "s" and stem not in _IS_PRONOUNS:
+        return word
+    return stem + _CONTRACTION_TAILS[tail]
+
+
+_COLLOQUIAL_KEYS = {
+    _orthographic_key(word): _orthographic_key(form) for word, form in _COLLOQUIAL_WORDS.items()
+}
+_NUMBER_KEYS = {spelling_key(word): value for word, value in _NUMBER_WORDS.items()}
+_ORDINAL_KEYS = {spelling_key(word): value for word, value in _ORDINAL_WORDS.items()}
+_NUMBER_ATOM = re.compile(
+    r"[0-9]+|" + "|".join(re.escape(w) for w in sorted(_NUMBER_KEYS, key=len, reverse=True))
+)
+_DIGIT_ORDINAL = re.compile(r"([0-9]+)(?:st|nd|rd|th)")
+
+
+def _combine(values: list[int]) -> int | None:
+    """The value of a run of number words in speaking order, or None if the run is not a number.
+
+    ``five hundred forty two`` is 542 and ``एक लाख पचास हजार`` is 150000; ``five twenty`` and
+    ``forty fifty`` are not numbers, so a units word may only follow a round ten or hundred.
+    """
+    total = current = 0
+    for value in values:
+        if value == 100:
+            if current >= 100:
+                return None
+            current = (current or 1) * 100
+        elif value in _MULTIPLIERS:
+            total += (current or 1) * value
+            current = 0
+        else:
+            round_ten = 20 <= current < 100 and current % 10 == 0 and value < 10
+            if current and not (current % 100 == 0 or round_ten):
+                return None
+            current += value
+    return total + current
+
+
+@lru_cache(maxsize=65536)
+def _number(key: str) -> tuple[frozenset[int], str, bool, bool] | None:
+    """Read a spelling key as a number: (values, suffix, written in digits, ordinal) or None.
+
+    Several values when the words allow two readings -- ``twenty fourteen`` is 34 as arithmetic
+    and 2014 as a year, and only the year is kept because the arithmetic breaks :func:`_combine`.
+    """
+    if key in _ORDINAL_KEYS:
+        return frozenset({_ORDINAL_KEYS[key]}), "", False, True
+    if ordinal := _DIGIT_ORDINAL.fullmatch(key):
+        return frozenset({int(ordinal.group(1))}), "", True, True
+    atoms: list[int] = []
+    digits = False
+    position = 0
+    while match := _NUMBER_ATOM.match(key, position):
+        atom = match.group(0)
+        if atom[0].isdigit():
+            if atoms:  # digits lead a number ("5 हजार"), never follow a word
+                break
+            digits = True
+            atoms.append(int(atom))
+        else:
+            atoms.append(_NUMBER_KEYS[atom])
+        position = match.end()
+    if not atoms:
+        return None
+    values = set()
+    if (value := _combine(atoms)) is not None:
+        values.add(value)
+    if not digits and len(atoms) >= 2 and 10 <= atoms[0] < 100:
+        rest = _combine(atoms[1:])
+        if rest is not None and 10 <= rest < 100:
+            values.add(atoms[0] * 100 + rest)  # a year: nineteen seventy nine
+    return (frozenset(values), key[position:], digits, False) if values else None
+
+
+def _same_number(a: str, b: str) -> bool:
+    """Rule 2: one number, digits on at least one side, and the same suffix."""
+    left, right = _number(spelling_key(a)), _number(spelling_key(b))
+    if not left or not right or not (left[2] or right[2]):
+        return False
+    same_kind = left[1] == right[1] and left[3] == right[3]  # suffix, and ordinal or cardinal
+    return same_kind and bool(left[0] & right[0])
 
 
 def _script(token: str) -> str:
@@ -315,7 +544,7 @@ def similarity(a: str, b: str) -> float:
 @lru_cache(maxsize=262144)
 def same_word(a: str, b: str) -> bool:
     """Whether two words are one word written two ways. See the module docstring for the rules."""
-    if spelling_key(a) == spelling_key(b):
+    if spelling_key(a) == spelling_key(b) or _same_number(a, b):
         return True
     sa, sb = _script(a), _script(b)
     if sa == sb or "none" in (sa, sb):
@@ -334,10 +563,10 @@ def same_word(a: str, b: str) -> bool:
 def align(ref: list[str], hyp: list[str], *, folded: bool = True) -> Alignment:
     """Minimum-edit word alignment of two token lists.
 
-    With ``folded`` the alignment uses :func:`same_word` and allows a zero-cost two-to-one merge
-    in either direction; without it, only identical strings match and it is a plain Levenshtein
-    WER alignment. Ties are broken toward matches, then merges, then substitutions, so the
-    result is deterministic.
+    With ``folded`` the alignment uses :func:`same_word` and allows zero-cost merges of up to
+    :data:`MAX_MERGE` adjacent words on either side (see :func:`_merges`); without it, only
+    identical strings match and it is a plain Levenshtein WER alignment. Ties are broken toward
+    matches, then the smallest merge, then substitutions, so the result is deterministic.
     """
     m, n = len(ref), len(hyp)
 
@@ -346,54 +575,63 @@ def align(ref: list[str], hyp: list[str], *, folded: bool = True) -> Alignment:
 
     inf = m + n + 1
     cost = [[inf] * (n + 1) for _ in range(m + 1)]
-    back: list[list[str]] = [[""] * (n + 1) for _ in range(m + 1)]
+    #: Each cell's step as (reference words, hypothesis words) consumed.
+    back: list[list[tuple[int, int]]] = [[(0, 0)] * (n + 1) for _ in range(m + 1)]
     cost[0][0] = 0
+    spans = [(a, b) for a in range(1, MAX_MERGE + 1) for b in range(1, MAX_MERGE + 1) if a + b > 2]
     for i in range(m + 1):
         for j in range(n + 1):
             if i == 0 and j == 0:
                 continue
-            options: list[tuple[int, int, str]] = []
+            options: list[tuple[int, int, tuple[int, int]]] = []
             if i and j:
                 matched = same(ref[i - 1], hyp[j - 1])
-                options.append((cost[i - 1][j - 1] + (0 if matched else 1), 0, "diag"))
-            if folded and i >= 2 and j >= 1 and same(ref[i - 2] + ref[i - 1], hyp[j - 1]):
-                options.append((cost[i - 2][j - 1], 1, "merge_ref"))
-            if folded and i >= 1 and j >= 2 and same(ref[i - 1], hyp[j - 2] + hyp[j - 1]):
-                options.append((cost[i - 1][j - 2], 1, "merge_hyp"))
+                options.append((cost[i - 1][j - 1] + (0 if matched else 1), 0, (1, 1)))
+            if folded:
+                for a, b in spans:
+                    if a <= i and b <= j and _merges(ref[i - a : i], hyp[j - b : j]):
+                        options.append((cost[i - a][j - b], a + b - 2, (a, b)))
             if i:
-                options.append((cost[i - 1][j] + 1, 2, "del"))
+                options.append((cost[i - 1][j] + 1, 10, (1, 0)))
             if j:
-                options.append((cost[i][j - 1] + 1, 3, "ins"))
+                options.append((cost[i][j - 1] + 1, 11, (0, 1)))
             best = min(options)
             cost[i][j], back[i][j] = best[0], best[2]
 
     ops: list[AlignOp] = []
     i, j = m, n
     while i or j:
-        step = back[i][j]
-        if step == "diag":
-            r, h = ref[i - 1], hyp[j - 1]
-            if spelling_key(r) == spelling_key(h) or (not folded and r == h):
-                ops.append(AlignOp("match", (r,), (h,)))
-            elif same(r, h):
-                ops.append(AlignOp("fold", (r,), (h,)))
+        a, b = back[i][j]
+        r, h = tuple(ref[i - a : i]), tuple(hyp[j - b : j])
+        if (a, b) == (1, 1):
+            if spelling_key(r[0]) == spelling_key(h[0]) or (not folded and r[0] == h[0]):
+                ops.append(AlignOp("match", r, h))
+            elif same(r[0], h[0]):
+                ops.append(AlignOp("fold", r, h))
             else:
-                ops.append(AlignOp("sub", (r,), (h,), round(similarity(r, h), 4)))
-            i, j = i - 1, j - 1
-        elif step == "merge_ref":
-            ops.append(AlignOp("merge", (ref[i - 2], ref[i - 1]), (hyp[j - 1],)))
-            i, j = i - 2, j - 1
-        elif step == "merge_hyp":
-            ops.append(AlignOp("merge", (ref[i - 1],), (hyp[j - 2], hyp[j - 1])))
-            i, j = i - 1, j - 2
-        elif step == "del":
-            ops.append(AlignOp("del", (ref[i - 1],), ()))
-            i -= 1
+                ops.append(AlignOp("sub", r, h, round(similarity(r[0], h[0]), 4)))
+        elif b == 0:
+            ops.append(AlignOp("del", r, ()))
+        elif a == 0:
+            ops.append(AlignOp("ins", (), h))
         else:
-            ops.append(AlignOp("ins", (), (hyp[j - 1],)))
-            j -= 1
+            ops.append(AlignOp("merge", r, h))
+        i, j = i - a, j - b
     ops.reverse()
     return Alignment(ops=ops)
+
+
+def _merges(ref: list[str], hyp: list[str]) -> bool:
+    """Whether adjacent words on each side are one word, or one number, written differently.
+
+    Two against one may match by any rule, sound included (``Facebook`` / `फेस बुक`). Anything
+    wider must be the same spelling or the same number once joined: by sound, three words against
+    two matched unrelated phrases (`थाहा नै रहेनछ` / ``Thane नै रहेछ``).
+    """
+    left, right = "".join(ref), "".join(hyp)
+    if len(ref) + len(hyp) == 3:
+        return same_word(left, right)
+    return spelling_key(left) == spelling_key(right) or _same_number(left, right)
 
 
 def word_errors(

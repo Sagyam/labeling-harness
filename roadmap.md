@@ -120,19 +120,26 @@ and the bake-off notebook (`03`) were removed 2026-09-14.
 
 ### Models Scored on Gold (706 clips, 2.3 h)
 
-| Model | Setup | Folded WER % | Raw WER % | CER % | Loops | Notes |
-|---|---|---|---|---|---|---|
-| **Scribe v2** | Cloud API (in ref) | 12.73% | 20.14% | 9.93% | 0 | Commercial; fused into reference |
-| **Gemini 3.8 Flash** | Cloud API (in ref) | 12.03% | 20.64% | 10.69% | 0 | Commercial; fused into reference |
-| **MAI Transcribe 2** | Cloud API (in ref) | 12.47% | 20.98% | 11.38% | 0 | Commercial; fused into reference |
-| **Indic-Transcribe-Flex** | Zero-shot | 18.2% | — | 14.0% | 4 | Baseline |
-| **Indic-Transcribe-Flex** | Fine-tuned, greedy | 13.20% | 16.15% | 9.40% | 7 | 6 epochs (best ep 5) |
-| **Indic-Transcribe-Flex** | **Fine-tuned + retry** | **11.44%** | **14.41%** | **8.09%** | **0** | **Best model; 04c's decoder** |
-| **Indic-Transcribe-Flex** | Fine-tuned, greedy + cap + retry (reloaded weights) | 11.53% | 14.52% | 8.07% | 0 | **Standard decoder from Phase 1** (reloaded bf16 weights: 04c's decoder gives 11.51% on them) |
-| **Indic-Transcribe-Flex** | Fine-tuned, beam 4 + cap + rp1.1 + retry | 11.10% | 14.01% | 7.85% | 0 | Not adopted: ~4x decode time; chosen on gold (dev score) |
-| **Whisper-large-v3-turbo** | Zero-shot | 123% | — | — | 271 | Unusable zero-shot |
-| **Whisper-large-v3-turbo** | Fine-tuned, greedy | 14.62% | 17.72% | 8.68% | 0 | 5 epochs (still improving) |
-| **Omnilingual CTC-1B v2**| Fine-tuned (partial)| ~16.6% (val)| — | — | 0 | Stopped at epoch 6 |
+Folded WER is under `fold-v1` unless the column says otherwise. `fold-v2` (D84, 2026-09-15) also
+drops fillers and folds numbers, contractions and colloquial Nepali; every system gains 1.7–2.3
+points, and the fine-tuned Flex no longer leads Gemini. The fold-v2 column was measured against
+`exports/gold/gold.jsonl`, with the recognisers' text read from the harness. It gives Scribe /
+Gemini / MAI 13.11 / 11.96 / 11.99 under fold-v1, not the bake-off's figures below, which came
+from another copy of their text. Raw WER does not depend on the fold.
+
+| Model | Setup | Folded WER % | Folded WER % (fold-v2) | Raw WER % | CER % | Loops | Notes |
+|---|---|---|---|---|---|---|---|
+| **Scribe v2** | Cloud API (in ref) | 12.73% | 11.40% | 20.14% | 9.93% | 0 | Commercial; fused into reference |
+| **Gemini 3.8 Flash** | Cloud API (in ref) | 12.03% | 9.66% | 20.64% | 10.69% | 0 | Commercial; fused into reference |
+| **MAI Transcribe 2** | Cloud API (in ref) | 12.47% | 10.21% | 20.98% | 11.38% | 0 | Commercial; fused into reference |
+| **Indic-Transcribe-Flex** | Zero-shot | 18.2% | — | — | 14.0% | 4 | Baseline |
+| **Indic-Transcribe-Flex** | Fine-tuned, greedy | 13.20% | — | 16.15% | 9.40% | 7 | 6 epochs (best ep 5) |
+| **Indic-Transcribe-Flex** | **Fine-tuned + retry** | **11.44%** | — | **14.41%** | **8.09%** | **0** | **Best model; 04c's decoder** |
+| **Indic-Transcribe-Flex** | Fine-tuned, greedy + cap + retry (reloaded weights) | 11.53% | **9.65%** (val 5.59%, CER 7.62%) | 14.52% | 8.07% | 0 | **Standard decoder from Phase 1** (reloaded bf16 weights: 04c's decoder gives 11.51% on them) |
+| **Indic-Transcribe-Flex** | Fine-tuned, beam 4 + cap + rp1.1 + retry | 11.10% | — | 14.01% | 7.85% | 0 | Not adopted: ~4x decode time; chosen on gold (dev score) |
+| **Whisper-large-v3-turbo** | Zero-shot | 123% | — | — | — | 271 | Unusable zero-shot |
+| **Whisper-large-v3-turbo** | Fine-tuned, greedy | 14.62% | — | 17.72% | 8.68% | 0 | 5 epochs (still improving) |
+| **Omnilingual CTC-1B v2**| Fine-tuned (partial)| ~16.6% (val)| — | — | — | 0 | Stopped at epoch 6 |
 
 Every model from here on should also go to the harness's **Models** page (D83): 04c writes
 `OUT/harness/` (card plus gold/val transcripts), which is copied to `data/models/asr/<slug>/`. The
@@ -267,6 +274,10 @@ All trained weights and evaluation logs persist on Google Drive under `MyDrive/n
 
 ## 4. Technical Traps & Operational Gotchas
 
+- **The notebook scores with the dataset's copy of `fold.py`.** `harness/` in the HF dataset still
+  holds fold-v1 until `backend/app/services/fold.py` is re-uploaded there, and the Models page
+  imports a run under whatever the harness runs. Check that `fold_version()` agrees on both sides
+  before comparing a notebook number with the page or this table.
 - **Edit sources, not notebooks:** Notebooks are generated from `notebooks/src/`:
   - `ftkit.py`: shared training kit embedded via `%%writefile`.
   - `cpukit.py`: weight-only int8 for the CPU export, embedded via `%%writefile` and copied into
