@@ -506,7 +506,7 @@ print(f"val {score([r['text'] for r in splits['val']], val_texts)['wer']:.2f}% |
     md("""
 ## CPU export: quantize, benchmark, export
 
-The target is a CPU at a desk, not this GPU: transcribing a microphone live, and later the harness.
+The target is a CPU at a desk, not this GPU: the harness's mic playground (D85).
 **What was measured locally (Ryzen 7 7700X, 8 threads, 2026-09-15)**, base Flex on 10 gold clips:
 - fp32 runs at RTF 0.41 and bf16 at RTF 0.18, with the same WER (21.8%). bf16 is realtime and
   free, and `best/` already stores bf16, so it is the CPU model if nothing else passes.
@@ -605,6 +605,26 @@ card["cpu"] = {
 }
 (HARNESS / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
 print("wrote", OUT / "cpu_bench.json", "and the card's cpu block")
+"""),
+    md("""
+## Playground bundle
+
+The harness's Models page can run this model on the CPU and transcribe your voice (D85). It needs
+the harness folder above plus the CPU weights this bench accepted, both in
+`data/models/asr/<RUN_NAME>/`. This packs them into one uncompressed tar on Drive (safetensors do
+not compress). Download it and unpack it under `data/models/asr/`, press **Rescan**, and start the
+sidecar: `docker-compose --profile playground up -d playground`.
+"""),
+    code(r"""
+import tarfile
+
+export = json.loads((HARNESS / "model_card.json").read_text())["cpu"]["export"].strip("/")
+bundle = OUT / f"{RUN_NAME}-playground.tar"
+with tarfile.open(bundle, "w") as tar:
+    for f in sorted(HARNESS.iterdir()):
+        tar.add(f, arcname=f"{RUN_NAME}/{f.name}")
+    tar.add(OUT / export, arcname=f"{RUN_NAME}/{export}")
+print(bundle, f"{bundle.stat().st_size / 2**30:.2f} GiB,", export)
 """),
 ]
 
