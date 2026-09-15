@@ -433,7 +433,9 @@ class LlmRoute(BaseModel):
 
     model_config = _STRICT
 
-    provider: Literal["openrouter", "elevenlabs", "vertex"] = "openrouter"
+    #: ``local`` is a fine-tuned model on this machine's CPU, served by the playground sidecar
+    #: (D85). It is never an ingest system: only the Models page calls it.
+    provider: Literal["openrouter", "elevenlabs", "vertex", "local"] = "openrouter"
     api: Literal["chat", "transcription", "audio_chat"] = "chat"
     model: str
     #: Name this system is recorded under in ``asr_systems`` and every export. Defaults to the
@@ -488,8 +490,8 @@ class LlmRoute(BaseModel):
     def _check_provider_api(self) -> LlmRoute:
         if self.thinking_budget is not None and self.reasoning_enabled is False:
             raise ValueError("thinking_budget is set on a route with reasoning_enabled: false")
-        if self.provider == "elevenlabs" and self.api != "transcription":
-            raise ValueError("the elevenlabs provider only offers api: transcription")
+        if self.provider in ("elevenlabs", "local") and self.api != "transcription":
+            raise ValueError(f"the {self.provider} provider only offers api: transcription")
         if self.provider == "vertex" and self.api not in ("transcription", "audio_chat", "chat"):
             raise ValueError(
                 "the vertex provider only offers api: transcription, audio_chat or chat"
@@ -518,12 +520,23 @@ class LlmRoutes(BaseModel):
     #: Region serving the models. ``global`` serves both; ``us-central1`` is the only other
     #: location that carries the recogniser.
     vertex_location: str = ""
+    #: The playground sidecar (D85), by its compose service name.
+    local_base_url: str = "http://playground:8100"
     default_timeout_seconds: float = 30.0
     default_max_tokens: int = 1024
     max_retries: int = 3
     retry_backoff_seconds: float = 0.5
     dry_run: bool = True
     routes: dict[str, LlmRoute] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_local_routes(self) -> LlmRoutes:
+        for name, route in self.routes.items():
+            if route.provider == "local" and name.startswith("asr"):
+                raise ValueError(
+                    f"route {name!r}: a local model cannot be an ingest system (asr* route)"
+                )
+        return self
 
     def asr_route_names(self) -> list[str]:
         """Every route that becomes an ASR system during ingestion, in configured order."""

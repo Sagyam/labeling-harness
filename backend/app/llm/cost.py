@@ -39,6 +39,9 @@ VERTEX_GEMINI_35_TRANSCRIBE_INPUT_PER_M = Decimal("3.50")
 VERTEX_GEMINI_35_TRANSCRIBE_OUTPUT_PER_M = Decimal("21.00")
 VERTEX_GEMINI_35_TRANSCRIBE_PER_MIN = Decimal("0.0368")
 
+# A fine-tuned model on this machine's CPU (the playground, D85): no bill, so every estimate is 0.
+LOCAL_VENDOR = "Local CPU"
+
 # Pricing catalog for UI presentation and documentation
 MODEL_PRICING_CATALOG: list[dict[str, Any]] = [
     {
@@ -205,6 +208,8 @@ def vendor_for_route_or_model(route: str, model: str | None = None) -> str:
                 return "Google Cloud Vertex AI"
             if provider == "openrouter":
                 return "OpenRouter"
+            if provider == "local":
+                return LOCAL_VENDOR
     except Exception:
         pass
 

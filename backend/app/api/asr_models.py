@@ -1,11 +1,13 @@
-"""The Models page: fine-tuned models, their runs, and each run's clips worst first (D83)."""
+"""The Models page: fine-tuned models, their runs, each run's clips worst first (D83), and a
+playground that transcribes a recording with a model on the CPU (D85)."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_config, get_session, require_auth
@@ -15,16 +17,20 @@ from app.api.schemas import (
     ModelClipPageOut,
     ModelEvalRunOut,
     ModelRescanOut,
+    PlaygroundOut,
 )
 from app.config import Settings
+from app.llm.base import LlmError
 from app.models import AsrModel, ModelEvalRun
 from app.services.model_browse import ClipFilter, ClipSort, clip_detail, list_run_clips
 from app.services.model_import import ModelImportError, scan_models
+from app.services.playground import PlaygroundError, cpu_weights
+from app.services.playground import transcribe as playground_transcribe
 
 router = APIRouter(tags=["models"], dependencies=[Depends(require_auth)])
 
 
-def _model_out(model: AsrModel) -> AsrModelOut:
+def _model_out(model: AsrModel, root: Path) -> AsrModelOut:
     return AsrModelOut(
         id=model.id,
         slug=model.slug,
@@ -46,6 +52,7 @@ def _model_out(model: AsrModel) -> AsrModelOut:
             )
             for run in model.runs
         ],
+        playground=cpu_weights(root / model.slug, model.card_jsonb),
     )
 
 
@@ -57,24 +64,71 @@ def _get_run(session: Session, run_id: int) -> ModelEvalRun:
 
 
 @router.get("/models", response_model=list[AsrModelOut])
-def get_models(session: Session = Depends(get_session)) -> list[AsrModelOut]:
+def get_models(
+    session: Session = Depends(get_session), settings: Settings = Depends(get_config)
+) -> list[AsrModelOut]:
     """Every imported model, newest trained first."""
     models = session.scalars(
         sa.select(AsrModel)
         .options(selectinload(AsrModel.runs))
         .order_by(AsrModel.trained_at.desc().nulls_last(), AsrModel.slug)
     )
-    return [_model_out(model) for model in models]
+    return [_model_out(model, settings.models.root) for model in models]
 
 
 @router.get("/models/{slug}", response_model=AsrModelOut)
-def get_model(slug: str, session: Session = Depends(get_session)) -> AsrModelOut:
+def get_model(
+    slug: str, session: Session = Depends(get_session), settings: Settings = Depends(get_config)
+) -> AsrModelOut:
+    return _model_out(_get_model(session, slug), settings.models.root)
+
+
+def _get_model(session: Session, slug: str) -> AsrModel:
     model = session.scalars(
         sa.select(AsrModel).options(selectinload(AsrModel.runs)).where(AsrModel.slug == slug)
     ).first()
     if model is None:
         raise HTTPException(status_code=404, detail=f"model {slug!r} not found")
-    return _model_out(model)
+    return model
+
+
+@router.post("/models/{slug}/transcribe", response_model=PlaygroundOut)
+async def post_transcribe(
+    slug: str,
+    audio: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_config),
+) -> PlaygroundOut:
+    """Transcribe one recording with this model on the CPU, in the playground sidecar (D85).
+
+    409 when no CPU weights sit in the model's folder, 422 for a recording that is empty, too
+    long or not audio, 502 when the sidecar is down or fails. The ``llm_requests`` row is kept
+    either way.
+    """
+    model = _get_model(session, slug)
+    weights = cpu_weights(settings.models.root / slug, model.card_jsonb)
+    if weights is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"no CPU weights for {slug!r}: copy the notebook's cpu/ (or best/) folder into "
+            f"{settings.models.root / slug}/",
+        )
+    data = await audio.read()
+    try:
+        result = playground_transcribe(session, slug, weights, data, filename=audio.filename)
+    except PlaygroundError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LlmError as exc:
+        session.commit()  # the failed attempt's llm_requests row outlives the error
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return PlaygroundOut(
+        text=result.text,
+        audio_s=result.audio_s,
+        latency_ms=result.latency_ms,
+        weights=result.weights,
+        dry_run=result.dry_run,
+        raw=result.raw,
+    )
 
 
 @router.post("/models/rescan", response_model=ModelRescanOut)

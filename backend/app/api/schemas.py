@@ -481,6 +481,21 @@ class AsrModelOut(BaseModel):
     trained_at: dt.datetime | None = None
     card: dict[str, Any] = Field(default_factory=dict)
     runs: list[ModelEvalRunOut] = Field(default_factory=list)
+    #: The subfolder of CPU weights the playground loads (``cpu`` or ``best``), or ``None`` when
+    #: none has been copied next to the card (D85).
+    playground: str | None = None
+
+
+class PlaygroundOut(BaseModel):
+    """One recording from the Models page, transcribed on the CPU (D85)."""
+
+    text: str
+    audio_s: float
+    latency_ms: int | None = None
+    weights: str
+    dry_run: bool = False
+    #: The sidecar's answer: decoder timings, whether the loop retry fired, the first decode.
+    raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModelRescanOut(BaseModel):
