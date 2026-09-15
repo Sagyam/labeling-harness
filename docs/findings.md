@@ -344,6 +344,54 @@ discarded.
 
 ---
 
+## Overlap windows: how long they are and who is louder (2026-09-15)
+
+A corpus-wide characterisation of crosstalk, to ground the synthetic mixing of roadmap item 3 in
+what real overlap looks like rather than in LibriMix-style guesses. Analysis code discarded; every
+number here is re-derivable from the stored spans and the newest diarization run.
+
+- **Method.** Overlap windows are the measured D77 detector spans on **all 7,075 clips** (not just
+  gold and val, which is what the 2026-09-13 study's 25% of clips and 2.1% of clip time cover).
+  Speaker identity comes from the current pyannote community-1 run (D78/D79). Loudness is
+  broadband frame RMS (25 ms window, 10 ms hop) of each speaker's **solo** speech — frames where
+  only that speaker is active — referenced locally within ±15 s of each window, with an
+  episode-global reference as fallback. No source separation ran, so "who is louder" is an energy
+  model over solo reference levels, not a measurement of the two voices inside the window.
+- **Overlap is common in clips but rare in time.** 1,887 of 7,075 clips (27%) carry 4,250 measured
+  windows, 2,714 s in total — **3.1% of all clip audio**. The diarizer's own turn overlaps agree
+  with the detector within 1% (2,694 s vs 2,714 s inside clips).
+- **Windows are short.** 83% are under 1 s; only 84 windows (2%) exceed 3 s. The shape is a burst
+  distribution — backchannels, interjections, laughter over speech — not extended duets.
+
+  | percentile (s) | d10 | d20 | d30 | d40 | d50 | d60 | d70 | d80 | d90 | p95 | p99 | max |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | window duration | 0.07 | 0.17 | 0.27 | 0.35 | **0.42** | 0.52 | 0.66 | 0.89 | 1.33 | 1.93 | 4.03 | 8.94 |
+
+- **Per overlapped clip.** Median total overlap 0.81 s (5.4% of the clip); p75 1.74 s (10.8%), p90
+  3.48 s (20.2%), p99 9.3 s (51%). Median 2 windows per clip.
+- **The two voices are nearly always at comparable levels.** Over the 3,450 windows (≥ 0.2 s) where
+  both speakers have a solo reference — 33 (episode, pair) units — the **per-pair median level gap
+  is 1.59 dB, IQR 1.17–2.06 dB, p90 2.51 dB, and no pair exceeds ~3.0 dB**. One voice is louder in
+  ≥ 90% of a pair's windows in only 5 of the 33 pairs (gaps 0.9–3.05 dB); elsewhere the direction
+  flips between windows, which at sub-dB gaps is estimate noise.
+- **The mix itself confirms near-equality.** The measured level inside an overlap window sits
+  **+0.78 dB above the louder speaker's solo reference** (p5 −4.2, p95 +6.2), and ~1.5 dB below the
+  incoherent power-sum of the two solo references. That is the signature of two comparable sources
+  actually summing: the "quieter" voice is fully audible, only ~7 dB down, not masked.
+- **The negative finding: there is no consistently louder voice to train on.** Real crosstalk in
+  this corpus is near-equal-level mixing, so a "focus on the dominant voice" model would discard
+  roughly half the overlap energy on data that does not resemble the corpus. Target-speaker
+  conditioning, if used, must key on voice identity, not level.
+- **What item 3's mixer should sample** (all from these measurements): 2 speakers per window;
+  duration from the decile table above (median ~0.4 s); level gap over 0–3 dB with mass at 1–2 dB;
+  incidence such that ~27% of clips carry ≥ 1 window but only ~3% of frames are overlapped.
+- **Caveats.** Loudness is solo-frame RMS, so sub-1-dB direction calls are noise and per-speaker
+  levels inside a window were never separated; the diarizer labels are model outputs; the overlap
+  detector remains unchecked by ear; and the fused reference is at its least reliable exactly in
+  these windows (as the studies above warn).
+
+---
+
 ## The reference is a consensus of the systems it scores
 
 - The references are an LLM fusion of Scribe, Gemini and MAI (D74). Only 3 of 1,170 verified
