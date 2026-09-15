@@ -31,9 +31,11 @@ model run is split by all of them, and the Models page shows each axis's verdict
 per bucket, and a lever it points at. An axis whose interval holds 1 stays in, as a condition
 ruled out on every later model.
 
+The joint fit is run (findings.md, *The joint fit*): overlapped time and rapid hand-overs each
+carry their own weight, and a second voice with at most one hand-over is exonerated. It is what
+splits items 2 and 3 — extraction pays only on the overlapped seconds.
+
 **Still open.**
-- Each ratio adjusts for the episode only. Crosstalk, speakers and turn changes move together,
-  so a joint fit (the crosstalk study's Poisson) is the way to tell them apart if it matters.
 - Listen to the band-limited podcast clips: they score *better* within their episodes.
 - The voice links have not been checked by ear; they agree with the EDA's independent ECAPA
   voices on every recurring host.

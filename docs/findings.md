@@ -297,7 +297,50 @@ run down by the same buckets.
   - **Clip edges are the worst words**, which points at VAD cuts through a word.
   - **Number CER is mostly spelling.** A digit against a number word is a match in folded WER
     but a full character error, as in the run's own CER.
-- **Caveat.** The references are still the fused consensus (below), least reliable in crosstalk.
+  - **Caveat.** The references are still the fused consensus (below), least reliable in crosstalk.
+
+---
+
+## The joint fit: overlapped time and rapid hand-overs are two enemies; the second speaker is exonerated (2026-09-15)
+
+The crosstalk study's joint Poisson — episode fixed effects, episode-clustered SEs, offset log
+reference words — run on the current model's gold run (706 clips, 36 episodes, fold-v2+norm-v3)
+with all covariates together instead of one axis at a time. Covariates from the stored spans and
+the newest diarization run; filler share is fillers per raw reference token. Analysis code
+discarded.
+
+| covariate | alone | joint |
+|---|---|---|
+| overlap share, per 10 points | 1.61 [1.42, 1.82] | **1.52 [1.35, 1.71]** |
+| 2+ speakers in clip | 1.48 [1.10, 1.99] | **0.85 [0.66, 1.09]** |
+| 2+ turn changes | 1.64 [1.23, 2.18] | **1.51 [1.25, 1.83]** |
+| filler share, per 10 points | — | 1.07 [0.93, 1.24] |
+| pause share, per 10 points | — | 0.97 [0.88, 1.06] |
+
+- **Validation.** The bucket-alone fit reproduces the clip-classes table's ratios (1.32 / 2.05 /
+  3.03 against the page's 1.37 / 2.11 / 3.25), and the recomputed classes match every clip's
+  stored ones.
+- **Overlapped time barely attenuates** (1.61 → 1.52): it is not the other axes in disguise.
+- **The second speaker collapses** to 0.85, interval holding 1. Since 2+ turn changes requires
+  two speakers, its coefficient is read off clips with a second voice but at most one
+  hand-over — exactly the clips the clip-classes table already found harmless (0.97). A polite
+  second voice costs nothing.
+- **Rapid hand-overs keep their weight** at zero measured overlap: 1.51. Filler share's 1.28
+  from the old study does not replicate on this model; pause stays ruled out. Together the five
+  explain 17.6% of within-episode deviance.
+- **Counterfactuals (joint fit).** 9.54% now; **8.03%** with overlap set to zero — the extraction
+  prize, 16% of errors; **7.32%** if hand-over churn goes too (23%). The earlier 11.53 → 8.8
+  counterfactual credited overlap with hand-over difficulty that is not overlap.
+- **The reference is bounded, not acquitted.** Scoring substitutions and insertions only,
+  overlap still carries 1.36 [1.24, 1.50] and hand-overs 1.41. The deletions charged in overlap
+  clips are dominated by response tokens — हजुर, त, नि, you, हो, Thank — both the hardest to hear
+  under crosstalk and the reference's least reliable keep-or-drop choices. The by-ear audit
+  listens for exactly these.
+- **For the roadmap.** Extraction (item 2) pays only on the overlapped seconds (~1.5 points);
+  the ~0.7 points of hand-over churn need augmentation or a better architecture (items 3–4).
+  Extraction does not need to erase the other voice, only the overlapped seconds.
+- **Caveats.** Identification comes from the 16 multi-speaker episodes; dispersion is about 2,
+  and episode-clustered SEs are the crosstalk study's convention for that.
 
 ---
 
