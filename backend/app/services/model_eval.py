@@ -18,6 +18,14 @@ clips in the baseline. It answers the question the crosstalk study asked with a 
 Poisson fit (docs/findings.md), one axis at a time. Its interval resamples whole episodes. A
 ratio whose interval holds 1 is a condition ruled out, at this sample size, as a source of
 errors.
+
+**Word classes (D87).** A clip-level average dilutes where errors land, so a run is also split by
+the class of each reference word: its script (Devanagari, Latin, or both in one word), whether it
+is a number, whether it sits at a code-switch (a neighbour in the other script), and whether it
+is the first or last word of the clip, where the VAD may have cut. A word's substitution or
+deletion is its class's error; insertions have no reference word and belong to no class. CER per
+class spreads each alignment step's character distance over the reference words it consumed, so
+the classes do not add up exactly to the run's CER, which is one distance over the whole text.
 """
 
 from __future__ import annotations
@@ -30,13 +38,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.clip_classes import AXES, Axis
-from app.services.fold import Ruleset, fold_tokens, word_errors
+from app.services.fold import Alignment, Ruleset, fold_tokens, is_number, word_errors
 
 #: Episode resamples behind a WER interval. Seeded, so the same run always reports the same one.
 BOOTSTRAP_ROUNDS = 1000
 BOOTSTRAP_SEED = 0
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
+_LATIN = re.compile(r"[A-Za-z]")
+
+#: Word classes, in display order. A word can be in several.
+WORD_CLASSES = ("devanagari", "latin", "mixed_script", "number", "switch", "edge")
+#: Number words that are far more often something else: छ is "is" before it is "six", एक is "a"
+#: before it is "one". Counting them would make the number class mostly copulas and articles.
+_NOT_NUMBERS = frozenset({"छ", "एक"})
 
 
 @dataclass(frozen=True)
@@ -55,14 +70,26 @@ class ClipScore:
     is_loop: bool
 
 
+@dataclass
+class WordCounts:
+    """One word class's reference words, their word errors, characters and character errors."""
+
+    words: int = 0
+    errors: int = 0
+    chars: int = 0
+    char_errors: float = 0.0
+
+
 @dataclass(frozen=True)
 class ScoredClip:
-    """A clip's score with what the breakdowns group it by: its episode, genre and classes."""
+    """A clip's score with what the breakdowns group it by: its episode, genre and classes, and
+    its word-class counts when they were computed."""
 
     episode: str
     genre: str | None
     classes: Mapping[str, str]
     score: ClipScore
+    words: Mapping[str, WordCounts] | None = None
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -129,6 +156,71 @@ def score_clip(reference: str, hypothesis: str, *, ruleset: Ruleset | None = Non
         char_errors=levenshtein(ref_chars, _chars(hypothesis, ruleset)),
         is_loop=is_loop(hypothesis),
     )
+
+
+def _script(token: str) -> str:
+    dev, lat = bool(_DEVANAGARI.search(token)), bool(_LATIN.search(token))
+    return "mixed_script" if dev and lat else "devanagari" if dev else "latin" if lat else ""
+
+
+def _lowered(tokens: Sequence[str]) -> str:
+    return " ".join(t if _DEVANAGARI.search(t) else t.lower() for t in tokens)
+
+
+def word_class_counts(alignment: Alignment) -> dict[str, WordCounts]:
+    """Count one clip's reference words and their errors by word class."""
+    ref = [word for op in alignment.ops for word in op.ref]
+    scripts = [_script(w) for w in ref]
+    counts = {name: WordCounts() for name in WORD_CLASSES}
+
+    def classes(i: int) -> list[str]:
+        out = [scripts[i]] if scripts[i] else []
+        if ref[i] not in _NOT_NUMBERS and is_number(ref[i]):
+            out.append("number")
+        if scripts[i] in ("devanagari", "latin") and any(
+            0 <= j < len(ref) and scripts[j] in ("devanagari", "latin") and scripts[j] != scripts[i]
+            for j in (i - 1, i + 1)
+        ):
+            out.append("switch")
+        if i in (0, len(ref) - 1):
+            out.append("edge")
+        return out
+
+    index = 0
+    for op in alignment.ops:
+        if not op.ref:
+            continue  # an insertion has no reference word
+        distance = levenshtein(_lowered(op.ref), _lowered(op.hyp))
+        for word in op.ref:
+            for name in classes(index):
+                entry = counts[name]
+                entry.words += 1
+                entry.errors += op.kind in ("sub", "del")
+                entry.chars += len(_lowered([word]))
+                entry.char_errors += distance / len(op.ref)
+            index += 1
+    return {name: c for name, c in counts.items() if c.words}
+
+
+def _word_breakdown(clips: Sequence[ScoredClip]) -> dict[str, Any]:
+    totals = {name: WordCounts() for name in WORD_CLASSES}
+    words = 0
+    for clip in clips:
+        words += clip.score.ref_words
+        for name, c in (clip.words or {}).items():
+            t = totals[name]
+            t.words, t.errors = t.words + c.words, t.errors + c.errors
+            t.chars, t.char_errors = t.chars + c.chars, t.char_errors + c.char_errors
+    return {
+        name: {
+            "words": t.words,
+            "wer": _rate(t.errors, t.words),
+            "cer": 100 * t.char_errors / t.chars if t.chars else 0.0,
+            "share_of_words": t.words / words if words else 0.0,
+        }
+        for name, t in totals.items()
+        if t.words
+    }
 
 
 def _rate(errors: int, words: int) -> float:
@@ -279,4 +371,4 @@ def summarize(clips: Sequence[ScoredClip]) -> dict[str, Any]:
             for axis in AXES
             if (breakdown := _axis_breakdown(axis, clips, errors, draws))
         },
-    }
+    } | ({"by_word_class": _word_breakdown(clips)} if any(c.words for c in clips) else {})

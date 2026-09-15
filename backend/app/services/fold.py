@@ -437,6 +437,11 @@ def _number(key: str) -> tuple[frozenset[int], str, bool, bool] | None:
     return (frozenset(values), key[position:], digits, False) if values else None
 
 
+def is_number(token: str) -> bool:
+    """Whether a word reads as a number -- digits, a number word, an ordinal -- by rule 2."""
+    return _number(spelling_key(token)) is not None
+
+
 def _same_number(a: str, b: str) -> bool:
     """Rule 2: one number, digits on at least one side, and the same suffix."""
     left, right = _number(spelling_key(a)), _number(spelling_key(b))

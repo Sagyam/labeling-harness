@@ -7,8 +7,15 @@ import random
 import pytest
 
 from app.services.clip_classes import overlap_bucket
-from app.services.fold import _levenshtein
-from app.services.model_eval import ScoredClip, is_loop, levenshtein, score_clip, summarize
+from app.services.fold import _levenshtein, word_errors
+from app.services.model_eval import (
+    ScoredClip,
+    is_loop,
+    levenshtein,
+    score_clip,
+    summarize,
+    word_class_counts,
+)
 
 # --- edit distance, loops ---------------------------------------------------------------------
 
@@ -205,3 +212,52 @@ def test_buckets_come_in_the_axis_order_and_carry_cer() -> None:
     by_overlap = summarize(clips)["by_class"]["overlap"]
     assert list(by_overlap) == ["none", "0-5%", ">15%"]
     assert by_overlap["0-5%"]["cer"] > 0
+
+
+# --- word classes (D87) --------------------------------------------------------------------------
+
+
+def test_every_reference_word_is_counted_in_its_classes() -> None:
+    counts = word_class_counts(word_errors("मेरो phone मा 5 वटा app छ", "मेरो phone मा 5 वटा app छ"))
+    assert counts["devanagari"].words == 4  # मेरो मा वटा छ
+    assert counts["latin"].words == 2
+    assert counts["number"].words == 1
+    assert counts["edge"].words == 2  # the first and the last word
+    # phone and app, and the Devanagari word on each side of them; the digit has no script.
+    assert counts["switch"].words == 6
+    assert all(c.errors == 0 and c.char_errors == 0 for c in counts.values())
+
+
+def test_errors_land_on_the_class_of_the_reference_word() -> None:
+    counts = word_class_counts(word_errors("मेरो phone राम्रो छ", "मेरो फुल राम्रो"))
+    # phone -> फुल is a substitution of a Latin word; छ is deleted at the clip's edge.
+    assert counts["latin"].errors == 1
+    assert counts["devanagari"].errors == 1
+    assert counts["edge"].errors == 1
+    assert counts["latin"].char_errors > 0
+    assert counts["devanagari"].char_errors == pytest.approx(1)  # छ, one character
+
+
+def test_insertions_belong_to_no_class() -> None:
+    counts = word_class_counts(word_errors("एक दुई", "एक दुई तीन"))
+    assert sum(c.errors for c in counts.values()) == 0
+
+
+def test_a_run_reports_wer_and_cer_per_word_class() -> None:
+    clip = ScoredClip(
+        "a",
+        "podcast",
+        {},
+        score_clip("मेरो phone राम्रो छ", "मेरो फुल राम्रो"),
+        words=word_class_counts(word_errors("मेरो phone राम्रो छ", "मेरो फुल राम्रो")),
+    )
+    by_word = summarize([clip])["by_word_class"]
+    assert by_word["latin"]["words"] == 1
+    assert by_word["latin"]["wer"] == pytest.approx(100.0)
+    assert by_word["devanagari"]["wer"] == pytest.approx(100 * 1 / 3)
+    assert by_word["latin"]["share_of_words"] == pytest.approx(1 / 4)
+    assert "cer" in by_word["latin"]
+
+
+def test_without_word_counts_a_run_has_no_word_breakdown() -> None:
+    assert "by_word_class" not in summarize([_clip("a", "एक", "एक")])

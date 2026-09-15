@@ -78,6 +78,9 @@ def test_a_gold_run_is_scored_against_the_current_labels(
     by_class = run.metrics_jsonb["by_class"]
     assert by_class["overlap"]["0-5%"]["clips"] == 1  # 0.5 s of a longer clip
     assert by_class["speakers"]["undiarized"]["clips"] == 3  # never diarized, not one speaker
+    by_word = run.metrics_jsonb["by_word_class"]
+    assert by_word["devanagari"]["words"] == 12  # every word but the trailing digit
+    assert by_word["edge"]["wer"] > 0  # the lost words were the clip's last two
     assert run.metrics_jsonb["by_genre"]["podcast"]["clips"] == 3
     worst = db_session.scalars(
         sa.select(ModelEvalClip)
@@ -243,3 +246,4 @@ def test_reclassifying_a_run_rebuilds_its_classes_and_keeps_its_scores(
         k: v for k, v in before.items() if k != "by_class"
     }
     assert all(c.classes_jsonb["speakers"] == "1" for c in run.clips)
+    assert run.metrics_jsonb["by_word_class"] == before["by_word_class"]

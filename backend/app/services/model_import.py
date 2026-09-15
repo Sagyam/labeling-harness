@@ -42,8 +42,14 @@ from app.models import (
 )
 from app.models.enums import APPROVED_DISPOSITIONS, EVAL_SPLITS
 from app.services.clip_classes import classify_segments, overlap_share
-from app.services.fold import fold_version
-from app.services.model_eval import ClipScore, ScoredClip, score_clip, summarize
+from app.services.fold import fold_version, word_errors
+from app.services.model_eval import (
+    ClipScore,
+    ScoredClip,
+    score_clip,
+    summarize,
+    word_class_counts,
+)
 from app.services.normalize import load_ruleset, normalize_text
 from app.services.stats import latest_labels_subquery
 
@@ -238,6 +244,7 @@ def _import_run(
                 genre=genre,
                 classes=classes[segment.id],
                 score=score,
+                words=word_class_counts(word_errors(reference, row["text"])),
             )
         )
         clips.append(
@@ -341,7 +348,9 @@ def reclassify_runs(
 
     A clip's classes change when something new is measured about it -- a backfill, a voice
     link, a new diarization run -- while its scores do not. So the run keeps every stored count
-    and headline number, and only ``classes_jsonb`` and ``by_class`` are replaced.
+    and headline number, and only ``classes_jsonb``, ``by_class`` and ``by_word_class`` are
+    replaced. Word classes are re-aligned from the stored texts, and only under the fold rules
+    the run was scored with: under other rules they would not match its counts.
 
     Args:
         session: Open session; the caller commits.
@@ -359,8 +368,10 @@ def reclassify_runs(
     segments = {clip.segment.id: clip.segment for run in runs for clip in run.clips}
     classes = classify_segments(session, list(segments.values()))
     report = ReclassifyReport()
+    current_fold = fold_version()
     for run in runs:
         scored = []
+        realign = run.fold_version == current_fold
         for clip in run.clips:
             clip.classes_jsonb = classes[clip.segment_id]
             scored.append(
@@ -371,10 +382,18 @@ def reclassify_runs(
                     score=ClipScore(
                         **{f: getattr(clip, f) for f in ClipScore.__dataclass_fields__}
                     ),
+                    words=(
+                        word_class_counts(word_errors(clip.ref_text, clip.hyp_text))
+                        if realign
+                        else None
+                    ),
                 )
             )
+        summary = summarize(scored)
         metrics = {k: v for k, v in run.metrics_jsonb.items() if k != "by_overlap"}  # superseded
-        run.metrics_jsonb = metrics | {"by_class": summarize(scored)["by_class"]}
+        run.metrics_jsonb = metrics | {
+            key: summary[key] for key in ("by_class", "by_word_class") if key in summary
+        }
         session.add(
             AuditLog(
                 entity_type="asr_model",

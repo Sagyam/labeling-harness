@@ -12,7 +12,7 @@
 
 import { Panel, PanelHeading, Stat, BarRow, humanize, percent } from '@/components/analytics/primitives'
 import { cn } from '@/lib/utils'
-import type { ClassAxis, ModelBreakdown, ModelEvalRun } from '@/types'
+import type { ClassAxis, ModelBreakdown, ModelEvalRun, WordClassBreakdown } from '@/types'
 
 /** Bucket names that read badly on their own. Everything else is humanized. */
 const BUCKET_LABEL: Record<string, string> = {
@@ -228,6 +228,56 @@ function ClassPanel({
   )
 }
 
+const WORD_CLASSES: [string, string, string][] = [
+  ['devanagari', 'Devanagari words', 'Words written in Devanagari.'],
+  ['latin', 'Latin words', 'Words written in Latin letters: English, mostly.'],
+  ['mixed_script', 'Mixed-script words', 'One word in both scripts, like phoneमा.'],
+  ['number', 'Numbers', 'Digits and number words (not छ or एक, which are mostly "is" and "a").'],
+  ['switch', 'At a code-switch', 'A word whose neighbour is in the other script.'],
+  ['edge', 'First or last word', 'Where the VAD may have cut the clip mid-word.'],
+]
+
+function WordClassPanel({ classes }: { classes: Record<string, WordClassBreakdown> }) {
+  const rows = WORD_CLASSES.filter(([key]) => classes[key])
+  const peak = Math.max(1, ...rows.map(([key]) => classes[key].wer))
+  return (
+    <Panel>
+      <PanelHeading
+        title="By word"
+        note="each reference word's substitutions and deletions; insertions have no word to belong to"
+      />
+      <div className="grid gap-x-6 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
+        {rows.map(([key, label, title]) => {
+          const entry = classes[key]
+          return (
+            <div key={key} title={title}>
+              <BarRow
+                label={
+                  <span>
+                    {label}{' '}
+                    <span className="text-[10px] text-muted-foreground">
+                      {entry.words.toLocaleString()} · {percent(entry.share_of_words)}
+                    </span>
+                  </span>
+                }
+                value={entry.wer}
+                peak={peak}
+                fill="bg-rose-500/70"
+                caption={
+                  <span>
+                    {fmtWer(entry.wer, 1)}
+                    <span className="text-muted-foreground"> · CER {fmtWer(entry.cer, 1)}</span>
+                  </span>
+                }
+              />
+            </div>
+          )
+        })}
+      </div>
+    </Panel>
+  )
+}
+
 export function RunSummary({
   run,
   axes,
@@ -303,6 +353,7 @@ export function RunSummary({
           onPickBucket={onPickBucket}
         />
       </div>
+      {m.by_word_class && <WordClassPanel classes={m.by_word_class} />}
     </div>
   )
 }

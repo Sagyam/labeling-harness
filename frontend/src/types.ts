@@ -839,6 +839,15 @@ export interface ModelBreakdown {
   rate_ratio_episodes?: number
 }
 
+/** One class of reference word: how many, and the WER and CER over them. Insertions have no
+ * reference word, so a class's WER counts only its substitutions and deletions. */
+export interface WordClassBreakdown {
+  words: number
+  wer: number
+  cer: number
+  share_of_words: number
+}
+
 /** One axis a run is split by (D87), from `GET /model-classes`. */
 export interface ClassAxis {
   name: string
@@ -867,6 +876,8 @@ export interface ModelRunMetrics {
   by_genre: Record<string, ModelBreakdown>
   /** Axis -> bucket -> slice (D87). Key order is not display order: JSONB sorts keys. */
   by_class?: Record<string, Record<string, ModelBreakdown>>
+  /** Reference words by class -- script, number, code-switch, clip edge (D87). */
+  by_word_class?: Record<string, WordClassBreakdown>
   /** Clips in the file that were not scored: left the split, or no transcript to score against. */
   skipped?: { not_in_split: number; no_reference: number }
 }

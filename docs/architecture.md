@@ -430,6 +430,12 @@ over episodes so that each episode compares only its own clips, with an episode-
 interval. A backfill or a voice link changes what is known about clips but not their scores:
 `scripts/reclassify_runs.py` rewrites the snapshots and `by_class` and keeps every count.
 
+A run is also split by **word class** (`metrics_jsonb.by_word_class`). Each reference word is
+tagged by script (Devanagari, Latin or mixed), as a number, as sitting at a code-switch, or as the
+clip's first or last word, and a class's WER counts its words' substitutions and deletions.
+Insertions have no reference word. Reclassification re-aligns the stored texts only when the run
+was scored under the current `fold_version()`.
+
 ### Known gaps
 
 Recorded here rather than left to be rediscovered. Neither is load-bearing today, and both are
