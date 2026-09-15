@@ -20,6 +20,7 @@ from app.db.session import session_scope
 from app.models import Episode
 from app.services.diarization import declared_speaker_count, diarize_audio
 from app.services.diarization_import import import_diarization
+from app.services.voices import link_voices
 from app.storage import build_storage
 
 
@@ -60,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
                 source=conf.endpoint_url,
                 actor=args.actor,
             )
+            link_voices(session, actor=args.actor)  # the new run joins the corpus's voices (D87)
         state = "stored" if report.runs_created else "unchanged, already stored"
         print(
             f"{external_id}: {len(result['labels'])} speakers "

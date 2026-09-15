@@ -245,3 +245,48 @@ def test_facts_come_from_the_newest_diarization_run_and_the_stored_spans(
     assert classes["turn_changes"] == "1"
     later = classify_segments(db_session, [segments[1]])[segments[1].id]
     assert later["speakers"] == "none"  # diarized, and nobody heard in this clip
+
+
+@pytest.mark.db
+def test_a_clip_gets_its_dominant_speakers_voice_and_that_voices_hours_in_train(
+    db_session, imported_episode
+) -> None:
+    import sqlalchemy as sa
+
+    from app.models import DiarizationRun, Episode, SpeakerTurn
+    from app.services.clip_classes import classify_segments, load_clip_facts, voice_train_seconds
+
+    episode = db_session.scalars(
+        sa.select(Episode).where(Episode.external_id == imported_episode)
+    ).one()
+    episode.split = "train"
+    gold, *train = sorted(episode.segments, key=lambda s: s.start_time)
+    gold.pot = "gold"
+    # A (voice v001) holds every train clip; B (v002) talks only in the gold clip.
+    turns = [(gold.start_time, gold.end_time, "B")] + [
+        (s.start_time, s.end_time, "A") for s in train
+    ]
+    db_session.add(
+        DiarizationRun(
+            episode_id=episode.id,
+            model="test",
+            checksum="voices",
+            speakers_jsonb=["A", "B"],
+            voices_jsonb={"A": "v001", "B": "v002"},
+            turns=[SpeakerTurn(speaker=s, start_time=a, end_time=b) for a, b, s in turns],
+        )
+    )
+    db_session.flush()
+
+    exposure = voice_train_seconds(db_session)
+    assert exposure == {"v001": pytest.approx(sum(s.duration_seconds for s in train))}
+
+    facts = load_clip_facts(db_session, [gold])[gold.id]
+    assert facts.voice == "v002" and facts.voice_train_seconds == 0.0
+    classes = classify_segments(db_session, [gold, train[0]])
+    assert classes[gold.id]["voice_exposure"] == "unseen"
+    assert classes[train[0].id]["voice"] == "v001"
+
+    episode.split = "val"  # a val episode is held out of training
+    db_session.flush()
+    assert voice_train_seconds(db_session) == {}

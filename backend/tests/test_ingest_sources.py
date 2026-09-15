@@ -161,7 +161,7 @@ def test_the_diarizers_turns_become_the_episodes_first_run(
         return {
             "turns": [[0.0, 3.0, "SPEAKER_00"], [2.5, 6.0, "SPEAKER_01"]],
             "labels": ["SPEAKER_00", "SPEAKER_01"],
-            "embeddings": None,
+            "embeddings": [[1.0, 0.0], [0.0, 1.0]],
         }
 
     monkeypatch.setattr("app.services.ingest.pipeline.diarize_audio", fake_diarize)
@@ -181,6 +181,8 @@ def test_the_diarizers_turns_become_the_episodes_first_run(
         (0.0, 3.0, "SPEAKER_00"),
         (2.5, 6.0, "SPEAKER_01"),
     ]
+    # Voices are handed out in talk-time order, and SPEAKER_01 talks longer (D87).
+    assert run.voices_jsonb == {"SPEAKER_01": "v001", "SPEAKER_00": "v002"}
 
 
 def test_a_failing_diarizer_never_fails_the_ingest(

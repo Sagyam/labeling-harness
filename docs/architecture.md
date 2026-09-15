@@ -70,7 +70,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `asr_hypotheses` | Immutable imported transcripts, one per (segment, system) |
 | `hypothesis_words` | Optional word-level timings, languages and scripts; times are **clip-relative** (D26) |
 | `segment_scores` | Imported agreement scores and rule flags, one row per segment |
-| `diarization_runs` | One imported diarization of one episode: model, checksum, speakers by talk time (D78) |
+| `diarization_runs` | One imported diarization of one episode: model, checksum, speakers by talk time (D78), per-speaker embeddings, and each speaker's anonymous voice linked across episodes (D87) |
 | `speaker_turns` | A run's episode-relative turns; turns of different speakers may overlap |
 
 ### Fine-tuned models (D83)
@@ -391,6 +391,14 @@ with uncoloured words. The endpoint needs a Modal proxy-auth token
 which the client follows. `scripts/diarize_episode.py` runs the same call for episodes already
 imported; turns diarized outside the harness are not accepted (D86). Runs are append-only and
 checksum-keyed; the newest per episode is current.
+
+Every stored run is then **linked into voices** (`app/services/voices.py`, D87): each speaker's
+embedding is matched to the centroids of the voices of every earlier run at cosine 0.6, the
+middle of the corpus's widest similarity gap, with the closest pairs matched first and no two
+speakers of one run sharing a voice; the rest start new voices. The result is an anonymous id per
+label in `diarization_runs.voices_jsonb` (`v001`, never a name). Ingest and
+`scripts/diarize_episode.py` link as they store; `scripts/link_voices.py` links runs stored
+earlier, and `--relink` starts over.
 The editor asks for the current run's turns inside the clip, clip-relative, with speakers numbered by
 talk time across the episode, and colours each timed word by the speaker talking at its midpoint.
 

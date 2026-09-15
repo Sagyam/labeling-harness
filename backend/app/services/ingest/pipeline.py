@@ -44,6 +44,7 @@ from app.services.silero_vad import (
     speech_spans_within,
 )
 from app.services.speaker_meta import strip_speaker_pii
+from app.services.voices import link_voices
 from app.services.youtube import (
     YouTubeBotDetected,
     YouTubeError,
@@ -226,12 +227,14 @@ def _import_speaker_turns(
                 source=settings.diarization.endpoint_url,
                 actor="ingest",
             )
+            # The new run's speakers joined to the voices of every episode before it (D87).
+            linked = link_voices(session, actor="ingest")
     except Exception as exc:
         job.log(f"Diarization skipped: {type(exc).__name__}: {exc}", "warn")
         return
     job.log(
         f"Diarization: {report.turns_inserted} speaker turns, "
-        f"{len(result.get('labels') or [])} speakers"
+        f"{len(result.get('labels') or [])} speakers; {linked.voices} voices in the corpus"
     )
 
 

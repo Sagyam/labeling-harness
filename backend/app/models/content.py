@@ -276,8 +276,11 @@ class DiarizationRun(Base):
     #: so the dominant voice (usually the host) is "Speaker 1" in every clip of the episode.
     speakers_jsonb: Mapped[list[str]] = mapped_column(JsonB, nullable=False)
     #: Per-speaker voice embeddings as reported by the diarizer, keyed by label, when it gave any.
-    #: Kept so voices can be linked across episodes later; nothing reads them yet.
+    #: :mod:`app.services.voices` links voices across episodes by them (D87).
     embeddings_jsonb: Mapped[dict[str, list[float]] | None] = mapped_column(JsonB)
+    #: Label to anonymous voice id (``v001``) linked across episodes (D87). Null until linked;
+    #: a speaker without an embedding has no entry.
+    voices_jsonb: Mapped[dict[str, str] | None] = mapped_column(JsonB)
     created_at: Mapped[dt.datetime] = utc_now_column()
 
     turns: Mapped[list[SpeakerTurn]] = relationship(

@@ -22,6 +22,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
@@ -253,30 +254,79 @@ def clip_turns(turns: Iterable[Turn], start: float, end: float) -> list[Turn]:
     return out
 
 
+class _Diarization:
+    """One episode's newest diarization run: its turns, indexed for cutting to clips, and its
+    speakers' linked voices (``None`` until the run is linked)."""
+
+    def __init__(self, turns: list[Turn], voices: Mapping[str, str] | None) -> None:
+        turns = sorted(turns)
+        self.turns = turns
+        self.starts = np.array([t[0] for t in turns], dtype=np.float64)
+        self.ends = np.array([t[1] for t in turns], dtype=np.float64)
+        self.voices = voices
+
+    def within(self, start: float, end: float) -> list[Turn]:
+        hits = np.flatnonzero((self.starts < end) & (self.ends > start))
+        return clip_turns((self.turns[i] for i in hits), start, end)
+
+    def voice(self, clip: Sequence[Turn]) -> str | None:
+        speaker = dominant_speaker(clip)
+        return None if self.voices is None or speaker is None else self.voices.get(speaker)
+
+
+def _diarizations(session: Session, episode_ids: Sequence[int] | None) -> dict[int, _Diarization]:
+    """Each episode's newest diarization run, for these episodes or all of them."""
+    query = sa.select(DiarizationRun.id, DiarizationRun.episode_id, DiarizationRun.voices_jsonb)
+    if episode_ids is not None:
+        query = query.where(DiarizationRun.episode_id.in_(episode_ids))
+    newest: dict[int, tuple[int, Mapping[str, str] | None]] = {}
+    for run_id, episode_id, voices in session.execute(query.order_by(DiarizationRun.id)):
+        newest[episode_id] = (run_id, voices)  # the newest run wins
+    turns: dict[int, list[Turn]] = defaultdict(list)
+    for run_id, start, end, speaker in session.execute(
+        sa.select(
+            SpeakerTurn.run_id, SpeakerTurn.start_time, SpeakerTurn.end_time, SpeakerTurn.speaker
+        ).where(SpeakerTurn.run_id.in_([run_id for run_id, _ in newest.values()]))
+    ):
+        turns[run_id].append((float(start), float(end), str(speaker)))
+    return {
+        episode_id: _Diarization(turns[run_id], voices)
+        for episode_id, (run_id, voices) in newest.items()
+    }
+
+
+def voice_train_seconds(session: Session) -> dict[str, float]:
+    """Each voice's talk time inside the clips a model trains on: the train pot of train-split
+    episodes. Val episodes are held out of training (D71), so their clips do not count."""
+    diarizations = _diarizations(session, None)
+    seconds: dict[str, float] = defaultdict(float)
+    for episode_id, start, end in session.execute(
+        sa.select(Segment.episode_id, Segment.start_time, Segment.end_time)
+        .join(Episode, Episode.id == Segment.episode_id)
+        .where(Segment.pot == "train", Episode.split == "train")
+    ):
+        diarization = diarizations.get(episode_id)
+        if diarization is None or diarization.voices is None:
+            continue
+        for speaker, talk in _talk(diarization.within(start, end)).items():
+            if (voice := diarization.voices.get(speaker)) is not None:
+                seconds[voice] += talk
+    return dict(seconds)
+
+
 def load_clip_facts(session: Session, segments: Sequence[Segment]) -> dict[int, ClipFacts]:
     """Everything :func:`classify` needs for these clips, keyed by segment id.
 
     A handful of queries whatever the number of clips: each episode's newest diarization run
-    and all of its turns, the clips' CMI, and the episodes' declared speakers.
+    and its turns, every voice's talk time in train, the clips' CMI, and the episodes' declared
+    speakers.
     """
     episode_ids = sorted({s.episode_id for s in segments})
     episodes = {
         e.id: e for e in session.scalars(sa.select(Episode).where(Episode.id.in_(episode_ids)))
     }
-    runs: dict[int, int] = {}
-    for run_id, episode_id in session.execute(
-        sa.select(DiarizationRun.id, DiarizationRun.episode_id)
-        .where(DiarizationRun.episode_id.in_(episode_ids))
-        .order_by(DiarizationRun.id)
-    ):
-        runs[episode_id] = run_id  # the newest run wins
-    turns: dict[int, list[Turn]] = defaultdict(list)
-    for run_id, start, end, speaker in session.execute(
-        sa.select(
-            SpeakerTurn.run_id, SpeakerTurn.start_time, SpeakerTurn.end_time, SpeakerTurn.speaker
-        ).where(SpeakerTurn.run_id.in_(list(runs.values())))
-    ):
-        turns[run_id].append((float(start), float(end), str(speaker)))
+    diarizations = _diarizations(session, episode_ids)
+    exposure = voice_train_seconds(session)
     cmi = dict(
         session.execute(
             sa.select(SegmentScore.segment_id, SegmentScore.code_switch_density).where(
@@ -290,21 +340,22 @@ def load_clip_facts(session: Session, segments: Sequence[Segment]) -> dict[int, 
     facts: dict[int, ClipFacts] = {}
     for segment in segments:
         episode = episodes[segment.episode_id]
-        run_id = runs.get(segment.episode_id)
+        diarization = diarizations.get(segment.episode_id)
+        turns = None
+        voice = None
+        if diarization is not None:
+            turns = diarization.within(segment.start_time, segment.end_time)
+            voice = diarization.voice(turns)
         density = cmi.get(segment.id)
         facts[segment.id] = ClipFacts(
             duration=segment.duration_seconds,
             vad_spans=segment.vad_spans_jsonb,
             overlap_spans=segment.overlap_spans_jsonb,
-            turns=(
-                None
-                if run_id is None
-                else clip_turns(turns[run_id], segment.start_time, segment.end_time)
-            ),
+            turns=turns,
             cmi=None if density is None else 100.0 * density,
-            acoustics=None,
-            voice=None,
-            voice_train_seconds=None,
+            acoustics=segment.acoustics_jsonb,
+            voice=voice,
+            voice_train_seconds=None if voice is None else exposure.get(voice, 0.0),
             gender=declared_value(episode.metadata_jsonb, "gender"),
             age_bracket=declared_value(episode.metadata_jsonb, "age_bracket"),
         )
