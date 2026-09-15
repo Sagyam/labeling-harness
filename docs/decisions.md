@@ -2189,7 +2189,7 @@ gets the `speaker_overlap` flag. The flag is a chip in the editor and a field in
 nothing else: it is listed in `INFO_FLAGS`, outside `ALL_FLAGS`, so `rule_flag_score` never
 counts it, and no gate, pot rule or export filter reads it.
 
-**Why measure it.** Crosstalk is the largest error factor found in the corpus (roadmap §3,
+**Why measure it.** Crosstalk is the largest error factor found in the corpus (docs/findings.md,
 2026-09-13). Within an episode, each 10 points of a clip's overlap share multiplies Flex's error
 rate by 1.49 [1.32, 1.69]. Podcast WER is 9.0% on clips without overlap and 24.3% above 15%,
 mostly dropped words. Speaking rate and code-mixing show no effect once the episode is held
@@ -2426,12 +2426,12 @@ ONNX export on the owner's machine. It was declined for scoring, for two reasons
   8-core CPU is an unmeasured estimate of 10–30 min per run.
 - **It is a different model.** Quantization shifts WER by an unmeasured amount, likely near the
   ~0.3-point run-to-run noise. CPU-scored runs would not compare like-for-like with the bf16
-  numbers in `roadmap.md`.
+  numbers in `docs/findings.md`.
 
 So no inference happens here, nothing is routed through `llm_routes.yaml`, and invariant 6 is not
 touched. A future mic playground that does run a model locally needs its own decision.
 
-**Scoring is the notebook's scoring**, so the page and the roadmap cannot disagree:
+**Scoring is the notebook's scoring**, so the page and the findings cannot disagree:
 - WER is `fold.word_errors`, folded and raw, pooled over words;
 - CER is over folded tokens, with Latin lower-cased;
 - a loop is a 3-word run repeated 5 or more times (`ftkit.harness_scorer`, `ftkit.is_loop`);
@@ -2441,7 +2441,7 @@ On the 2026-09-12 Flex output this reproduces 11.53% folded / 14.52% raw / 8.07%
 7.57% on val.
 
 A run also carries a WER interval from resampling whole episodes, and breakdowns by genre and by
-the roadmap's crosstalk buckets. Clicking a breakdown bar filters the clips. The clip's diff is
+the crosstalk buckets in docs/findings.md. Clicking a breakdown bar filters the clips. The clip's diff is
 drawn from the backend's alignment ops, so every mark is one counted error. The editor's raw
 `DiffViewer` would mark `टिम`/`team`.
 
@@ -2531,10 +2531,75 @@ includes it. It is the next place to look if the metric reads too kind.
 **Cost.** Alignment takes ~40% longer (1,109 clips: 12.3 → 17.5 s), almost all from the wider
 merges. The rules live in `fold.py`, not in `config/`, so the dataset's `harness/` copy the notebook
 scores with stays one file. Every stored score from before is a fold-v1 number:
-- the roadmap's tables;
+- the tables in docs/findings.md;
 - the Models page's imported run, which warns, and which a rescan will not rescore, because the
   import dedupes on the file's sha256;
 - queue scores computed at ingest.
 
 **Reversal:** revert `fold.py` to fold-v1; nothing is stored under the new rules except numbers
 that name `fold-v2`.
+
+## D85 — A mic playground runs a fine-tuned model on the CPU, in a sidecar, logged as a route
+
+The Models page gets a **playground** at the top: hold a button and talk, click to start and stop,
+or pick an audio file. The model the page is showing transcribes the recording, and the text
+appears under a player for the take. It is for hearing a model at work on a voice it has never
+met: a demo and a smell test, never a score. D83 left this out and said a playground that runs a
+model locally would need its own decision. This is that decision.
+
+**Where the model runs: a sidecar, not the backend.** D32 and D79 keep torch out of the harness
+process, and that holds here. The model runs in `playground/`, a compose service with CPU PyTorch
+and nothing else. The backend sends it one HTTP call per recording, as it does for the Modal
+diarizer. The service is behind a compose profile (`docker-compose --profile playground up -d
+playground`), because a loaded model holds 1.3–2.5 GB of RAM.
+
+**Which weights: 04c's CPU export, copied next to the card.**
+- Weight-only int8 goes in `data/models/asr/<slug>/cpu/` when the notebook accepted it (val WER
+  within +0.3 of bf16, and no more loops).
+- Otherwise the bf16 `best/` goes there.
+
+The card's `cpu.export` says which one. The page shows the playground only when one of them is
+there, and says how to add it when neither is. ONNX is not used: plain PyTorch bf16 is already
+realtime on the 7700X (docs/findings.md), and dynamic int8 broke Flex.
+
+**Invariant 6 is kept, not bent.** A local model is a provider like the others:
+- the route is `playground_transcribe` in `config/llm_routes.yaml`, with `provider: local`;
+- the client is `app/llm/local_asr.py`;
+- every attempt writes an `llm_requests` row naming the model folder, with its status, latency
+  and output, and costs $0;
+- `dry_run` returns canned text without calling the sidecar.
+
+A `local` route may not be named `asr*`, so a CPU model can never become an ingest system. A failed
+attempt's row is committed before the error goes back to the page (the D66 gap does not repeat
+here).
+
+**The recording is prepared as ingest prepares an episode.** The backend runs the stage-1
+normalisation on it (two-pass EBU R128 loudness, mono, 16 kHz through soxr), so the model hears the
+microphone the way it heard its training audio. The page turns off the browser's own echo
+cancellation, noise suppression and gain control for the same reason.
+
+**Decoder: the standard one** (docs/findings.md). Greedy, capped at 13 tokens per second of audio, and a
+clip whose output loops is decoded again with a repetition penalty of 1.2 and no repeated 6-gram.
+The cap applies to the first pass too: on a CPU a loop run to 300 tokens costs seconds.
+
+**Limits.**
+- **30 s per recording.** Flex was fine-tuned on clips of at most 21 s and is not a long-form
+  model; the page stops at 29 s.
+- **One model in memory.** Switching models reloads it.
+- **One request at a time.** A second recording waits for the first.
+
+**Measured on the first model, 2026-09-15** (`indic-transcribe-flex-ft-2026-09-15`):
+- **Accuracy.** 04c accepted int8: val 5.54% against 5.58% for bf16, gold 9.58% against 9.54%,
+  no loops, and the same text on 337 of 403 val clips.
+- **Speed on the 7700X, 8 threads.** A 20 s gold clip decoded in 2.3 s (RTF 0.11). The first call
+  after a start adds 5.2 s to load the model. The sidecar holds 1.6 GB.
+- **Output.** The playground's text on that clip matched the notebook's GPU text except for one
+  word, which is also not in the reference.
+
+**Nothing is stored but the request row.** A recording is not a clip. It gets no segment, no
+label and no object, so the corpus, the pots and invariant 7 are untouched. The takes shown on the
+page live in the browser tab.
+
+**Reversal:** delete `playground/`, the compose service, the route, `app/llm/local_asr.py`,
+`app/services/playground.py`, the endpoint and the page's panel. The `llm_requests` rows stay; they
+are the record of what ran.

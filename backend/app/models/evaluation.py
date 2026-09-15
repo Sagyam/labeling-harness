@@ -68,7 +68,7 @@ class ModelEvalRun(Base):
         BigInteger, ForeignKey("asr_models.id", ondelete="CASCADE"), nullable=False
     )
     split: Mapped[str] = mapped_column(String(16), nullable=False)
-    #: How the transcripts were decoded, e.g. ``greedy+cap+retry`` (roadmap Phase 1).
+    #: How the transcripts were decoded, e.g. ``greedy+cap+retry`` (docs/findings.md).
     decoder: Mapped[str | None] = mapped_column(String(128))
     #: ``fold_version()`` the clips were scored under; runs compare only under the same one.
     fold_version: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -91,7 +91,7 @@ def test_overlap_share_is_the_fraction_of_the_clip_in_crosstalk() -> None:
     ("share", "bucket"),
     [(None, "unmeasured"), (0.0, "none"), (0.03, "0-5%"), (0.05, "5-15%"), (0.2, ">15%")],
 )
-def test_overlap_buckets_follow_the_roadmap(share: float | None, bucket: str) -> None:
+def test_overlap_buckets_follow_the_crosstalk_findings(share: float | None, bucket: str) -> None:
     assert overlap_bucket(share) == bucket
 
 

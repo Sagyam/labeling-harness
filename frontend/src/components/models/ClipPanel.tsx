@@ -2,7 +2,7 @@
  * One clip of a run: listen, then read what the model got wrong (D83).
  *
  * Audio and peaks come from the segment endpoints the editor uses; the crosstalk spans (D77) are
- * drawn over the waveform because they are the largest measured cause of error (roadmap §3). The
+ * drawn over the waveform because they are the largest measured cause of error (docs/findings.md). The
  * diff is the backend's folded alignment, so its marks add up to the error count shown above it.
  * `Space` plays or pauses and `r` replays from the start.
  */

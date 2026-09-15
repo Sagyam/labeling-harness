@@ -25,9 +25,11 @@ backend/app/
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
   llm/             base (retry, dry-run, request log), openrouter, elevenlabs, and the
-                   transcription dispatcher every ASR call in the pipeline goes through
+                   transcription dispatcher every ASR call in the pipeline goes through;
+                   local_asr, the playground sidecar's client (D85)
   utils/           logging, hashing, time
 scripts/           thin CLI wrappers over services
+playground/        the CPU sidecar that runs a fine-tuned model for the Models page (D85)
 config/            settings.yaml, llm_routes.yaml
 ```
 
@@ -77,8 +79,15 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | `model_eval_clips` | Per clip: the model's text, a snapshot of the reference it was scored against, folded/raw/char counts, loop flag, overlap share at import |
 
 The model's text never enters `asr_hypotheses`, so it cannot reach disagreement, the queue or an
-export. The harness never runs a model: the notebook transcribes on a GPU and the page scores the
-text with `fold.py`, exactly as the notebook does.
+export. The harness never runs a model to score it: the notebook transcribes on a GPU and the page
+scores the text with `fold.py`, exactly as the notebook does.
+
+The page's playground (D85) is the one place a model runs. A recording made on the page goes
+through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an
+episode, then sends it to the `playground` compose service: CPU PyTorch reading the model's
+`cpu/` or `best/` weights. The route is `playground_transcribe`, and each attempt writes an
+`llm_requests` row. Nothing else is stored. The service is opt-in:
+`docker-compose --profile playground up -d playground`.
 
 ### Annotation
 
@@ -465,6 +474,7 @@ the same inputs and filters produce byte-identical output.
 | `POST /models/rescan` | Import every folder under `models.root` (default `data/models/asr/`); all or nothing, 422 on a bad folder |
 | `GET /model-runs/{id}/clips` | A run's clips; `sort` (errors, wer, deletions, insertions, substitutions, duration, overlap), `order`, `genre`, `overlap`, `loops_only`, `min_errors`, `offset`, `limit` |
 | `GET /model-runs/{id}/clips/{segment_id}` | One clip with the folded alignment ops behind its counts |
+| `POST /models/{slug}/transcribe` | Playground (D85): a multipart `audio` recording, ≤ 30 s, transcribed on the CPU; 409 without CPU weights, 422 for bad audio, 502 when the sidecar fails |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
 `annotation_events` row carrying the client-reported elapsed time, and an `audit_logs` entry.

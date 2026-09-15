@@ -18,7 +18,8 @@ notebooks/       EDA and fine-tuning (04c, Indic-Transcribe; generated from note
 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
 
-ASR fine-tuning in progress: start at [roadmap.md](roadmap.md).
+ASR work: what is next is in [docs/roadmap.md](docs/roadmap.md), what has been measured in
+[docs/findings.md](docs/findings.md).
 
 Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
 formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they

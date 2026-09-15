@@ -25,7 +25,7 @@ from app.services.fold import Ruleset, fold_tokens, word_errors
 BOOTSTRAP_ROUNDS = 1000
 BOOTSTRAP_SEED = 0
 
-#: Overlap-share buckets, as in roadmap.md section 3. ``unmeasured`` is a clip the overlap
+#: Overlap-share buckets, as in docs/findings.md (crosstalk). ``unmeasured`` is a clip the overlap
 #: detector never saw; it is kept apart from ``none`` because only ``none`` is evidence of a clean
 #: clip (D77).
 OVERLAP_BUCKETS = ("none", "0-5%", "5-15%", ">15%", "unmeasured")
@@ -135,7 +135,7 @@ def overlap_share(spans: Sequence[Sequence[float]] | None, duration: float) -> f
 
 
 def overlap_bucket(share: float | None) -> str:
-    """The roadmap's overlap bucket for a clip's overlap share."""
+    """The overlap bucket for a clip's overlap share (docs/findings.md)."""
     if share is None:
         return "unmeasured"
     if share <= 0:

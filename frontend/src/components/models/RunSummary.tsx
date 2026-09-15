@@ -1,7 +1,7 @@
 /**
  * One run's headline numbers and where its errors live (D83).
  *
- * The ledger strip carries the numbers the roadmap reports -- folded WER with its episode
+ * The ledger strip carries the numbers docs/findings.md reports -- folded WER with its episode
  * interval, raw WER beside it, CER, loops. The two breakdowns are bars of WER per slice captioned
  * with each slice's share of all errors, and clicking one filters the clip list to it: the point
  * of the page is to go from "podcasts with crosstalk are bad" to the clips themselves.
