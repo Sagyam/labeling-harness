@@ -226,5 +226,4 @@ a 76% accept rate.
 | [AGENTS.md](AGENTS.md) | Working agreement for coding agents: rules, conventions, gotchas |
 | [docs/architecture.md](docs/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
 | [docs/decisions.md](docs/decisions.md) | Every design decision, why it was made, what reversing costs |
-| [docs/manifest-contract.md](docs/manifest-contract.md) | The import format, and the transcript policy |
 | [docs/diagrams/](docs/diagrams/) | Figure sources (HTML), plus `.svg` and print-ready `.pdf` exports |
