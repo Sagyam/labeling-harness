@@ -7,6 +7,11 @@ Nyquist limit of the stored 16 kHz clips. Only the clip's VAD speech is read: th
 words carry the room, not the voice. Over the 44 episodes of 2026-09-15 most podcasts sat near
 7.8 kHz and many tech reviews near 5.3 kHz.
 
+**SNR and reverb.** Brouhaha (:mod:`app.services.brouhaha`) reads the whole episode, and each
+clip gets the mean speech-to-noise ratio and C50 over its own frames that Brouhaha calls speech.
+The model is gated and never downloaded; without it a clip gets bandwidth alone, and is marked
+so (:data:`BANDWIDTH_ONLY_VERSION`) that a backfill with the model finishes the job.
+
 **Not measured: clipping.** The stored audio is loudness-normalised and resampled to 16 kHz
 before anything reads it (ingest stage 1), and resampling rounds off the flat tops a clipping
 detector looks for. The source audio is not retained, so there is nothing honest to measure.
@@ -17,13 +22,18 @@ older rules from one measured under the current ones.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Protocol
 
 import numpy as np
 
 SAMPLE_RATE = 16_000
 #: Bump whenever a measurement's rule changes or one is added.
-ACOUSTICS_VERSION = "acoustics-v1"
+ACOUSTICS_VERSION = "acoustics-v2"
+#: The same rules measured without Brouhaha: bandwidth only, to be completed when it is present.
+BANDWIDTH_ONLY_VERSION = f"{ACOUSTICS_VERSION}-bandwidth-only"
+#: A Brouhaha frame counts as speech above this probability, as in brouhaha-vad's own pipeline.
+SPEECH_THRESHOLD = 0.5
 
 _FRAME = 512
 _HOP = 256
@@ -71,9 +81,43 @@ def bandwidth_hz(
     return float(_FREQS[audible.max()])
 
 
+class FrameModel(Protocol):
+    """What the meter needs of :class:`~app.services.brouhaha.Brouhaha`."""
+
+    @property
+    def available(self) -> bool: ...
+
+    def frames(self, audio: np.ndarray, sample_rate: int) -> np.ndarray: ...
+
+
 class AcousticMeter:
-    """Measures every clip of an episode from the whole episode's audio, which is what a model
-    reading long windows (SNR, reverb) will need; bandwidth itself only reads the clip."""
+    """Measures every clip of an episode from the whole episode's audio.
+
+    Args:
+        brouhaha: The SNR/reverb model; ``None`` measures bandwidth only. :meth:`default` loads
+            the exported model when it is on disk.
+    """
+
+    def __init__(self, brouhaha: FrameModel | None = None) -> None:
+        self._brouhaha = brouhaha if brouhaha is not None and brouhaha.available else None
+
+    @classmethod
+    def default(cls) -> AcousticMeter:
+        """The meter ingest and the backfill use: Brouhaha from its default path, if there."""
+        from app.services.brouhaha import Brouhaha
+
+        return cls(Brouhaha())
+
+    @property
+    def version(self) -> str:
+        """What this meter's results are stamped with."""
+        return ACOUSTICS_VERSION if self._brouhaha is not None else BANDWIDTH_ONLY_VERSION
+
+    def is_current(self, result: Mapping[str, object] | None) -> bool:
+        """Whether a stored result needs nothing this meter could add. A full result is current
+        even for a meter without Brouhaha: a backfill never measures less than it found."""
+        version = (result or {}).get("version")
+        return version in (ACOUSTICS_VERSION, self.version)
 
     def measure(
         self, audio: np.ndarray, sample_rate: int, clips: Sequence[ClipSpec]
@@ -88,11 +132,28 @@ class AcousticMeter:
                 f"acoustic measurement needs {SAMPLE_RATE} Hz audio, got {sample_rate}"
             )
         audio = np.asarray(audio, dtype=np.float32)
+        frames = self._brouhaha.frames(audio, sample_rate) if self._brouhaha is not None else None
         results: list[dict[str, object]] = []
         for start, end, spans in clips:
             clip = audio[int(start * sample_rate) : int(end * sample_rate)]
-            result: dict[str, object] = {"version": ACOUSTICS_VERSION}
+            result: dict[str, object] = {"version": self.version}
             if (hz := bandwidth_hz(clip, sample_rate, spans=spans)) is not None:
                 result["bandwidth_hz"] = round(hz, 1)
+            if frames is not None:
+                result |= _speech_means(frames, start, end)
             results.append(result)
         return results
+
+
+def _speech_means(frames: np.ndarray, start: float, end: float) -> dict[str, object]:
+    """Mean SNR and C50 over the clip's speech frames; nothing when Brouhaha heard no speech."""
+    from app.services.brouhaha import C50, FRAME_STEP, SNR, VAD
+
+    clip = frames[int(start / FRAME_STEP) : int(np.ceil(end / FRAME_STEP))]
+    speech = clip[clip[:, VAD] > SPEECH_THRESHOLD]
+    if not len(speech):
+        return {}
+    return {
+        "snr_db": round(float(speech[:, SNR].mean()), 1),
+        "c50_db": round(float(speech[:, C50].mean()), 1),
+    }

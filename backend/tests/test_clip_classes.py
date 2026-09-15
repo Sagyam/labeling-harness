@@ -149,6 +149,26 @@ def test_bandwidth_buckets(acoustics, bucket: str) -> None:
     assert classify(_facts(acoustics=acoustics))["bandwidth"] == bucket
 
 
+@pytest.mark.parametrize(
+    ("snr", "bucket"),
+    [(8.0, "<15 dB"), (20.0, "15-25 dB"), (30.0, "25-35 dB"), (40.0, "35-45 dB"), (57.0, "45+ dB")],
+)
+def test_snr_buckets(snr: float, bucket: str) -> None:
+    assert classify(_facts(acoustics={"snr_db": snr}))["snr"] == bucket
+
+
+@pytest.mark.parametrize(
+    ("c50", "bucket"), [(24.0, "<40 dB"), (43.0, "40-50 dB"), (52.0, "50-55 dB"), (59.0, "55+ dB")]
+)
+def test_reverb_buckets(c50: float, bucket: str) -> None:
+    assert classify(_facts(acoustics={"c50_db": c50}))["reverb"] == bucket
+
+
+def test_a_clip_without_brouhaha_speech_is_unmeasured_on_snr_and_reverb() -> None:
+    classes = classify(_facts(acoustics={"bandwidth_hz": 7800.0}))
+    assert classes["snr"] == classes["reverb"] == "unmeasured"
+
+
 # --- voices -----------------------------------------------------------------------------------
 
 

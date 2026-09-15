@@ -2678,11 +2678,23 @@ agrees, because diarization cannot say which voice is which declared speaker (D7
 **Not measured: clipping.** The stored audio is resampled to 16 kHz before anything reads it, and
 the source is not retained, so a clipping detector would measure the resampler.
 
-**Not yet measured: SNR and reverb.** Brouhaha (`pyannote/brouhaha`) is the planned model. It is
-gated, and runs as ONNX beside the overlap detector once exported; `acoustics_jsonb` is versioned
-so it can be added without a migration.
+**SNR and reverb: Brouhaha, rebuilt without pyannote.** `pyannote/brouhaha` gives speech
+probability, speech-to-noise ratio and C50 per 16.875 ms frame. Its checkpoint needs pyannote
+3.1, which pins a torch and torchaudio the harness does not use. So
+`scripts/export_brouhaha_onnx.py` rebuilds it in plain torch, reading the checkpoint with every
+non-torch class stubbed out so none of its own code runs, and exports ONNX. The rebuild matched
+pyannote 3.1.1's Brouhaha on every frame of 36 six-second windows of real corpus audio, and the
+ONNX matched the rebuild to within 0.003 dB. It runs beside the overlap detector:
+- 6 s windows on a 1 s hop, averaged;
+- each clip gets the mean SNR and C50 of the frames Brouhaha calls speech;
+- ~25 s of CPU per hour of audio, 11.8 minutes for the corpus.
 
-**Cost.** Bandwidth is 20 s of CPU for the whole corpus. Linking voices is milliseconds.
+The model is gated and OpenRAIL, so the export is never fetched or published. It lives in the
+gitignored `data/models/`, and without it a clip is measured for bandwidth alone and stamped
+`acoustics-v2-bandwidth-only`, which a backfill with the model completes. A backfill never
+measures less than it finds.
+
+**Cost.** Bandwidth is 20 s of CPU for the whole corpus, Brouhaha 12 minutes. Linking voices is milliseconds.
 Reclassifying the two Flex runs takes ~18 s, mostly the ratio bootstraps. Three nullable JSONB
 columns.
 

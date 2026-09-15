@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         report = backfill_acoustics(
             session,
             build_storage(settings),
-            AcousticMeter(),
+            AcousticMeter.default(),
             actor=args.actor,
             episode_external_ids=args.episode,
             force=args.force,

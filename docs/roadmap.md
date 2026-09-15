@@ -24,7 +24,7 @@ model run is split by all of them, and the Models page shows each axis's verdict
 | declared gender, age | episode metadata, only where every speaker of the episode shares it | per episode, so no within-episode ratio |
 | CMI | `segment_scores.code_switch_density` | kept as a descriptive attribute, crossed with the rest |
 | word classes: script, number, code-switch, clip edge | the aligned reference words of a scored run | per run |
-| **noise (SNR) and reverb (C50)** | pyannote Brouhaha, as ONNX beside the overlap detector | **not yet**: the model is gated, awaiting access |
+| noise (SNR) and reverb (C50) | pyannote Brouhaha, as ONNX beside the overlap detector | backfilled for 7,071 clips (4 have no speech Brouhaha hears) |
 | clipping | — | not measured: stored audio is resampled before anything reads it |
 
 **What earns a class** is unchanged: computable without the reference, a within-episode ratio
@@ -32,7 +32,6 @@ per bucket, and a lever it points at. An axis whose interval holds 1 stays in, a
 ruled out on every later model.
 
 **Still open.**
-- Brouhaha SNR/C50, once the model is available (a new `ACOUSTICS_VERSION` and a backfill).
 - Each ratio adjusts for the episode only. Crosstalk, speakers and turn changes move together,
   so a joint fit (the crosstalk study's Poisson) is the way to tell them apart if it matters.
 - Listen to the band-limited podcast clips: they score *better* within their episodes.

@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models import Episode, Segment
-from app.services.acoustics import ACOUSTICS_VERSION
+from app.services.acoustics import BANDWIDTH_ONLY_VERSION
 from app.services.ingest import (
     IngestJob,
     run_pipeline,
@@ -115,7 +115,7 @@ def test_every_clip_is_measured_as_it_is_cut(
     )
     assert segments
     for segment in segments:
-        assert segment.acoustics_jsonb["version"] == ACOUSTICS_VERSION
+        assert segment.acoustics_jsonb["version"] == BANDWIDTH_ONLY_VERSION  # no Brouhaha here
         assert segment.acoustics_jsonb["bandwidth_hz"] > 0
 
 

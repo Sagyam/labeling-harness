@@ -260,11 +260,18 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
    pinned and digest-checked; without it, or if it fails, the clips are simply left unmeasured.
    Episodes imported before it existed are measured by `scripts/backfill_overlap.py` from their
    retained audio. Each clip's **acoustics** are measured here too (`app/services/acoustics.py`,
-   D87): its bandwidth, the highest frequency at which its speech spectrum is within 40 dB of
-   the voice-band peak, over its VAD speech only. The result is a versioned object in
-   `segments.acoustics_jsonb`; a failure leaves the clips unmeasured, and
-   `scripts/backfill_acoustics.py` measures older clips, or clips measured under an older
-   version, from the retained episode audio.
+   D87):
+   - its **bandwidth**: the highest frequency at which its speech spectrum is within 40 dB of
+     the voice-band peak, over its VAD speech only;
+   - its **SNR** and **C50** (reverberation): the mean over its speech frames of pyannote's
+     Brouhaha, run as ONNX over the whole episode (`app/services/brouhaha.py`, ~25 s of CPU per
+     hour).
+
+   Brouhaha is gated, so its graph is built once by `scripts/export_brouhaha_onnx.py` into
+   `data/models/`, never fetched; without it the clips get bandwidth alone. The result is a
+   versioned object in `segments.acoustics_jsonb`. A failure leaves the clips unmeasured, and
+   `scripts/backfill_acoustics.py` measures older clips, clips measured under an older version,
+   and bandwidth-only clips once the model is present, from the retained episode audio.
 3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip,
    producing one ASR system per route, in the order the routes are written. Transcribers for a
    segment run concurrently via a worker pool with a shared `httpx.Client` for HTTP connection
@@ -416,6 +423,8 @@ have classes too:
 | pause share | clip time outside `vad_spans_jsonb` | <2% / 2–10% / >10% |
 | clip length | `duration_seconds` | <5 / 5–15 / 15+ s |
 | bandwidth | `acoustics_jsonb` | <4.5 / 4.5–6.5 / 6.5+ kHz |
+| speech-to-noise | `acoustics_jsonb`, Brouhaha | <15 / 15–25 / 25–35 / 35–45 / 45+ dB |
+| room (C50) | `acoustics_jsonb`, Brouhaha | <40 / 40–50 / 50–55 / 55+ dB (high is dry) |
 | voice | the dominant speaker's linked voice | one bucket per voice |
 | voice's hours in train | that voice's talk in train-pot clips of train-split episodes | unseen / <10 min / 10–60 min / 1 h+ |
 | declared gender, age | episode metadata, only when every declared speaker shares it | the value / mixed |

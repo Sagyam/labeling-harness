@@ -192,6 +192,10 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   dependency by editing `pyproject.toml` and running `uv lock`, then commit both -- a
   `pyproject.toml` change alone will not reach the container, and `uv export --frozen` fails
   loudly when the two disagree.
+- **Brouhaha's ONNX (SNR and reverb, D87) never downloads itself**: the model is gated and
+  OpenRAIL. `scripts/export_brouhaha_onnx.py` builds it once into `data/models/` from an account
+  that accepted its terms. Without it, ingest measures bandwidth only and says so in the result's
+  version; `scripts/backfill_acoustics.py` completes those clips once it is there.
 - The aligner's ONNX model is gitignored (~317 MB) and **downloads itself when missing** (D42),
   pinned to a commit and digest-checked, so the container no longer needs the export.
   `scripts/export_aligner_onnx.py` remains for provenance; `torch` and `transformers` must never

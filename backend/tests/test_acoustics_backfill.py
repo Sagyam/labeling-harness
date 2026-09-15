@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import load_settings
 from app.models import AuditLog, Episode, Segment
-from app.services.acoustics import ACOUSTICS_VERSION, AcousticMeter
+from app.services.acoustics import BANDWIDTH_ONLY_VERSION, AcousticMeter
 from app.services.acoustics_backfill import backfill_acoustics
 from app.services.importer import import_manifest
 from app.storage.local import LocalFilesystemStorage
@@ -21,6 +21,7 @@ pytestmark = pytest.mark.db
 
 class _CountingMeter(AcousticMeter):
     def __init__(self) -> None:
+        super().__init__()
         self.clips_seen = 0
 
     def measure(self, audio, sample_rate, clips):
@@ -51,7 +52,7 @@ def test_every_clip_is_measured_and_versioned(db_session: Session, tmp_path: Pat
     assert report.episodes_measured == 1
     assert report.segments_updated == 3
     for segment in _segments(db_session, episode):
-        assert segment.acoustics_jsonb["version"] == ACOUSTICS_VERSION
+        assert segment.acoustics_jsonb["version"] == BANDWIDTH_ONLY_VERSION
         assert segment.acoustics_jsonb["bandwidth_hz"] > 0
     audit = db_session.scalars(sa.select(AuditLog).where(AuditLog.action == "acoustics_backfill"))
     assert [a.entity_id for a in audit] == ["ac_ep1"]
@@ -70,7 +71,7 @@ def test_a_second_run_measures_only_what_is_stale(db_session: Session, tmp_path:
     db_session.flush()
     backfill_acoustics(db_session, storage, meter, actor="test")
     assert meter.clips_seen == 1
-    assert stale.acoustics_jsonb["version"] == ACOUSTICS_VERSION
+    assert stale.acoustics_jsonb["version"] == BANDWIDTH_ONLY_VERSION
 
     backfill_acoustics(db_session, storage, meter, actor="test", force=True)
     assert meter.clips_seen == 4

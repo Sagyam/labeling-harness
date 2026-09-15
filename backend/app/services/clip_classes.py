@@ -69,6 +69,13 @@ AXES: tuple[Axis, ...] = (
     Axis("duration", "Clip length", ("<5 s", "5-15 s", "15+ s"), "5-15 s"),
     Axis("bandwidth", "Audio bandwidth", ("<4.5 kHz", "4.5-6.5 kHz", "6.5+ kHz", "unmeasured"),
          "6.5+ kHz", "unmeasured"),
+    # Brouhaha's speech-to-noise ratio and C50 (D87). Edges from the corpus of 2026-09-15:
+    # SNR 194 / 752 / 1,355 / 1,656 / 3,114 clips; C50 292 / 398 / 498 / 5,883.
+    Axis("snr", "Speech-to-noise",
+         ("<15 dB", "15-25 dB", "25-35 dB", "35-45 dB", "45+ dB", "unmeasured"), "45+ dB",
+         "unmeasured"),
+    Axis("reverb", "Room (C50)", ("<40 dB", "40-50 dB", "50-55 dB", "55+ dB", "unmeasured"),
+         "55+ dB", "unmeasured"),
     # The baseline is where most clips are, and where an episode's seen host is: "1 h+" is
     # almost only the tech-review host, who shares no episode with an unseen voice.
     Axis("voice_exposure", "Voice's hours in train",
@@ -212,6 +219,24 @@ def _bandwidth_bucket(acoustics: Mapping[str, Any] | None) -> str:
     return "<4.5 kHz" if hz < 4500 else "4.5-6.5 kHz" if hz < 6500 else "6.5+ kHz"
 
 
+def _snr_bucket(acoustics: Mapping[str, Any] | None) -> str:
+    db = (acoustics or {}).get("snr_db")
+    if not isinstance(db, (int, float)):
+        return "unmeasured"
+    for edge, bucket in ((15, "<15 dB"), (25, "15-25 dB"), (35, "25-35 dB"), (45, "35-45 dB")):
+        if db < edge:
+            return bucket
+    return "45+ dB"
+
+
+def _reverb_bucket(acoustics: Mapping[str, Any] | None) -> str:
+    """C50 in dB: low is a reverberant room, high a dry one."""
+    db = (acoustics or {}).get("c50_db")
+    if not isinstance(db, (int, float)):
+        return "unmeasured"
+    return "<40 dB" if db < 40 else "40-50 dB" if db < 50 else "50-55 dB" if db < 55 else "55+ dB"
+
+
 def _exposure_bucket(voice: str | None, seconds: float | None) -> str:
     if voice is None or seconds is None:
         return "unlinked"
@@ -235,6 +260,8 @@ def classify(facts: ClipFacts) -> dict[str, str]:
         "pause": _pause_bucket(facts.vad_spans, facts.duration),
         "duration": _duration_bucket(facts.duration),
         "bandwidth": _bandwidth_bucket(facts.acoustics),
+        "snr": _snr_bucket(facts.acoustics),
+        "reverb": _reverb_bucket(facts.acoustics),
         "voice_exposure": _exposure_bucket(facts.voice, facts.voice_train_seconds),
         "voice": facts.voice or "unlinked",
         "gender": facts.gender,

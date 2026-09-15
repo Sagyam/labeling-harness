@@ -85,7 +85,8 @@ def run_pipeline(
             already persisted elsewhere by the time the run finishes.
         overlap_detector: Finds overlapped speech in the episode (D77). Defaults to the ONNX
             detector, which fetches its model on first use; without one, clips go unmeasured.
-        acoustic_meter: Measures each clip's bandwidth (D87). Defaults to :class:`AcousticMeter`.
+        acoustic_meter: Measures each clip's bandwidth, SNR and reverb (D87). Defaults to
+            :meth:`AcousticMeter.default`.
     """
     settings = settings or get_settings()
     storage = storage or build_storage(settings)
@@ -277,7 +278,7 @@ def _measure_acoustics(
     unmeasured, which the backfill can mend later.
     """
     try:
-        meter = meter if meter is not None else AcousticMeter()
+        meter = meter if meter is not None else AcousticMeter.default()
         results = meter.measure(
             audio,
             sample_rate,

@@ -261,6 +261,20 @@ run down by the same buckets.
 - **Bandwidth runs the wrong way.** The band-limited clips (4.5–6.5 kHz; 99 of the 116 are
   podcast clips) do *better* within their episodes, and the interval only just clears 1. Nothing says narrow audio is easy, so the likely reading is a confound with the axes above;
   listen before building on it.
+- **Noise splits WER only through crosstalk.** By Brouhaha's speech-to-noise ratio, against
+  45+ dB (357 clips):
+  - 35–45 dB gives 1.28 [1.02, 1.80], 25–35 dB 1.77 [1.04, 2.14] and 15–25 dB 1.98
+    [1.61, 2.95] within episodes, while the pooled WER per bucket is flat, because the noisier
+    buckets are full of easy tech reviews.
+  - Crosstalk rises as SNR falls, though, from 1.0% to 3.8% of the clip: a second voice is noise
+    to Brouhaha. On the 511 gold clips with no crosstalk, every SNR interval holds 1
+    (35–45 dB: 1.08 [0.74, 1.26]).
+  - So by this measure the corpus's background noise is not a source of errors. Item 3's noise
+    augmentation is insurance for audio the corpus does not have yet, not a fix for measured
+    errors.
+- **Reverb is ruled out.** C50 is 55+ dB (a dry room) for 591 of 706 gold clips, and no bucket's
+  interval clears 1. The one reverberant episode, the six-speaker `ep_344` roundtable (median C50
+  43 dB), has too few gold clips to say more.
 - **Voice exposure cannot be measured on this gold.** Gold shares its speakers with train (see
   Leakage verification). Only one gold voice is unseen in train: the guest of `ep_612`, a val
   episode, 50 clips. The guest's ratio against the seen host of the same episode is 1.20, from
