@@ -69,8 +69,10 @@ AXES: tuple[Axis, ...] = (
     Axis("duration", "Clip length", ("<5 s", "5-15 s", "15+ s"), "5-15 s"),
     Axis("bandwidth", "Audio bandwidth", ("<4.5 kHz", "4.5-6.5 kHz", "6.5+ kHz", "unmeasured"),
          "6.5+ kHz", "unmeasured"),
+    # The baseline is where most clips are, and where an episode's seen host is: "1 h+" is
+    # almost only the tech-review host, who shares no episode with an unseen voice.
     Axis("voice_exposure", "Voice's hours in train",
-         ("unseen", "<10 min", "10-60 min", "1 h+", "unlinked"), "1 h+", "unlinked"),
+         ("unseen", "<10 min", "10-60 min", "1 h+", "unlinked"), "10-60 min", "unlinked"),
     Axis("voice", "Voice", (), None, "unlinked"),
     Axis("gender", "Declared gender", ("male", "female", "mixed", "undeclared"), None,
          "undeclared"),
