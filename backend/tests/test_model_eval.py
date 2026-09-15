@@ -6,16 +6,9 @@ import random
 
 import pytest
 
+from app.services.clip_classes import overlap_bucket
 from app.services.fold import _levenshtein
-from app.services.model_eval import (
-    ScoredClip,
-    is_loop,
-    levenshtein,
-    overlap_bucket,
-    overlap_share,
-    score_clip,
-    summarize,
-)
+from app.services.model_eval import ScoredClip, is_loop, levenshtein, score_clip, summarize
 
 # --- edit distance, loops ---------------------------------------------------------------------
 
@@ -79,20 +72,6 @@ def test_a_looping_hypothesis_is_marked() -> None:
 
 
 # --- overlap ----------------------------------------------------------------------------------
-
-
-def test_overlap_share_is_the_fraction_of_the_clip_in_crosstalk() -> None:
-    assert overlap_share([[0.0, 1.0], [3.0, 4.0]], 10.0) == pytest.approx(0.2)
-    assert overlap_share([], 10.0) == 0.0
-    assert overlap_share(None, 10.0) is None  # never measured is not clean
-
-
-@pytest.mark.parametrize(
-    ("share", "bucket"),
-    [(None, "unmeasured"), (0.0, "none"), (0.03, "0-5%"), (0.05, "5-15%"), (0.2, ">15%")],
-)
-def test_overlap_buckets_follow_the_crosstalk_findings(share: float | None, bucket: str) -> None:
-    assert overlap_bucket(share) == bucket
 
 
 # --- summary ----------------------------------------------------------------------------------

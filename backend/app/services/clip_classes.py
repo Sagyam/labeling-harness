@@ -1,0 +1,316 @@
+"""Every clip's classes: the conditions a WER is split by (roadmap item 1, D87).
+
+A class is a bucket a clip falls into on one axis -- how much of it is crosstalk, how many people
+talk in it, how band-limited its audio is. Each is computed from what the harness already stores
+about the clip, never from its reference, so a class exists for every clip, train included, and
+for audio nobody has labelled.
+
+Classification is pure: :func:`classify` takes a :class:`ClipFacts` and returns ``{axis:
+bucket}``. :func:`load_clip_facts` is the only function that reads the database. Buckets meaning
+"never measured" are kept apart from every measured bucket: ``undiarized`` is not evidence of one
+speaker, as ``unmeasured`` overlap is not evidence of a clean clip (D77).
+
+CMI is an axis for description, not for errors: it did not split WER within an episode
+(docs/findings.md), and it is kept for its sociolinguistic value. ``descriptive`` marks it.
+"""
+
+from __future__ import annotations
+
+import itertools
+from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+import sqlalchemy as sa
+from sqlalchemy.orm import Session
+
+from app.models import DiarizationRun, Episode, Segment, SegmentScore, SpeakerTurn
+
+Turn = tuple[float, float, str]
+
+#: Talk time, in the clip, that makes someone one of its speakers. A shorter backchannel ("हो",
+#: "hm") is crosstalk if it overlaps, but not a second speaker; the crosstalk study counted a
+#: two-speaker clip the same way (docs/findings.md).
+MIN_TALK_SECONDS = 0.5
+
+
+@dataclass(frozen=True)
+class Axis:
+    """One way of splitting clips.
+
+    Attributes:
+        name: The key in a clip's classes and in a run's ``by_class``.
+        label: What the Models page calls it.
+        buckets: Every bucket, in display order. Empty for an open set (voices).
+        baseline: The bucket a within-episode rate ratio compares each other bucket against;
+            ``None`` when the axis cannot vary within an episode, so no ratio means anything.
+        unmeasured: The bucket for a clip the axis could not be measured on. It never gets a
+            ratio: it is missing data, not a condition.
+        descriptive: Kept to describe the corpus rather than to explain errors.
+    """
+
+    name: str
+    label: str
+    buckets: tuple[str, ...]
+    baseline: str | None
+    unmeasured: str | None = None
+    descriptive: bool = False
+
+
+AXES: tuple[Axis, ...] = (
+    Axis("overlap", "Crosstalk", ("none", "0-5%", "5-15%", ">15%", "unmeasured"), "none",
+         "unmeasured"),
+    Axis("speakers", "Speakers in the clip", ("1", "2", "3+", "none", "undiarized"), "1",
+         "undiarized"),
+    Axis("turn_changes", "Turn changes", ("0", "1", "2+", "undiarized"), "0", "undiarized"),
+    Axis("pause", "Pause share", ("<2%", "2-10%", ">10%", "unmeasured"), "<2%", "unmeasured"),
+    Axis("duration", "Clip length", ("<5 s", "5-15 s", "15+ s"), "5-15 s"),
+    Axis("bandwidth", "Audio bandwidth", ("<4.5 kHz", "4.5-6.5 kHz", "6.5+ kHz", "unmeasured"),
+         "6.5+ kHz", "unmeasured"),
+    Axis("voice_exposure", "Voice's hours in train",
+         ("unseen", "<10 min", "10-60 min", "1 h+", "unlinked"), "1 h+", "unlinked"),
+    Axis("voice", "Voice", (), None, "unlinked"),
+    Axis("gender", "Declared gender", ("male", "female", "mixed", "undeclared"), None,
+         "undeclared"),
+    Axis("age_bracket", "Declared age",
+         ("under_20", "20_39", "40_59", "60_79", "80_plus", "mixed", "undeclared"), None,
+         "undeclared"),
+    Axis("cmi", "Code-mixing (CMI)", ("0", "<15", "15-30", "30+", "unmeasured"), "0",
+         "unmeasured", descriptive=True),
+)  # fmt: skip
+AXIS_BY_NAME = {axis.name: axis for axis in AXES}
+
+
+@dataclass(frozen=True)
+class ClipFacts:
+    """What classification reads about one clip. Times are clip-relative seconds.
+
+    ``None`` always means "not measured": ``turns`` is ``None`` for an episode never diarized and
+    ``[]`` for a clip the diarizer heard nobody in.
+    """
+
+    duration: float
+    vad_spans: Sequence[Sequence[float]] | None
+    overlap_spans: Sequence[Sequence[float]] | None
+    turns: Sequence[Turn] | None
+    cmi: float | None
+    acoustics: Mapping[str, Any] | None
+    voice: str | None
+    voice_train_seconds: float | None
+    gender: str
+    age_bracket: str
+
+
+# --- one axis at a time -----------------------------------------------------------------------
+
+
+def overlap_share(spans: Sequence[Sequence[float]] | None, duration: float) -> float | None:
+    """The fraction of a clip spent in crosstalk; ``None`` when it was never measured."""
+    if spans is None:
+        return None
+    if duration <= 0:
+        return 0.0
+    return min(1.0, sum(max(0.0, end - start) for start, end in spans) / duration)
+
+
+def overlap_bucket(share: float | None) -> str:
+    """The overlap bucket for a clip's overlap share (docs/findings.md)."""
+    if share is None:
+        return "unmeasured"
+    if share <= 0:
+        return "none"
+    if share < 0.05:
+        return "0-5%"
+    if share <= 0.15:
+        return "5-15%"
+    return ">15%"
+
+
+def _talk(turns: Iterable[Turn]) -> dict[str, float]:
+    talk: dict[str, float] = defaultdict(float)
+    for start, end, speaker in turns:
+        talk[speaker] += max(0.0, end - start)
+    return talk
+
+
+def speakers_present(turns: Iterable[Turn]) -> list[str]:
+    """The speakers with at least :data:`MIN_TALK_SECONDS` of talk, most talk first."""
+    talk = _talk(turns)
+    return sorted((s for s, t in talk.items() if t >= MIN_TALK_SECONDS), key=lambda s: -talk[s])
+
+
+def dominant_speaker(turns: Iterable[Turn]) -> str | None:
+    """The speaker with the most talk time in the clip, or ``None`` when nobody talks."""
+    talk = _talk(turns)
+    return max(sorted(talk), key=lambda s: talk[s]) if talk else None
+
+
+def turn_changes(turns: Sequence[Turn]) -> int:
+    """How often the floor passes between speakers who count, in order of turn start.
+
+    Turns overlap, so this is the number of changes in the sequence of turn *starts*: a reply
+    that begins under the other speaker's last words is one hand-over, as it would be heard.
+    """
+    present = set(speakers_present(turns))
+    order = [speaker for _, _, speaker in sorted(turns) if speaker in present]
+    return sum(1 for a, b in itertools.pairwise(order) if a != b)
+
+
+def declared_value(metadata: Mapping[str, Any] | None, field: str) -> str:
+    """A declared speaker field that holds for every clip of the episode, or why it does not.
+
+    Diarization cannot say which voice is which declared speaker (D78), so a declared value
+    reaches a clip only when every speaker of the episode shares it. ``mixed`` when they differ,
+    ``undeclared`` when any speaker -- a form row left blank included -- has no value.
+    """
+    metadata = metadata or {}
+    speakers = metadata.get("speakers")
+    rows = list(speakers.values()) if isinstance(speakers, Mapping) else []
+    count = metadata.get("speaker_count")
+    if not rows or (isinstance(count, int) and count > len(rows)):
+        return "undeclared"
+    values = [row.get(field) if isinstance(row, Mapping) else None for row in rows]
+    if any(not isinstance(v, str) or not v for v in values):
+        return "undeclared"
+    return values[0] if len(set(values)) == 1 else "mixed"
+
+
+def _speakers_bucket(turns: Sequence[Turn] | None) -> str:
+    if turns is None:
+        return "undiarized"
+    count = len(speakers_present(turns))
+    return "none" if count == 0 else "3+" if count >= 3 else str(count)
+
+
+def _turn_changes_bucket(turns: Sequence[Turn] | None) -> str:
+    if turns is None:
+        return "undiarized"
+    changes = turn_changes(turns)
+    return "2+" if changes >= 2 else str(changes)
+
+
+def _pause_bucket(vad_spans: Sequence[Sequence[float]] | None, duration: float) -> str:
+    if vad_spans is None or duration <= 0:
+        return "unmeasured"
+    speech = sum(max(0.0, end - start) for start, end in vad_spans)
+    pause = max(0.0, 1.0 - speech / duration)
+    return "<2%" if pause < 0.02 else "2-10%" if pause <= 0.10 else ">10%"
+
+
+def _duration_bucket(duration: float) -> str:
+    return "<5 s" if duration < 5 else "5-15 s" if duration < 15 else "15+ s"
+
+
+def _bandwidth_bucket(acoustics: Mapping[str, Any] | None) -> str:
+    hz = (acoustics or {}).get("bandwidth_hz")
+    if not isinstance(hz, (int, float)):
+        return "unmeasured"
+    return "<4.5 kHz" if hz < 4500 else "4.5-6.5 kHz" if hz < 6500 else "6.5+ kHz"
+
+
+def _exposure_bucket(voice: str | None, seconds: float | None) -> str:
+    if voice is None or seconds is None:
+        return "unlinked"
+    if seconds <= 0:
+        return "unseen"
+    return "<10 min" if seconds < 600 else "10-60 min" if seconds < 3600 else "1 h+"
+
+
+def _cmi_bucket(cmi: float | None) -> str:
+    if cmi is None:
+        return "unmeasured"
+    return "0" if cmi <= 0 else "<15" if cmi < 15 else "15-30" if cmi < 30 else "30+"
+
+
+def classify(facts: ClipFacts) -> dict[str, str]:
+    """Every axis's bucket for one clip."""
+    return {
+        "overlap": overlap_bucket(overlap_share(facts.overlap_spans, facts.duration)),
+        "speakers": _speakers_bucket(facts.turns),
+        "turn_changes": _turn_changes_bucket(facts.turns),
+        "pause": _pause_bucket(facts.vad_spans, facts.duration),
+        "duration": _duration_bucket(facts.duration),
+        "bandwidth": _bandwidth_bucket(facts.acoustics),
+        "voice_exposure": _exposure_bucket(facts.voice, facts.voice_train_seconds),
+        "voice": facts.voice or "unlinked",
+        "gender": facts.gender,
+        "age_bracket": facts.age_bracket,
+        "cmi": _cmi_bucket(facts.cmi),
+    }
+
+
+# --- reading the facts ------------------------------------------------------------------------
+
+
+def clip_turns(turns: Iterable[Turn], start: float, end: float) -> list[Turn]:
+    """Episode-relative turns cut to one clip and made clip-relative."""
+    out: list[Turn] = []
+    for lo, hi, speaker in turns:
+        a, b = max(lo, start), min(hi, end)
+        if b > a:
+            out.append((a - start, b - start, speaker))
+    return out
+
+
+def load_clip_facts(session: Session, segments: Sequence[Segment]) -> dict[int, ClipFacts]:
+    """Everything :func:`classify` needs for these clips, keyed by segment id.
+
+    A handful of queries whatever the number of clips: each episode's newest diarization run
+    and all of its turns, the clips' CMI, and the episodes' declared speakers.
+    """
+    episode_ids = sorted({s.episode_id for s in segments})
+    episodes = {
+        e.id: e for e in session.scalars(sa.select(Episode).where(Episode.id.in_(episode_ids)))
+    }
+    runs: dict[int, int] = {}
+    for run_id, episode_id in session.execute(
+        sa.select(DiarizationRun.id, DiarizationRun.episode_id)
+        .where(DiarizationRun.episode_id.in_(episode_ids))
+        .order_by(DiarizationRun.id)
+    ):
+        runs[episode_id] = run_id  # the newest run wins
+    turns: dict[int, list[Turn]] = defaultdict(list)
+    for run_id, start, end, speaker in session.execute(
+        sa.select(
+            SpeakerTurn.run_id, SpeakerTurn.start_time, SpeakerTurn.end_time, SpeakerTurn.speaker
+        ).where(SpeakerTurn.run_id.in_(list(runs.values())))
+    ):
+        turns[run_id].append((float(start), float(end), str(speaker)))
+    cmi = dict(
+        session.execute(
+            sa.select(SegmentScore.segment_id, SegmentScore.code_switch_density).where(
+                SegmentScore.segment_id.in_([s.id for s in segments])
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+    facts: dict[int, ClipFacts] = {}
+    for segment in segments:
+        episode = episodes[segment.episode_id]
+        run_id = runs.get(segment.episode_id)
+        density = cmi.get(segment.id)
+        facts[segment.id] = ClipFacts(
+            duration=segment.duration_seconds,
+            vad_spans=segment.vad_spans_jsonb,
+            overlap_spans=segment.overlap_spans_jsonb,
+            turns=(
+                None
+                if run_id is None
+                else clip_turns(turns[run_id], segment.start_time, segment.end_time)
+            ),
+            cmi=None if density is None else 100.0 * density,
+            acoustics=None,
+            voice=None,
+            voice_train_seconds=None,
+            gender=declared_value(episode.metadata_jsonb, "gender"),
+            age_bracket=declared_value(episode.metadata_jsonb, "age_bracket"),
+        )
+    return facts
+
+
+def classify_segments(session: Session, segments: Sequence[Segment]) -> dict[int, dict[str, str]]:
+    """:func:`classify` for every clip, keyed by segment id."""
+    return {sid: classify(f) for sid, f in load_clip_facts(session, segments).items()}

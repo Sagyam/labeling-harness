@@ -19,6 +19,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.clip_classes import AXIS_BY_NAME
 from app.services.fold import Ruleset, fold_tokens, word_errors
 
 #: Episode resamples behind a WER interval. Seeded, so the same run always reports the same one.
@@ -28,7 +29,7 @@ BOOTSTRAP_SEED = 0
 #: Overlap-share buckets, as in docs/findings.md (crosstalk). ``unmeasured`` is a clip the overlap
 #: detector never saw; it is kept apart from ``none`` because only ``none`` is evidence of a clean
 #: clip (D77).
-OVERLAP_BUCKETS = ("none", "0-5%", "5-15%", ">15%", "unmeasured")
+OVERLAP_BUCKETS = AXIS_BY_NAME["overlap"].buckets
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
@@ -123,28 +124,6 @@ def score_clip(reference: str, hypothesis: str, *, ruleset: Ruleset | None = Non
         char_errors=levenshtein(ref_chars, _chars(hypothesis, ruleset)),
         is_loop=is_loop(hypothesis),
     )
-
-
-def overlap_share(spans: Sequence[Sequence[float]] | None, duration: float) -> float | None:
-    """The fraction of a clip spent in crosstalk; ``None`` when it was never measured."""
-    if spans is None:
-        return None
-    if duration <= 0:
-        return 0.0
-    return min(1.0, sum(max(0.0, end - start) for start, end in spans) / duration)
-
-
-def overlap_bucket(share: float | None) -> str:
-    """The overlap bucket for a clip's overlap share (docs/findings.md)."""
-    if share is None:
-        return "unmeasured"
-    if share <= 0:
-        return "none"
-    if share < 0.05:
-        return "0-5%"
-    if share <= 0.15:
-        return "5-15%"
-    return ">15%"
 
 
 def _rate(errors: int, words: int) -> float:

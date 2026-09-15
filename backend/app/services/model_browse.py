@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models import Episode, ModelEvalClip, Segment
+from app.services.clip_classes import overlap_bucket
 from app.services.fold import fold_version, word_errors
-from app.services.model_eval import overlap_bucket
 
 ClipSort = Literal[
     "errors", "wer", "deletions", "insertions", "substitutions", "duration", "overlap"
@@ -38,7 +38,7 @@ def _genre_sql() -> sa.ColumnElement[str]:
 
 
 def _overlap_bucket_sql() -> sa.ColumnElement[str]:
-    """:func:`app.services.model_eval.overlap_bucket` in SQL, so a filter matches the breakdown."""
+    """:func:`~app.services.clip_classes.overlap_bucket` in SQL: a filter matches the breakdown."""
     share = ModelEvalClip.overlap_share
     return sa.case(
         (share.is_(None), "unmeasured"),

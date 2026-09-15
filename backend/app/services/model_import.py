@@ -41,14 +41,9 @@ from app.models import (
     SegmentLabel,
 )
 from app.models.enums import APPROVED_DISPOSITIONS, EVAL_SPLITS
+from app.services.clip_classes import overlap_bucket, overlap_share
 from app.services.fold import fold_version
-from app.services.model_eval import (
-    ScoredClip,
-    overlap_bucket,
-    overlap_share,
-    score_clip,
-    summarize,
-)
+from app.services.model_eval import ScoredClip, score_clip, summarize
 from app.services.normalize import load_ruleset, normalize_text
 from app.services.stats import latest_labels_subquery
 
