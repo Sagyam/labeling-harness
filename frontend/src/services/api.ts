@@ -37,6 +37,7 @@ import {
   ModelClipDetail,
   ModelClipPage,
   ModelRescanOut,
+  PlaygroundResult,
   Segment,
 } from '../types'
 
@@ -412,5 +413,29 @@ export const api = {
 
   getRunClip: (runId: number, segmentId: number): Promise<ModelClipDetail> => {
     return request<ModelClipDetail>(`/model-runs/${runId}/clips/${segmentId}`)
+  },
+
+  /** Transcribe a recording with a model on the CPU (D85). Multipart, so not `request`. */
+  transcribeWithModel: async (slug: string, audio: Blob, filename: string): Promise<PlaygroundResult> => {
+    const form = new FormData()
+    form.append('audio', audio, filename)
+    const res = await fetch(resolveUrl(`/models/${encodeURIComponent(slug)}/transcribe`), {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const errJson = await res.json()
+        detail = errJson.detail || JSON.stringify(errJson)
+      } catch {
+        // ignore
+      }
+      const error = new Error(`API error ${res.status}: ${detail}`) as Error & { status: number; detail: string }
+      error.status = res.status
+      error.detail = detail
+      throw error
+    }
+    return res.json()
   },
 }

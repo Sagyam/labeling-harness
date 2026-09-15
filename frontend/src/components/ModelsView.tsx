@@ -2,8 +2,10 @@
  * The Models page: every fine-tuned model, its scores on gold and val, and the clips it got
  * wrong, worst first (D83).
  *
- * Nothing here runs a model. The notebook transcribes gold and val on a GPU, the owner copies the
- * model's folder to `data/models/asr/<slug>/`, and Rescan scores it against the current labels.
+ * The scores never come from running a model here. The notebook transcribes gold and val on a GPU,
+ * the owner copies the model's folder to `data/models/asr/<slug>/`, and Rescan scores it against
+ * the current labels. The one place a model does run is the playground at the top (D85): a
+ * recording of the owner's own voice, transcribed on the CPU and never scored.
  * The page then reads top to bottom as the error hunt goes: which model, how good, where the
  * errors live (click a bar to filter), and the clips themselves -- listen, read the diff, `j`/`k`
  * to the next one.
@@ -17,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ClipPanel } from '@/components/models/ClipPanel'
 import { ClipTable, type ClipFilters } from '@/components/models/ClipTable'
+import { Playground } from '@/components/models/Playground'
 import { RunSummary, fmtWer } from '@/components/models/RunSummary'
 import { cn } from '@/lib/utils'
 import { api } from '@/services/api'
@@ -284,6 +287,7 @@ export function ModelsView() {
 
       <main className="min-w-0 flex-1 space-y-4 overflow-y-auto p-4">
         {model && <ModelHeader model={model} />}
+        {model && <Playground key={model.slug} model={model} />}
 
         {model && model.runs.length > 1 && (
           <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">

@@ -868,6 +868,27 @@ export interface AsrModel {
   trained_at: string | null
   card: Record<string, unknown>
   runs: ModelEvalRun[]
+  /** The CPU weights the playground loads (`cpu` or `best`), or null when none were copied (D85). */
+  playground: string | null
+}
+
+/** One recording from the Models page, transcribed on the CPU by the playground sidecar (D85). */
+export interface PlaygroundResult {
+  text: string
+  audio_s: number
+  latency_ms: number | null
+  weights: string
+  dry_run: boolean
+  raw: {
+    retried?: boolean
+    first_text?: string | null
+    tokens?: number
+    compute_s?: number
+    rtf?: number
+    load_s?: number | null
+    variant?: string
+    threads?: number
+  }
 }
 
 export interface ModelRescanOut {
