@@ -2636,3 +2636,57 @@ already-imported clip. A clip whose checksum changed since import is now always 
 
 **Reversal:** restore the two scripts, the two importer options and their tests from git, in one
 revert of this commit.
+
+## D87 — Every clip has classes, and every model run is split by all of them
+
+Roadmap item 1 goes into the standard pipeline rather than into a one-off analysis. Every clip
+falls into one bucket on each axis of `app/services/clip_classes.py`:
+- crosstalk, speakers in the clip, turn changes, pause share and clip length, from spans already
+  stored;
+- audio bandwidth, measured at ingest (`segments.acoustics_jsonb`);
+- the clip's voice and that voice's talk time in train, from voices linked across episodes
+  (`diarization_runs.voices_jsonb`);
+- declared gender and age, where every speaker of the episode shares them;
+- CMI, as a descriptive axis.
+
+A model run snapshots each clip's classes and reports WER, CER, share of errors and a
+within-episode rate ratio per bucket. It also reports WER and CER per word class: script, number,
+code-switch, clip edge. The owner's reasoning: an axis that turns out not to matter is worth
+having too, because a ratio whose interval holds 1 is a condition ruled out, and keeping the
+axis keeps it ruled out on every later model.
+
+**Why a rate ratio and not bucket WER.** Buckets are filled by different episodes. Crosstalk
+lives in podcasts, and podcasts are harder anyway, so pooled WER per bucket measures genre as
+much as the bucket. The Mantel-Haenszel ratio compares each episode's clips in the bucket only
+with the same episode's clips in the baseline, then pools over episodes. It is the one-axis form
+of the crosstalk study's Poisson fit with episode fixed effects (docs/findings.md). It adjusts
+for nothing but the episode: two axes that travel together within an episode, such as speakers
+and crosstalk, each carry some of the other.
+
+**Why classes never read the reference.** A class computed without the reference exists for
+train clips and unlabelled audio too, so training data can be chosen or weighted by it.
+Word classes are the exception by nature. They describe reference words, and exist only for
+scored runs.
+
+**Voices.** A voice is an anonymous id. A speaker joins a voice when its diarizer embedding is
+within cosine 0.6 of the voice's centroid. The closest pairs are matched first, and two speakers
+of one run never share a voice. On the 44 episodes, thresholds of 0.5, 0.6 and 0.7 give the same
+32 voices, with the recurring hosts the EDA's ECAPA prints found. No name, gender or age is ever
+attached to a voice (D56, D58). Declared gender and age reach a clip only when the whole episode
+agrees, because diarization cannot say which voice is which declared speaker (D78).
+
+**Not measured: clipping.** The stored audio is resampled to 16 kHz before anything reads it, and
+the source is not retained, so a clipping detector would measure the resampler.
+
+**Not yet measured: SNR and reverb.** Brouhaha (`pyannote/brouhaha`) is the planned model. It is
+gated, and runs as ONNX beside the overlap detector once exported; `acoustics_jsonb` is versioned
+so it can be added without a migration.
+
+**Cost.** Bandwidth is 20 s of CPU for the whole corpus. Linking voices is milliseconds.
+Reclassifying the two Flex runs takes ~18 s, mostly the ratio bootstraps. Three nullable JSONB
+columns.
+
+**Reversal:** drop the three columns (`segments.acoustics_jsonb`, `diarization_runs.voices_jsonb`,
+`model_eval_clips.classes_jsonb`) with their migrations. Revert the class, acoustics and voice
+services and scripts. Restore `by_overlap` in `model_eval.summarize` and the crosstalk panel on
+the Models page.

@@ -12,80 +12,32 @@ makes the benchmark worth measuring against.
 
 ## 1. Classify every clip by acoustic condition
 
-Tag each clip with the conditions that drive errors, so any WER can be split by them and
-training data can be chosen or weighted by them. This may prove useful well beyond the first
-experiment.
+**In the standard pipeline since 2026-09-15 (D87).** Every clip has a bucket on every axis, every
+model run is split by all of them, and the Models page shows each axis's verdict (*splits* /
+*ruled out*). The first reading is in findings.md, clip classes. What it measures:
 
-**What earns a class.** Content measures of the transcript do not split WER: speaking rate and CMI
-had within-episode rate ratios of 1.01 and 1.06, i.e. no effect (findings.md, crosstalk). What did
-split it was acoustic or speech-style: overlap, two speakers, fillers. Even those explain only
-14–17% of clip-level deviance, and the rest sits at episode or speaker level (`ep_447`: 20.7% WER
-at 1.8% overlap). A class becomes a WER bucket only if:
-- it can be computed without the reference, so it applies to train clips and new audio too;
-- it splits WER within an episode, by the crosstalk study's Poisson fit with episode fixed
-  effects, under a rule fixed before the run (e.g. the rate-ratio CI excludes 1);
-- it points at a lever: separation (item 2), augmentation (item 3) or new voices (item 5).
+| class | source | status |
+|---|---|---|
+| crosstalk, speakers in clip, turn changes, pause share, clip length | stored spans and the newest diarization run | computed on the fly for every clip |
+| bandwidth | `segments.acoustics_jsonb`, measured at ingest | backfilled for all 7,075 clips |
+| voice, voice's hours in train | voices linked across episodes, `diarization_runs.voices_jsonb` | 32 voices over the 44 runs |
+| declared gender, age | episode metadata, only where every speaker of the episode shares it | per episode, so no within-episode ratio |
+| CMI | `segment_scores.code_switch_density` | kept as a descriptive attribute, crossed with the rest |
+| word classes: script, number, code-switch, clip edge | the aligned reference words of a scored run | per run |
+| **noise (SNR) and reverb (C50)** | pyannote Brouhaha, as ONNX beside the overlap detector | **not yet**: the model is gated, awaiting access |
+| clipping | — | not measured: stored audio is resampled before anything reads it |
 
-**Clip-level acoustic classes**, cheapest first:
+**What earns a class** is unchanged: computable without the reference, a within-episode ratio
+per bucket, and a lever it points at. An axis whose interval holds 1 stays in, as a condition
+ruled out on every later model.
 
-| class | buckets | source | status |
-|---|---|---|---|
-| **crosstalk** | none / 0–5 / 5–15 / >15% overlap | ingest's overlap detector (D77), `segments.overlap_spans_jsonb` | in the database for all 7,075 clips; the Models page splits by it |
-| **speakers in clip** | 1 / 2 / 3+ | distinct speakers in the clip's `speaker_turns` (D78/D79) | turns stored; derive on the fly |
-| **turn changes in clip** | 0 / 1 / 2+ | same | derive on the fly. Turn changes are where the diarizers disagree (findings.md) |
-| **pause share** | share of clip time outside VAD speech | `segments.vad_spans_jsonb` | derive on the fly. Greedy loops start on pauses and fillers (loop anatomy) |
-| **duration** | <5 / 5–15 / 15+ s | `segments.duration_seconds` | derive on the fly |
-| **noise and room** | SNR buckets; reverb (C50) | pyannote Brouhaha: per-frame SNR, C50 and speech, one pass. WADA-SNR is a crude numpy fallback | nothing yet |
-| **channel** | full-band / narrow-band (a remote guest on a call); clipping share | spectral rolloff, energy above 4 kHz | nothing yet |
-
-Noise and channel are the best guess at the episode-level residual: in a podcast, the remote
-guest's line is usually what varies most. Measure them per speaker turn and give the clip the
-time-weighted mean, since one clip can hold a studio host and a compressed guest.
-
-**Speaker-level classes:**
-- **Voice.** Link voices across episodes from the per-speaker embeddings stored with each
-  diarization run (D78); nothing reads them yet. The key is an anonymous voice ID, never a name
-  (D56). Per-voice WER shows whether `ep_447` is one voice or one recording setup.
-- **Voice's hours in train:** 0 / < 10 min / > 1 h. This is the measure item 5 needs: the learning
-  curve put an episode's own speakers at +0.62 [−0.16, +1.39], and this would settle it on every
-  run.
-- **Gender and age bracket**, as declared on the ingest form (D58), are already there to split by.
-
-**Word-level classes.** A clip-level average dilutes where errors land, so also split WER and CER
-by the class of each aligned reference word:
-- script: Devanagari / Latin;
-- number;
-- filler;
-- at a code-switch boundary;
-- at a clip edge, where VAD may cut mid-word.
-
-This is the right test of code-switching: whether switch points cost more, not whether mixed
-clips do. CER beside WER per class also separates spelling near-misses from misrecognitions.
-
-**CMI stays as a descriptive attribute.** It has sociolinguistic value (corpus statistics, the
-dataset card, selecting heavily mixed clips) even though it is not an error bucket. It can still
-be crossed with the acoustic classes, e.g. crosstalk WER in high- vs low-CMI clips.
-
-**Where the classes live.**
-- **Clip level.** The clip is what the model hears: a dialogue episode holds many single-speaker
-  clips (D52 measured 51 of 68). Episodes are the grouping for confidence intervals, not a class.
-- **Derived from stored spans** (speakers, turn changes, pause share, duration): computed on the
-  fly, with no migration.
-- **Needing a model** (noise, room, channel): a column written at ingest plus a backfill, as
-  overlap was (D77, `overlap_backfill.py`), with the feature version stored beside the value.
-
-**First step.**
-1. Compute the derived classes, plus Brouhaha SNR/C50 and bandwidth, on the 1,109 gold and val
-   clips.
-2. Refit the fixed-effects model and keep the classes that pass the rule.
-3. Write the result into findings.md.
-4. Listen to `ep_447` against its channel numbers before anything goes into ingest.
-
-**Caveats.**
-- Single-host episodes were diarized with one speaker, so they have no crosstalk by construction,
-  and a guest who was never declared cannot be found.
-- The filler effect (1.28 per 10 points) was measured under fold-v1. fold-v2 drops fillers on
-  both sides, so refit it before keeping fillers as a class.
+**Still open.**
+- Brouhaha SNR/C50, once the model is available (a new `ACOUSTICS_VERSION` and a backfill).
+- Each ratio adjusts for the episode only. Crosstalk, speakers and turn changes move together,
+  so a joint fit (the crosstalk study's Poisson) is the way to tell them apart if it matters.
+- Listen to the band-limited podcast clips: they score *better* within their episodes.
+- The voice links have not been checked by ear; they agree with the EDA's independent ECAPA
+  voices on every recurring host.
 
 ## 2. Experiments on overlapped audio: target-voice extraction
 
@@ -136,8 +88,10 @@ Gold today shares speakers and episodes with train: 36 of 42 episodes have clips
 - **Reporting.** Report folded and raw WER side by side, with the fold version.
 - **After every fine-tune:**
   - copy 04c's `<RUN_NAME>-playground.tar` into `data/models/asr/` and press **Rescan**;
-  - the Models page shows its worst clips (D83);
+  - the Models page shows its worst clips (D83) and its split by every clip class (D87);
   - the playground runs it on the CPU (D85).
+- **After a backfill or a voice link:** `scripts/reclassify_runs.py`, so every run's classes
+  catch up with what is now known about its clips.
 - **After an experiment:**
   - write what was measured into findings.md;
   - discard the experiment code.

@@ -224,6 +224,69 @@ run down by the same buckets.
 
 ---
 
+## Clip classes on the current model: what splits WER and what is ruled out (2026-09-15)
+
+- **Method.** Every clip classified (D87); the gold run of `indic-transcribe-flex-ft-2026-09-15`
+  (706 clips, 36 episodes, fold-v2) split by each axis. The ratio is the Mantel-Haenszel
+  within-episode error-rate ratio against the axis's baseline, and the interval resamples
+  episodes. Each axis is taken alone: the ratio adjusts for the episode and nothing else. The
+  Models page shows these numbers live.
+
+  | axis | bucket (clips) | WER | ratio [95% CI] | verdict |
+  |---|---|---|---|---|
+  | crosstalk | none (511) | 6.80 | baseline | **splits** |
+  | | 0–5% (101) | 11.01 | 1.37 [1.19, 1.66] | |
+  | | 5–15% (67) | 14.87 | 2.11 [1.60, 2.73] | |
+  | | >15% (27) | 22.40 | 3.25 [2.03, 4.65] | |
+  | speakers in clip | 1 (470) | 6.74 | baseline | **splits** |
+  | | 2 (228) | 12.53 | 1.45 [1.18, 2.05] | |
+  | turn changes | 0 (470) | 6.74 | baseline | **splits** |
+  | | 1 (53) | 9.02 | 0.97 [0.70, 1.25] | |
+  | | 2+ (183) | 13.93 | 1.63 [1.28, 2.38] | |
+  | bandwidth | 6.5+ kHz (578) | 9.96 | baseline | splits, *downwards* |
+  | | 4.5–6.5 kHz (116) | 6.70 | 0.75 [0.40, 0.98] | |
+  | pause share | <2% (412) | 9.44 | baseline | ruled out |
+  | | 2–10% (217) / >10% (77) | 9.54 / 10.77 | 0.96 [0.82, 1.16] / 0.87 [0.66, 1.38] | |
+  | clip length | 5–15 s (255) | 9.97 | baseline | ruled out |
+  | | <5 s (165) / 15+ s (286) | 9.19 / 9.39 | 0.89 [0.61, 1.03] / 1.04 [0.76, 1.28] | |
+  | CMI (descriptive) | 0 (101) | 6.27 | baseline | ruled out |
+  | | <15 / 15–30 / 30+ | 10.12 / 11.66 / 8.54 | 1.35 [0.95, 2.25] / 1.10 [0.66, 1.58] / 1.15 [0.91, 1.78] | |
+
+- **Crosstalk still leads**, and more steeply than under fold-v1: over 15% overlap triples the
+  error rate within an episode. Two speakers and 2+ turn changes split WER too. The three axes
+  travel together, so each ratio carries part of the others.
+- **A single hand-over does not hurt** (0.97). Only repeated back-and-forth does.
+- **Ruled out: pauses, clip length, CMI.** A clip's pauses were the suspected trigger for decoder
+  loops, but the current decoder's loop retry leaves no trace of them in WER.
+- **Bandwidth runs the wrong way.** The band-limited clips (4.5–6.5 kHz; 99 of the 116 are
+  podcast clips) do *better* within their episodes, and the interval only just clears 1. Nothing says narrow audio is easy, so the likely reading is a confound with the axes above;
+  listen before building on it.
+- **Voice exposure cannot be measured on this gold.** Gold shares its speakers with train (see
+  Leakage verification). Only one gold voice is unseen in train: the guest of `ep_612`, a val
+  episode, 50 clips. The guest's ratio against the seen host of the same episode is 1.20, from
+  one episode, so there is no interval. That is item 5's argument, now as a number.
+- **Declared gender and age cannot be separated from genre.** Female-declared clips are at 4.38
+  WER, but almost all of them are the tech-review host's clean monologues. With no within-episode
+  contrast, there is no ratio.
+- **Word classes.**
+
+  | class | words | WER | CER |
+  |---|---|---|---|
+  | Devanagari | 14,722 (63%) | 9.04 | 10.20 |
+  | Latin | 8,252 (36%) | 6.82 | 8.07 |
+  | at a code-switch | 8,742 (38%) | 7.31 | 9.51 |
+  | first or last word of the clip | 1,411 (6%) | **11.13** | 10.45 |
+  | numbers | 699 (3%) | 8.01 | 23.39 |
+
+  - **A code-switch is not where errors land.** Switch words are no worse than either script's
+    words. With the clip-level CMI result, code-mixing is ruled out as a cause of errors twice.
+  - **Clip edges are the worst words**, which points at VAD cuts through a word.
+  - **Number CER is mostly spelling.** A digit against a number word is a match in folded WER
+    but a full character error, as in the run's own CER.
+- **Caveat.** The references are still the fused consensus (below), least reliable in crosstalk.
+
+---
+
 ## The reference is a consensus of the systems it scores
 
 - The references are an LLM fusion of Scribe, Gemini and MAI (D74). Only 3 of 1,170 verified
