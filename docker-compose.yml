@@ -72,6 +72,19 @@ services:
       minio:
         condition: service_healthy
 
+  # The Models page playground (D85): a fine-tuned model on this machine's CPU, reached by the
+  # backend at http://playground:8100. Opt-in, because a loaded model holds 1.3-2.5 GB of RAM:
+  #   docker-compose --profile playground up -d playground
+  # Weights are the notebook's cpu/ (or best/) folder, copied into data/models/asr/<slug>/.
+  playground:
+    profiles: ["playground"]
+    build:
+      context: ./playground
+    environment:
+      PLAYGROUND_THREADS: ${PLAYGROUND_THREADS:-8}
+    volumes:
+      - ./data/models/asr:/models:ro
+
   frontend:
     build:
       context: ./frontend

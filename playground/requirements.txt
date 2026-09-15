@@ -1,0 +1,9 @@
+# The playground sidecar (D85). Pinned to the versions 04c trained and exported the model with
+# (Colab, 2026-09-15), so the model's own code runs on what it was written against. torch and
+# torchaudio come from PyTorch's CPU index (see the Dockerfile); the CUDA wheels are 2 GB of
+# libraries this service never loads.
+transformers==5.16.1
+safetensors==0.8.0
+sentencepiece==0.2.2
+soundfile==0.14.0
+numpy==2.1.3
