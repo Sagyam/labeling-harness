@@ -36,10 +36,13 @@ config/            settings.yaml, llm_routes.yaml
 Import and queue building are pure functions over a batch with no global state, so moving them
 behind a job queue later is a wiring change, not a rewrite.
 
-## Input contract: the manifest
+## Import handoff: the manifest
+
+Ingest's last stage writes this directory in the job's work dir and imports it. It is an internal
+handoff, not a way in: nothing produced outside the harness is imported (D86).
 
 ```text
-export_<episode_id>/
+<job work dir>/
   episode.json          object described by app/schemas/episode.schema.json
   segments.jsonl        one object per line, app/schemas/segment.schema.json
   clips/<segment_id>.flac    16 kHz mono FLAC, rejected otherwise
@@ -48,7 +51,7 @@ export_<episode_id>/
 
 Both files are validated against JSON Schema before a single row is written. Import is idempotent,
 keyed on `segment_id` for segments and `(segment_id, system_id)` for hypotheses. A changed clip
-checksum is an error unless `--allow-clip-change` is passed.
+checksum is an error.
 
 ## Data model
 
@@ -368,8 +371,8 @@ same log lines the backend writes, over SSE, into a terminal panel in the browse
 committed per segment rather than in one transaction around the whole stage, so a job that fails
 halfway leaves the work it already did.
 
-The manifest importer (below) remains the other, equal-status way in: an upstream GPU pipeline can
-still produce `export_<episode_id>/` and `scripts/import_manifest.py` will ingest it.
+These two, a YouTube URL and an uploaded file, are the only ways an episode enters (D86). Nothing
+processed outside the harness is imported; the manifest importer (below) is ingest's own last stage.
 
 ### Speaker turns (diarized remotely, never in-process)
 
@@ -381,8 +384,8 @@ row with its `speaker_turns` (D78). A failure is a warning, not a stage failure:
 with uncoloured words. The endpoint needs a Modal proxy-auth token
 (`HARNESS_DIARIZATION__AUTH_TOKEN`), and a request past 150 s is carried by Modal's 303 redirects,
 which the client follows. `scripts/diarize_episode.py` runs the same call for episodes already
-imported; `scripts/import_diarization.py` still takes a file diarized anywhere else. Runs are
-append-only and checksum-keyed; the newest per episode is current.
+imported; turns diarized outside the harness are not accepted (D86). Runs are append-only and
+checksum-keyed; the newest per episode is current.
 The editor asks for the current run's turns inside the clip, clip-relative, with speakers numbered by
 talk time across the episode, and colours each timed word by the speaker talking at its midpoint.
 
@@ -393,7 +396,7 @@ behaviour changes, so neither is fixed in passing.
 
 - **Stage 4 writes three values the importer never reads.** `ingest.py` nests `cmi`, `avg_logprob`
   and `flags` inside the segment record's `scores` object, but the importer reads `flags` from the
-  record's *top level* (as the manifest contract specifies) and `SegmentScore` has no column for
+  record's *top level* (as `segment.schema.json` specifies) and `SegmentScore` has no column for
   the other two. The flags survive anyway — the importer recomputes the same rules over the same
   hypotheses — and `avg_logprob` reaches the queue through the seed hypothesis, so the practical
   loss is CMI, which is only ever displayed in the ingest log.

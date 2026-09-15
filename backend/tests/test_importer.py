@@ -323,23 +323,8 @@ def test_changed_clip_checksum_is_an_error(
     build_export_fixture(tmp_path / "e3", episode_id="chg_ep", segments=2, systems=1, seed=1)
     run_import(db_session, tmp_path / "e3", storage, settings)
     build_export_fixture(tmp_path / "e3", episode_id="chg_ep", segments=2, systems=1, seed=2)
-    with pytest.raises(ClipChangedError, match="--allow-clip-change"):
+    with pytest.raises(ClipChangedError, match="never replaced"):
         run_import(db_session, tmp_path / "e3", storage, settings)
-
-
-def test_changed_clip_is_accepted_with_the_override(
-    db_session: Session, tmp_path: Path, storage, settings: Settings
-) -> None:
-    build_export_fixture(tmp_path / "e4", episode_id="ovr_ep", segments=2, systems=1, seed=1)
-    run_import(db_session, tmp_path / "e4", storage, settings)
-    first = [s.clip_checksum for s in db_session.scalars(sa.select(Segment).order_by(Segment.id))]
-
-    build_export_fixture(tmp_path / "e4", episode_id="ovr_ep", segments=2, systems=1, seed=2)
-    report = run_import(db_session, tmp_path / "e4", storage, settings, allow_clip_change=True)
-    db_session.expire_all()
-    second = [s.clip_checksum for s in db_session.scalars(sa.select(Segment).order_by(Segment.id))]
-    assert report.clips_replaced == 2
-    assert first != second
 
 
 def test_non_flac_clip_is_rejected(
@@ -406,46 +391,6 @@ def test_a_missing_clip_file_is_rejected(
     next((export_dir / "clips").iterdir()).unlink()
     with pytest.raises(ImportError_, match="not found"):
         run_import(db_session, export_dir, storage, settings)
-
-
-# --- dry run -----------------------------------------------------------------------------
-
-
-def test_dry_run_writes_nothing_to_the_database(
-    db_session: Session, export_dir: Path, storage, settings: Settings
-) -> None:
-    report = run_import(db_session, export_dir, storage, settings, dry_run=True)
-    assert report.dry_run is True
-    assert report.segments_inserted == 4  # what *would* be inserted
-    assert db_session.scalar(sa.select(sa.func.count()).select_from(Episode)) == 0
-    assert db_session.scalar(sa.select(sa.func.count()).select_from(Segment)) == 0
-    assert db_session.scalar(sa.select(sa.func.count()).select_from(ImportRun)) == 0
-
-
-def test_dry_run_writes_nothing_to_storage(
-    db_session: Session, export_dir: Path, storage, settings: Settings
-) -> None:
-    run_import(db_session, export_dir, storage, settings, dry_run=True)
-    assert not any((storage.root).rglob("*")) if storage.root.exists() else True
-
-
-def test_dry_run_after_a_real_import_reports_a_no_op(
-    db_session: Session, export_dir: Path, storage, settings: Settings
-) -> None:
-    run_import(db_session, export_dir, storage, settings)
-    report = run_import(db_session, export_dir, storage, settings, dry_run=True)
-    assert report.segments_inserted == 0
-    assert report.segments_skipped == 4
-
-
-def test_report_renders_a_readable_summary(
-    db_session: Session, export_dir: Path, storage, settings: Settings
-) -> None:
-    report = run_import(db_session, export_dir, storage, settings, dry_run=True)
-    text = report.render()
-    assert "imp_ep001" in text
-    assert "DRY RUN" in text
-    assert "segments" in text
 
 
 # --- a fused hypothesis is a different kind of system (D72) -------------------------------------

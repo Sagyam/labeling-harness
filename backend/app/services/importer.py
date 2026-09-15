@@ -1,21 +1,19 @@
-"""Manifest importer.
+"""Manifest importer: the last stage of ingest, and the only way rows enter (D86).
 
 Import runs in two phases:
 
 1. **Plan.** Read and validate the manifest, probe every clip, compare checksums against what is
    already stored, and decide what would change. Nothing is written. Any problem raises here, so a
-   malformed export leaves the database exactly as it was.
+   malformed manifest leaves the database exactly as it was.
 2. **Apply.** Write the episode (assigning its frozen split on first sight), segments, hypotheses,
    words and scores, upload clips, and store precomputed peaks.
-
-A dry run stops after phase 1 and reports the plan.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +53,7 @@ class ClipChangedError(ImportError_):
 
 @dataclass
 class ImportReport:
-    """What an import did, or -- in a dry run -- what it would have done."""
+    """What an import did."""
 
     source_path: str
     episode_id: str
@@ -67,38 +65,11 @@ class ImportReport:
     hypotheses_skipped: int = 0
     words_inserted: int = 0
     clips_uploaded: int = 0
-    clips_replaced: int = 0
     episode_audio_uploaded: bool = False
     peaks_written: int = 0
     peaks_reused: int = 0
     systems_created: int = 0
-    dry_run: bool = False
     import_run_id: int | None = None
-    warnings: list[str] = field(default_factory=list)
-
-    def render(self) -> str:
-        """A short human-readable summary, for the CLI."""
-        header = f"{'DRY RUN -- ' if self.dry_run else ''}import of {self.episode_id}"
-        lines = [
-            header,
-            f"  source            {self.source_path}",
-            f"  split             {self.split}"
-            + (" (newly assigned)" if self.episode_created else " (already frozen)"),
-            f"  segments          {self.segments_inserted} inserted, "
-            f"{self.segments_skipped} unchanged",
-            f"  hypotheses        {self.hypotheses_inserted} inserted, "
-            f"{self.hypotheses_skipped} unchanged",
-            f"  words             {self.words_inserted} inserted",
-            f"  clips             {self.clips_uploaded} uploaded, {self.clips_replaced} replaced",
-            "  episode audio     "
-            + ("uploaded" if self.episode_audio_uploaded else "not shipped by the manifest"),
-            f"  peaks             {self.peaks_written} computed, {self.peaks_reused} reused",
-            f"  asr systems       {self.systems_created} created",
-        ]
-        if self.import_run_id is not None:
-            lines.append(f"  import_run_id     {self.import_run_id}")
-        lines.extend(f"  warning: {w}" for w in self.warnings)
-        return "\n".join(lines)
 
 
 @dataclass
@@ -109,7 +80,6 @@ class _SegmentPlan:
     clip_path: Path
     clip_checksum: str
     existing: Segment | None
-    clip_changed: bool
     supplied_peaks: Path | None
     missing_system_ids: list[str]
 
@@ -129,9 +99,7 @@ def peaks_object_key(episode_id: str, segment_id: str) -> str:
     return f"peaks/{episode_id}/{segment_id}.json"
 
 
-def _plan(
-    session: Session, manifest: Manifest, settings: Settings, *, allow_clip_change: bool
-) -> list[_SegmentPlan]:
+def _plan(session: Session, manifest: Manifest, settings: Settings) -> list[_SegmentPlan]:
     """Validate every clip and work out what each segment needs. Writes nothing."""
     # Two batched lookups instead of two queries per manifest record: which segments already
     # exist, and which systems already have a hypothesis for each of them.
@@ -165,16 +133,14 @@ def _plan(
         if declared and not checksums_match(declared, actual):
             raise ImportError_(
                 f"{segment_id}: clip checksum mismatch -- manifest declares {declared}, "
-                f"the file on disk is {actual}. The export is corrupt or was modified."
+                f"the file on disk is {actual}. The manifest is corrupt or was modified."
             )
 
         existing = existing_by_id.get(segment_id)
-        clip_changed = existing is not None and not checksums_match(existing.clip_checksum, actual)
-        if clip_changed and not allow_clip_change:
+        if existing is not None and not checksums_match(existing.clip_checksum, actual):
             raise ClipChangedError(
                 f"{segment_id}: clip checksum changed since it was imported "
-                f"({existing.clip_checksum} -> {actual}). Re-run with --allow-clip-change if the "
-                "upstream audio was intentionally regenerated."
+                f"({existing.clip_checksum} -> {actual}). An imported clip is never replaced."
             )
 
         missing_system_ids: list[str] = []
@@ -190,43 +156,11 @@ def _plan(
                 clip_path=clip_path,
                 clip_checksum=actual,
                 existing=existing,
-                clip_changed=clip_changed,
                 supplied_peaks=manifest.peaks_path(record),
                 missing_system_ids=missing_system_ids,
             )
         )
     return plans
-
-
-def _dry_run_report(
-    manifest: Manifest, plans: list[_SegmentPlan], split: str, episode_exists: bool
-) -> ImportReport:
-    report = ImportReport(
-        source_path=str(manifest.root),
-        episode_id=manifest.episode_id,
-        split=split,
-        episode_created=not episode_exists,
-        dry_run=True,
-    )
-    for plan in plans:
-        if plan.existing is None:
-            report.segments_inserted += 1
-            report.hypotheses_inserted += len(plan.record["hypotheses"])
-            report.words_inserted += sum(
-                len(h.get("words") or []) for h in plan.record["hypotheses"]
-            )
-            report.clips_uploaded += 1
-            report.peaks_reused += 1 if plan.supplied_peaks else 0
-            report.peaks_written += 0 if plan.supplied_peaks else 1
-        else:
-            report.segments_skipped += 1
-            report.hypotheses_inserted += len(plan.missing_system_ids)
-            report.hypotheses_skipped += len(plan.record["hypotheses"]) - len(
-                plan.missing_system_ids
-            )
-            if plan.clip_changed:
-                report.clips_replaced += 1
-    return report
 
 
 def _upsert_systems(
@@ -274,8 +208,8 @@ def _upsert_episode(
         "pipeline_commit",
         "audio_path",
     }
-    # The one choke point both the ingest form and an upstream `episode.json` pass through, so
-    # it is where the speaker allowlist is enforced rather than at either caller (D56).
+    # Every episode's metadata passes through here, from the upload form and from YouTube alike,
+    # so it is where the speaker allowlist is enforced rather than at either caller (D56).
     extra = strip_speaker_pii({k: v for k, v in manifest.episode.items() if k not in known})
     published_at = manifest.episode.get("published_at")
 
@@ -380,16 +314,11 @@ def _store_clip_and_peaks(
     storage: ObjectStorage,
     settings: Settings,
     report: ImportReport,
-    *,
-    replacing: bool,
 ) -> tuple[str, str]:
     segment_id = str(plan.record["segment_id"])
     clip_key = clip_object_key(manifest.episode_id, segment_id)
     storage.put_file(clip_key, plan.clip_path, content_type="audio/flac")
-    if replacing:
-        report.clips_replaced += 1
-    else:
-        report.clips_uploaded += 1
+    report.clips_uploaded += 1
 
     peaks_key = peaks_object_key(manifest.episode_id, segment_id)
     if plan.supplied_peaks is not None:
@@ -412,25 +341,21 @@ def import_manifest(
     *,
     storage: ObjectStorage,
     settings: Settings | None = None,
-    dry_run: bool = False,
-    allow_clip_change: bool = False,
 ) -> ImportReport:
-    """Import an upstream export directory.
+    """Import the manifest directory an ingest job wrote.
 
     Args:
         session: Open session; the caller commits. On failure the caller must roll back.
-        root: The ``export_<episode_id>/`` directory.
+        root: The job's directory holding ``episode.json``, ``segments.jsonl`` and ``clips/``.
         storage: Object storage for clips and peaks.
         settings: Configuration override.
-        dry_run: Plan and report without writing anything.
-        allow_clip_change: Accept a clip whose checksum differs from the imported one.
 
     Returns:
-        An :class:`ImportReport`. In a dry run the counters describe the planned changes.
+        An :class:`ImportReport`.
 
     Raises:
         ImportError_: The manifest is malformed, a clip is not 16 kHz mono FLAC, a checksum does
-            not match, or a clip changed without the override.
+            not match, or an already-imported clip changed.
     """
     settings = settings or get_settings()
     try:
@@ -454,12 +379,7 @@ def import_manifest(
         )
     )
 
-    plans = _plan(session, manifest, settings, allow_clip_change=allow_clip_change)
-
-    if dry_run:
-        report = _dry_run_report(manifest, plans, split, existing_episode is not None)
-        logger.info("import_dry_run", episode_id=manifest.episode_id, source=str(manifest.root))
-        return report
+    plans = _plan(session, manifest, settings)
 
     report = ImportReport(
         source_path=str(manifest.root), episode_id=manifest.episode_id, split=split
@@ -482,9 +402,7 @@ def import_manifest(
         segment_id = str(record["segment_id"])
 
         if plan.existing is None:
-            clip_key, peaks_key = _store_clip_and_peaks(
-                plan, manifest, storage, settings, report, replacing=False
-            )
+            clip_key, peaks_key = _store_clip_and_peaks(plan, manifest, storage, settings, report)
             segment = Segment(
                 episode_id=episode.id,
                 external_id=segment_id,
@@ -547,14 +465,6 @@ def import_manifest(
         else:
             segment = plan.existing
             report.segments_skipped += 1
-            if plan.clip_changed:
-                clip_key, peaks_key = _store_clip_and_peaks(
-                    plan, manifest, storage, settings, report, replacing=True
-                )
-                segment.clip_object_key = clip_key
-                segment.clip_checksum = plan.clip_checksum
-                segment.peaks_object_key = peaks_key
-                report.warnings.append(f"{segment_id}: clip replaced")
             if plan.missing_system_ids:
                 _import_hypotheses(session, plan, segment, systems, report, only_missing=True)
             else:

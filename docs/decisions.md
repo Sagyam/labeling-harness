@@ -105,6 +105,11 @@ processing time, because the quantity of interest is how long the human took. An
 **Reversal:** would make the throughput baseline meaningless.
 
 ## D18 — Podcast ingestion and Cloud ASR integrated into Web UI
+
+> **The manifest importer as a way in is superseded by D86**: `scripts/import_manifest.py` is
+> deleted, and an episode enters only through the web ingest. The importer service stays as the
+> ingest's last stage.
+
 The external, fragile Colab GPU notebook is replaced with an in-app ingestion flow managed
 entirely from the Web UI. The annotator uploads or selects a podcast audio file (.mp3, .m4a, .wav)
 directly in the browser. The backend normalizes loudness and segments speech at natural pauses via
@@ -2240,7 +2245,8 @@ changes.
 
 > **Where and when the diarizer runs is superseded by D79**: ingest calls it on a Modal GPU for
 > every new episode, and the Colab notebook is gone. The tables, the import and the editor are
-> unchanged.
+> unchanged. **`scripts/import_diarization.py` is deleted by D86**: turns made outside the harness
+> are no longer accepted; `scripts/diarize_episode.py` re-runs the Modal diarizer instead.
 
 Two new tables hold who spoke when:
 - `diarization_runs`: one diarization of one episode, with its model, source file, a checksum,
@@ -2603,3 +2609,30 @@ page live in the browser tab.
 **Reversal:** delete `playground/`, the compose service, the route, `app/llm/local_asr.py`,
 `app/services/playground.py`, the endpoint and the page's panel. The `llm_requests` rows stay; they
 are the record of what ran.
+
+## D86 — An episode enters only through the web ingest: a YouTube URL or an audio file
+
+There are exactly two ways to add an episode, both on the Ingest page: a YouTube URL
+(`POST /ingest/youtube`) and an uploaded audio file (`POST /ingest`). Every stage from loudness
+normalisation to the queue runs inside the harness, so no episode arrives partly processed by
+something else.
+
+`scripts/import_manifest.py`, which imported an `export_<episode_id>/` directory produced by an
+upstream GPU pipeline (D18), is deleted. So is `scripts/import_diarization.py`, which loaded speaker
+turns diarized elsewhere (D78); `scripts/diarize_episode.py` re-runs the harness's own Modal
+diarizer for an episode that needs it (D79). The notebooks that produced those files are gone
+(D18, D79), and an outside producer's segmentation, recognisers, flags or diarizer would each be
+one the harness cannot re-run or audit.
+
+**What stays.** The manifest format and its JSON Schemas (D11), `app/services/manifest.py` and
+`app/services/importer.py` are the ingest's own last stage: it writes `episode.json` and
+`segments.jsonl` into the job directory and imports them, so the schemas still check every row
+before it is written. The importer is an internal handoff now, not a door.
+
+**What went with the scripts.** The importer's `dry_run` and `allow_clip_change` options existed
+only for the CLI, and ingest never passed either. Both are gone, and so is everything only they
+reached: the dry-run report, `ImportReport.render()`, and the branch that replaced an
+already-imported clip. A clip whose checksum changed since import is now always refused.
+
+**Reversal:** restore the two scripts, the two importer options and their tests from git, in one
+revert of this commit.

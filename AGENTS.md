@@ -12,7 +12,7 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/            architecture, decisions, manifest contract
+docs/            architecture, decisions, roadmap, findings
 notebooks/       EDA and fine-tuning (04c, Indic-Transcribe; generated from notebooks/src/)
 ```
 
@@ -210,13 +210,13 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 - Audio is streamed with HTTP range support, never a presigned redirect — one code path for both
   storage backends. `ObjectStorage.read_range` exists for exactly this.
 - Peaks are precomputed at import and never computed in the browser.
-- Anything reaching HTML output (episode titles, transcripts) comes from an upstream manifest or a
+- Anything reaching HTML output (episode titles, transcripts) comes from a user, YouTube or a
   model. Escape it.
 
 
 ## Documentation
 
-Five documents, and no others: this file, `README.md`, and the three under `docs/`. When behaviour
+Six documents, and no others: this file, `README.md`, and the four under `docs/`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
 its reversal cost; supersede an old entry in place rather than deleting it.

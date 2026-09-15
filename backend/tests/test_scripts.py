@@ -127,31 +127,6 @@ def test_report_script_writes_html_to_a_file(cli, tmp_path: Path) -> None:
     assert out.read_text(encoding="utf-8").startswith("<!doctype html>")
 
 
-def test_import_script_rejects_a_missing_export_directory(
-    cli, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    assert load("import_manifest").main([str(tmp_path / "nope")]) == 1
-    assert "import failed" in capsys.readouterr().err
-
-
-def test_import_script_imports_a_fixture_export(
-    cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from app.storage.local import LocalFilesystemStorage
-    from tests.fixtures import build_export_fixture
-
-    script = load("import_manifest")
-    monkeypatch.setattr(
-        script, "build_storage", lambda settings: LocalFilesystemStorage(root=tmp_path / "objects")
-    )
-    root = build_export_fixture(tmp_path / "export_cli", episode_id="cli_ep000", segments=2)
-
-    assert script.main([str(root), "--dry-run"]) == 0
-    assert "DRY RUN" in capsys.readouterr().out
-    assert script.main([str(root)]) == 0
-    assert "cli_ep000" in capsys.readouterr().out
-
-
 def test_diarize_script_stores_a_run_and_reports_what_it_could_not_do(
     cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

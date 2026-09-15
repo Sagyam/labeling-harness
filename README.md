@@ -152,14 +152,12 @@ Latin exactly as typed. `?` opens the full list in the app.
 Run from the repository root with the backend virtualenv:
 
 ```bash
-backend/.venv/bin/python scripts/import_manifest.py  export_show-a_ep012/ [--dry-run]
 backend/.venv/bin/python scripts/build_queue.py      [--episode show-a_ep012]
 backend/.venv/bin/python scripts/export_dataset.py   --kind training --label-version v1
 backend/.venv/bin/python scripts/align_and_verify_timestamps.py  [--input exports/analytics/analytics.jsonl]
 backend/.venv/bin/python scripts/report_status.py    [--format html]
 backend/.venv/bin/python scripts/backfill_overlap.py [--episode show-a_ep012] [--force]
 backend/.venv/bin/python scripts/diarize_episode.py  show-a_ep012 [--num-speakers 2]   # on the Modal GPU
-backend/.venv/bin/python scripts/import_diarization.py diarization.json   # turns made elsewhere
 backend/.venv/bin/python scripts/import_models.py    [data/models/asr/flex-ft]   # fine-tuned models (D83)
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 ```
