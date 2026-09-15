@@ -463,7 +463,7 @@ class ModelEvalRunOut(BaseModel):
     decoder: str | None = None
     fold_version: str
     clip_count: int
-    #: ``wer``, ``wer_ci``, ``raw_wer``, ``cer``, ``loops``, ``by_genre``, ``by_overlap``,
+    #: ``wer``, ``wer_ci``, ``raw_wer``, ``cer``, ``loops``, ``by_genre``, ``by_class``,
     #: ``skipped`` -- see :func:`app.services.model_eval.summarize`.
     metrics: dict[str, Any]
     source: str | None = None
@@ -507,6 +507,18 @@ class ModelRescanOut(BaseModel):
     skipped: int
 
 
+class ClassAxisOut(BaseModel):
+    """One axis a run's clips are split by (D87): its buckets in display order, the bucket rate
+    ratios compare against, and the bucket meaning "not measured"."""
+
+    name: str
+    label: str
+    buckets: list[str]
+    baseline: str | None = None
+    unmeasured: str | None = None
+    descriptive: bool = False
+
+
 class ModelClipOut(BaseModel):
     """One clip of a run. ``segment_id`` is the harness id, for ``/segments/{id}`` and audio."""
 
@@ -528,6 +540,9 @@ class ModelClipOut(BaseModel):
     char_errors: int
     ref_chars: int
     is_loop: bool
+    #: The clip's classes, ``{axis: bucket}``, as stored with the run (D87); empty before the
+    #: run was classified.
+    classes: dict[str, str] = Field(default_factory=dict)
     ref_text: str
     hyp_text: str
 

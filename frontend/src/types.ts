@@ -826,7 +826,29 @@ export interface SegmentPotOut {
 export interface ModelBreakdown {
   clips: number
   wer: number
+  /** Pooled CER; absent on runs scored before classes existed. */
+  cer?: number
   share_of_errors: number
+  /**
+   * Within-episode error-rate ratio against the axis's baseline bucket (Mantel-Haenszel over
+   * episodes, D87). Absent for the baseline itself, "not measured" buckets and axes that cannot
+   * vary within an episode; null when no episode holds both.
+   */
+  rate_ratio?: number | null
+  rate_ratio_ci?: [number, number] | null
+  rate_ratio_episodes?: number
+}
+
+/** One axis a run is split by (D87), from `GET /model-classes`. */
+export interface ClassAxis {
+  name: string
+  label: string
+  /** Display order; empty for an open set (voices). */
+  buckets: string[]
+  baseline: string | null
+  unmeasured: string | null
+  /** Kept to describe the corpus (CMI), not to explain errors. */
+  descriptive: boolean
 }
 
 /** A run's numbers, as `app.services.model_eval.summarize` computed them at import. */
@@ -843,7 +865,8 @@ export interface ModelRunMetrics {
   cer: number
   loops: number
   by_genre: Record<string, ModelBreakdown>
-  by_overlap: Record<string, ModelBreakdown>
+  /** Axis -> bucket -> slice (D87). Key order is not display order: JSONB sorts keys. */
+  by_class?: Record<string, Record<string, ModelBreakdown>>
   /** Clips in the file that were not scored: left the split, or no transcript to score against. */
   skipped?: { not_in_split: number; no_reference: number }
 }
@@ -929,6 +952,8 @@ export interface ModelClip {
   char_errors: number
   ref_chars: number
   is_loop: boolean
+  /** Axis -> bucket, as stored with the run (D87). */
+  classes: Record<string, string>
   ref_text: string
   hyp_text: string
 }
@@ -962,6 +987,8 @@ export interface ClipQuery {
   overlap?: OverlapBucket
   loops_only?: boolean
   min_errors?: number
+  class_axis?: string
+  class_bucket?: string
   offset?: number
   limit?: number
 }

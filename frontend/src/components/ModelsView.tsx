@@ -23,7 +23,7 @@ import { Playground } from '@/components/models/Playground'
 import { RunSummary, fmtWer } from '@/components/models/RunSummary'
 import { cn } from '@/lib/utils'
 import { api } from '@/services/api'
-import type { AsrModel, ModelClip, ModelClipPage, ModelEvalRun } from '@/types'
+import type { AsrModel, ClassAxis, ModelClip, ModelClipPage, ModelEvalRun } from '@/types'
 
 const PAGE_SIZE = 50
 const CARD_SHOWN = new Set(['name', 'description', 'architecture', 'created_at', 'decoder'])
@@ -31,7 +31,8 @@ const DEFAULT_FILTERS: ClipFilters = {
   sort: 'errors',
   order: 'desc',
   genre: null,
-  overlap: null,
+  classAxis: null,
+  classBucket: null,
   loopsOnly: false,
   minErrors: 0,
 }
@@ -157,6 +158,8 @@ export function ModelsView() {
   const [page, setPage] = useState<ModelClipPage | null>(null)
   const [loadingClips, setLoadingClips] = useState(false)
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [axes, setAxes] = useState<ClassAxis[]>([])
+  const [shownAxis, setShownAxis] = useState('overlap')
 
   const model = useMemo(() => models?.find((m) => m.slug === slug) ?? null, [models, slug])
   const run = useMemo(() => model?.runs.find((r) => r.id === runId) ?? null, [model, runId])
@@ -174,6 +177,10 @@ export function ModelsView() {
 
   useEffect(() => {
     loadModels()
+    api
+      .getModelClasses()
+      .then(setAxes)
+      .catch(() => setAxes([]))
   }, [loadModels])
 
   // A different model opens on its default run, with the filters cleared.
@@ -199,7 +206,8 @@ export function ModelsView() {
         sort: filters.sort,
         order: filters.order,
         genre: filters.genre ?? undefined,
-        overlap: filters.overlap ?? undefined,
+        class_axis: filters.classBucket ? filters.classAxis ?? undefined : undefined,
+        class_bucket: filters.classBucket ?? undefined,
         loops_only: filters.loopsOnly || undefined,
         min_errors: filters.minErrors || undefined,
         offset,
@@ -319,15 +327,21 @@ export function ModelsView() {
           <>
             <RunSummary
               run={run}
+              axes={axes}
               genre={filters.genre}
-              overlap={filters.overlap}
+              classAxis={shownAxis}
+              classBucket={filters.classAxis === shownAxis ? filters.classBucket : null}
               onPickGenre={(genre) => updateFilters({ genre })}
-              onPickOverlap={(overlap) => updateFilters({ overlap })}
+              onPickAxis={setShownAxis}
+              onPickBucket={(bucket) =>
+                updateFilters({ classAxis: bucket ? shownAxis : null, classBucket: bucket })
+              }
             />
             <div className="grid gap-3 xl:grid-cols-[minmax(22rem,28rem)_1fr]">
               <div className="h-[70vh] min-h-0">
                 <ClipTable
                   page={page}
+                  axes={axes}
                   loading={loadingClips}
                   filters={filters}
                   onChange={updateFilters}

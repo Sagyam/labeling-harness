@@ -8,6 +8,16 @@ Latin lower-cased; a loop is a 3-word run repeated five or more times.
 
 Scoring is pure: :func:`score_clip` and :func:`summarize` take text and return numbers, and only
 :mod:`app.services.model_import` touches the database.
+
+**Classes (D87).** Every clip carries its classes (:mod:`app.services.clip_classes`), and a run
+breaks down by every axis. Raw WER per bucket mixes the bucket with the episodes that happen to
+fill it -- overlap lives in podcasts, and podcasts are harder anyway -- so each bucket also gets a
+**within-episode rate ratio** against its axis's baseline: the Mantel-Haenszel ratio of error
+rates pooled over episodes, each episode comparing its own clips in the bucket with its own
+clips in the baseline. It answers the question the crosstalk study asked with a fixed-effects
+Poisson fit (docs/findings.md), one axis at a time. Its interval resamples whole episodes. A
+ratio whose interval holds 1 is a condition ruled out, at this sample size, as a source of
+errors.
 """
 
 from __future__ import annotations
@@ -15,21 +25,16 @@ from __future__ import annotations
 import random
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.clip_classes import AXIS_BY_NAME
+from app.services.clip_classes import AXES, Axis
 from app.services.fold import Ruleset, fold_tokens, word_errors
 
 #: Episode resamples behind a WER interval. Seeded, so the same run always reports the same one.
 BOOTSTRAP_ROUNDS = 1000
 BOOTSTRAP_SEED = 0
-
-#: Overlap-share buckets, as in docs/findings.md (crosstalk). ``unmeasured`` is a clip the overlap
-#: detector never saw; it is kept apart from ``none`` because only ``none`` is evidence of a clean
-#: clip (D77).
-OVERLAP_BUCKETS = AXIS_BY_NAME["overlap"].buckets
 
 _DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 
@@ -52,11 +57,11 @@ class ClipScore:
 
 @dataclass(frozen=True)
 class ScoredClip:
-    """A clip's score with what the breakdowns group it by."""
+    """A clip's score with what the breakdowns group it by: its episode, genre and classes."""
 
     episode: str
     genre: str | None
-    overlap: str
+    classes: Mapping[str, str]
     score: ClipScore
 
 
@@ -158,19 +163,102 @@ def _group(clips: Iterable[ScoredClip], total_errors: int) -> dict[str, Any]:
     return {
         "clips": len(clips),
         "wer": _rate(errors, sum(c.score.ref_words for c in clips)),
+        "cer": _rate(
+            sum(c.score.char_errors for c in clips), sum(c.score.ref_chars for c in clips)
+        ),
         "share_of_errors": errors / total_errors if total_errors else 0.0,
     }
 
 
+#: Per episode, (errors, reference words) in one bucket.
+_Totals = dict[str, tuple[int, int]]
+
+
+def _totals(clips: Iterable[ScoredClip]) -> _Totals:
+    out: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for clip in clips:
+        out[clip.episode][0] += clip.score.errors
+        out[clip.episode][1] += clip.score.ref_words
+    return {episode: (e, w) for episode, (e, w) in out.items()}
+
+
+def mh_rate_ratio(
+    exposed: _Totals, baseline: _Totals, episodes: Iterable[str]
+) -> tuple[float | None, int]:
+    """Mantel-Haenszel error-rate ratio of ``exposed`` to ``baseline``, pooled over episodes.
+
+    Returns:
+        The ratio -- ``None`` when no episode holds words in both, or the baseline has no errors
+        where it can be compared -- and how many episodes could compare. An episode repeated in
+        ``episodes`` (a bootstrap draw) counts each time.
+    """
+    numerator = denominator = 0.0
+    informative = 0
+    for episode in episodes:
+        a, t1 = exposed.get(episode, (0, 0))
+        b, t0 = baseline.get(episode, (0, 0))
+        if not t1 or not t0:
+            continue
+        informative += 1
+        numerator += a * t0 / (t0 + t1)
+        denominator += b * t1 / (t0 + t1)
+    return (numerator / denominator if denominator > 0 else None), informative
+
+
+def _ratio_interval(
+    exposed: _Totals, baseline: _Totals, draws: Sequence[Sequence[str]]
+) -> list[float] | None:
+    """95% interval of the ratio over episode resamples; ``None`` when too few draws give one."""
+    ratios = sorted(
+        r for draw in draws if (r := mh_rate_ratio(exposed, baseline, draw)[0]) is not None
+    )
+    if len(ratios) < len(draws) // 2:
+        return None
+    return [ratios[int(0.025 * len(ratios))], ratios[int(0.975 * len(ratios)) - 1]]
+
+
+def _axis_breakdown(
+    axis: Axis, clips: Sequence[ScoredClip], total_errors: int, draws: Sequence[Sequence[str]]
+) -> dict[str, Any]:
+    groups: dict[str, list[ScoredClip]] = defaultdict(list)
+    for clip in clips:
+        if axis.name in clip.classes:
+            groups[clip.classes[axis.name]].append(clip)
+    order = list(axis.buckets) or sorted(groups, key=lambda b: (b == axis.unmeasured, b))
+    out = {bucket: _group(groups[bucket], total_errors) for bucket in order if bucket in groups}
+    if axis.baseline is None or axis.baseline not in groups:
+        return out
+    baseline = _totals(groups[axis.baseline])
+    episodes = sorted({c.episode for c in clips})
+    for bucket, entry in out.items():
+        if bucket in (axis.baseline, axis.unmeasured):
+            continue
+        exposed = _totals(groups[bucket])
+        ratio, informative = mh_rate_ratio(exposed, baseline, episodes)
+        entry["rate_ratio"] = ratio
+        entry["rate_ratio_episodes"] = informative
+        entry["rate_ratio_ci"] = (
+            _ratio_interval(exposed, baseline, draws)
+            if ratio is not None and informative >= 2
+            else None
+        )
+    return out
+
+
+def _draws(episodes: Sequence[str]) -> list[list[str]]:
+    """The episode resamples every ratio's interval shares, seeded like the WER interval's."""
+    rng = random.Random(BOOTSTRAP_SEED)
+    return [rng.choices(episodes, k=len(episodes)) for _ in range(BOOTSTRAP_ROUNDS)]
+
+
 def summarize(clips: Sequence[ScoredClip]) -> dict[str, Any]:
-    """A run's headline numbers and its breakdowns by genre and by overlap share."""
+    """A run's headline numbers and its breakdowns by genre and by every class."""
     errors = sum(c.score.errors for c in clips)
     words = sum(c.score.ref_words for c in clips)
     by_genre: dict[str, list[ScoredClip]] = defaultdict(list)
-    by_overlap: dict[str, list[ScoredClip]] = defaultdict(list)
     for clip in clips:
         by_genre[clip.genre or "unknown"].append(clip)
-        by_overlap[clip.overlap].append(clip)
+    draws = _draws(sorted({c.episode for c in clips})) if clips else []
     return {
         "clips": len(clips),
         "episodes": len({c.episode for c in clips}),
@@ -186,7 +274,9 @@ def summarize(clips: Sequence[ScoredClip]) -> dict[str, Any]:
         ),
         "loops": sum(c.score.is_loop for c in clips),
         "by_genre": {name: _group(group, errors) for name, group in sorted(by_genre.items())},
-        "by_overlap": {
-            name: _group(by_overlap[name], errors) for name in OVERLAP_BUCKETS if name in by_overlap
+        "by_class": {
+            axis.name: breakdown
+            for axis in AXES
+            if (breakdown := _axis_breakdown(axis, clips, errors, draws))
         },
     }

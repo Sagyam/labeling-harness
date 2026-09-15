@@ -26,7 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, utc_now_column, utc_optional_column
-from app.models.content import JsonB
+from app.models.content import JsonB, Segment
 from app.models.enums import EVAL_SPLITS, check_in
 
 
@@ -132,5 +132,9 @@ class ModelEvalClip(Base):
     #: Fraction of the clip in crosstalk when the run was imported (D77); null = never measured.
     #: Kept with the run so filtering clips by it agrees with the run's overlap breakdown.
     overlap_share: Mapped[float | None] = mapped_column(Float)
+    #: The clip's classes, ``{axis: bucket}`` (D87), as of the run's import or its last
+    #: reclassification -- kept with the run so filtering clips agrees with its breakdowns.
+    classes_jsonb: Mapped[dict[str, str] | None] = mapped_column(JsonB)
 
     run: Mapped[ModelEvalRun] = relationship(back_populates="clips")
+    segment: Mapped[Segment] = relationship()

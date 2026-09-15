@@ -1,7 +1,8 @@
 /**
  * A run's clips, worst first, with the filters the error hunt needs (D83).
  *
- * Genre and crosstalk are picked from the breakdown bars above and shown here as removable chips;
+ * Genre and a class bucket (D87) are picked from the breakdown bars above and shown here as
+ * removable chips;
  * sort, loops and a minimum error count live on this bar. `j`/`k` move the selection (wired by
  * the parent, which owns it).
  */
@@ -12,8 +13,9 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { humanize } from '@/components/analytics/primitives'
+import { bucketLabel } from '@/components/models/RunSummary'
 import { cn } from '@/lib/utils'
-import type { ClipSort, ModelClip, ModelClipPage, OverlapBucket } from '@/types'
+import type { ClassAxis, ClipSort, ModelClip, ModelClipPage } from '@/types'
 
 const SORTS: [ClipSort, string][] = [
   ['errors', 'Most errors'],
@@ -32,7 +34,9 @@ export interface ClipFilters {
   sort: ClipSort
   order: 'asc' | 'desc'
   genre: string | null
-  overlap: OverlapBucket | null
+  /** One bucket of one class axis (D87); both set, or both null. */
+  classAxis: string | null
+  classBucket: string | null
   loopsOnly: boolean
   minErrors: number
 }
@@ -110,6 +114,7 @@ function Row({
 
 export function ClipTable({
   page,
+  axes,
   loading,
   filters,
   onChange,
@@ -118,6 +123,7 @@ export function ClipTable({
   onPage,
 }: {
   page: ModelClipPage | null
+  axes: ClassAxis[]
   loading: boolean
   filters: ClipFilters
   onChange: (next: Partial<ClipFilters>) => void
@@ -170,13 +176,16 @@ export function ClipTable({
             />
           </label>
         </div>
-        {(filters.genre || filters.overlap) && (
+        {(filters.genre || filters.classBucket) && (
           <div className="flex flex-wrap gap-1.5">
             {filters.genre && (
               <FilterChip label={`genre: ${humanize(filters.genre)}`} onClear={() => onChange({ genre: null })} />
             )}
-            {filters.overlap && (
-              <FilterChip label={`crosstalk: ${filters.overlap}`} onClear={() => onChange({ overlap: null })} />
+            {filters.classAxis && filters.classBucket && (
+              <FilterChip
+                label={`${(axes.find((a) => a.name === filters.classAxis)?.label ?? humanize(filters.classAxis)).toLowerCase()}: ${bucketLabel(filters.classBucket)}`}
+                onClear={() => onChange({ classAxis: null, classBucket: null })}
+              />
             )}
           </div>
         )}

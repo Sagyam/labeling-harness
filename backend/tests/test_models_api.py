@@ -78,6 +78,7 @@ def test_clips_come_worst_first_with_rates(client, run_id: int) -> None:
     assert worst["wer"] == pytest.approx(100 * 2 / worst["ref_words"])
     assert worst["genre"] == "podcast"
     assert worst["overlap_bucket"] == "0-5%"
+    assert worst["classes"]["overlap"] == "0-5%"
     assert worst["hyp_text"] == "एक दुई तीन"
 
 
@@ -101,6 +102,9 @@ def test_clips_sort_and_page(client, run_id: int) -> None:
         ("genre=tech_review", 0),
         ("min_errors=1", 2),
         ("loops_only=true", 0),
+        ("class_axis=overlap&class_bucket=0-5%25", 1),
+        ("class_axis=speakers&class_bucket=undiarized", 3),
+        ("class_axis=speakers&class_bucket=2", 0),
     ],
 )
 def test_clips_filter(client, run_id: int, query: str, count: int) -> None:
@@ -122,3 +126,15 @@ def test_a_clip_carries_the_alignment_that_was_counted(
 def test_unknown_runs_and_clips_are_404(client, run_id: int) -> None:
     assert client.get("/model-runs/999999/clips").status_code == 404
     assert client.get(f"/model-runs/{run_id}/clips/999999").status_code == 404
+
+
+def test_an_unknown_class_axis_is_422(client, run_id: int) -> None:
+    response = client.get(f"/model-runs/{run_id}/clips?class_axis=bogus&class_bucket=x")
+    assert response.status_code == 422
+
+
+def test_the_class_axes_come_in_display_order(client) -> None:
+    axes = client.get("/model-classes").json()
+    assert axes[0]["name"] == "overlap"
+    assert axes[0]["buckets"][0] == "none" and axes[0]["baseline"] == "none"
+    assert [a["name"] for a in axes if a["descriptive"]] == ["cmi"]

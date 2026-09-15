@@ -77,9 +77,19 @@ def test_a_looping_hypothesis_is_marked() -> None:
 # --- summary ----------------------------------------------------------------------------------
 
 
-def _clip(episode: str, ref: str, hyp: str, genre: str = "podcast", share: float = 0.0):
+def _clip(
+    episode: str,
+    ref: str,
+    hyp: str,
+    genre: str = "podcast",
+    share: float = 0.0,
+    **classes: str,
+):
     return ScoredClip(
-        episode=episode, genre=genre, overlap=overlap_bucket(share), score=score_clip(ref, hyp)
+        episode=episode,
+        genre=genre,
+        classes={"overlap": overlap_bucket(share)} | classes,
+        score=score_clip(ref, hyp),
     )
 
 
@@ -124,11 +134,74 @@ def test_breakdowns_by_genre_and_overlap_carry_their_share_of_errors() -> None:
     assert podcast["wer"] == pytest.approx(100 * 4 / 5)
     assert podcast["share_of_errors"] == pytest.approx(1.0)
     assert summary["by_genre"]["tech_review"]["wer"] == 0.0
-    assert summary["by_overlap"][">15%"]["clips"] == 1
-    assert summary["by_overlap"]["none"]["share_of_errors"] == pytest.approx(3 / 4)
+    overlap = summary["by_class"]["overlap"]
+    assert overlap[">15%"]["clips"] == 1
+    assert overlap["none"]["share_of_errors"] == pytest.approx(3 / 4)
 
 
 def test_an_empty_run_summarizes_to_zeroes() -> None:
     summary = summarize([])
     assert summary["clips"] == 0
     assert summary["wer"] == 0.0
+
+
+# --- classes: within-episode rate ratios (D87) ---------------------------------------------------
+
+
+def test_the_rate_ratio_compares_buckets_inside_each_episode() -> None:
+    """Episode a is clean and easy, episode b is overlapped and hard. Pooled, overlap looks
+    terrible; inside each episode it doubles the error rate, and the ratio says 2."""
+    clips = []
+    for episode, base_errors in (("a", 1), ("b", 4)):
+        for _ in range(3):
+            ref = " ".join(["एक"] * 10)
+            clean = " ".join(["दुई"] * base_errors + ["एक"] * (10 - base_errors))
+            dirty = " ".join(["दुई"] * (2 * base_errors) + ["एक"] * (10 - 2 * base_errors))
+            clips.append(_clip(episode, ref, clean, share=0.0))
+            clips.append(_clip(episode, ref, dirty, share=0.1))
+    by_overlap = summarize(clips)["by_class"]["overlap"]
+    assert by_overlap["5-15%"]["rate_ratio"] == pytest.approx(2.0)
+    assert "rate_ratio" not in by_overlap["none"]  # the baseline compares against nothing
+
+
+def test_a_bucket_never_seen_beside_the_baseline_in_one_episode_has_no_ratio() -> None:
+    clips = [_clip("a", "एक दुई", "एक", share=0.0), _clip("b", "एक दुई", "एक", share=0.3)]
+    by_overlap = summarize(clips)["by_class"]["overlap"]
+    assert by_overlap[">15%"]["rate_ratio"] is None
+    assert by_overlap[">15%"]["rate_ratio_episodes"] == 0
+
+
+def test_the_ratio_interval_is_reproducible_and_brackets_the_estimate() -> None:
+    clips = [
+        _clip(f"ep{e}", "एक दुई तीन चार", hyp, share=share)
+        for e in range(8)
+        for share, hyp in ((0.0, "एक दुई तीन चार"), (0.0, "एक दुई तीन पाँच"), (0.1, "एक दुई पाँच पाँच"))
+    ]
+    first = summarize(clips)["by_class"]["overlap"]["5-15%"]
+    second = summarize(clips)["by_class"]["overlap"]["5-15%"]
+    low, high = first["rate_ratio_ci"]
+    assert low <= first["rate_ratio"] <= high
+    assert first["rate_ratio_ci"] == second["rate_ratio_ci"]
+    assert first["rate_ratio_episodes"] == 8
+
+
+def test_unmeasured_buckets_and_axes_without_a_baseline_get_no_ratio() -> None:
+    clips = [
+        _clip("a", "एक दुई", "एक", gender="male"),
+        _clip("a", "एक दुई", "एक", gender="female"),
+    ]
+    clips.append(ScoredClip("a", "podcast", {"overlap": "unmeasured"}, score_clip("एक", "एक")))
+    by_class = summarize(clips)["by_class"]
+    assert "rate_ratio" not in by_class["overlap"]["unmeasured"]
+    assert all("rate_ratio" not in b for b in by_class["gender"].values())
+
+
+def test_buckets_come_in_the_axis_order_and_carry_cer() -> None:
+    clips = [
+        _clip("a", "एक", "एक", share=0.3),
+        _clip("a", "एक", "एक", share=0.0),
+        _clip("a", "एक दुई", "एक", share=0.01),
+    ]
+    by_overlap = summarize(clips)["by_class"]["overlap"]
+    assert list(by_overlap) == ["none", "0-5%", ">15%"]
+    assert by_overlap["0-5%"]["cer"] > 0

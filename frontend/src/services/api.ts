@@ -33,6 +33,7 @@ import {
   SegmentPotOut,
   IngestQueueResponse,
   AsrModel,
+  ClassAxis,
   ClipQuery,
   ModelClipDetail,
   ModelClipPage,
@@ -396,6 +397,10 @@ export const api = {
 
   getModels: (): Promise<AsrModel[]> => {
     return request<AsrModel[]>('/models')
+  },
+
+  getModelClasses: (): Promise<ClassAxis[]> => {
+    return request<ClassAxis[]>('/model-classes')
   },
 
   rescanModels: (): Promise<ModelRescanOut> => {

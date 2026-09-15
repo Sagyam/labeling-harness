@@ -12,15 +12,18 @@ from app.config import Settings
 from app.models import (
     AsrModel,
     AuditLog,
+    DiarizationRun,
     ModelEvalClip,
     ModelEvalRun,
     SegmentLabel,
+    SpeakerTurn,
 )
 from app.models import Segment as SegmentRow
 from app.services.model_import import (
     ModelImportError,
     import_model_dir,
     read_card,
+    reclassify_runs,
     scan_models,
 )
 from tests.model_support import CARD, write_model
@@ -72,7 +75,9 @@ def test_a_gold_run_is_scored_against_the_current_labels(
     run = model.runs[0]
     assert (run.split, run.decoder, run.clip_count) == ("gold", "greedy+cap+retry", 3)
     assert run.metrics_jsonb["errors"] == 2  # one clip lost two words
-    assert run.metrics_jsonb["by_overlap"]["0-5%"]["clips"] == 1  # 0.5 s of a longer clip
+    by_class = run.metrics_jsonb["by_class"]
+    assert by_class["overlap"]["0-5%"]["clips"] == 1  # 0.5 s of a longer clip
+    assert by_class["speakers"]["undiarized"]["clips"] == 3  # never diarized, not one speaker
     assert run.metrics_jsonb["by_genre"]["podcast"]["clips"] == 3
     worst = db_session.scalars(
         sa.select(ModelEvalClip)
@@ -83,6 +88,7 @@ def test_a_gold_run_is_scored_against_the_current_labels(
         worst.ref_text == model_corpus[gold[0]] and worst.deletions == 2 and worst.compute_s == 0.1
     )
     assert 0 < worst.overlap_share < 0.05
+    assert worst.classes_jsonb["overlap"] == "0-5%"
     assert (
         db_session.scalar(
             sa.select(sa.func.count())
@@ -201,3 +207,39 @@ def test_scan_imports_every_model_folder(
     report = scan_models(db_session, root, settings=settings, actor="test")
     assert report.models == ["a", "b"]
     assert db_session.scalar(sa.select(sa.func.count()).select_from(AsrModel)) == 2
+
+
+def test_reclassifying_a_run_rebuilds_its_classes_and_keeps_its_scores(
+    db_session: Session, tmp_path: Path, settings: Settings, model_corpus: dict[str, str]
+) -> None:
+    gold = _gold_ids(db_session)
+    rows = [{"segment_id": sid, "text": model_corpus[sid]} for sid in gold]
+    import_model_dir(
+        db_session, write_model(tmp_path / "models", "flex-ft", gold=rows), actor="test"
+    )
+    run = db_session.scalars(sa.select(ModelEvalRun)).one()
+    before = dict(run.metrics_jsonb)
+    assert list(before["by_class"]["speakers"]) == ["undiarized"]
+
+    segment = db_session.scalars(
+        sa.select(SegmentRow).where(SegmentRow.external_id == gold[0])
+    ).one()
+    db_session.add(
+        DiarizationRun(
+            episode_id=segment.episode_id,
+            model="test",
+            checksum="later",
+            speakers_jsonb=["A"],
+            turns=[SpeakerTurn(speaker="A", start_time=0.0, end_time=1000.0)],
+        )
+    )
+    db_session.flush()
+
+    report = reclassify_runs(db_session, actor="test")
+
+    assert (report.runs, report.clips) == (1, 3)
+    assert run.metrics_jsonb["by_class"]["speakers"]["1"]["clips"] == 3
+    assert {k: v for k, v in run.metrics_jsonb.items() if k != "by_class"} == {
+        k: v for k, v in before.items() if k != "by_class"
+    }
+    assert all(c.classes_jsonb["speakers"] == "1" for c in run.clips)

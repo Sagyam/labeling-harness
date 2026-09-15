@@ -41,9 +41,9 @@ from app.models import (
     SegmentLabel,
 )
 from app.models.enums import APPROVED_DISPOSITIONS, EVAL_SPLITS
-from app.services.clip_classes import overlap_bucket, overlap_share
+from app.services.clip_classes import classify_segments, overlap_share
 from app.services.fold import fold_version
-from app.services.model_eval import ScoredClip, score_clip, summarize
+from app.services.model_eval import ClipScore, ScoredClip, score_clip, summarize
 from app.services.normalize import load_ruleset, normalize_text
 from app.services.stats import latest_labels_subquery
 
@@ -215,6 +215,7 @@ def _import_run(
     # The export normalizes every label it writes, so the notebook's references are normalized;
     # scoring against the raw label would count the ruleset's own rewrites as model errors.
     ruleset = load_ruleset()
+    classes = classify_segments(session, list(segments.values()))
     skipped = {"not_in_split": 0, "no_reference": 0}
     clips: list[ModelEvalClip] = []
     scored: list[ScoredClip] = []
@@ -235,7 +236,7 @@ def _import_run(
             ScoredClip(
                 episode=segment.episode.external_id,
                 genre=genre,
-                overlap=overlap_bucket(share),
+                classes=classes[segment.id],
                 score=score,
             )
         )
@@ -247,6 +248,7 @@ def _import_run(
                 hyp_text=row["text"],
                 compute_s=row["compute_s"],
                 overlap_share=share,
+                classes_jsonb=classes[segment.id],
                 **vars(score),
             )
         )
@@ -322,6 +324,68 @@ def import_model_dir(
                 f"label version {version_name!r} does not exist; nothing to score"
             )
         _import_run(session, model, card, split, path, version=version, actor=actor, report=report)
+    session.flush()
+    return report
+
+
+@dataclass
+class ReclassifyReport:
+    runs: int = 0
+    clips: int = 0
+
+
+def reclassify_runs(
+    session: Session, *, actor: str, run_ids: list[int] | None = None
+) -> ReclassifyReport:
+    """Re-read every clip's classes and rebuild each run's class breakdowns (D87).
+
+    A clip's classes change when something new is measured about it -- a backfill, a voice
+    link, a new diarization run -- while its scores do not. So the run keeps every stored count
+    and headline number, and only ``classes_jsonb`` and ``by_class`` are replaced.
+
+    Args:
+        session: Open session; the caller commits.
+        actor: Recorded on each run's ``audit_logs`` row.
+        run_ids: Restrict to these runs; every run when omitted.
+    """
+    query = sa.select(ModelEvalRun).options(
+        selectinload(ModelEvalRun.clips)
+        .selectinload(ModelEvalClip.segment)
+        .selectinload(Segment.episode)
+    )
+    if run_ids:
+        query = query.where(ModelEvalRun.id.in_(run_ids))
+    runs = list(session.scalars(query.order_by(ModelEvalRun.id)))
+    segments = {clip.segment.id: clip.segment for run in runs for clip in run.clips}
+    classes = classify_segments(session, list(segments.values()))
+    report = ReclassifyReport()
+    for run in runs:
+        scored = []
+        for clip in run.clips:
+            clip.classes_jsonb = classes[clip.segment_id]
+            scored.append(
+                ScoredClip(
+                    episode=clip.segment.episode.external_id,
+                    genre=(clip.segment.episode.metadata_jsonb or {}).get("genre"),
+                    classes=classes[clip.segment_id],
+                    score=ClipScore(
+                        **{f: getattr(clip, f) for f in ClipScore.__dataclass_fields__}
+                    ),
+                )
+            )
+        metrics = {k: v for k, v in run.metrics_jsonb.items() if k != "by_overlap"}  # superseded
+        run.metrics_jsonb = metrics | {"by_class": summarize(scored)["by_class"]}
+        session.add(
+            AuditLog(
+                entity_type="asr_model",
+                entity_id=run.model.slug,
+                action="model_eval_reclassify",
+                actor=actor,
+                new_values_jsonb={"run_id": run.id, "clips": len(scored)},
+            )
+        )
+        report.runs += 1
+        report.clips += len(scored)
     session.flush()
     return report
 

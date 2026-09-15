@@ -25,12 +25,18 @@ ClipSort = Literal[
 
 @dataclass(frozen=True)
 class ClipFilter:
-    """Which of a run's clips to show. ``genre`` ``unknown`` matches an episode without one."""
+    """Which of a run's clips to show. ``genre`` ``unknown`` matches an episode without one.
+
+    ``class_axis`` and ``class_bucket`` together keep the clips in one bucket of one axis of the
+    run's class breakdowns (D87), read from the classes stored with the run.
+    """
 
     genre: str | None = None
     overlap: str | None = None
     loops_only: bool = False
     min_errors: int = 0
+    class_axis: str | None = None
+    class_bucket: str | None = None
 
 
 def _genre_sql() -> sa.ColumnElement[str]:
@@ -84,6 +90,7 @@ def _row(clip: ModelEvalClip, segment: Segment, episode_id: str, genre: str) -> 
         "char_errors": clip.char_errors,
         "ref_chars": clip.ref_chars,
         "is_loop": clip.is_loop,
+        "classes": clip.classes_jsonb or {},
         "ref_text": clip.ref_text,
         "hyp_text": clip.hyp_text,
     }
@@ -118,6 +125,10 @@ def list_run_clips(
         query = query.where(ModelEvalClip.is_loop.is_(True))
     if where.min_errors > 0:
         query = query.where(ModelEvalClip.errors >= where.min_errors)
+    if where.class_axis is not None and where.class_bucket is not None:
+        query = query.where(
+            ModelEvalClip.classes_jsonb[where.class_axis].astext == where.class_bucket
+        )
 
     total = session.scalar(sa.select(sa.func.count()).select_from(query.subquery())) or 0
     column = _SORT_COLUMNS[sort]

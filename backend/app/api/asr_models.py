@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.deps import get_config, get_session, require_auth
 from app.api.schemas import (
     AsrModelOut,
+    ClassAxisOut,
     ModelClipDetailOut,
     ModelClipPageOut,
     ModelEvalRunOut,
@@ -22,6 +23,7 @@ from app.api.schemas import (
 from app.config import Settings
 from app.llm.base import LlmError
 from app.models import AsrModel, ModelEvalRun
+from app.services.clip_classes import AXES, AXIS_BY_NAME
 from app.services.model_browse import ClipFilter, ClipSort, clip_detail, list_run_clips
 from app.services.model_import import ModelImportError, scan_models
 from app.services.playground import PlaygroundError, cpu_weights
@@ -74,6 +76,22 @@ def get_models(
         .order_by(AsrModel.trained_at.desc().nulls_last(), AsrModel.slug)
     )
     return [_model_out(model, settings.models.root) for model in models]
+
+
+@router.get("/model-classes", response_model=list[ClassAxisOut])
+def get_model_classes() -> list[ClassAxisOut]:
+    """The axes every run is broken down by, in display order (D87)."""
+    return [
+        ClassAxisOut(
+            name=a.name,
+            label=a.label,
+            buckets=list(a.buckets),
+            baseline=a.baseline,
+            unmeasured=a.unmeasured,
+            descriptive=a.descriptive,
+        )
+        for a in AXES
+    ]
 
 
 @router.get("/models/{slug}", response_model=AsrModelOut)
@@ -167,19 +185,29 @@ def get_run_clips(
     overlap: Literal["none", "0-5%", "5-15%", ">15%", "unmeasured"] | None = None,
     loops_only: bool = False,
     min_errors: int = Query(default=0, ge=0),
+    class_axis: str | None = None,
+    class_bucket: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
     session: Session = Depends(get_session),
 ) -> ModelClipPageOut:
-    """A run's clips, worst first by default."""
+    """A run's clips, worst first by default. ``class_axis`` with ``class_bucket`` keeps one
+    bucket of one class breakdown (D87); an axis the harness does not know is a 422."""
     _get_run(session, run_id)
+    if class_axis is not None and class_axis not in AXIS_BY_NAME:
+        raise HTTPException(status_code=422, detail=f"unknown class axis {class_axis!r}")
     total, rows = list_run_clips(
         session,
         run_id,
         sort=sort,
         descending=order == "desc",
         where=ClipFilter(
-            genre=genre, overlap=overlap, loops_only=loops_only, min_errors=min_errors
+            genre=genre,
+            overlap=overlap,
+            loops_only=loops_only,
+            min_errors=min_errors,
+            class_axis=class_axis,
+            class_bucket=class_bucket,
         ),
         offset=offset,
         limit=limit,

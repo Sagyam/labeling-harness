@@ -78,8 +78,8 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 | Table | Purpose |
 |---|---|
 | `asr_models` | One fine-tuned model per `data/models/asr/<slug>/` folder; the notebook's `model_card.json` kept whole |
-| `model_eval_runs` | One import of a model's `gold.jsonl` or `val.jsonl`: decoder, `fold_version`, metrics (WER + episode CI, raw WER, CER, loops, by genre, by crosstalk, skipped clips); sha256-keyed |
-| `model_eval_clips` | Per clip: the model's text, a snapshot of the reference it was scored against, folded/raw/char counts, loop flag, overlap share at import |
+| `model_eval_runs` | One import of a model's `gold.jsonl` or `val.jsonl`: decoder, `fold_version`, metrics (WER + episode CI, raw WER, CER, loops, by genre, by every clip class with within-episode rate ratios, skipped clips); sha256-keyed |
+| `model_eval_clips` | Per clip: the model's text, a snapshot of the reference it was scored against, folded/raw/char counts, loop flag, overlap share at import, and its classes as of import or the last reclassification (D87) |
 
 The model's text never enters `asr_hypotheses`, so it cannot reach disagreement, the queue or an
 export. The harness never runs a model to score it: the notebook transcribes on a GPU and the page
@@ -402,6 +402,34 @@ earlier, and `--relink` starts over.
 The editor asks for the current run's turns inside the clip, clip-relative, with speakers numbered by
 talk time across the episode, and colours each timed word by the speaker talking at its midpoint.
 
+### Clip classes (what a WER is split by)
+
+Every clip falls into one bucket on each axis of `app/services/clip_classes.py` (D87), computed
+from what is stored about it and never from its reference, so train clips and unlabelled audio
+have classes too:
+
+| axis | from | buckets |
+|---|---|---|
+| crosstalk | `overlap_spans_jsonb` | none / 0–5% / 5–15% / >15% of the clip |
+| speakers in the clip | newest run's turns, ≥ 0.5 s of talk to count | 1 / 2 / 3+ / none |
+| turn changes | the same turns, in order of start | 0 / 1 / 2+ |
+| pause share | clip time outside `vad_spans_jsonb` | <2% / 2–10% / >10% |
+| clip length | `duration_seconds` | <5 / 5–15 / 15+ s |
+| bandwidth | `acoustics_jsonb` | <4.5 / 4.5–6.5 / 6.5+ kHz |
+| voice | the dominant speaker's linked voice | one bucket per voice |
+| voice's hours in train | that voice's talk in train-pot clips of train-split episodes | unseen / <10 min / 10–60 min / 1 h+ |
+| declared gender, age | episode metadata, only when every declared speaker shares it | the value / mixed |
+| CMI (descriptive) | `segment_scores.code_switch_density` | 0 / <15 / 15–30 / 30+ |
+
+Each axis also has a "never measured" bucket (`unmeasured`, `undiarized`, `unlinked`,
+`undeclared`), kept apart from every measured one. A model run snapshots each clip's classes into
+`model_eval_clips.classes_jsonb` at import and breaks down by every axis in
+`metrics_jsonb.by_class`. For each bucket, the breakdown gives WER, CER and share of errors. It
+also gives the Mantel-Haenszel ratio of the bucket's error rate to the axis baseline's, pooled
+over episodes so that each episode compares only its own clips, with an episode-bootstrap
+interval. A backfill or a voice link changes what is known about clips but not their scores:
+`scripts/reclassify_runs.py` rewrites the snapshots and `by_class` and keeps every count.
+
 ### Known gaps
 
 Recorded here rather than left to be rediscovered. Neither is load-bearing today, and both are
@@ -489,7 +517,8 @@ the same inputs and filters produce byte-identical output.
 | `GET /models` | Fine-tuned models with every imported run and its metrics (D83) |
 | `GET /models/{slug}` | One model, its card and runs |
 | `POST /models/rescan` | Import every folder under `models.root` (default `data/models/asr/`); all or nothing, 422 on a bad folder |
-| `GET /model-runs/{id}/clips` | A run's clips; `sort` (errors, wer, deletions, insertions, substitutions, duration, overlap), `order`, `genre`, `overlap`, `loops_only`, `min_errors`, `offset`, `limit` |
+| `GET /model-classes` | The axes every run is split by, with their buckets in display order, baseline and "not measured" bucket (D87) |
+| `GET /model-runs/{id}/clips` | A run's clips; `sort` (errors, wer, deletions, insertions, substitutions, duration, overlap), `order`, `genre`, `overlap`, `class_axis` + `class_bucket`, `loops_only`, `min_errors`, `offset`, `limit` |
 | `GET /model-runs/{id}/clips/{segment_id}` | One clip with the folded alignment ops behind its counts |
 | `POST /models/{slug}/transcribe` | Playground (D85): a multipart `audio` recording, ≤ 30 s, transcribed on the CPU; 409 without CPU weights, 422 for bad audio, 502 when the sidecar fails |
 
@@ -524,7 +553,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodeManagerModal.tsx` | Browse episodes and segments, delete either |
-| Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns, and the clips worst first with audio and the folded diff (D83) |
+| Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the clips worst first with audio and the folded diff (D83) |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
 
 Audio is never decoded in the browser to draw a waveform (D8), and clips are streamed from
