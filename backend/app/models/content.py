@@ -114,6 +114,10 @@ class Segment(Base):
     #: from the overlap detector (D77). ``[]`` means measured and clean; null means never measured
     #: -- the two must not be conflated, because only the first is evidence of a clean clip.
     overlap_spans_jsonb: Mapped[list[list[float]] | None] = mapped_column(JsonB)
+    #: Acoustic measurements of the clip's audio (roadmap item 1, D87), e.g.
+    #: ``{"version": "acoustics-v1", "bandwidth_hz": 7781.2}``. A value that could not be measured
+    #: is absent from the object; null means the clip was never measured at all.
+    acoustics_jsonb: Mapped[dict[str, Any] | None] = mapped_column(JsonB)
 
     pipeline_status: Mapped[str] = mapped_column(String(16), nullable=False, default="imported")
     #: ``gold`` or ``train``, chosen for this one clip by hand (D71). Every move writes an

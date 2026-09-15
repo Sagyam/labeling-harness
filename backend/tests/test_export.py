@@ -507,6 +507,21 @@ def test_normalization_is_idempotent_across_exports(
     assert first.data_path.read_bytes() == second.data_path.read_bytes()
 
 
+def test_every_kind_carries_the_acoustics_as_measured(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Acoustics are a per-clip covariate like overlap (D87): null stays null."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    segments = db_session.scalars(sa.select(Segment).order_by(Segment.id)).all()
+    segments[0].acoustics_jsonb = {"version": "acoustics-v1", "bandwidth_hz": 5300.0}
+    db_session.flush()
+    expected = {s.external_id: s.acoustics_jsonb for s in segments}
+    for kind in ("training", "gold", "analytics"):
+        result = export_dataset(db_session, kind=kind, output_root=tmp_path / f"ac_{kind}")
+        for row in read_jsonl(result.data_path):
+            assert row["acoustics"] == expected[row["segment_id"]]
+
+
 def test_every_kind_carries_overlap_spans_as_measured(
     db_session: Session, tmp_path: Path, storage, settings: Settings
 ) -> None:

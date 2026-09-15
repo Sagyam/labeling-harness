@@ -29,6 +29,7 @@ from app.llm.transcription import (
     system_id_for,
     transcribe,
 )
+from app.services.acoustics import AcousticMeter
 from app.services.analysis import analyze_transcript, mean_pairwise_disagreement
 from app.services.diarization import declared_speaker_count, diarize_audio
 from app.services.diarization_import import import_diarization
@@ -69,6 +70,7 @@ def run_pipeline(
     *,
     keep_work_dir: bool = False,
     overlap_detector: OverlapDetector | None = None,
+    acoustic_meter: AcousticMeter | None = None,
 ) -> None:
     """Run all 5 stages synchronously inside background worker thread.
 
@@ -82,6 +84,7 @@ def run_pipeline(
             already persisted elsewhere by the time the run finishes.
         overlap_detector: Finds overlapped speech in the episode (D77). Defaults to the ONNX
             detector, which fetches its model on first use; without one, clips go unmeasured.
+        acoustic_meter: Measures each clip's bandwidth (D87). Defaults to :class:`AcousticMeter`.
     """
     settings = settings or get_settings()
     storage = storage or build_storage(settings)
@@ -89,7 +92,7 @@ def run_pipeline(
     try:
         if job.audio_path is None and not _fetch_source_audio(job, settings):
             return
-        _run_stages(job, session_factory, storage, settings, overlap_detector)
+        _run_stages(job, session_factory, storage, settings, overlap_detector, acoustic_meter)
     finally:
         if not keep_work_dir:
             shutil.rmtree(job.work_dir, ignore_errors=True)
@@ -257,12 +260,46 @@ def _detect_overlap(
     return spans
 
 
+def _measure_acoustics(
+    job: IngestJob,
+    meter: AcousticMeter | None,
+    audio: Any,
+    sample_rate: int,
+    segments: list[Any],
+    turns: Any,
+) -> dict[str, dict[str, Any]]:
+    """Each clip's acoustic measurements, keyed by segment id; empty when they failed (D87).
+
+    Like overlap, a covariate rather than a stage: a failure is logged and the clips go
+    unmeasured, which the backfill can mend later.
+    """
+    try:
+        meter = meter if meter is not None else AcousticMeter()
+        results = meter.measure(
+            audio,
+            sample_rate,
+            [
+                (
+                    seg.start_time,
+                    seg.end_time,
+                    speech_spans_within(turns, seg.start_time, seg.end_time),
+                )
+                for seg in segments
+            ],
+        )
+    except Exception as exc:
+        job.log(f"Acoustic measurement skipped: {type(exc).__name__}: {exc}")
+        return {}
+    return {seg.segment_id: result for seg, result in zip(segments, results, strict=True)}
+
+
 def _run_stages(
     job: IngestJob,
     session_factory: Callable[[], Session],
     storage: ObjectStorage,
     settings: Settings,
     overlap_detector: OverlapDetector | None = None,
+    acoustic_meter: AcousticMeter | None = None,
 ) -> None:
     """The five pipeline stages. Every failure is reported through ``job.fail`` and returns.
 
@@ -327,6 +364,7 @@ def _run_stages(
         job.total_segments = len(segments)
         job.active_segments = len(segments)
         job.log(f"Extracted {len(segments)} audio clips to disk")
+        acoustics = _measure_acoustics(job, acoustic_meter, audio_data, sr, segments, turns)
         job.set_progress(
             "segmenting", 40.0, total_segments=len(segments), active_segments=len(segments)
         )
@@ -538,6 +576,11 @@ def _run_stages(
                         **(
                             {"overlap_spans": spans_within(overlap, seg.start_time, seg.end_time)}
                             if overlap is not None
+                            else {}
+                        ),
+                        **(
+                            {"acoustics": acoustics[seg.segment_id]}
+                            if seg.segment_id in acoustics
                             else {}
                         ),
                         "hypotheses": hypotheses,

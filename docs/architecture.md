@@ -65,7 +65,7 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 |---|---|
 | `import_runs` | One row per import invocation, with counts and status |
 | `episodes` | Episode metadata plus the **frozen** train/val/test split |
-| `segments` | Time span, clip and peaks object keys, `pipeline_status`, VAD speech spans, overlapped-speech spans (D77) |
+| `segments` | Time span, clip and peaks object keys, `pipeline_status`, VAD speech spans, overlapped-speech spans (D77), acoustic measurements (D87) |
 | `asr_systems` | One row per upstream ASR system |
 | `asr_hypotheses` | Immutable imported transcripts, one per (segment, system) |
 | `hypothesis_words` | Optional word-level timings, languages and scripts; times are **clip-relative** (D26) |
@@ -259,7 +259,12 @@ queue. `POST /ingest` starts a background job and returns a job id; the six stag
    audio, D77) and gives each clip its clip-relative share. The model is fetched on first use,
    pinned and digest-checked; without it, or if it fails, the clips are simply left unmeasured.
    Episodes imported before it existed are measured by `scripts/backfill_overlap.py` from their
-   retained audio.
+   retained audio. Each clip's **acoustics** are measured here too (`app/services/acoustics.py`,
+   D87): its bandwidth, the highest frequency at which its speech spectrum is within 40 dB of
+   the voice-band peak, over its VAD speech only. The result is a versioned object in
+   `segments.acoustics_jsonb`; a failure leaves the clips unmeasured, and
+   `scripts/backfill_acoustics.py` measures older clips, or clips measured under an older
+   version, from the retained episode audio.
 3. **Transcribe** — every route named `asr*` in `config/llm_routes.yaml` transcribes every clip,
    producing one ASR system per route, in the order the routes are written. Transcribers for a
    segment run concurrently via a worker pool with a shared `httpx.Client` for HTTP connection
@@ -425,7 +430,8 @@ Every row of every kind carries the clip's per-clip covariates next to its text:
 - `code_switch_density`;
 - `overlap_spans`: its clip-relative crosstalk, `[]` when measured clean and null when never
   measured (D77). A result can then be reported with and without overlapped clips instead of
-  dropping them.
+  dropping them;
+- `acoustics`: the clip's acoustic measurements (D87), null when never measured.
 
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:

@@ -210,6 +210,9 @@ def _record(
         #: result can be reported with and without it. ``[]`` is measured and clean, null is
         #: never measured.
         "overlap_spans": segment.overlap_spans_jsonb,
+        #: Acoustic measurements of the clip (D87) -- bandwidth, and SNR and reverb once measured
+        #: -- so training data can be chosen or weighted by them. Null is never measured.
+        "acoustics": segment.acoustics_jsonb,
     }
     if kind.include_hypotheses:
         record["speaker_id"] = segment.speaker_id

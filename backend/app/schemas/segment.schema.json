@@ -90,6 +90,13 @@
         "minItems": 2,
         "maxItems": 2
       }
+    },
+    "acoustics": {
+      "type": ["object", "null"],
+      "properties": {
+        "version": {"type": "string"},
+        "bandwidth_hz": {"type": "number"}
+      }
     }
   },
   "additionalProperties": true

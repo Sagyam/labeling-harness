@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.models import Episode, Segment
+from app.services.acoustics import ACOUSTICS_VERSION
 from app.services.ingest import (
     IngestJob,
     run_pipeline,
@@ -32,7 +33,13 @@ class _StubOverlap:
 
 
 def _ingest_with(
-    db_session: Session, object_storage, settings, tmp_path: Path, detector, name: str
+    db_session: Session,
+    object_storage,
+    settings,
+    tmp_path: Path,
+    detector,
+    name: str,
+    meter=None,
 ):
     job = IngestJob(
         job_id=f"test-job-{name}",
@@ -48,6 +55,7 @@ def _ingest_with(
         storage=object_storage,
         settings=settings,
         overlap_detector=detector,
+        acoustic_meter=meter,
     )
     assert job.error is None, job.error
     episode = db_session.scalar(sa.select(Episode).where(Episode.external_id == f"ov_{name}"))
@@ -89,6 +97,43 @@ def test_a_failing_overlap_detector_never_fails_the_ingest(
     assert job.status == "completed"
     assert all(s.overlap_spans_jsonb is None for s in segments)
     assert any("onnx exploded" in item.message for item in job.logs)
+
+
+# --- Acoustics (D87) ------------------------------------------------------------------------
+
+
+class _BrokenMeter:
+    def measure(self, audio, sample_rate, clips):
+        raise RuntimeError("fft exploded")
+
+
+def test_every_clip_is_measured_as_it_is_cut(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    _, segments = _ingest_with(
+        db_session, object_storage, settings, tmp_path, _StubOverlap(spans=[]), "acoustic"
+    )
+    assert segments
+    for segment in segments:
+        assert segment.acoustics_jsonb["version"] == ACOUSTICS_VERSION
+        assert segment.acoustics_jsonb["bandwidth_hz"] > 0
+
+
+def test_a_failing_meter_never_fails_the_ingest(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    job, segments = _ingest_with(
+        db_session,
+        object_storage,
+        settings,
+        tmp_path,
+        _StubOverlap(spans=[]),
+        "nometer",
+        meter=_BrokenMeter(),
+    )
+    assert job.status == "completed"
+    assert all(s.acoustics_jsonb is None for s in segments)
+    assert any("fft exploded" in item.message for item in job.logs)
 
 
 # --- Remote diarization (D79) ------------------------------------------------------------

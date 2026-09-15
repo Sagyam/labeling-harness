@@ -420,6 +420,7 @@ def import_manifest(
                 vad_spans_jsonb=record.get("vad_spans") or None,
                 # ``[]`` survives as ``[]``: measured and clean is not the same as never measured.
                 overlap_spans_jsonb=record.get("overlap_spans"),
+                acoustics_jsonb=record.get("acoustics"),
             )
             session.add(segment)
             session.flush()
