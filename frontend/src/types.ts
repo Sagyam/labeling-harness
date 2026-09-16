@@ -162,11 +162,13 @@ export interface QueueRow {
   seed_text: string | null
   cmi?: number | null
   word_disagreement_rate?: number | null
+  /** Share of the clip spent in crosstalk; null means never measured, not clean (D77). */
+  overlap_share?: number | null
   audio_url: string
   peaks_url: string
 }
 
-export type TriageSortBy = 'priority' | 'cmi' | 'disagreement' | 'duration' | 'pot'
+export type TriageSortBy = 'priority' | 'cmi' | 'disagreement' | 'duration' | 'overlap' | 'pot'
 export type SortOrder = 'asc' | 'desc'
 
 export interface DisputeAlternative {

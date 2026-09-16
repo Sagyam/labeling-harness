@@ -224,6 +224,46 @@ def test_cmi_is_marked_descriptive() -> None:
 
 
 @pytest.mark.db
+def test_the_sql_overlap_share_agrees_with_the_python_one(db_session, imported_episode) -> None:
+    """Sorting the queue by crosstalk must give the same number the breakdown does."""
+    import sqlalchemy as sa
+
+    from app.models import Episode, Segment
+    from app.services.clip_classes import overlap_share_sql
+
+    episode = db_session.scalars(
+        sa.select(Episode).where(Episode.external_id == imported_episode)
+    ).one()
+    segments = sorted(episode.segments, key=lambda s: s.start_time)
+    # One of each: measured clean, three shapes of crosstalk, and unmeasured -- which the ORM
+    # spells as the JSON null below, and raw SQL as a SQL NULL, set after the flush.
+    spans = [[], [[0.0, 1.0]], [[0.0, 0.5], [1.0, 2.0]], [[0.0, 9999.0]], None]
+    for segment, value in zip(segments, spans, strict=False):
+        segment.overlap_spans_jsonb = value
+    db_session.flush()
+    db_session.execute(
+        sa.update(Segment).where(Segment.id == segments[5].id).values(overlap_spans_jsonb=sa.null())
+    )
+
+    rows = db_session.execute(
+        sa.select(Segment.id, overlap_share_sql()).where(Segment.episode_id == episode.id)
+    ).all()
+    db_session.expire_all()
+    by_id = {segment.id: segment for segment in db_session.scalars(sa.select(Segment))}
+    assert len(rows) == len(segments)
+    for segment_id, from_sql in rows:
+        segment = by_id[segment_id]
+        expected = overlap_share(segment.overlap_spans_jsonb, segment.duration_seconds)
+        if expected is None:
+            assert from_sql is None  # never measured stays missing data, not a clean clip
+        else:
+            assert from_sql == pytest.approx(expected)
+    # Both spellings of never measured, and a span longer than the clip is still capped at 1.
+    assert sum(1 for _, value in rows if value is None) == 2
+    assert max(value for _, value in rows if value is not None) == pytest.approx(1.0)
+
+
+@pytest.mark.db
 def test_facts_come_from_the_newest_diarization_run_and_the_stored_spans(
     db_session, imported_episode
 ) -> None:

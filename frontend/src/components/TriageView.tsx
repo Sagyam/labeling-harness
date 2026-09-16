@@ -45,6 +45,7 @@ const SORT_OPTIONS: Array<{ id: TriageSortBy; label: string }> = [
   { id: 'cmi', label: 'CMI (Code-Mixing)' },
   { id: 'disagreement', label: 'Disagreement' },
   { id: 'duration', label: 'Duration' },
+  { id: 'overlap', label: 'Crosstalk' },
   { id: 'pot', label: 'Pot (Gold first)' },
 ]
 
@@ -52,6 +53,7 @@ const SORT_LABELS: Record<TriageSortBy, string> = {
   priority: 'Priority',
   cmi: 'CMI',
   disagreement: 'Disagreement',
+  overlap: 'Crosstalk',
   duration: 'Duration',
   pot: 'Pot',
 }
@@ -563,6 +565,26 @@ export function TriageView({
                   </div>
                 </TableHead>
                 <TableHead
+                  className="w-20 cursor-pointer select-none hover:text-foreground transition-colors"
+                  onClick={() => handleHeaderSort('overlap')}
+                  title="Click to sort by how much of the clip is crosstalk"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className={sortBy === 'overlap' ? 'font-semibold text-foreground' : ''}>
+                      Crosstalk
+                    </span>
+                    {sortBy === 'overlap' ? (
+                      sortOrder === 'desc' ? (
+                        <RiArrowDownSLine className="size-3 text-primary" />
+                      ) : (
+                        <RiArrowUpSLine className="size-3 text-primary" />
+                      )
+                    ) : (
+                      <RiArrowUpDownLine className="size-2.5 opacity-30" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
                   className="w-48 cursor-pointer select-none hover:text-foreground transition-colors"
                   onClick={() => handleHeaderSort('pot')}
                   title="Click to sort by pot (Gold clips first)"
@@ -718,6 +740,37 @@ export function TriageView({
                         </Tooltip>
                       ) : (
                         <span className="font-mono text-xs text-muted-foreground/30">—</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell>
+                      {row.overlap_share != null ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {row.overlap_share > 0.15 ? (
+                              <span className="inline-block rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-sky-700 dark:text-sky-300">
+                                {(row.overlap_share * 100).toFixed(0)}%
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {(row.overlap_share * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent className="font-mono text-xs">
+                            {(row.overlap_share * 100).toFixed(1)}% of the clip has two or more
+                            people talking at once
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="font-mono text-xs text-muted-foreground/30">—</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="font-mono text-xs">
+                            Never measured — not the same as a clean clip
+                          </TooltipContent>
+                        </Tooltip>
                       )}
                     </TableCell>
 

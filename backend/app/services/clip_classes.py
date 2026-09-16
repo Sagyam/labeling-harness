@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.models import DiarizationRun, Episode, Segment, SegmentScore, SpeakerTurn
@@ -122,6 +123,40 @@ def overlap_share(spans: Sequence[Sequence[float]] | None, duration: float) -> f
     if duration <= 0:
         return 0.0
     return min(1.0, sum(max(0.0, end - start) for start, end in spans) / duration)
+
+
+def overlap_share_sql() -> sa.ColumnElement[float]:
+    """:func:`overlap_share` as a SQL expression over ``segments``, for ordering and filtering.
+
+    Must agree with the Python function clip for clip -- ``test_clip_classes.py`` checks that it
+    does. Never measured stays null rather than sorting as a clean clip, and it has two spellings
+    to catch: a SQL NULL, and the JSON ``null`` the ORM writes for a Python ``None``.
+    """
+    measured = sa.func.jsonb_typeof(Segment.overlap_spans_jsonb) == "array"
+    # jsonb_array_elements raises on a scalar, and the planner may reach it whatever the outer
+    # CASE says, so it is only ever handed an array.
+    spans = sa.case((measured, Segment.overlap_spans_jsonb), else_=sa.cast("[]", JSONB))
+    span = sa.func.jsonb_array_elements(spans).table_valued(sa.column("value", JSONB))
+    seconds = (
+        sa.select(
+            sa.func.coalesce(
+                sa.func.sum(
+                    sa.func.greatest(0.0, span.c.value[1].as_float() - span.c.value[0].as_float())
+                ),
+                0.0,
+            )
+        )
+        .select_from(span)
+        .scalar_subquery()
+    )
+    return sa.case(
+        (
+            sa.and_(measured, Segment.duration_seconds > 0),
+            sa.func.least(1.0, seconds / Segment.duration_seconds),
+        ),
+        (measured, sa.literal(0.0)),
+        else_=sa.null(),
+    )
 
 
 def overlap_bucket(share: float | None) -> str:

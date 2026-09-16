@@ -14,6 +14,7 @@ from app.api.schemas import (
     SpeakerTurnOut,
 )
 from app.models import AnnotationTask, AsrHypothesis, Segment
+from app.services.clip_classes import overlap_share
 from app.services.diarization_import import segment_speaker_turns
 from app.services.labeling import latest_label
 
@@ -146,6 +147,7 @@ def serialize_queue_row(task: AnnotationTask) -> QueueRowOut:
             else None
         ),
         word_disagreement_rate=w_disagree,
+        overlap_share=overlap_share(segment.overlap_spans_jsonb, segment.duration_seconds),
         audio_url=audio_url(segment.id),
         peaks_url=peaks_url(segment),
     )

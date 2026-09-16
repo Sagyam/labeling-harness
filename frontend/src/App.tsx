@@ -59,7 +59,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [triageSortBy, setTriageSortBy] = useState<TriageSortBy>(() => {
     const sb = new URLSearchParams(window.location.search).get('sort_by')
-    return (['priority', 'cmi', 'disagreement', 'duration', 'pot'].includes(sb || '')
+    return (['priority', 'cmi', 'disagreement', 'duration', 'overlap', 'pot'].includes(sb || '')
       ? sb
       : 'priority') as TriageSortBy
   })

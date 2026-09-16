@@ -12,6 +12,7 @@ from app.api.deps import get_session, require_auth
 from app.api.schemas import QueueRowOut
 from app.api.serializers import serialize_queue_row
 from app.models import AnnotationTask, Episode, Segment, SegmentScore
+from app.services.clip_classes import overlap_share_sql
 from app.services.inventory import collect_inventory
 from app.services.report import collect_report
 from app.services.stats import collect_stats
@@ -29,7 +30,7 @@ def get_queue(
     queue: str | None = Query(default=None, pattern="^(review|audit|error)$"),
     sort_by: str = Query(
         default="priority",
-        pattern="^(priority|cmi|disagreement|duration|pot)$",
+        pattern="^(priority|cmi|disagreement|duration|overlap|pot)$",
         description="Field to sort by",
     ),
     sort_order: str = Query(
@@ -68,6 +69,11 @@ def get_queue(
     elif sort_by == "duration":
         col = Segment.duration_seconds
         order_clauses.append(col.desc() if is_desc else col.asc())
+    elif sort_by == "overlap":
+        # Crosstalk share, computed from the spans rather than stored. Unmeasured clips sort last
+        # either way: null is missing data, not a clean clip (D77).
+        col = overlap_share_sql()
+        order_clauses.append(col.desc().nulls_last() if is_desc else col.asc().nulls_last())
     elif sort_by == "pot":
         col = sa.case((Segment.pot == "gold", 1), else_=0)
         order_clauses.append(col.desc() if is_desc else col.asc())

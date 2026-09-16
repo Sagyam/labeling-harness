@@ -110,6 +110,37 @@ def test_queue_sorts_by_duration(client: TestClient, imported_episode: str) -> N
     assert durs_asc == sorted(durs_asc)
 
 
+def test_queue_sorts_by_crosstalk_with_unmeasured_clips_last(
+    client: TestClient, db_session, imported_episode: str
+) -> None:
+    import sqlalchemy as sa
+
+    from app.models import Episode
+
+    episode = db_session.scalars(
+        sa.select(Episode).where(Episode.external_id == imported_episode)
+    ).one()
+    segments = sorted(episode.segments, key=lambda s: s.start_time)
+    # Crosstalk that does not follow the queue's own order, plus one clip never measured.
+    for segment, spans in zip(segments, ([[0.0, 1.0]], [], [[0.0, 3.0]], None), strict=False):
+        segment.overlap_spans_jsonb = spans
+    db_session.commit()
+
+    rows_desc = queue_rows(client, sort_by="overlap", sort_order="desc")
+    shares = [r["overlap_share"] for r in rows_desc]
+    measured = [s for s in shares if s is not None]
+    assert measured == sorted(measured, reverse=True)
+    assert measured[0] > 0
+    # Unmeasured is missing data, not a clean clip: it sorts last in both directions (D77).
+    assert all(s is None for s in shares[len(measured) :])
+
+    rows_asc = queue_rows(client, sort_by="overlap", sort_order="asc")
+    shares_asc = [r["overlap_share"] for r in rows_asc]
+    measured_asc = [s for s in shares_asc if s is not None]
+    assert measured_asc == sorted(measured_asc)
+    assert all(s is None for s in shares_asc[len(measured_asc) :])
+
+
 def test_queue_sorts_by_pot(client: TestClient, imported_episode: str) -> None:
     # Set one segment to gold
     rows = queue_rows(client)

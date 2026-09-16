@@ -120,6 +120,8 @@ class QueueRowOut(BaseModel):
     seed_text: str | None = None
     cmi: float | None = None
     word_disagreement_rate: float | None = None
+    #: Share of the clip spent in crosstalk; null means never measured, not clean (D77).
+    overlap_share: float | None = None
     audio_url: str
     peaks_url: str | None = None
 
