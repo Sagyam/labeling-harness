@@ -58,6 +58,27 @@ The first measurement on a gold pot no training voice speaks in. The HF dataset
 - **Selection.** Clips where Gemini returned SAFETY were dropped before gold was labeled (~16%), so
   gold holds only clips all three recognisers transcribed.
 
+**Why val is twice gold: crosstalk (measured the same day).** Folded WER by the overlapped share of
+each clip:
+
+| overlap share | gold clips | gold WER | val clips | val WER | train clips (seen) | train WER |
+|---|---|---|---|---|---|---|
+| none | 456 | 6.40 | 497 | **5.71** | 200 | 7.01 |
+| < 5% | 35 | 7.22 | 122 | 9.11 | 116 | 11.65 |
+| 5–15% | 12 | 9.86 | 133 | 14.08 | 84 | 13.82 |
+| > 15% | 2 | 16.47 | 169 | **25.45** | 151 | 20.30 |
+
+- **With crosstalk removed, val and gold agree** (5.71 against 6.40), so the pipeline is not at fault.
+  On val, 81% of errors are in overlapped clips and 49% in the >15% bucket. Deletions rise from 0.9%
+  to 5.0% of reference words.
+- **One episode dominates val.** The bodybuilders roundtable has 16.52% WER and 83% of val's errors;
+  its clean clips alone score 8.54%. ep_612 scores 6.97%, the tech reviews 1.9–3.3%.
+- **The model does not fit crosstalk even on clips it trained on.** Train clips with >15% overlap
+  still score 20.30% after 3 epochs (deletions 7.0%). That is why val sat at ~12.6 from epoch 3:
+  it is not a generalisation gap that more epochs would close. Only 2.5% of train clips are >15%
+  overlapped. The references in overlap are screened fusion output, and nobody has listened to
+  whether they are a consistent target.
+
 Outputs are on Drive under `MyDrive/nepanglish-asr/indic-transcribe-flex-ft-2026-09-16/`: `best/`,
 `harness/` for the Models page, and gold hyps. No CPU export or playground bundle was built.
 
