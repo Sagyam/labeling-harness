@@ -79,6 +79,25 @@ each clip:
   overlapped. The references in overlap are screened fusion output, and nobody has listened to
   whether they are a consistent target.
 
+**What the 6.58% is made of (error mining, 2026-09-17).** The 1,483 folded errors, each assigned
+to the first rule that fits. The votes compare the word with the three recognisers' own
+transcripts. Those recognisers are what the reference was fused from, so a vote is a proxy, not
+ground truth.
+
+| bucket | errors | WER pts | what it looks like |
+|---|---|---|---|
+| clip edge (first/last word) | 169 | 0.75 | reference holds a cut fragment (`सक्नुहु`), the model completes it; edge-word WER 12.7% |
+| Devanagari spelling variant | 56 | 0.25 | vowel length, nasal marks, halant, स/श/ष, ब/व, ण/न |
+| number / unit | 153 | 0.68 | `साढे नौ फिट` → `9.9 ft` (a real error: 9.5), `किलो` → `kg`; also catches छ-forms read as six |
+| ≥2 recognisers side with the model | 132 | 0.59 | reference suspects: `गको` / `गएको`, dropped fillers |
+| all 3 recognisers agree with the reference | 266 | 1.18 | clear model errors: brands (`ElevenLabs` → `11 lamps`, `Api` → `Appy`), English (`firm` → `form`) |
+| split vote | 707 | 3.14 | suffixes (`हामी`/`हामीले`, `कुरा`/`कुराहरू`), colloquial against standard forms (`देछु`/`दिएछु`, `चै`/`चाहिँ`) |
+
+- **Noise shows at the low end.** 39 gold clips below 10 dB SNR score 12.58%, against ~6% everywhere
+  above. `api_base_camp`, recorded beside a waterfall, has a median SNR of 10.6 dB and 11.6% WER.
+- **Concentration.** 113 clips are error-free; the worst 10% of clips hold 34% of errors. Clips
+  the owner edited score 8.79%, against 6.48% for clips accepted unchanged.
+
 Outputs are on Drive under `MyDrive/nepanglish-asr/indic-transcribe-flex-ft-2026-09-16/`: `best/`,
 `harness/` for the Models page, and gold hyps. No CPU export or playground bundle was built.
 
