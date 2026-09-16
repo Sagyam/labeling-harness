@@ -24,6 +24,45 @@ until 2026-09-15, `fold-v2` (D84) since.
 
 ---
 
+## Speaker-held-out gold: the retrain (2026-09-16)
+
+The first measurement on a gold pot no training voice speaks in. The HF dataset
+(`Sagyam/nepanglish-asr`, commit 5345974, harness `a45d467`) was re-exported:
+- **gold**: 505 clips (2.17 h) from 82 shorts/reels, every clip listened to, 23 edited (4.6%).
+  None of those recordings feeds train or val. Voice linking finds 93 gold voices, none among
+  train's 32; the links are unchecked by ear.
+- **train**: 6,131 clips (20.55 h), the old 706 gold clips included. **val**: 921 clips (3.94 h),
+  of which 849 come from two podcasts.
+
+`indic-transcribe-flex-ft-2026-09-16` is 04c with the standard settings, fold-v2:
+
+| | gold WER (95% CI by recording) | gold raw WER | gold CER | val WER |
+|---|---|---|---|---|
+| base Flex, zero-shot | 12.26% | 22.36% | 11.60% | 22.38% |
+| **fine-tune** | **6.58% (5.61–7.59)** | 12.36% | 6.25% | 12.59% |
+
+- **Fine-tuning transfers to new voices.** It roughly halves gold WER, with 0 loops before or
+  after, so the retry did nothing on this gold.
+- **Per recording** WER has a median of 5.3%, a p90 of 11.4% and a maximum of 18.5% (`cars_in_nepal`).
+  The CI resamples the 82 recordings. It is 2 points wide, against 4.4 points for the old gold
+  resampled by its 27 voices.
+- **Training.** Val by epoch: 14.20, 12.94, **12.59**, 12.65, 12.93, then early stopping (patience 2).
+  Val is no longer comparable with the 5.58 of 2026-09-15: it now contains the bodybuilders
+  roundtable, and 46% of val clips have crosstalk.
+- **Gold has almost no crosstalk.** 10% of gold clips have any overlap, and overlap is 0.4% of
+  gold audio (train 1.6%, val 7.3%). Gold measures clean single-voice speech, not the podcast
+  failure mode that item 2 of the roadmap targets.
+- **Recognisers on the same gold** (fold-v2): MAI 6.00%, Gemini 6.38%, Scribe 7.08%. The references
+  are their fusion (the fusion itself scores 0.04%), so these are flattered. The fine-tune's 6.58%
+  is independent of the references.
+- **Selection.** Clips where Gemini returned SAFETY were dropped before gold was labeled (~16%), so
+  gold holds only clips all three recognisers transcribed.
+
+Outputs are on Drive under `MyDrive/nepanglish-asr/indic-transcribe-flex-ft-2026-09-16/`: `best/`,
+`harness/` for the Models page, and gold hyps. No CPU export or playground bundle was built.
+
+---
+
 ## The current model (2026-09-15)
 
 `indic-transcribe-flex-ft-2026-09-15` is a 04c full fine-tune of Indic-Transcribe-Flex with the
