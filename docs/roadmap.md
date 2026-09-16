@@ -5,10 +5,12 @@ measured so far, and the numbers each item starts from, are in [findings.md](fin
 plans (decoder search, learning curve, benchmark sanity checks) are done or dropped; their outcomes
 are in the findings.
 
-The thread through all five: **crosstalk is the largest measured source of error.** Podcast WER
+The thread through items 1–5: **crosstalk is the largest measured source of error.** Podcast WER
 climbs from 9% on clean clips to 24% on clips more than 15% overlapped. Removing that effect would
 take gold from ~11.5% to ~8.8% (fold-v1). Item 1 is the measuring stick for items 2–4, and item 5
-makes the benchmark worth measuring against.
+makes the benchmark worth measuring against. On the 2026-09-16 split, crosstalk costs val 5.46
+points and the speaker-held-out gold 0.17. Item 6, the spelling convention, costs up to 2 points
+on both.
 
 ## 1. Classify every clip by acoustic condition
 
@@ -72,6 +74,13 @@ numbers for the current model are the bar (findings.md, CPU inference).
 
 ## 5. New held-out voices and microphones for the gold pot
 
+**Done 2026-09-16.** Gold is now 505 clips from 82 shorts that share no recording with train or
+val, with 93 linked voices and none shared with train. The old 706 gold clips moved into train.
+First score: findings.md, *Speaker-held-out gold*. **Still missing: crosstalk.** 0.4% of gold audio
+is overlapped, so a held-out crosstalk number needs podcasts with new voices.
+
+The plan as written before it was done:
+
 Gold today shares speakers and episodes with train: 36 of 42 episodes have clips in both pots.
 
 - **Collect** new gold with new voices and new microphone setups: people who have never been in
@@ -80,6 +89,24 @@ Gold today shares speakers and episodes with train: 36 of 42 episodes have clips
 - **Rules that apply.** Gold stays chosen by hand, clip by clip, and every move goes through
   `set_segment_pot` with an audit row (invariant 4, D71). A screened clip cannot enter gold
   (invariant 5).
+
+## 6. Decide a spelling convention for spoken Nepali
+
+The owner will come back to this. Of the levers the error mining found (findings.md, *What the
+6.58% is made of*), it is the one judged worth the effort.
+
+When a speaker says a colloquial or contracted form, the reference sometimes keeps it as spoken
+(`गको`, `चै`, `देछु`) and sometimes writes the standard form (`गएको`, `चाहिँ`, `दिएछु`). Training
+references mix both, so the model cannot tell which one is wanted, and the scorer counts either
+choice as an error.
+
+- **Cost today.** Devanagari substitutions of the same word in a different form (similarity at
+  least 0.5, not at a clip edge) are 2.02 points on gold and 2.02 on val. That is a ceiling: it
+  also holds real suffix errors (`हामी`/`हामीले`) that no convention removes.
+- **Start from** the most frequent such pairs in the gold and val errors. For each pair, decide:
+  verbatim, standard, or equivalent.
+- **Then** either fold the equivalent pairs in `fold.py` (a new fold version, D84's process) or
+  relabel to one form, and re-score.
 
 ---
 
