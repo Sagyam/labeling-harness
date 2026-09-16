@@ -79,6 +79,66 @@ notebook (`03`) were removed on 2026-09-14.
 
 ---
 
+## How big gold has to be: voices, not hours (2026-09-16)
+
+Measured on run 5 (the current model on the 706-clip gold pot) by bootstrapping its per-clip
+errors 4,000 times. The question was what size gold has to reach before its WER is worth
+publishing; the answer is that the number of clips stopped being the binding constraint a while
+ago.
+
+The same 9.54% carries three different intervals depending on what a resample treats as
+independent:
+
+| Resampled unit | 95% CI | Width |
+|---|---|---|
+| Clips | 8.79 – 10.30 | 1.52 pts |
+| Episodes (36) | 7.26 – 11.33 | 4.07 pts |
+| **Voices (27)** | **7.34 – 11.70** | **4.36 pts** |
+
+Clips of one speaker are not independent evidence about the next speaker, so the voice-clustered
+interval is the one a corpus can claim. It is nearly three times the clip interval, because
+per-voice WER runs from 2.14% (v017) to 22.05% (v011) — between-voice variance dominates
+everything else, which is the same thing the voice-exposure axis says (see the clip-classes
+section).
+
+That makes the clip curve misleading and the voice curve the real one:
+
+| Clips (resampling clips) | CI width | Voices (resampling voices) | CI width |
+|---|---|---|---|
+| 706 (2.3 h) | 1.58 pts | 27 | 4.27 pts |
+| 1,500 (4.9 h) | 1.06 pts | 60 | 2.92 pts |
+| 3,000 (9.8 h) | 0.72 pts | 100 | 2.29 pts |
+| 5,000 (16.3 h) | 0.58 pts | 150 | 1.85 pts |
+
+A two-stage bootstrap (draw voices, then clips within each) prices the trade-off directly. At a
+fixed budget of 700 clips:
+
+| Shape | CI width |
+|---|---|
+| 7 voices x 100 clips | 8.33 pts |
+| 27 voices x 26 clips (what gold was) | 4.46 pts |
+| 70 voices x 10 clips | 2.86 pts |
+| 140 voices x 5 clips | 2.19 pts |
+
+Depth per voice saturates at about 20 clips: going from 20 to 80 clips a voice buys 0.2–0.5
+points at any voice count, while going from 27 to 60 voices buys 1.6. **Roughly 60 voices x 20
+clips (~1,200 clips, ~3.9 h) puts the published interval near +/-1.5 points; 100–120 voices is
+what it takes to get near +/-1.**
+
+Two consequences for how gold is filled:
+
+- A clip is worth adding in proportion to how new its speaker is. Twenty clips from a voice
+  already in gold are worth less than five from a voice that is not.
+- Diversity on the other axes is only free when it does not cost voices. Hunting the extremes
+  (crosstalk, low SNR, narrow band) concentrates on a few noisy episodes — sorting the queue by
+  crosstalk returns one roundtable's clips for pages — so the hunt has to be run per episode, or
+  gold buys rare conditions by spending voices.
+
+Separately, this is measured on gold as the seed built it, and gold's clips were chosen by hand
+from episodes that also fed train. It bounds precision, not leakage; see the leakage section.
+
+---
+
 ## Decoder search (2026-09-13)
 
 Gold was treated as a dev set.
