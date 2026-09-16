@@ -51,6 +51,8 @@ NON_WORD_TYPES = frozenset({"spacing", "audio_event"})
 class ElevenLabsClient(ProviderClient):
     """A thin, logged, retrying client for the ElevenLabs speech-to-text endpoint."""
 
+    provider = "elevenlabs"
+
     def __init__(
         self,
         session: Session,

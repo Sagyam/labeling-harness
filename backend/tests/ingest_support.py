@@ -46,7 +46,7 @@ def _drain(timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         with manager._lock:
-            if manager._pending.empty() and manager._running_id is None and not manager._waiting:
+            if not manager._pending and not manager._running and not manager._waiting:
                 return
         time.sleep(0.01)
     raise AssertionError("ingestion queue did not drain")

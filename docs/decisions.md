@@ -2702,3 +2702,53 @@ columns.
 `model_eval_clips.classes_jsonb`) with their migrations. Revert the class, acoustics and voice
 services and scripts. Restore `by_overlap` in `model_eval.summarize` and the crosstalk panel on
 the Models page.
+
+## D88 — Episodes ingest a few at a time, behind one rate-limit gate per service
+
+Up to `ingest.max_concurrent_jobs` episodes (default 3) now run at once. They start in submission
+order. Every call to a rate-limited service goes through that service's one process-wide gate
+(`app/utils/rate_limit.py`), whichever job makes it. Before this, jobs ran one at a time.
+
+**Why.** Short episodes spent about 3 minutes each in the queue, and nearly all of it was waiting on
+remote services. One fusion call alone is 2–4 minutes of Gemini thinking (median 210 s over 107
+calls). Running jobs one at a time protected the ASR rate limits, but by idling the machine.
+Nothing coordinated the requests of two jobs, and a 429 cost its clip (D46): the client retried
+three times over 1.5 s, then gave up. A queue of 83 two-minute gold files would have taken about 4
+hours.
+
+**What a gate does.**
+- **In-flight cap.** At most `max_in_flight` requests are open at once, summed over every job.
+- **Spacing.** Starts are at least `min_interval_seconds` apart.
+- **Shared cooldown.** A 429 starts a cooldown that every caller waits out. Its length is the
+  `Retry-After` (or OpenRouter's `X-RateLimit-Reset`) if the service sends one. Otherwise it starts
+  at `cooldown_seconds`, doubles for each further cooldown without a success between, and is capped
+  at `max_cooldown_seconds`.
+- **Adaptive limit.** The same refusal halves the working limit. Successes win it back one slot per
+  `allowed` successes, i.e. additive increase, multiplicative decrease. Refusals that land inside a
+  running cooldown count once, so twenty requests refused together are one signal.
+- **Retries.** A 429 does not spend `max_retries`. The request waits out the cooldown and tries
+  again, up to `rate_limit_retries` times (default 8, about 10 minutes of backoff). Only after that
+  is it a failure, and so a discard. Latency in `llm_requests` is time spent in requests, excluding
+  gate waits.
+
+**Limits.** They live in `llm_routes.yaml` under `limits`, per provider: openrouter 16, elevenlabs 8,
+vertex 12. Gemini ASR and fusion share the Vertex gate because they share the model's quota. The 8
+for ElevenLabs is what one ingest already sent without a 429 in 7,905 calls. YouTube has its own
+gate in `ingest.youtube.limit`: one download at a time, starts 5 s apart. A bot check on a download
+or a lookup cools every later download down for 10 minutes. The job that hit it is backlogged as
+before, and the ones behind it wait rather than trip the check again. Modal diarization is not
+gated; it is at most one call per running job.
+
+**Import still takes turns.** Stage 6 writes corpus-wide rows (voices, systems, the queue), so it runs
+under one lock. The diarizer's answer is awaited before the lock is taken, so a slow GPU never holds
+up another job's import.
+
+**Fixed on the way.** A clip whose every route failed was discarded without committing, so the
+`llm_requests` rows of its failed attempts were rolled back. An expired key left no trace of a
+single refused call (invariant 6). The discard path now commits.
+
+**Cost.** No extra requests: the same calls, overlapping in time. Peak CPU and disk rise with the
+number of jobs, since each runs its own ONNX models and work directory (~350 MB of models, well
+within 27 GB).
+
+**Reversal:** set `max_concurrent_jobs: 1`. The gates are harmless on their own and can stay.

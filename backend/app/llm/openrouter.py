@@ -77,6 +77,8 @@ def _usage_cost(usage: dict[str, Any]) -> Decimal | None:
 class OpenRouterClient(ProviderClient):
     """A thin, logged, retrying client for OpenRouter's chat and transcription endpoints."""
 
+    provider = "openrouter"
+
     def __init__(
         self,
         session: Session,

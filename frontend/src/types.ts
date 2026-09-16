@@ -367,8 +367,23 @@ export interface QueueJobSummary {
   queue_position?: number | null
 }
 
+/** One rate-limited service's shared gate (D88). */
+export interface ProviderGateState {
+  name: string
+  in_flight: number
+  /** Working limit: halved by a 429, won back one slot at a time. */
+  allowed: number
+  max_in_flight: number
+  cooling_down_seconds: number
+  throttled_total: number
+}
+
 export interface IngestQueueResponse {
+  /** The earliest-started running job; every running job is in `running_jobs`. */
   running: QueueJobSummary | null
+  running_jobs: QueueJobSummary[]
+  max_concurrent_jobs: number
+  limits: ProviderGateState[]
   upcoming: QueueJobSummary[]
   backlog: QueueJobSummary[]
   past: QueueJobSummary[]

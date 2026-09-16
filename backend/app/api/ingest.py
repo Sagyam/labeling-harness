@@ -26,6 +26,7 @@ from app.services.youtube import (
     InvalidYouTubeUrl,
     VideoInfo,
     VideoTooLong,
+    YouTubeBotDetected,
     YouTubeUnavailable,
     canonical_url,
     check_duration,
@@ -33,6 +34,7 @@ from app.services.youtube import (
 )
 from app.storage.base import ObjectStorage
 from app.utils.logging import get_logger
+from app.utils.rate_limit import provider_gate
 
 logger = get_logger(__name__)
 
@@ -139,8 +141,13 @@ def _probe_or_http_error(url: str, settings: Settings) -> VideoInfo:
     A bad URL and an over-long video are the caller's problem (422); a yt-dlp or network failure
     is not (502), and telling the two apart is what makes the modal's error message actionable.
     """
+    # A lookup is one request, not a download, so it does not queue for the download slot; but a
+    # bot check it hits cools the downloads down like one a download hit (D88).
     try:
         info = probe(url, settings=settings)
+    except YouTubeBotDetected as exc:
+        provider_gate("youtube", settings.ingest.youtube.limit).throttled()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except InvalidYouTubeUrl as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

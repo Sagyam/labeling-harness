@@ -143,6 +143,64 @@ export function QueueList({
       </div>
     )}
 
+    {/* 2b. RUNNING JOBS AND SERVICE GATES (D88) */}
+    {(queueData.running_jobs.length > 0 || queueData.limits.some((g) => g.throttled_total > 0)) && (
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+          <h2 className="font-heading text-sm font-bold tracking-wide uppercase">
+            Running now ({queueData.running_jobs.length}/{queueData.max_concurrent_jobs})
+          </h2>
+          <div className="flex flex-wrap gap-2 font-mono text-[11px]">
+            {queueData.limits.map((gate) => (
+              <span
+                key={gate.name}
+                title={`${gate.throttled_total} rate-limit refusals so far; limit ${gate.allowed} of ${gate.max_in_flight}`}
+                className={cn(
+                  'rounded px-1.5 py-0.5',
+                  gate.cooling_down_seconds > 0
+                    ? 'bg-amber-500/20 text-amber-500'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {gate.name} {gate.in_flight}/{gate.allowed}
+                {gate.cooling_down_seconds > 0 && ` · cooling ${Math.ceil(gate.cooling_down_seconds)}s`}
+              </span>
+            ))}
+          </div>
+        </div>
+        {queueData.running_jobs.length > 0 && (
+          <div className="divide-y rounded-lg border">
+            {queueData.running_jobs.map((job) => (
+              <div
+                key={job.job_id}
+                className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-foreground">{job.title}</div>
+                  <div className="font-mono text-xs text-muted-foreground">
+                    {job.stage}
+                    {job.total_segments > 0 && ` · ${job.active_segments}/${job.total_segments} clips`}
+                  </div>
+                </div>
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                  {Math.round(job.progress)}%
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-destructive"
+                  onClick={() => onCancelJob(job.job_id)}
+                  aria-label="Stop this job"
+                >
+                  <RiCloseLine className="size-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
     {/* 3. UPCOMING QUEUE SECTION */}
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:p-5 shadow-xs">
       <div className="flex items-center justify-between gap-3 border-b pb-3">
@@ -153,20 +211,20 @@ export function QueueList({
           </h2>
         </div>
         <div className="text-xs text-muted-foreground">
-          Processed in order · 1 at a time on worker thread
+          Processed in order · {queueData.max_concurrent_jobs} at a time
         </div>
       </div>
 
       {queueData && queueData.upcoming.length > 0 ? (
         <div className="divide-y rounded-lg border">
-          {queueData.upcoming.map((job) => (
+          {queueData.upcoming.map((job, index) => (
             <div
               key={job.job_id}
               className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm hover:bg-muted/20"
             >
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono text-xs font-bold text-primary">
-                  #{job.queue_position}
+                  #{index + 1}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-foreground truncate">{job.title}</div>

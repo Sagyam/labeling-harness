@@ -436,6 +436,33 @@ def test_a_failed_download_fails_the_job_without_running_a_stage(
     assert not (tmp_path / "work_yt_fail").exists()
 
 
+def test_a_bot_check_backlogs_the_job_and_cools_every_later_download_down(
+    object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D88: the next queued URL waits out the cooldown instead of tripping the check again."""
+    from app.utils.rate_limit import provider_gate
+
+    def challenged(*args: Any, **kwargs: Any) -> Path:
+        raise YouTubeBotDetected("Sign in to confirm you're not a bot")
+
+    monkeypatch.setattr("app.services.ingest.pipeline.download_audio", challenged)
+
+    job = IngestJob(
+        job_id="yt-job-bot",
+        episode_id="yt_bot",
+        show_id="podcast",
+        title="Challenged",
+        audio_path=None,
+        work_dir=tmp_path / "work_yt_bot",
+        source_url=f"https://www.youtube.com/watch?v={VIDEO_ID}",
+    )
+    run_pipeline(job, lambda: None, object_storage, settings)
+
+    assert job.status == "backlog"
+    gate = provider_gate("youtube", settings.ingest.youtube.limit)
+    assert gate.cooling_down_for() > 0
+
+
 @pytest.mark.db
 def test_a_job_with_neither_a_file_nor_a_url_fails_loudly(
     db_session: Session, object_storage, settings, tmp_path: Path

@@ -91,6 +91,8 @@ SAFETY_SETTINGS = [{"category": c, "threshold": "OFF"} for c in _HARM_CATEGORIES
 class VertexClient(ProviderClient):
     """A logged, retrying client for Gemini speech models on Vertex AI."""
 
+    provider = "vertex"
+
     def __init__(
         self,
         session: Session,

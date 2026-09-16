@@ -507,3 +507,30 @@ def test_a_discard_is_emitted_to_subscribers_as_it_happens(
     discards = [e for e in seen if e.get("type") == "discard"]
     assert len(discards) == 1
     assert discards[0]["segment"]["failures"][0]["system_id"] == "gemini-3.8-flash"
+
+
+def test_a_run_whose_every_clip_fails_still_keeps_the_failed_request_rows(
+    db_session: Session, object_storage, settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invariant 6: a failed attempt is logged, and the log survives the episode failing.
+
+    The rows used to be flushed and never committed, because only a clip that transcribed
+    committed -- so an expired key left no trace of a single refused request.
+    """
+    job = _pipeline_job(tmp_path, "keylog", seconds=6.0)
+
+    def refusing(session, audio_path, *, route, **kwargs):
+        session.add(
+            LlmRequest(
+                route=route, model="m", request_hash="h", status="failed", error_message="401"
+            )
+        )
+        session.flush()
+        raise LlmRequestFailed("HTTP 401: key expired")
+
+    monkeypatch.setattr("app.services.ingest.pipeline.transcribe", refusing)
+    run_pipeline(job, session_factory=lambda: db_session, storage=object_storage, settings=settings)
+
+    assert job.status == "failed"
+    rows = db_session.scalars(sa.select(LlmRequest).where(LlmRequest.error_message == "401")).all()
+    assert rows, "the refused requests are on record"

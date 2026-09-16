@@ -20,6 +20,17 @@ default_max_tokens: 1024
 max_retries: 3
 retry_backoff_seconds: 0.5
 dry_run: false
+# One gate per service for the whole process (D88): every concurrent ingest's requests share it.
+# `max_in_flight` is a ceiling -- a 429 halves the working limit and starts a cooldown every caller
+# waits out, and successes win the limit back a slot at a time. A 429 is waited out up to
+# `rate_limit_retries` times without spending `max_retries`.
+limits:
+  openrouter:            # MAI-Transcribe-2: sub-second calls
+    max_in_flight: 16
+  elevenlabs:            # Scribe v2: one ingest's 8 concurrent clips never drew a 429
+    max_in_flight: 8
+  vertex:                # Gemini ASR and fusion share the model's quota
+    max_in_flight: 12
 routes:
   # ElevenLabs Scribe v2, called directly (ELEVEN_LABS_API_KEY). The only transcriber configured
   # here that returns word spans and per-word log probabilities, which is why it is primary: the

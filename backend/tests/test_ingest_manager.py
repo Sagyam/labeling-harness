@@ -249,41 +249,73 @@ def test_api_scram_unknown_job_404(client: TestClient) -> None:
 # --- the ingestion queue -----------------------------------------------------------------
 
 
-def test_queued_jobs_run_one_at_a_time_in_submission_order(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
-) -> None:
-    """The whole point of the queue: two submissions must not share the machine.
+def _with_jobs(settings, n: int):
+    return settings.model_copy(
+        update={"ingest": settings.ingest.model_copy(update={"max_concurrent_jobs": n})}
+    )
 
-    Overlap is asserted directly rather than through timing -- a concurrency bug that only shows
-    up on a loaded CI box is not a test.
-    """
-    running = 0
-    overlapped = False
-    order: list[str] = []
+
+def _overlap_probe(order: list[str]):
+    """A stand-in pipeline that records the peak number of jobs running together."""
+    state = {"running": 0, "peak": 0}
     guard = threading.Lock()
 
     def fake_pipeline(job, *args) -> None:
-        nonlocal running, overlapped
         with guard:
-            running += 1
-            overlapped = overlapped or running > 1
+            state["running"] += 1
+            state["peak"] = max(state["peak"], state["running"])
             order.append(job.episode_id)
-        time.sleep(0.02)
+        time.sleep(0.05)
         with guard:
-            running -= 1
+            state["running"] -= 1
         job.status = "completed"
 
+    return fake_pipeline, state
+
+
+def test_with_one_slot_queued_jobs_run_one_at_a_time_in_submission_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    """Overlap is asserted directly rather than through timing -- a concurrency bug that only shows
+    up on a loaded CI box is not a test.
+    """
+    order: list[str] = []
+    fake_pipeline, state = _overlap_probe(order)
     monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", fake_pipeline)
+    serial = _with_jobs(settings, 1)
 
     jobs = [_queued_job(f"queued_{n}", tmp_path) for n in range(4)]
-    positions = [manager.submit(job, lambda: None, None, settings) for job in jobs]
+    positions = [manager.submit(job, lambda: None, None, serial) for job in jobs]
     _drain()
 
-    assert not overlapped
+    assert state["peak"] == 1
     assert order == [job.episode_id for job in jobs]
     # The first submission starts immediately; each later one reports the jobs ahead of it.
     assert positions[0] == 0
     assert positions == sorted(positions)
+
+
+def test_jobs_run_concurrently_up_to_the_configured_limit_and_start_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    """D88: several episodes at once, never more than ``max_concurrent_jobs``."""
+    order: list[str] = []
+    fake_pipeline, state = _overlap_probe(order)
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", fake_pipeline)
+    three = _with_jobs(settings, 3)
+
+    jobs = [_queued_job(f"parallel_{n}", tmp_path) for n in range(7)]
+    positions = [manager.submit(job, lambda: None, None, three) for job in jobs]
+    _drain()
+
+    assert state["peak"] == 3
+    assert all(job.status == "completed" for job in jobs)
+    # Starters are released in submission order; which of three concurrent starters records itself
+    # first is the scheduler's business, so only the first three as a set are asserted.
+    assert set(order[:3]) == {job.episode_id for job in jobs[:3]}
+    # Three start at once; the fourth waits for one of them.
+    assert positions[:3] == [0, 0, 0]
+    assert positions[3] >= 1
 
 
 def test_a_job_scrammed_while_still_queued_never_runs(
@@ -302,8 +334,9 @@ def test_a_job_scrammed_while_still_queued_never_runs(
 
     first = _queued_job("scram_first", tmp_path)
     second = _queued_job("scram_second", tmp_path)
-    manager.submit(first, lambda: None, None, settings)
-    manager.submit(second, lambda: None, None, settings)
+    serial = _with_jobs(settings, 1)
+    manager.submit(first, lambda: None, None, serial)
+    manager.submit(second, lambda: None, None, serial)
 
     second.scram("queued and no longer wanted")
     release.set()
@@ -349,17 +382,20 @@ def test_the_queue_endpoint_lists_what_is_waiting(
 
     first = _queued_job("listed_first", tmp_path)
     second = _queued_job("listed_second", tmp_path)
-    manager.submit(first, lambda: None, None, settings)
-    manager.submit(second, lambda: None, None, settings)
+    serial = _with_jobs(settings, 1)
+    manager.submit(first, lambda: None, None, serial)
+    manager.submit(second, lambda: None, None, serial)
 
     deadline = time.monotonic() + 5.0
-    while manager._running_id != first.job_id and time.monotonic() < deadline:
+    while first.job_id not in manager._running and time.monotonic() < deadline:
         time.sleep(0.01)
 
     body = client.get("/ingest").json()
     listed = [row["episode_id"] for row in body["jobs"]]
     assert listed[:2] == ["listed_first", "listed_second"]
     assert body["running"]["episode_id"] == "listed_first"
+    assert [row["episode_id"] for row in body["running_jobs"]] == ["listed_first"]
+    assert "limits" in body
     assert client.get(f"/ingest/{second.job_id}").json()["queue_position"] == 1
 
     release.set()

@@ -55,12 +55,17 @@ from app.storage import build_storage
 from app.storage.base import ObjectStorage
 from app.utils.hashing import sha256_file
 from app.utils.logging import get_logger
+from app.utils.rate_limit import provider_gate
 
 from .audio import normalize_audio
 from .fusion import _classify_episode_topic, _run_fusion_stage
 from .job import DiscardedSegment, IngestJob, LockedSession
 
 logger = get_logger(__name__)
+
+#: Stage 6 writes corpus-wide rows (voices, systems, the queue), so concurrent jobs take turns at it
+#: (D88). Everything before it is per-episode and runs in parallel.
+_IMPORT_LOCK = threading.Lock()
 
 
 def run_pipeline(
@@ -144,11 +149,21 @@ def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
         # slice ahead of stage 1 rather than the whole bar.
         job.set_progress("downloading", percent * 0.05)
 
+    # One gate for every YouTube download in the process (D88): spaced out, one at a time, and a bot
+    # check cools every later download down instead of letting each one trip it again.
+    gate = provider_gate("youtube", settings.ingest.youtube.limit)
+
+    def waiting(seconds: float) -> None:
+        after = f", about {seconds:.0f}s" if seconds >= 1 else ""
+        job.log(f"Waiting for a YouTube download slot{after}...")
+
     try:
-        job.audio_path = download_audio(
-            job.source_url, job.work_dir, settings=settings, on_progress=report
-        )
+        with gate.slot(on_wait=waiting):
+            job.audio_path = download_audio(
+                job.source_url, job.work_dir, settings=settings, on_progress=report
+            )
     except YouTubeBotDetected as exc:
+        gate.throttled()
         job.backlog(
             reason="YouTube bot detection / rate limit challenge",
             error_message=str(exc),
@@ -157,6 +172,7 @@ def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
         return False
     except YouTubeError as exc:
         if is_bot_detection_error(str(exc)):
+            gate.throttled()
             job.backlog(
                 reason="YouTube bot detection / rate limit challenge",
                 error_message=str(exc),
@@ -204,10 +220,28 @@ def _halted(job: IngestJob, *, segments_detected: int = 0, segments_transcribed:
     return True
 
 
+def _await_speaker_turns(
+    job: IngestJob,
+    future: concurrent.futures.Future[dict[str, Any] | None] | None,
+    settings: Settings,
+) -> dict[str, Any] | None:
+    """The remote diarizer's answer, or ``None`` when it failed or ran out of time.
+
+    Waited for before the import lock is taken, so a slow GPU never holds up another job's import.
+    """
+    if future is None:
+        return None
+    try:
+        return future.result(timeout=settings.diarization.timeout_seconds)
+    except Exception as exc:
+        job.log(f"Diarization skipped: {type(exc).__name__}: {exc}", "warn")
+        return None
+
+
 def _import_speaker_turns(
     job: IngestJob,
     session: Session,
-    future: concurrent.futures.Future[dict[str, Any] | None],
+    result: dict[str, Any] | None,
     settings: Settings,
 ) -> None:
     """Store the remote diarizer's answer as the episode's first diarization run (D79).
@@ -216,10 +250,9 @@ def _import_speaker_turns(
     running after the timeout is logged, and the episode completes with uncoloured words. The
     savepoint keeps a failed import from taking the manifest import down with it.
     """
+    if not result:
+        return
     try:
-        result = future.result(timeout=settings.diarization.timeout_seconds)
-        if not result:
-            return
         with session.begin_nested():
             report = import_diarization(
                 session,
@@ -477,6 +510,9 @@ def _run_stages(
                                 )
                             )
                             _bump_progress()
+                        # The failed attempts' llm_requests rows are only flushed. Commit them, or
+                        # a run whose every clip fails leaves no record of its attempts (inv. 6).
+                        locked_session.commit()
                         # The clip is dead: nothing will reference it, and leaving it in the work
                         # directory would put it in the manifest's clip upload by accident.
                         with contextlib.suppress(OSError):
@@ -721,7 +757,8 @@ def _run_stages(
             for rec in segment_records:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-        with session_factory() as session:
+        speaker_turns = _await_speaker_turns(job, diarize_future, settings)
+        with _IMPORT_LOCK, session_factory() as session:
             import_report = import_manifest(
                 session,
                 job.work_dir,
@@ -734,7 +771,7 @@ def _run_stages(
             )
 
             if diarize_future is not None:
-                _import_speaker_turns(job, session, diarize_future, settings)
+                _import_speaker_turns(job, session, speaker_turns, settings)
 
             # Nothing stands between import and the queue any more: the episode drew its train/val
             # split at import, and gold is chosen per clip by hand from the queue itself (D71).

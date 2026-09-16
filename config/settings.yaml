@@ -103,7 +103,8 @@ export:
 
 ingest:
   work_root: ./data/ingest_work   # scratch space for web uploads; removed when a job finishes
-  max_segment_concurrency: 8     # number of segments transcribed concurrently
+  max_concurrent_jobs: 3         # episodes ingested at once; their inference shares the llm_routes.yaml limits (D88)
+  max_segment_concurrency: 8     # number of segments transcribed concurrently, per episode
   cpu_workers: 8                 # number of worker threads for audio slicing & ONNX
   # Text route that labels an episode's topic from its own transcript, once per episode, only
   # when the form left the topic blank (D57). Empty disables it.
@@ -114,6 +115,12 @@ ingest:
     probe_timeout_seconds: 30
     download_timeout_seconds: 1800
     cookies_file: ""              # Netscape cookie jar, for videos YouTube will not serve anonymously
+    limit:                        # D88: one download at a time, spaced out; a bot check cools all later ones down
+      max_in_flight: 1
+      min_interval_seconds: 5
+      cooldown_seconds: 600
+      max_cooldown_seconds: 3600
+      rate_limit_retries: 0
 
 # Transcript fusion (D72): a reasoning model reconciles the three recognisers into the seed.
 # The route itself -- model, thinking budget, timeout -- is `fuse_transcript` in llm_routes.yaml.

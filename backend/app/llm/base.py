@@ -12,7 +12,6 @@ route, model, status and latency -- is what an ingest's cost is reconstructed fr
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import time
@@ -28,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.config import LlmRoutes, load_llm_routes
 from app.models import LlmRequest
 from app.utils.logging import get_logger
+from app.utils.rate_limit import ProviderGate, provider_gate, retry_after_seconds
 
 logger = get_logger(__name__)
 
@@ -121,6 +121,9 @@ class ProviderClient:
     inherited from here.
     """
 
+    #: The service this client calls: its ``limits`` entry and its shared gate (D88).
+    provider: str = "default"
+
     def __init__(
         self,
         session: Session,
@@ -136,6 +139,9 @@ class ProviderClient:
         if self._client is None:
             self._client = httpx.Client(timeout=self.config.default_timeout_seconds)
         return self._client
+
+    def _gate(self) -> ProviderGate:
+        return provider_gate(self.provider, self.config.limit_for(self.provider))
 
     @staticmethod
     def _hash(payload: dict[str, Any]) -> str:
@@ -186,34 +192,58 @@ class ProviderClient:
     ) -> tuple[httpx.Response | None, str, int]:
         """Call ``send`` until it returns 200, fails unretryably, or runs out of attempts.
 
+        Every attempt holds a slot in the service's gate (D88), so concurrent jobs together stay
+        under its ``limits``. A 429 is not counted against ``max_retries``: it starts a cooldown
+        the whole service waits out, and the request tries again once it ends, up to
+        ``rate_limit_retries`` times. Other retryable statuses back off exponentially as before.
+
         Args:
             send: Builds and performs one request. Called once per attempt.
 
         Returns:
             ``(response, last_error, latency_ms)``. ``response`` is ``None`` when every attempt
-            failed, in which case ``last_error`` describes the final one.
+            failed, in which case ``last_error`` describes the final one. Latency is time spent in
+            requests, not waiting at the gate, so it stays comparable with a run that never waited.
         """
+        gate = self._gate()
+        limit = self.config.limit_for(self.provider)
         attempts = max(1, self.config.max_retries)
-        started = time.monotonic()
+        in_request = 0.0
         last_error = "no attempt was made"
-        for attempt in range(attempts):
+        failures = 0
+        refusals = 0
+        while True:
             response: httpx.Response | None = None
-            try:
-                response = send()
-            except httpx.HTTPError as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-            else:
+            with gate.slot():
+                began = time.monotonic()
+                try:
+                    response = send()
+                except httpx.HTTPError as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                finally:
+                    in_request += time.monotonic() - began
+            if response is not None:
                 if response.status_code == 200:
-                    return response, last_error, int((time.monotonic() - started) * 1000)
+                    gate.succeeded()
+                    return response, last_error, int(in_request * 1000)
                 last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                if response.status_code == 429:
+                    refusals += 1
+                    if refusals > limit.rate_limit_retries:
+                        last_error += f" (still rate limited after {refusals - 1} cooldowns)"
+                        break
+                    wait = gate.throttled(retry_after_seconds(response.headers))
+                    logger.info(
+                        "provider_request_throttled",
+                        provider=self.provider,
+                        refusals=refusals,
+                        wait_seconds=round(wait, 2),
+                    )
+                    continue  # the next slot waits out the cooldown
                 if response.status_code not in RETRYABLE_STATUS:
                     break
-            if attempt + 1 < attempts:
-                backoff = self.config.retry_backoff_seconds * (2**attempt)
-                if response is not None and response.status_code == 429:
-                    retry_after_header = response.headers.get("retry-after")
-                    if retry_after_header:
-                        with contextlib.suppress(ValueError):
-                            backoff = max(backoff, float(retry_after_header))
-                time.sleep(backoff)
-        return None, last_error, int((time.monotonic() - started) * 1000)
+            failures += 1
+            if failures >= attempts:
+                break
+            time.sleep(self.config.retry_backoff_seconds * (2 ** (failures - 1)))
+        return None, last_error, int(in_request * 1000)

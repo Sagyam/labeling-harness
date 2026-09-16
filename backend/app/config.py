@@ -293,6 +293,35 @@ class ModelsSettings(BaseModel):
         return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
+class ProviderLimit(BaseModel):
+    """How hard one rate-limited service may be pushed, from every ingest at once (D88).
+
+    One gate per service is shared by the whole process, so these numbers bound the traffic of all
+    concurrent jobs together, not of one job. ``max_in_flight`` is a ceiling: a 429 halves the
+    working limit and every caller waits out one shared cooldown, and the limit climbs back one
+    slot at a time as requests succeed.
+    """
+
+    model_config = _STRICT
+
+    #: Requests allowed in flight at once, across every job.
+    max_in_flight: int = Field(default=8, ge=1, le=256)
+    #: Minimum gap between two request starts. 0 lets requests start as soon as a slot is free.
+    min_interval_seconds: float = Field(default=0.0, ge=0.0)
+    #: First cooldown after a rate-limit refusal that names no wait of its own. It doubles for each
+    #: further refusal without a success in between.
+    cooldown_seconds: float = Field(default=5.0, gt=0.0)
+    #: Ceiling on any single cooldown, including one a ``Retry-After`` header asks for.
+    max_cooldown_seconds: float = Field(default=300.0, gt=0.0)
+    #: Rate-limit refusals one request waits out before it gives up. Kept apart from
+    #: ``max_retries``: a 429 is the service asking for time, not the request failing.
+    rate_limit_retries: int = Field(default=8, ge=0, le=32)
+
+
+#: The limit of a service with no entry of its own. Module-level so the test suite can shorten it.
+DEFAULT_PROVIDER_LIMIT = ProviderLimit()
+
+
 class YouTubeSettings(BaseModel):
     """Fetching an episode's audio straight from a YouTube URL, via yt-dlp.
 
@@ -311,6 +340,16 @@ class YouTubeSettings(BaseModel):
     #: Netscape-format cookie jar, for videos YouTube will not serve anonymously. Path only --
     #: the file itself is a secret and belongs outside the repository.
     cookies_file: str = ""
+    #: One download at a time, spaced out; a bot check cools every later download down (D88).
+    limit: ProviderLimit = Field(
+        default_factory=lambda: ProviderLimit(
+            max_in_flight=1,
+            min_interval_seconds=5.0,
+            cooldown_seconds=600.0,
+            max_cooldown_seconds=3600.0,
+            rate_limit_retries=0,
+        )
+    )
 
 
 class IngestSettings(BaseModel):
@@ -323,6 +362,9 @@ class IngestSettings(BaseModel):
     model_config = _STRICT
 
     work_root: Path = Path("./data/ingest_work")
+    #: Episodes ingested at once (D88). Their inference shares the per-service gates in
+    #: ``llm_routes.yaml``'s ``limits``, so more jobs never means more requests than those allow.
+    max_concurrent_jobs: int = Field(default=3, ge=1, le=8)
     max_segment_concurrency: int = Field(default=8, ge=1, le=32)
     cpu_workers: int = Field(default=8, ge=1, le=64)
     youtube: YouTubeSettings = Field(default_factory=YouTubeSettings)
@@ -527,7 +569,13 @@ class LlmRoutes(BaseModel):
     max_retries: int = 3
     retry_backoff_seconds: float = 0.5
     dry_run: bool = True
+    #: Per-service gates, keyed by provider (``openrouter``, ``elevenlabs``, ``vertex``, ``local``).
+    limits: dict[str, ProviderLimit] = Field(default_factory=dict)
     routes: dict[str, LlmRoute] = Field(default_factory=dict)
+
+    def limit_for(self, provider: str) -> ProviderLimit:
+        """The configured limit for ``provider``, or the default one."""
+        return self.limits.get(provider) or DEFAULT_PROVIDER_LIMIT
 
     @model_validator(mode="after")
     def _check_local_routes(self) -> LlmRoutes:

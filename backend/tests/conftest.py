@@ -27,6 +27,25 @@ DEFAULT_TEST_DB_URL = "postgresql+psycopg://harness:harness@localhost:5432/harne
 os.environ.setdefault("HARNESS_OVERLAP_NO_DOWNLOAD", "1")
 
 
+@pytest.fixture(autouse=True)
+def _fast_provider_gates(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Fresh per-service gates for every test, with cooldowns short enough not to be waited on.
+
+    The gates are process-wide (D88), so a refusal in one test would otherwise slow the next.
+    """
+    from app import config
+    from app.utils.rate_limit import reset_gates
+
+    monkeypatch.setattr(
+        config,
+        "DEFAULT_PROVIDER_LIMIT",
+        config.ProviderLimit(cooldown_seconds=0.001, max_cooldown_seconds=0.01),
+    )
+    reset_gates()
+    yield
+    reset_gates()
+
+
 def test_database_url() -> str:
     """URL of the throwaway database the suite runs against."""
     return os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DB_URL)

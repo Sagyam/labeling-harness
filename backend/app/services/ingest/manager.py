@@ -1,12 +1,12 @@
-"""The in-process queue that runs one ingestion job at a time, and its persistence."""
+"""The in-process queue that runs ingestion jobs, a few at a time, and its persistence."""
 
 from __future__ import annotations
 
 import contextlib
 import json
-import queue
 import threading
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.storage.base import ObjectStorage
 from app.utils.logging import get_logger
+from app.utils.rate_limit import gate_snapshots
 
 from . import pipeline as _pipeline
 from .job import IngestJob
@@ -41,12 +42,13 @@ class IngestionManager:
     long as the process lives. Only finished jobs are evicted, oldest first, so a running pipeline
     can never lose the record it is still writing to.
 
-    Submitted jobs run **one at a time**, in submission order, on a single worker thread. The
-    pipeline already parallelises inside an episode -- `max_segment_concurrency` clips are in
-    flight at once in stage 3 -- so running two episodes together does not finish either sooner:
-    it splits the same ffmpeg cores and the same ASR rate limit across both, and doubles the peak
-    disk in the work root. Queueing instead means the machine is loaded the same whether one
-    episode was submitted or twenty.
+    Submitted jobs start in submission order and up to ``ingest.max_concurrent_jobs`` run at once
+    (D88). This used to be one at a time, because two episodes shared one ASR rate limit with
+    nothing coordinating them. Every inference call now passes through its service's
+    process-wide gate (:mod:`app.utils.rate_limit`), which caps what all jobs together send and
+    makes every job wait out a 429 together. An episode spends most of its time waiting on remote
+    services, so a few in flight finish the queue sooner without sending more than the gates
+    allow. The import stage still runs one job at a time (see the pipeline).
 
     The queue lives in this process and nowhere else, which is the same limitation the job log has
     always had: if the server dies, everything still waiting dies with it and there is no record
@@ -59,15 +61,21 @@ class IngestionManager:
     def __init__(self) -> None:
         self._jobs: dict[str, IngestJob] = {}
         #: Jobs submitted and not yet picked up, with everything the pipeline needs to run them.
-        self._pending: queue.Queue[_QueuedRun] = queue.Queue()
+        #: Guarded by ``_lock``; workers wait on ``_wakeup`` for a job and a free slot together, so
+        #: jobs start strictly in submission order.
+        self._pending: deque[_QueuedRun] = deque()
         #: Ids in queue order, so a waiting job can be told its place without draining the queue.
         #: Held under ``_lock`` with the running job, because the status endpoint reads both.
         self._waiting: list[str] = []
         #: Jobs placed in backlog (e.g. YouTube bot check/rate limiting) to retry later.
         self._backlog: list[str] = []
-        self._running_id: str | None = None
+        #: Jobs running now, in the order they started.
+        self._running: list[str] = []
+        #: ``ingest.max_concurrent_jobs`` as of the latest submission.
+        self._max_jobs = 1
         self._lock = threading.Lock()
-        self._worker: threading.Thread | None = None
+        self._wakeup = threading.Condition(self._lock)
+        self._workers: list[threading.Thread] = []
         self._state_file: Path | None = None
         self._state_loaded: bool = False
 
@@ -86,15 +94,10 @@ class IngestionManager:
             self._jobs.clear()
             self._waiting.clear()
             self._backlog.clear()
-            self._running_id = None
+            self._running.clear()
             self._state_file = None
             self._state_loaded = False
-            while not self._pending.empty():
-                try:
-                    self._pending.get_nowait()
-                    self._pending.task_done()
-                except Exception:
-                    break
+            self._pending.clear()
 
     def _save_state(self) -> None:
         """Persist jobs and queue state to disk atomically. Caller should hold _lock."""
@@ -104,7 +107,7 @@ class IngestionManager:
             payload = {
                 "waiting": list(self._waiting),
                 "backlog": list(self._backlog),
-                "running_id": self._running_id,
+                "running_ids": list(self._running),
                 "jobs": [job.to_dict() for job in self._jobs.values()],
             }
             temp_file = self._state_file.with_suffix(".tmp")
@@ -191,9 +194,11 @@ class IngestionManager:
                 self._backlog.remove(job.job_id)
             if job.job_id not in self._waiting:
                 self._waiting.append(job.job_id)
-            ahead = len(self._waiting) - 1 + (1 if self._running_id else 0)
-            self._pending.put(_QueuedRun(job, session_factory, storage, settings))
-            self._ensure_worker()
+            self._max_jobs = settings.ingest.max_concurrent_jobs
+            ahead = self._ahead(len(self._waiting) - 1)
+            self._pending.append(_QueuedRun(job, session_factory, storage, settings))
+            self._ensure_workers()
+            self._wakeup.notify_all()
             self._save_state()
         if ahead:
             job.log(f"Queued: {ahead} job(s) ahead of this one.")
@@ -240,9 +245,11 @@ class IngestionManager:
 
             job.log("Job requeued for retry by user", "info")
             self._waiting.append(job.job_id)
-            ahead = len(self._waiting) - 1 + (1 if self._running_id else 0)
-            self._pending.put(_QueuedRun(job, session_factory, storage, settings))
-            self._ensure_worker()
+            self._max_jobs = settings.ingest.max_concurrent_jobs
+            ahead = self._ahead(len(self._waiting) - 1)
+            self._pending.append(_QueuedRun(job, session_factory, storage, settings))
+            self._ensure_workers()
+            self._wakeup.notify_all()
             self._save_state()
         return ahead
 
@@ -276,7 +283,7 @@ class IngestionManager:
             job = self._jobs.get(job_id)
             if job is None:
                 raise KeyError(f"Job {job_id} not found")
-            if job_id == self._running_id:
+            if job_id in self._running:
                 job.scram(reason="Cancelled by user")
                 self._save_state()
                 return {"job_id": job_id, "action": "scrammed", "status": job.status}
@@ -306,7 +313,7 @@ class IngestionManager:
                 jid
                 for jid, j in self._jobs.items()
                 if j.status in ("completed", "failed", "aborted")
-                and jid != self._running_id
+                and jid not in self._running
                 and jid not in self._waiting
                 and jid not in self._backlog
             ]
@@ -320,12 +327,16 @@ class IngestionManager:
         with self._lock:
             if job_id not in self._waiting:
                 return None
-            return self._waiting.index(job_id) + (1 if self._running_id else 0)
+            return self._ahead(self._waiting.index(job_id))
+
+    def _ahead(self, index: int) -> int:
+        """Jobs that must finish before the waiting job at ``index`` starts. Caller holds _lock."""
+        return max(0, index + len(self._running) - self._max_jobs + 1)
 
     def queue_snapshot(self) -> list[dict[str, Any]]:
         """The running job and everything behind it, in the order they will run."""
         with self._lock:
-            ordered = ([self._running_id] if self._running_id else []) + list(self._waiting)
+            ordered = list(self._running) + list(self._waiting)
         rows = []
         for position, job_id in enumerate(ordered):
             job = self._jobs.get(job_id)
@@ -347,14 +358,16 @@ class IngestionManager:
     def queue_snapshot_rich(self) -> dict[str, Any]:
         """Categorized snapshot of running, upcoming, backlog, and past jobs."""
         with self._lock:
-            running_job = self._jobs.get(self._running_id) if self._running_id else None
+            running_jobs = [self._jobs[jid] for jid in self._running if jid in self._jobs]
+            running_ids = set(self._running)
             waiting_ids = list(self._waiting)
+            positions = {jid: self._ahead(i) for i, jid in enumerate(waiting_ids)}
             backlog_ids = [j.job_id for j in self._jobs.values() if j.status == "backlog"]
             past_jobs = [
                 j
                 for j in self._jobs.values()
                 if j.status in ("completed", "failed", "aborted")
-                and j.job_id != self._running_id
+                and j.job_id not in running_ids
                 and j.job_id not in waiting_ids
                 and j.job_id not in backlog_ids
             ]
@@ -376,45 +389,58 @@ class IngestionManager:
                 "queue_position": pos,
             }
 
-        running = _summary(running_job) if running_job else None
+        running_rows = [_summary(job) for job in running_jobs]
+        running = running_rows[0] if running_rows else None
         upcoming = [
-            _summary(self._jobs[jid], i + 1)
-            for i, jid in enumerate(waiting_ids)
-            if jid in self._jobs
+            _summary(self._jobs[jid], positions[jid]) for jid in waiting_ids if jid in self._jobs
         ]
         backlog = [_summary(self._jobs[jid]) for jid in backlog_ids if jid in self._jobs]
         past = [_summary(j) for j in sorted(past_jobs, key=lambda j: j.created_at, reverse=True)]
 
         return {
+            # The earliest-started running job, for clients that show one; all of them below.
             "running": running,
+            "running_jobs": running_rows,
+            "max_concurrent_jobs": self._max_jobs,
             "upcoming": upcoming,
             "backlog": backlog,
             "past": past,
             "counts": {
-                "running": 1 if running else 0,
+                "running": len(running_rows),
                 "upcoming": len(upcoming),
                 "backlog": len(backlog),
                 "past": len(past),
                 "total": len(self._jobs),
             },
-            "jobs": ([running] if running else []) + upcoming,
+            "jobs": running_rows + upcoming,
+            # Each rate-limited service's gate: in flight, working limit, cooldown left.
+            "limits": gate_snapshots(),
         }
 
-    def _ensure_worker(self) -> None:
-        """Start the runner thread on first submission. Caller holds ``_lock``."""
-        if self._worker is not None and self._worker.is_alive():
-            return
-        self._worker = threading.Thread(target=self._drain, name="ingest-queue", daemon=True)
-        self._worker.start()
+    def _ensure_workers(self) -> None:
+        """Start runner threads up to the job limit. Caller holds ``_lock``.
+
+        Threads are never stopped; a lowered limit is enforced by the slot check in
+        :meth:`_drain`, not by the number of threads.
+        """
+        self._workers = [w for w in self._workers if w.is_alive()]
+        while len(self._workers) < self._max_jobs:
+            worker = threading.Thread(
+                target=self._drain, name=f"ingest-queue-{len(self._workers)}", daemon=True
+            )
+            self._workers.append(worker)
+            worker.start()
 
     def _drain(self) -> None:
-        """Run queued jobs one at a time, forever."""
+        """Run queued jobs, forever, while fewer than ``_max_jobs`` are running."""
         while True:
-            item = self._pending.get()
-            with self._lock:
+            with self._wakeup:
+                while not self._pending or len(self._running) >= self._max_jobs:
+                    self._wakeup.wait()
+                item = self._pending.popleft()
                 if item.job.job_id in self._waiting:
                     self._waiting.remove(item.job.job_id)
-                self._running_id = item.job.job_id
+                self._running.append(item.job.job_id)
                 self._save_state()
             try:
                 if item.job.scrammed:
@@ -428,19 +454,19 @@ class IngestionManager:
                 with contextlib.suppress(Exception):
                     item.job.fail(f"Ingestion crashed: {exc}")
             finally:
-                with self._lock:
+                with self._wakeup:
                     if item.job.status == "backlog" and item.job.job_id not in self._backlog:
                         self._backlog.append(item.job.job_id)
-                    self._running_id = None
+                    self._running.remove(item.job.job_id)
                     self._save_state()
-                self._pending.task_done()
+                    self._wakeup.notify_all()
 
     def _evict_finished(self) -> None:
         finished = [
             j
             for j in self._jobs.values()
             if j.status in ("completed", "failed", "aborted")
-            and j.job_id != self._running_id
+            and j.job_id not in self._running
             and j.job_id not in self._waiting
             and j.job_id not in self._backlog
         ]

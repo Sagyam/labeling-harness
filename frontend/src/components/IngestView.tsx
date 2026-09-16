@@ -396,7 +396,7 @@ export function IngestView({ onComplete }: IngestViewProps) {
               Queue &amp; Activity
               {queueData && (
                 <span className="ml-1 rounded-full bg-muted px-2 py-0.5 font-mono text-[10px]">
-                  {queueData.counts.running ? '1 active' : 'idle'} · {queueData.counts.upcoming} queued
+                  {queueData.counts.running ? `${queueData.counts.running} active` : 'idle'} · {queueData.counts.upcoming} queued
                 </span>
               )}
               {queueData && queueData.counts.backlog > 0 && (
@@ -438,14 +438,14 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 >
                   {queueData.running ? 'Running' : 'Idle'}
                 </span>
-                {queueData.running && (
-                  <span className="truncate font-mono text-xs text-muted-foreground">
-                    #{queueData.running.job_id.slice(0, 8)}
-                  </span>
-                )}
+                <span className="font-mono text-xs text-muted-foreground tabular-nums">
+                  {queueData.counts.running}/{queueData.max_concurrent_jobs}
+                </span>
               </div>
               <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                {queueData.running ? queueData.running.title : 'Ready for next episode'}
+                {queueData.running_jobs.length
+                  ? queueData.running_jobs.map((job) => job.title).join(' · ')
+                  : 'Ready for next episode'}
               </div>
             </div>
 
@@ -459,7 +459,9 @@ export function IngestView({ onComplete }: IngestViewProps) {
                 </span>
                 <span className="text-xs text-muted-foreground">videos waiting</span>
               </div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">Sequential FIFO runner</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                In order, {queueData.max_concurrent_jobs} at a time
+              </div>
             </div>
 
             <div

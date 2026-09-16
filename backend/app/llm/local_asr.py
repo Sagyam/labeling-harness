@@ -35,6 +35,8 @@ PLAYGROUND_ROUTE = "playground_transcribe"
 class LocalAsrClient(ProviderClient):
     """Transcribes a recording with a fine-tuned model in the playground sidecar."""
 
+    provider = "local"
+
     def transcribe(
         self,
         audio: bytes,
