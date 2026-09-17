@@ -50,7 +50,7 @@ def test_choosing_one_recogniser_over_the_others_is_not_invention() -> None:
 
 
 def test_a_near_miss_spelling_counts_as_heard() -> None:
-    report = run(evidence("सबै जम्मै भयो", ["सबै जमै भयो", "सबै जमै भयो"]))
+    report = run(evidence("सबै जम्मा भयो", ["सबै जमा भयो", "सबै जमा भयो"]))
     assert report.unsupported_rate == 0.0
 
 

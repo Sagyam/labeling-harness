@@ -66,7 +66,7 @@ from functools import lru_cache
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 
 #: Bumped whenever a rule below changes what counts as the same word.
-FOLD_VERSION = "fold-v2"
+FOLD_VERSION = "fold-v3"
 
 #: Romanized forms (vowels kept) are accepted as one word at or below this normalized distance.
 #: The EDA notebook swept 0.25-0.6; this is the conservative end that still catches inflection.
@@ -165,44 +165,171 @@ _IS_PRONOUNS = frozenset(
     {"it", "that", "there", "what", "he", "she", "here", "where", "who", "how"}
 )
 
-#: Colloquial Nepali spellings of one word, as whole spelling keys: the second form is the one
-#: the key keeps. Emphatic ै forms (`मात्रै`) are here by the owner's choice (D84) -- the particle
-#: is audible, but it does not change the word.
-_COLLOQUIAL_WORDS = {
-    "हैन": "होइन", "भो": "भयो", "खोइ": "खै", "पहिला": "पहिले", "पहिलाको": "पहिलेको",
-    "रुपियाँ": "रुपैयाँ", "बुवा": "बुबा", "बिहा": "बिहे", "जवाब": "जवाफ", "गलती": "गल्ती",
-    "अलिक": "अलि", "हुन्न": "हुँदैन", "भको": "भएको", "नभको": "नभएको", "कस्ले": "कसले",
-    "हजुरबा": "हजुरबुबा", "मात्रै": "मात्र", "एकदमै": "एकदम", "ठ्याक्कै": "ठ्याक्क",
-    "भर्खरै": "भर्खर",
-}  # fmt: skip
+#: Colloquial Nepali (D84, D89). Spoken Nepali contracts what the written language spells out,
+#: and a transcriber may write either. Each group below is one kind of spoken form: a table of
+#: whole words (spoken -> written, before any rule runs) and the productive rewrites it needs.
+#: The groups are applied in the order of :data:`_COLLOQUIAL_GROUPS`; the comment on a group says
+#: when that order matters. fold-v3 (D89) folds every group the owner listed, loose pairs
+#: included, and leaves tightening to listening.
 _C = "[क-ह]"
-#: Colloquial Nepali, rewritten inside a spelling key. Each rule is productive -- it covers every
-#: verb, not a list of them -- and each was run over the corpus vocabulary to check that the only
-#: words it joins are spellings of one word (D84).
+
+#: 1. Contracted verb forms: भाको, भाछ, थ्यो, थेँ, रैछ, हुन्न.
+_CONTRACTED_VERB_WORDS = {
+    "हैन": "होइन", "भो": "भयो", "भा": "भए", "भको": "भएको", "नभको": "नभएको", "गको": "गएको",
+    "लाको": "लगाएको", "थ्यो": "थियो", "थ्यौँ": "थियौँ", "थेँ": "थिएँ", "थिएन": "थिइनँ",
+    "थेन": "थिइनँ", "हुन्न": "हुँदैन", "खोइ": "खै", "चै": "चाहिँ",
+}  # fmt: skip
+_CONTRACTED = (
+    # Perfect participle: भएको -> भाको, गएका -> गाका, आएको -> आको, ल्याएको -> ल्याको.
+    (rf"(?<={_C})एक(?=[ोा])", "ाक"),
+    (r"(?<=[ाआ])एक(?=[ोा])", "क"),
+    # Mirative on the same stems: भएछ -> भाछ, आएछ -> आछ.
+    (rf"(?<={_C})एछ", "ाछ"),
+    (r"(?<=[ाआ])एछ", "छ"),
+    (r"(?<=[दल])िए(?=छ|पछि)", "े"),  # दिएछु -> देछु, लिएपछि -> लेपछि
+    (rf"(?<={_C})िछु$", "ेछु"),  # राखीछु -> राखेछु
+    (r"रैछ", "रहेछ"),
+)
+
+#: 2. The western -या participle: गर्या -> गरेको. Runs before the progressive, which only
+#: recognises गरिराख्या once it reads गरिराखेको.
+_WESTERN = (
+    (r"(?<=्न)्या$", "े"),  # गर्न्या -> गर्ने
+    # Two letters before it, so क्या ("what") is spared.
+    (rf"(?<=.{_C})्या$", "ेको"),
+)
+
+#: 3. The progressive: गरिरहेको, गरिराखेको, गरिरा -> गरिराको.
+_PROGRESSIVE = (
+    (r"(?<=[िइ])र(?:हे|ाखे)", "रा"),
+    # A bare -रा needs a stem before -इ-, so कीरा ("insect") and हीरा ("diamond") are spared.
+    (r"(?<=..ि)रा$", "राको"),
+    (r"(?<=.इ)रा$", "राको"),
+    (r"(?<=[िइ])र(?:हं|ाहुं|ाख्)थ", "राथ"),  # भइरहन्थ्यो -> भइराथ्यो (after the nasal rule)
+    (r"(?<=[िइ])राहुं", "रहं"),  # हिँडिराहुन्छु -> हिँडिरहन्छु
+)
+
+#: 4. The benefactive: गरिदियो -> गर्दियो, हालिदिएर -> हाल्देर.
+_BENEFACTIVE = (
+    # Not a final -दिन, where गर्दिन is "I don't do".
+    (rf"(?<={_C})िदि(?!न$)", "्दि"),
+    (rf"(?<={_C})िदे", "्दे"),
+    (r"दिइ(?=र|ह)", "दि"),  # बेचिदिइराखेको -> बेच्दिराखेको
+    (r"(?<=्द)िया$", "िए"),  # गर्दिया -> गर्दिए
+    (r"्दिए(?=र$|ं$|$)", "्दे"),
+    (r"दिए(?=क[ोा]|ला)", "दे"),
+    (r"्देउ$", "्दे"),  # छोड्देऊ -> छोड्दे
+)
+
+#: 5. First person plural, in one spelling: भनूँ, भनौँ -> भनौं; जाऊँ, जाऔँ -> जाऔं. The -म् forms
+#: (भनुम्, गरेम्, जाम्) are in :func:`_first_plural`, because the virama that marks them is gone
+#: from the key.
+_FIRST_PLURAL = (
+    (rf"(?<=.{_C})ुं$", "ौं"),  # two letters: हुँ ("I am") is not हौँ
+    (r"(?<=[ािीेो])(?:उं|औं)$", "ौं"),
+    (rf"(?<={_C})ियौं$", "्यौं"),  # थियौँ -> थ्यौं
+)
+
+#: 6. Contracted pronouns. A table: -ल्ले is also बल्ले ("at last").
+_PRONOUN_WORDS = {
+    "उल्ले": "उसले", "तेल्लाई": "त्यसलाई", "त्यलाई": "त्यसलाई", "जोले": "जसले", "जल्ले": "जसले",
+    "एले": "यसले", "यल्ले": "यसले", "त्यल्ले": "त्यसले", "अर्ले": "अरूले", "कस्ले": "कसले",
+}  # fmt: skip
+
+#: 7. लाउनु for लगाउनु. Runs before the participle rules, so लाएको meets लगाएको. लाइ- only
+#: before a verb, so लाइन ("line") and लाइक ("like") are spared.
+_LAUNU = (
+    (r"^(न?)ला(?=उ|ए)", r"\1लगा"),
+    (r"^(न?)लाइ(?=दि|स|हाल|रा|रह)", r"\1लगाइ"),
+)
+
+#: 8. The emphatic -ै, and doubled consonants. Both are audible and are in by the owner's choice.
+_EMPHATIC_WORDS = {
+    "मात्रै": "मात्र", "एकदमै": "एकदम", "ठ्याक्कै": "ठ्याक्क", "भर्खरै": "भर्खर", "अझै": "अझ",
+    "आजै": "आज", "बाहिरै": "बाहिर", "मेरै": "मेरो", "मै": "मा", "बिस्तारो": "बिस्तारै",
+    "पहिल्यै": "पहिले", "खत्रा": "खतरा", "खत्त्रै": "खतरा", "बब्बाल": "बबाल",
+    "सक्केसम्म": "सकेसम्म",
+}  # fmt: skip
+_EMPHATIC = (
+    (r"(?<=..)मै$", "मा"),  # सुरुमै -> सुरुमा
+    (r"एरै$", "एर"),  # लिएरै -> लिएर
+    # Emphatic gemination and doublets: कत्तिको -> कतिको, मज्जाले -> मजाले, आफैँले -> आफैले.
+    (r"^(क|त्य|य|उ|ज)त्ति", r"\1ति"),
+    (r"^मज्जा", "मजा"),
+    (r"^आफैं", "आफै"),
+    (r"^भेट्टा", "भेटा"),
+    (r"^(फुल|बिल|पेल)्ल", r"\1"),
+    (r"^सब(?=भंदा|ले$)", "सबै"),  # after the nasal rule has made भन्दा भंदा
+)
+
+#: 9. Loose pairs: forms that may also be a different word (नि is a particle, या is "or"). The
+#: owner folds them and will tighten by ear.
+_LOOSE_WORDS = {
+    "नि": "पनि", "या": "यहाँ", "छुइनँ": "छैन", "अलिकति": "अलि", "अलिकता": "अलि", "अलिक": "अलि",
+    "अलिअलि": "अलि", "अलिकत्ति": "अलि",
+}  # fmt: skip
+_LOOSE = (
+    # Infinitive: गर्नु -> गर्न, हुनुपऱ्यो -> हुनपऱ्यो, बाँच्नुलाई -> बाँच्नलाई.
+    # Not after the benefactive: गर्दिनु ("to do for") is not गर्दिन ("I don't do").
+    (r"(?<=[्ािुउ])(?<!दि)नु(?=$|लाइ$|मा$)", "न"),
+    (r"नु(?=प[रऱ]|को$)", "न"),
+    (r"नुहोस$", "नुस"),  # गर्नुहोस् -> गर्नुस्
+    (r"दाखेरि?$", "दा"),  # भन्दाखेरि -> भन्दा
+    (r"(?<=ा)इयो$", "यो"),  # खाइयो -> खायो
+    (rf"(?<={_C})ियो$", "्यो"),  # देखियो -> देख्यो; थियो and थ्यो meet here too
+)
+
+#: 10. Spoken forms the corpus has not yet held: जान्न, भन्नि, भनेसि, गर्चु.
+_UNSEEN_WORDS = {"जान्न": "जान्दिनँ", "भन्नि": "भन्ने", "हुन्या": "हुने"}
+_UNSEEN = (
+    (r"(?<=े)सि$", "पछि"),  # भनेसि -> भनेपछि
+    (r"(?<=्)च(?=ु$|ौं$)", "छ"),  # गर्चु -> गर्छु
+)
+
+#: One spoken word for two written ones, so that a merge matches them: भाथ्यो / भएको थियो,
+#: गरिराछ / गरिरहेको छ, गरेनि / गरे पनि. Runs last, on the participles the groups above made.
+_JOINED = (
+    (r"ाको(?=छ)", "ा"),
+    (r"कोथिएं$", "कोथें"),
+    (r"कोथिए$", "कोथे"),
+    (r"को(?=थ्यो$|थें$|थे$)", ""),
+    (r"(?<=[ेए])नि$", "पनि"),
+)
+
+#: A nasal consonant before its own class is an anusvara: सम्पन्न -> संपन्न, घण्टा -> घंटा.
+#: Orthography rather than dialect. First, because later rules read the anusvara, and again last,
+#: for the nasal clusters the benefactive makes (भनिदिइ -> भन्दि).
+_NASAL = ((r"ङ्(?=[कखगघ])|ञ्(?=[चछजझ])|ण्(?=[टठडढ])|न्(?=[तथदध])|म्(?=[पफबभ])", "ं"),)
+
+_OTHER_WORDS = {
+    "पहिला": "पहिले", "पहिलाको": "पहिलेको", "रुपियाँ": "रुपैयाँ", "बुवा": "बुबा", "बिहा": "बिहे",
+    "जवाब": "जवाफ", "गलती": "गल्ती", "हजुरबा": "हजुरबुबा",
+}  # fmt: skip
+
+_COLLOQUIAL_WORDS = {
+    **_CONTRACTED_VERB_WORDS, **_PRONOUN_WORDS, **_EMPHATIC_WORDS, **_LOOSE_WORDS, **_UNSEEN_WORDS,
+    **_OTHER_WORDS,
+}  # fmt: skip
+_COLLOQUIAL_GROUPS = (
+    _NASAL, _WESTERN, _LAUNU, _CONTRACTED, _PROGRESSIVE, _BENEFACTIVE, _FIRST_PLURAL, _EMPHATIC,
+    _LOOSE, _UNSEEN, _JOINED, _NASAL,
+)  # fmt: skip
 _COLLOQUIAL = tuple(
+    (re.compile(pattern), repl) for group in _COLLOQUIAL_GROUPS for pattern, repl in group
+)
+#: A table word keeps its fold under a case ending: रुपियाँको -> रुपैयाँको, पहिलादेखि -> पहिलेदेखि.
+_TABLE_SUFFIXES = ("देखि", "सम्म", "लाइ", "बाट", "संग", "हरु", "को", "का", "कि", "मा", "ले")
+#: -म् first person plural endings, read on the key once the virama is gone.
+_FIRST_PLURAL_M = tuple(
     (re.compile(pattern), repl)
     for pattern, repl in (
-        # Progressive: गरिरहेको, गरिराखेको -> गरिराको.
-        (r"(?<=[िइ])र(?:हे|ाखे)", "रा"),
-        # Perfect participle: भएको -> भाको, गएका -> गाका, पाएको -> पाको, आएको -> आको.
-        (rf"(?<={_C})एक(?=[ोा])", "ाक"),
-        (r"(?<=[ाआ])एक(?=[ोा])", "क"),
-        # Benefactive: गरिदियो -> गर्दियो. Not a final -दिन, where गर्दिन is "I don't do".
-        (rf"(?<={_C})िदि(?!न$)", "्दि"),
-        (r"दिए(?=क[ोा]|ला)", "दे"),
-        # Western participle: गर्या -> गरेको. Two letters before it, so क्या ("what") is spared.
-        (rf"(?<=.{_C})्या$", "ेको"),
-        # Polite imperative and infinitive: गर्नुहोस् -> गर्नुस्, हुनुपर्छ -> हुनपर्छ, गर्नुको -> गर्नको.
-        (r"नुहोस$", "नुस"),
-        (r"नु(?=प[रऱ]|को$)", "न"),
-        # A nasal consonant before its own class is an anusvara: सम्पन्न -> संपन्न, घण्टा -> घंटा.
-        (r"ङ्(?=[कखगघ])|ञ्(?=[चछजझ])|ण्(?=[टठडढ])|न्(?=[तथदध])|म्(?=[पफबभ])", "ं"),
-        # Emphatic gemination and doublets: कत्तिको -> कतिको, मज्जाले -> मजाले, आफैँले -> आफैले.
-        (r"^(क|त्य|य|उ|ज)त्ति", r"\1ति"),
-        (r"^मज्जा", "मजा"),
-        (r"^आफैं", "आफै"),
-        (r"^सब(?=भंदा|ले$)", "सबै"),  # after the nasal rule has made भन्दा भंदा
-        (r"रैछ", "रहेछ"),
+        (r"ेम$", "्यौं"),  # गरेम् -> गर्यौं
+        (r"एम$", "यौं"),  # खाएम् -> खायौं
+        (r"^थिम$", "थ्यौं"),
+        (r"(?<=[दल]ि)म$", "ौं"),  # छोड्दिम् -> छोड्दिऊँ
+        (rf"(?<={_C})िम$", "्यौं"),  # निस्किम् -> निस्क्यौं
+        (r"(?<=[ा])म$", "ौं"),  # जाम् -> जाऔं
+        (rf"(?<={_C})ु?म$", "ौं"),  # भनुम्, भनम् -> भनौं
     )
 )
 
@@ -336,10 +463,30 @@ def spelling_key(token: str) -> str:
     """The word with every spelling distinction this corpus does not hold consistently removed."""
     key = _orthographic_key(token)
     if _DEV.search(key):
-        key = _COLLOQUIAL_KEYS.get(key, key)
+        key = _table_word(key)
+        if token.endswith("म्") and len(key) >= 2:
+            key = _first_plural(key)
         for pattern, repl in _COLLOQUIAL:
             key = pattern.sub(repl, key)
-        key = _COLLOQUIAL_KEYS.get(key, key)
+        key = _table_word(key)
+    return key
+
+
+def _table_word(key: str) -> str:
+    if key in _COLLOQUIAL_KEYS:
+        return _COLLOQUIAL_KEYS[key]
+    for suffix in _TABLE_SUFFIXES:
+        stem = key.removesuffix(suffix)
+        if stem != key and len(stem) > 2 and stem in _COLLOQUIAL_KEYS:
+            return _COLLOQUIAL_KEYS[stem] + suffix
+    return key
+
+
+def _first_plural(key: str) -> str:
+    for pattern, repl in _FIRST_PLURAL_M:
+        folded = pattern.sub(repl, key)
+        if folded != key:
+            return folded
     return key
 
 

@@ -2752,3 +2752,65 @@ number of jobs, since each runs its own ONNX models and work directory (~350 MB 
 within 27 GB).
 
 **Reversal:** set `max_concurrent_jobs: 1`. The gates are harmless on their own and can stay.
+
+## D89 — fold-v3: every colloquial Nepali form folded, grouped by kind
+
+Roadmap item 6 asked for a spelling convention for spoken Nepali: the references write a
+colloquial form (`गको`, `गरिराछ`, `उल्ले`) one day and the standard form the next. The error
+mining listed ten kinds of such form. There is no accepted normalizer for Nepali to follow, so the
+owner chose to **fold all ten** and let a listening check by native speakers decide what to
+tighten. `fold-v3` does that. It is still a comparison: no label or hypothesis changes.
+
+**The rules are grouped by kind in `fold.py`**, one table and one rule tuple per group, applied in
+the order of `_COLLOQUIAL_GROUPS`:
+
+| group | examples |
+|---|---|
+| 1. contracted verb forms | `भाको`/`भएको`, `गको`/`गएको`, `भाछ`/`भएछ`, `थ्यो`/`थियो`, `थेँ`/`थिएँ`, `थिएन`/`थिइनँ`, `राखीछु`/`राखेछु` |
+| 2. the western `-या` participle | `गर्या`/`गरेको`, `गर्न्या`/`गर्ने` |
+| 3. the progressive | `गरिरा`/`गरिरहेको`, `भइराथ्यो`/`भइरहन्थ्यो` |
+| 4. the benefactive | `गर्दिया`/`गरिदिए`, `छोड्देऊ`/`छोडिदेऊ`, `भन्दिहाल्छु`/`भनिदिइहाल्छु` |
+| 5. first person plural | `भनुम्`, `भनम्`, `भनूँ`/`भनौँ`; `गरेम्`/`गर्यौँ`; `जाम्`, `जाऔँ`/`जाऊँ` |
+| 6. contracted pronouns | `उल्ले`/`उसले`, `तेल्लाई`/`त्यसलाई`, `जोले`/`जसले` |
+| 7. `लाउनु` for `लगाउनु` | `लाएर`/`लगाएर`, `लाउँछ`/`लगाउँछ` |
+| 8. emphatic `-ै`, doubled consonants | `मै`/`मा`, `अझै`/`अझ`, `लिएरै`/`लिएर`, `सक्केसम्म`/`सकेसम्म`, `खत्रा`/`खतरा` |
+| 9. loose pairs | `नि`/`पनि`, `गर्न`/`गर्नु`, `भन्दाखेरि`/`भन्दा`, `अलिकति`/`अलि`, `या`/`यहाँ`, `छुइनँ`/`छैन`, `खाइयो`/`खायो` |
+| 10. forms not yet in the corpus | `जान्न`, `भन्नि`, `भनेसि`, `गर्चु` |
+
+A last group, **joined**, lets one spoken word match two written ones through a merge:
+`भाथ्यो`/`भएको थियो`, `गरिराछ`/`गरिरहेको छ`, `भाछैन`/`भएको छैन`, `गरेनि`/`गरे पनि`.
+
+**Two fold-v2 bugs are fixed on the way.** The progressive rule ran before the `-या` rule, so
+`गरिराख्या` never met `गरिराखेको`. A table word lost its fold under a case ending: `रुपियाँ` was
+folded, `रुपियाँको` and `पहिलादेखि` were not. Table words now keep their fold under the common
+endings.
+
+**Two fold-v2 refusals are reversed by the owner's choice:** `गरूँ`/`गरौँ` ("let me" / "let's")
+and `अलिकति`/`अलि` are now one word each. Group 9 as a whole joins words that are sometimes
+different: `नि` is also a particle, `या` is also "or", `गरियो` is a passive, `दिन` is also "day".
+
+**Audit.** As in D84, every rule was run over the corpus vocabulary (14,000 word types, plus the
+fine-tune's output) and all 380 groups it newly joined were read. Two were narrowed:
+- **The infinitive** skips the benefactive, so `गर्दिनु` ("to do for") does not meet `गर्दिन` ("I
+  don't do").
+- **`-ुँ` → `-ौँ`** needs two letters before it, so `हुँ` ("I am") does not meet `हौँ`.
+
+One wrong join is kept: `जान्न` ("I don't know") meets `जाँदिनँ` ("I don't go"), because the D84
+nasal rule already makes `जान्दिनँ` and `जाँदिनँ` one key.
+
+**Measured** on the 2026-09-16 fine-tune and the recognisers, same references:
+
+| system | gold fold-v2 | gold fold-v3 | gain |
+|---|---|---|---|
+| Flex fine-tune | 6.58 | 6.25 | 0.33 |
+| Scribe | 7.08 | 6.68 | 0.40 |
+| Gemini | 6.38 | 6.16 | 0.23 |
+| MAI | 6.00 | 5.81 | 0.19 |
+
+Flex val: 12.59 → 12.05. The gain is small, about a sixth of the 2.02-point ceiling item 6
+estimated. Most of that ceiling is grammar (person, tense, case suffixes), which no convention
+removes. **The fine-tune is not the system that gains most**, so the rules were not fitted to its
+errors, although they were chosen by reading them.
+
+**Reversal:** revert the groups to fold-v2's rules. Every number stored under fold-v2 stays valid
+under its own version name.
