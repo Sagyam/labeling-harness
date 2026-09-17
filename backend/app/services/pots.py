@@ -297,3 +297,113 @@ def pot_status(session: Session, *, settings: Settings | None = None) -> PotStat
         if set(status.corpus_coverage[key]) - set(status.gold_coverage[key])
     }
     return status
+
+
+# --- redrawing val (D90) -----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EpisodeHours:
+    """An episode and the hours of its clips that are not gold: what val would take from train."""
+
+    external_id: str
+    hours: float
+    show_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RedrawReport:
+    """What :func:`redraw_val` did."""
+
+    val: tuple[str, ...]
+    changed: tuple[str, ...]
+    val_hours: float
+    train_hours: float
+
+
+def draw_val(
+    episodes: Iterable[EpisodeHours], *, share: float, seed: int, long_form_hours: float
+) -> frozenset[str]:
+    """The episodes that make up val, drawn per stratum by hash (D90).
+
+    Long-form episodes (podcasts, at least ``long_form_hours``) and short-form ones (reviews) are
+    drawn separately, so val holds both in the proportion train does. Within a stratum, episodes
+    are taken in hash order while val stays within 125% of ``share`` of the stratum's hours. An
+    episode longer than half of that target is never taken, so no single recording can dominate val
+    the way one roundtable once carried 83% of its errors. Long-form val holds at most one episode
+    per show, so its hosts are as many as possible.
+    """
+    chosen: set[str] = set()
+    pool = [e for e in episodes if e.hours > 0]
+    for long_form in (True, False):
+        stratum = [e for e in pool if (e.hours >= long_form_hours) == long_form]
+        target = share * sum(e.hours for e in stratum)
+        taken = 0.0
+        shows: set[str] = set()
+        for episode in sorted(stratum, key=lambda e: _hash_unit(e.external_id, seed=seed)):
+            if taken >= target:
+                break
+            if episode.hours > target / 2 or taken + episode.hours > target * 1.25:
+                continue
+            if long_form and episode.show_id is not None:
+                if episode.show_id in shows:
+                    continue
+                shows.add(episode.show_id)
+            chosen.add(episode.external_id)
+            taken += episode.hours
+    return frozenset(chosen)
+
+
+def redraw_val(
+    session: Session, *, share: float, seed: int, long_form_hours: float, actor: str
+) -> RedrawReport:
+    """Redraw every episode's train/val split with :func:`draw_val`; audit each change.
+
+    Hours count an episode's clips outside gold that are not excluded. An episode with none (every
+    clip in gold) is left as it is: its split exports nothing. The caller commits.
+    """
+    hours_expr = sa.func.coalesce(
+        sa.func.sum(Segment.duration_seconds).filter(
+            Segment.pot != "gold", Segment.pipeline_status != "excluded"
+        ),
+        0.0,
+    )
+    rows = session.execute(
+        sa.select(Episode, hours_expr).outerjoin(Segment).group_by(Episode.id)
+    ).all()
+    hours = {episode.external_id: float(seconds) / 3600 for episode, seconds in rows}
+    val = draw_val(
+        [EpisodeHours(e.external_id, hours[e.external_id], e.show_id) for e, _ in rows],
+        share=share,
+        seed=seed,
+        long_form_hours=long_form_hours,
+    )
+    changed = []
+    now = sa.func.now()
+    for episode, _ in rows:
+        split = "val" if episode.external_id in val else "train"
+        if hours[episode.external_id] == 0 or split == episode.split:
+            continue
+        session.add(
+            AuditLog(
+                entity_type="episode",
+                entity_id=str(episode.id),
+                action="split_changed",
+                actor=actor,
+                old_values_jsonb={"split": episode.split, "split_seed": episode.split_seed},
+                new_values_jsonb={"split": split, "split_seed": seed, "share": share},
+            )
+        )
+        episode.split, episode.split_seed, episode.split_assigned_at = split, seed, now
+        changed.append(episode.external_id)
+    for episode, _ in rows:
+        if episode.external_id in val:
+            episode.split_seed = seed
+    session.flush()
+    logger.info("val_redrawn", val=len(val), changed=len(changed), seed=seed)
+    return RedrawReport(
+        val=tuple(sorted(val)),
+        changed=tuple(sorted(changed)),
+        val_hours=sum(hours[k] for k in val),
+        train_hours=sum(h for k, h in hours.items() if k not in val),
+    )

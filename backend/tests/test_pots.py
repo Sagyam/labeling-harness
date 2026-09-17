@@ -17,11 +17,14 @@ from app.models import AuditLog, Episode, Segment, SegmentLabel
 from app.services.labeling import get_or_create_label_version
 from app.services.pots import (
     GOLD_SPLIT,
+    EpisodeHours,
     PotError,
     draw_split,
+    draw_val,
     effective_split,
     episode_coverage,
     pot_status,
+    redraw_val,
     set_segment_pot,
 )
 
@@ -304,3 +307,89 @@ def test_episode_coverage_reads_speakers_and_topic(db_session: Session) -> None:
         "gender": frozenset({"female"}),
         "topic": frozenset({"technology"}),
     }
+
+
+# --- redrawing val (D90) -----------------------------------------------------------------
+
+
+def _long_and_short(n_long: int = 16, n_short: int = 28) -> list[EpisodeHours]:
+    long_form = [EpisodeHours(f"podcast-{i}", 0.7 + 0.1 * (i % 9)) for i in range(n_long)]
+    short_form = [EpisodeHours(f"review-{i}", 0.1 + 0.01 * (i % 12)) for i in range(n_short)]
+    return [*long_form, *short_form, EpisodeHours("roundtable", 2.3)]
+
+
+def _hours(episodes: list[EpisodeHours], ids: frozenset[str], *, long_form: bool) -> float:
+    return sum(e.hours for e in episodes if e.external_id in ids and (e.hours >= 0.5) == long_form)
+
+
+def test_the_val_draw_is_reproducible_and_changes_with_the_seed() -> None:
+    episodes = _long_and_short()
+    first = draw_val(episodes, share=0.1, seed=1, long_form_hours=0.5)
+    assert first == draw_val(list(reversed(episodes)), share=0.1, seed=1, long_form_hours=0.5)
+    assert first != draw_val(episodes, share=0.1, seed=2, long_form_hours=0.5)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_each_stratum_gives_its_share_of_hours_to_val(seed: int) -> None:
+    episodes = _long_and_short()
+    val = draw_val(episodes, share=0.1, seed=seed, long_form_hours=0.5)
+    for long_form in (True, False):
+        total = sum(e.hours for e in episodes if (e.hours >= 0.5) == long_form)
+        taken = _hours(episodes, val, long_form=long_form)
+        assert 0.1 * total * 0.75 <= taken <= 0.1 * total * 1.25
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_no_val_episode_is_more_than_half_its_strata_val_hours(seed: int) -> None:
+    episodes = _long_and_short()
+    val = draw_val(episodes, share=0.1, seed=seed, long_form_hours=0.5)
+    assert "roundtable" not in val
+    long_target = 0.1 * sum(e.hours for e in episodes if e.hours >= 0.5)
+    assert all(e.hours <= long_target / 2 for e in episodes if e.external_id in val)
+    assert sum(1 for e in episodes if e.external_id in val and e.hours >= 0.5) >= 2
+
+
+def test_redraw_moves_episodes_and_audits_only_the_changes(db_session: Session) -> None:
+    podcasts = [
+        make_episode(db_session, f"pod-{i}", minutes=40 + 5 * i, show_id=f"show-{i}")
+        for i in range(12)
+    ]
+    reviews = [make_episode(db_session, f"rev-{i}", minutes=8) for i in range(20)]
+    big = make_episode(db_session, "big", minutes=140, split="val")
+
+    report = redraw_val(db_session, share=0.1, seed=7, long_form_hours=0.5, actor="test")
+
+    by_id = {e.external_id: e for e in [*podcasts, *reviews, big]}
+    for episode in by_id.values():
+        db_session.refresh(episode)
+    val = {k for k, e in by_id.items() if e.split == "val"}
+    assert val == set(report.val)
+    assert by_id["big"].split == "train"
+    assert any(k.startswith("pod-") for k in val) and any(k.startswith("rev-") for k in val)
+    assert all(by_id[k].split_seed == 7 for k in val)
+    audits = db_session.scalars(sa.select(AuditLog).where(AuditLog.action == "split_changed")).all()
+    assert {a.new_values_jsonb["split"] for a in audits} <= {"train", "val"}
+    assert len(audits) == len(report.changed)
+    assert "big" in report.changed
+
+
+def test_long_form_val_holds_one_episode_per_show() -> None:
+    episodes = [EpisodeHours(f"a-{i}", 0.8, "show-a") for i in range(10)]
+    episodes += [EpisodeHours(f"b-{i}", 0.8, "show-b") for i in range(10)]
+    episodes += [EpisodeHours(f"c-{i}", 0.8, "show-c") for i in range(10)]
+    val = draw_val(episodes, share=0.1, seed=3, long_form_hours=0.5)
+    assert len({e.show_id for e in episodes if e.external_id in val}) == len(val)
+
+
+def test_redraw_leaves_an_episode_whose_clips_are_all_gold(db_session: Session) -> None:
+    for i in range(12):
+        make_episode(db_session, f"pod-{i}", minutes=40 + 5 * i, show_id=f"show-{i}")
+    shorts = make_episode(db_session, "short", minutes=1, split="val")
+    for segment in segments_of(db_session, shorts):
+        set_segment_pot(db_session, segment, "gold", actor="test")
+
+    report = redraw_val(db_session, share=0.1, seed=7, long_form_hours=0.5, actor="test")
+
+    db_session.refresh(shorts)
+    assert shorts.split == "val"
+    assert "short" not in report.changed and "short" not in report.val

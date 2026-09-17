@@ -2814,3 +2814,31 @@ errors, although they were chosen by reading them.
 
 **Reversal:** revert the groups to fold-v2's rules. Every number stored under fold-v2 stays valid
 under its own version name.
+
+## D90 — Val is redrawn by stratum: long and short form, capped, one podcast per show
+
+Val was drawn by hashing each episode against `val_fraction`. With 44 episodes, from 6-minute
+reviews to 2-hour roundtables, the hash gave val 3.94 h (larger than gold's 2.17 h), 849 of its 921
+clips from two podcasts, and one roundtable carried 83% of val's errors. Epochs were being picked
+on one recording's crosstalk, and val took longer to decode than gold.
+
+**The draw (`pots.draw_val`, run by `scripts/redraw_val.py`).**
+- **Two strata.** Long-form episodes (at least 0.5 h outside gold) and short-form ones are drawn
+  separately. Each gives `val_fraction` of its hours to val, so val has the same mix as train.
+- **Hash order, capped.** Within a stratum, episodes are taken in `hash(episode, seed)` order while
+  val stays within 125% of the target.
+- **No dominant recording.** An episode longer than half of its stratum's target is never taken.
+- **One podcast per show**, so val's long-form hosts differ.
+- **Gold-only episodes are left alone**: their split exports nothing.
+- Every changed episode gets an `audit_logs` row (`split_changed`).
+
+**Result, seed 20260917.** Val 2.18 h over 6 episodes: 2 podcasts from different shows
+(`on_air_with_sanjay_814`, `the_bravo_delta_show s3e2`) and 4 reviews. That is 635 clips, 20% with
+crosstalk (train 27%). Train is 22.30 h. The roundtable is back in train. New imports still draw by
+hash; rerun the script to rebalance.
+
+**Cost.** Val numbers from before 2026-09-17 are not comparable with later ones. Val holds only two
+podcasts, the most whole episodes the corpus allows at 10%.
+
+**Reversal:** restore the splits from `data/backups/harness_2026-09-17_pre_val_redraw.dump`, or
+reverse the `split_changed` audit rows.
