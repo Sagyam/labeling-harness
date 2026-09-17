@@ -20,7 +20,29 @@ What survives:
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
-until 2026-09-15, `fold-v2` (D84) since.
+until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
+
+---
+
+## fold-v3: colloquial Nepali folded (2026-09-17)
+
+D89 folds ten kinds of colloquial form (contracted verbs, `-या`, progressive, benefactive, first
+person plural, pronouns, `लाउनु`, emphatic `-ै`, loose pairs, unseen forms). Same references, same
+text:
+
+| system | gold fold-v2 | gold fold-v3 | val fold-v2 | val fold-v3 |
+|---|---|---|---|---|
+| Flex fine-tune 2026-09-16 | 6.58 | **6.25** | 12.59 | **12.05** |
+| Scribe | 7.08 | 6.68 | | |
+| Gemini | 6.38 | 6.16 | | |
+| MAI | 6.00 | 5.81 | | |
+
+- **Small.** Item 6's ceiling was 2.02 points of same-word substitutions. Only ~115 of those 1,268
+  errors were colloquial-against-standard pairs; the rest are grammar (`थियो`/`थिएँ`,
+  `हामी`/`हामीले`, `भने`/`भनेर`).
+- **Not fitted to the fine-tune.** Scribe gains most (0.40), Flex 0.33.
+- **In the references**, spoken forms are common, not rare: `हैन` 2,230 against `होइन` 992,
+  `थिएन` 170 against `थिइनँ` 10, `लाएर` 36 against `लगाएर` 11, `नि` 2,234 against `पनि` 4,671.
 
 ---
 

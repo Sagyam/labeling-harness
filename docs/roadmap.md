@@ -9,8 +9,7 @@ The thread through items 1–5: **crosstalk is the largest measured source of er
 climbs from 9% on clean clips to 24% on clips more than 15% overlapped. Removing that effect would
 take gold from ~11.5% to ~8.8% (fold-v1). Item 1 is the measuring stick for items 2–4, and item 5
 makes the benchmark worth measuring against. On the 2026-09-16 split, crosstalk costs val 5.46
-points and the speaker-held-out gold 0.17. Item 6, the spelling convention, costs up to 2 points
-on both.
+points and the speaker-held-out gold 0.17. Item 6, the spelling convention, is folded (fold-v3).
 
 ## 1. Classify every clip by acoustic condition
 
@@ -92,21 +91,15 @@ Gold today shares speakers and episodes with train: 36 of 42 episodes have clips
 
 ## 6. Decide a spelling convention for spoken Nepali
 
-The owner will come back to this. Of the levers the error mining found (findings.md, *What the
-6.58% is made of*), it is the one judged worth the effort.
+**Folded 2026-09-17 (D89, fold-v3).** The owner chose to fold every colloquial form the error
+mining found, in ten groups, and to tighten later if a listening check by native speakers finds the
+metric too kind. Gain: gold 6.58 → 6.25, val 12.59 → 12.05 (findings.md, *fold-v3*).
 
-When a speaker says a colloquial or contracted form, the reference sometimes keeps it as spoken
-(`गको`, `चै`, `देछु`) and sometimes writes the standard form (`गएको`, `चाहिँ`, `दिएछु`). Training
-references mix both, so the model cannot tell which one is wanted, and the scorer counts either
-choice as an error.
-
-- **Cost today.** Devanagari substitutions of the same word in a different form (similarity at
-  least 0.5, not at a clip edge) are 2.02 points on gold and 2.02 on val. That is a ceiling: it
-  also holds real suffix errors (`हामी`/`हामीले`) that no convention removes.
-- **Start from** the most frequent such pairs in the gold and val errors. For each pair, decide:
-  verbatim, standard, or equivalent.
-- **Then** either fold the equivalent pairs in `fold.py` (a new fold version, D84's process) or
-  relabel to one form, and re-score.
+**Still open.**
+- The listening check, and any group it tightens.
+- The references still mix both forms, so the model still cannot tell which one is wanted. Only a
+  relabel to one form would change what it learns; the fold only changes what is counted.
+- Most of the 2.02-point same-word ceiling is grammar, not spelling, and is untouched.
 
 ---
 
