@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import LlmRoutes
 from app.llm.local_asr import LocalAsrClient
-from app.services.ingest.audio import normalize_audio
+from app.services.ingest.audio import SilentAudioError, normalize_audio
 
 #: Longest recording accepted. Flex is not a long-form model: it was fine-tuned on clips of at most
 #: 21 s, and the page stops recording at this length.
@@ -85,6 +85,11 @@ def prepare_audio(data: bytes, filename: str | None = None) -> tuple[bytes, floa
         src.write_bytes(data)
         try:
             seconds = normalize_audio(src, dst)
+        except SilentAudioError as exc:
+            raise PlaygroundError(
+                "the recording is silent: check that the browser uses the right microphone and "
+                "that it is not muted"
+            ) from exc
         except RuntimeError as exc:
             raise PlaygroundError(f"not a readable recording: {exc}") from exc
         if seconds > MAX_SECONDS:

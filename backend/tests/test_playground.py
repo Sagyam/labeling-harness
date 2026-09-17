@@ -111,6 +111,13 @@ def test_a_recording_longer_than_the_cap_is_refused() -> None:
         prepare_audio(wav(playground.MAX_SECONDS + 1), "long.wav")
 
 
+def test_a_silent_recording_is_refused_as_silent() -> None:
+    silent = io.BytesIO()
+    sf.write(silent, np.zeros(48_000 * 2, dtype=np.float32), 48_000, format="WAV")
+    with pytest.raises(PlaygroundError, match="silent"):
+        prepare_audio(silent.getvalue(), "take.wav")
+
+
 @pytest.mark.parametrize("data", [b"", b"this is not audio at all"])
 def test_nothing_or_noise_is_refused(data: bytes) -> None:
     with pytest.raises(PlaygroundError):

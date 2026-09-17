@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -69,6 +70,10 @@ def _resample_filter() -> str:
     return SWR_RESAMPLE_FALLBACK
 
 
+class SilentAudioError(RuntimeError):
+    """The input holds no sound at all, so there is nothing to normalise."""
+
+
 def normalize_audio(input_path: Path, output_path: Path) -> float:
     """Stage 1: Normalize audio using FFmpeg with loudnorm filter.
 
@@ -78,6 +83,10 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
     downmixes and resamples through :func:`_resample_filter` so that nothing above 8 kHz folds
     back into the clip as alias.
     Returns duration in seconds.
+
+    Raises:
+        SilentAudioError: The input is digital silence.
+        RuntimeError: FFmpeg could not normalise it.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -109,6 +118,10 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
                     measured = data
         except Exception:
             measured = None
+    if measured is not None and not math.isfinite(float(measured["input_i"])):
+        # Silence measures -inf LUFS. Pass 2 then fails on the inf offset, and single-pass
+        # loudnorm would blow the silence up to full scale.
+        raise SilentAudioError("the audio is silent (loudness -inf LUFS)")
 
     # Pass 2: Apply linear normalization with clean mono downmix before resampling
     resample = _resample_filter()
