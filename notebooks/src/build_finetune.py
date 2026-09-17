@@ -181,10 +181,11 @@ Run 2026-09-12: gold 13.20% greedy -> 11.44% with the retry (7 loops -> 0); val 
     ),
     md("## Config"),
     code(r"""
-RUN_NAME = "indic-transcribe-flex-ft"
+RUN_NAME = "indic-transcribe-flex-ft-YYYY-MM-DD"  # the date makes the folder in OUT_REPO and on the Models page unique
 MODEL_ID = "bodhan-ai/indic-transcribe-flex"
 LANG, MODE = "ne", "mixed"
-USE_DRIVE = True
+USE_DRIVE = False          # outputs stay on the VM and go to OUT_REPO at the end; True also keeps them on Drive
+OUT_REPO = "Sagyam/nepanglish-asr-flex-ft"  # private HF model repo; every run lands in <RUN_NAME>/
 EPOCHS, LR, WARMUP = 6, 1e-5, 0.1
 # Shown on the harness's Models page (D83). Say what is different about this run.
 MODEL_NAME = "Indic-Transcribe-Flex FT"
@@ -466,8 +467,8 @@ for s, f, t in decode.log:
 
 Everything the harness's **Models** page needs to show this run (D83): the model card, plus gold
 and val transcripts from the best weights under the same decoder. No weights: the page scores
-text, it never runs the model. Copy `OUT/harness/` from Drive to the harness checkout as
-`data/models/asr/<slug>/` (the folder name becomes the model's id), then press **Rescan** on the
+text, it never runs the model. After the upload at the end, the files of `harness/` go into the
+harness checkout as `data/models/asr/<RUN_NAME>/` (the folder name becomes the model's id); press **Rescan** on the
 Models page. The harness scores the text against its *current* labels, so a clip relabeled since
 this export is scored against the new label.
 """),
@@ -546,6 +547,7 @@ int8_texts = {}
 for name, rows in (("val", splits["val"]), ("gold", splits["gold"])):
     int8_texts[name], _ = ftkit.transcribe_rows(rows, ftkit.RetryLoops(transcribe, retry_one),
                                                 budget_s=EVAL_BUDGET_S, max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
+    ftkit.write_hyps(OUT / "int8" / f"{name}.jsonl", rows, int8_texts[name], [0.0] * len(rows))
 int8_scores = {"val": score(val_refs, int8_texts["val"]), "gold": score(gold_refs, int8_texts["gold"])}
 same = sum(a == b for a, b in zip(val_texts, int8_texts["val"]))
 accept = (int8_scores["val"]["wer"] <= bf16_scores["val"]["wer"] + MAX_WER_COST
@@ -607,24 +609,37 @@ card["cpu"] = {
 print("wrote", OUT / "cpu_bench.json", "and the card's cpu block")
 """),
     md("""
-## Playground bundle
+## Upload to Hugging Face
 
-The harness's Models page can run this model on the CPU and transcribe your voice (D85). It needs
-the harness folder above plus the CPU weights this bench accepted, both in
-`data/models/asr/<RUN_NAME>/`. This packs them into one uncompressed tar on Drive (safetensors do
-not compress). Download it and unpack it under `data/models/asr/`, press **Rescan**, and start the
-sidecar: `docker-compose --profile playground up -d playground`.
+Every file of this run goes to the private model repo `OUT_REPO`, under `<RUN_NAME>/`: `best/` (bf16),
+`cpu/` (when int8 was accepted), `harness/`, `hyps/`, `int8/` and the metrics json. Nothing has to
+be pulled from Drive, and the VM can be deleted once this prints a commit.
+
+**The token must be able to write.** The cell reads the `HF_TOKEN` secret again, because Setup
+cached whatever token was there when it ran, so a secret swapped mid-session is picked up.
+
+Then, in the harness checkout:
+```bash
+hf download Sagyam/nepanglish-asr-flex-ft --include "<RUN_NAME>/*" --local-dir exports/<RUN_NAME>
+mkdir -p data/models/asr/<RUN_NAME>
+cp exports/<RUN_NAME>/<RUN_NAME>/harness/* data/models/asr/<RUN_NAME>/
+cp -r exports/<RUN_NAME>/<RUN_NAME>/cpu data/models/asr/<RUN_NAME>/   # mic playground (D85)
+```
+Press **Rescan** on the Models page, and start the playground sidecar with
+`docker-compose --profile playground up -d playground`.
 """),
     code(r"""
-import tarfile
+from huggingface_hub import HfApi
 
-export = json.loads((HARNESS / "model_card.json").read_text())["cpu"]["export"].strip("/")
-bundle = OUT / f"{RUN_NAME}-playground.tar"
-with tarfile.open(bundle, "w") as tar:
-    for f in sorted(HARNESS.iterdir()):
-        tar.add(f, arcname=f"{RUN_NAME}/{f.name}")
-    tar.add(OUT / export, arcname=f"{RUN_NAME}/{export}")
-print(bundle, f"{bundle.stat().st_size / 2**30:.2f} GiB,", export)
+if IN_COLAB:
+    os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
+    (Path.home() / ".cache" / "huggingface" / "token").write_text(os.environ["HF_TOKEN"])
+api = HfApi(token=os.environ["HF_TOKEN"])
+api.create_repo(OUT_REPO, repo_type="model", private=True, exist_ok=True)
+commit = api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT), path_in_repo=RUN_NAME,
+                           commit_message=f"{RUN_NAME}: {MODEL_DESCRIPTION}")
+size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
+print(f"{size / 2**30:.2f} GiB -> https://huggingface.co/{OUT_REPO}/tree/main/{RUN_NAME} @ {commit.oid[:7]}")
 """),
 ]
 

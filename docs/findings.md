@@ -24,6 +24,36 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## The retrain on fold-v3 and the redrawn val (2026-09-17)
+
+`indic-transcribe-flex-ft-2026-09-17` is 04c with the standard settings, trained on the D90 split
+(6,417 train clips; val 635 clips / 2.18 h in 6 episodes) and scored under fold-v3.
+
+| | val WER | val CER | gold WER | gold CER | gold raw WER | loops |
+|---|---|---|---|---|---|---|
+| base Flex | 13.15 | | | | | 0 |
+| fine-tune 2026-09-17 (bf16) | **5.75** | 4.69 | **6.94** [5.8, 8.3] | 6.93 | 12.95 | 0 |
+| same, int8 (accepted) | 5.78 | | 6.92 | | | 0 |
+| fine-tune 2026-09-16, rescored under fold-v3 | | | 6.25 | 6.25 | | |
+
+- **No clear change from 09-16.** Paired on the same 505 gold clips, it is +0.68 [−0.04, +1.82]
+  points of WER when bootstrapping episodes. 68 clips are better, 70 worse and 367 tied.
+- **Val kept falling.** By epoch: 6.84 / 6.18 / 6.06 / 5.89 / 5.84 / 5.75. The best epoch was the
+  last and the early stop never fired.
+- **CPU:** int8 runs at RTF 0.39 against 0.56 for bf16, on Colab's Xeon.
+- **Where the errors are (raw rates per class, not within-episode ratios):**
+  - Crosstalk: val goes from 4.5 with no overlap to 11.5 at 5–15%, and deletions grow fastest
+    (0.9 → 3.8 per 100 words).
+  - Noise: gold below 15 dB SNR scores 9.8 against ~6 above.
+  - Reverb: gold with C50 below 40 dB scores 9.8 against 6.1 for dry rooms.
+  - Clips under 5 s are the worst on both splits (gold 13.9, val 8.6).
+  - A second speaker adds ~4 points on both splits. Code-mixing shows no trend.
+- **Outputs** are in the private HF model repo `Sagyam/nepanglish-asr-flex-ft` under the run name
+  (commit a13eb37): `best/`, `cpu/`, `harness/`, `hyps/`, `int8/`. From this run on, 04c uploads
+  there instead of Drive.
+
+---
+
 ## fold-v3: colloquial Nepali folded (2026-09-17)
 
 D89 folds ten kinds of colloquial form (contracted verbs, `-या`, progressive, benefactive, first
