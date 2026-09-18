@@ -107,11 +107,15 @@ routes:
   # Thinking off, and `max_tokens` low, for the same reason as everywhere else (D44, D45): the
   # answer is a single token from a fixed list, so a reasoning budget buys nothing and a cap makes
   # a model that starts explaining itself cost a fraction of a cent rather than a page.
+  #
+  # But the cap counts thoughts, and gemini-3.8-flash thinks through `thinkingBudget: 0` on this
+  # prompt (its replies carry a `thoughtSignature`). At 16, 35 of 82 golden-pot reels came back
+  # MAX_TOKENS with no answer and no topic; the same 35 re-run on 2026-09-18 used up to 351.
   classify_topic:
     provider: vertex
     api: chat
     model: gemini-3.8-flash
-    max_tokens: 16
+    max_tokens: 1024
     temperature: 0.0
     reasoning_enabled: false
 
