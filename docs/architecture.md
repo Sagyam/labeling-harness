@@ -482,7 +482,14 @@ Every row of every kind carries the clip's per-clip covariates next to its text:
 - `overlap_spans`: its clip-relative crosstalk, `[]` when measured clean and null when never
   measured (D77). A result can then be reported with and without overlapped clips instead of
   dropping them;
-- `acoustics`: the clip's acoustic measurements (D87), null when never measured.
+- `acoustics`: the clip's acoustic measurements (D87), null when never measured;
+- `classes`: the clip's bucket on every axis of `clip_classes.py` (D87), the same classes a
+  model run is split by, so a result can be split or a training set weighted without the
+  database. An unmeasured axis says so in its bucket.
+
+The `analytics` and `error_mining` kinds also carry what the classes were computed from:
+`vad_spans` (D55) and `speaker_turns`, the newest diarization run's turns cut to the clip, each
+with its linked voice (D78, D87); null when never measured or never diarized.
 
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:

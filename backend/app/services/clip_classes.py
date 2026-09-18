@@ -111,6 +111,9 @@ class ClipFacts:
     voice_train_seconds: float | None
     gender: str
     age_bracket: str
+    #: The episode's newest run's speaker label to linked voice, so a consumer can name each
+    #: turn's voice. ``None`` until the run is linked; not read by :func:`classify`.
+    voices: Mapping[str, str] | None = None
 
 
 # --- one axis at a time -----------------------------------------------------------------------
@@ -422,6 +425,7 @@ def load_clip_facts(session: Session, segments: Sequence[Segment]) -> dict[int, 
             voice_train_seconds=None if voice is None else exposure.get(voice, 0.0),
             gender=declared_value(episode.metadata_jsonb, "gender"),
             age_bracket=declared_value(episode.metadata_jsonb, "age_bracket"),
+            voices=None if diarization is None else diarization.voices,
         )
     return facts
 

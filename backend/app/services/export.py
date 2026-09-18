@@ -47,6 +47,7 @@ from app.models import (
     Segment,
     SegmentLabel,
 )
+from app.services.clip_classes import ClipFacts, classify, load_clip_facts
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 from app.services.pots import effective_split, effective_split_sql
 from app.services.stats import latest_labels_subquery
@@ -175,6 +176,18 @@ def _hypothesis_payload(hypothesis: AsrHypothesis, *, include_words: bool) -> di
     return payload
 
 
+def _speaker_turns(facts: ClipFacts) -> list[dict[str, Any]] | None:
+    """The clip's turns from its episode's newest diarization run, clip-relative and each with
+    its linked voice (D78, D87). Null when the episode was never diarized."""
+    if facts.turns is None:
+        return None
+    voices = facts.voices or {}
+    return [
+        {"start": start, "end": end, "speaker": speaker, "voice": voices.get(speaker)}
+        for start, end, speaker in sorted(facts.turns)
+    ]
+
+
 def _record(
     segment: Segment,
     label: SegmentLabel,
@@ -183,6 +196,7 @@ def _record(
     seed_system_id: str | None,
     ruleset: Ruleset,
     spanning_episode_ids: set[int],
+    facts: ClipFacts,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "segment_id": segment.external_id,
@@ -213,8 +227,17 @@ def _record(
         #: Acoustic measurements of the clip (D87) -- bandwidth, and SNR and reverb once measured
         #: -- so training data can be chosen or weighted by them. Null is never measured.
         "acoustics": segment.acoustics_jsonb,
+        #: The clip's bucket on every axis of ``clip_classes.py`` (D87): the same classes a model
+        #: run is split by, so a consumer can split a result or weight a training set by them
+        #: without the database. An unmeasured axis says so in its bucket.
+        "classes": classify(facts),
     }
     if kind.include_hypotheses:
+        #: What the classes above were computed from, for analysis that needs the raw spans:
+        #: the VAD speech regions (D55) and the newest diarization run's turns cut to the clip,
+        #: each with its linked voice (D78, D87). Null is never measured or never diarized.
+        record["vad_spans"] = segment.vad_spans_jsonb
+        record["speaker_turns"] = _speaker_turns(facts)
         record["speaker_id"] = segment.speaker_id
         record["duration_seconds"] = segment.duration_seconds
         record["p_en"] = segment.p_en
@@ -429,6 +452,8 @@ def export_dataset(
             )
         )
 
+        facts = load_clip_facts(session, [segment for segment, _ in rows])
+
         for segment, label in rows:
             records.append(
                 _record(
@@ -439,6 +464,7 @@ def export_dataset(
                     seed_systems.get(label.seed_hypothesis_id),
                     ruleset,
                     spanning_episode_ids,
+                    facts[segment.id],
                 )
             )
             if segment.import_run_id:

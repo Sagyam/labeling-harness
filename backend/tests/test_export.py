@@ -10,7 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
-from app.models import AnnotationTask, Episode, Segment, SegmentLabel
+from app.models import AnnotationTask, DiarizationRun, Episode, Segment, SegmentLabel, SpeakerTurn
+from app.services.clip_classes import AXES, classify_segments
 from app.services.export import ExportError, GoldLeakError, export_dataset
 from app.services.importer import import_manifest
 from app.services.labeling import Decision, record_decision
@@ -538,3 +539,76 @@ def test_every_kind_carries_overlap_spans_as_measured(
         for row in read_jsonl(result.data_path):
             assert "overlap_spans" in row
             assert row["overlap_spans"] == expected[row["segment_id"]]
+
+
+def test_every_kind_carries_the_clip_classes(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Every row of every kind carries its classes (D87), so training data can be chosen or
+    weighted by them and a result split by them without a database at hand."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    segments = db_session.scalars(sa.select(Segment).order_by(Segment.id)).all()
+    expected = classify_segments(db_session, segments)
+    by_external = {s.external_id: expected[s.id] for s in segments}
+    for kind in ("training", "gold", "analytics", "error_mining"):
+        result = export_dataset(db_session, kind=kind, output_root=tmp_path / f"cl_{kind}")
+        rows = read_jsonl(result.data_path)
+        assert rows, kind
+        for row in rows:
+            assert row["classes"] == by_external[row["segment_id"]]
+            assert set(row["classes"]) == {axis.name for axis in AXES}
+
+
+def test_analytics_carries_vad_spans_and_the_clip_speaker_turns(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """The analytics kind also carries what the classes were computed from: the VAD spans and
+    the newest diarization run's turns cut to the clip, each with its linked voice. An
+    undiarized episode exports null turns, not an empty list, and a speaker without a voice
+    exports a null voice. The training kind stays without them."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    segments = db_session.scalars(sa.select(Segment).order_by(Segment.id)).all()
+    first = max(segments, key=lambda s: s.duration_seconds)
+    first.vad_spans_jsonb = [[0.0, 1.0]]
+    t0, t1 = first.start_time, first.end_time
+    cut = t0 + 0.6 * (t1 - t0)
+    db_session.add(
+        DiarizationRun(
+            episode_id=first.episode_id,
+            model="test",
+            checksum="turns",
+            speakers_jsonb=["A", "B"],
+            voices_jsonb={"A": "v001"},
+            turns=[
+                SpeakerTurn(speaker="A", start_time=t0 - 1.0, end_time=cut),
+                SpeakerTurn(speaker="B", start_time=cut, end_time=t1 + 1.0),
+            ],
+        )
+    )
+    db_session.flush()
+
+    result = export_dataset(db_session, kind="analytics", output_root=tmp_path / "out")
+    rows = {r["segment_id"]: r for r in read_jsonl(result.data_path)}
+    row = rows[first.external_id]
+    assert row["vad_spans"] == [[0.0, 1.0]]
+    assert row["speaker_turns"] == [
+        {"start": 0.0, "end": pytest.approx(cut - t0), "speaker": "A", "voice": "v001"},
+        {
+            "start": pytest.approx(cut - t0),
+            "end": pytest.approx(t1 - t0),
+            "speaker": "B",
+            "voice": None,
+        },
+    ]
+    assert row["classes"]["speakers"] == "2"
+    assert row["classes"]["voice"] == "v001"
+
+    other = next(r for r in rows.values() if r["episode_id"] != row["episode_id"])
+    assert other["speaker_turns"] is None
+    assert other["classes"]["speakers"] == "undiarized"
+    assert "vad_spans" in other
+
+    training = export_dataset(db_session, kind="training", output_root=tmp_path / "train")
+    train_row = read_jsonl(training.data_path)[0]
+    assert "speaker_turns" not in train_row
+    assert "vad_spans" not in train_row
