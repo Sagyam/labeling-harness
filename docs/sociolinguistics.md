@@ -5,6 +5,8 @@ support as material for a sociolinguistic study of Nepali–English code-mixing,
 next to make such a study robust, and what metadata is worth adding at ingest. The measurements
 behind it are in `notebooks/Sociolinguistics.ipynb`, run on the export of 2026-09-18, and every
 number below is printed by that notebook's verdict cell, so a rerun on a newer export revises it.
+The Corpus page in the harness computes the voice counts live (D91) and should agree with the
+notebook's; where they differ, the export is stale.
 
 ## What the corpus supports today
 
@@ -74,11 +76,13 @@ nothing to a paper's n.
 In order of value. Each is about the recording or is a closed, coarse fact; none reopens D56.
 
 1. **Link declared speaker rows to diarized voices.** This is the largest gain and needs no new
-   field. The notebook currently guesses which declared row is which voice by forcing (the
-   episode's rows agree, or a single host row meets a single recurring voice) and reaches
-   gender for 30 of 59 usable voices. A ten-second listen per diarized speaker, with a click on
-   the matching row, would cover nearly every podcast voice. D78 stores the per-speaker
-   embeddings for exactly this; nothing reads them yet. This is a build item, not a reversal.
+   field. The forcing rules the notebook applies (one row meets one voice; a single host row
+   meets a single recurring voice; the remaining rows agree) now live in the harness
+   (`app/services/inventory/resolve.py`, D91), so the Corpus page shows the same 30 of 59
+   usable voices with gender and reports the rest as unresolved rather than absent. What is
+   still missing is the manual link: a ten-second listen per diarized speaker, with a click on
+   the matching row, would cover nearly every remaining podcast voice. D78 stores the
+   per-speaker embeddings for exactly this. This is a build item, not a reversal.
 2. **Upload date, channel and view count.** The YouTube probe already fetches upload date and
    uploader and drops them before storage. Year of recording gives change over time; channel
    gives a clean show variable instead of parsing episode ids; a view-count bucket is an

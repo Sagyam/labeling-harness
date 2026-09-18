@@ -55,7 +55,8 @@ dataset:
     - gender
     - age_bracket
     - topic
-  min_stratum_hours: 1.0         # under this, the analytics page calls a stratum thin (D69)
+  min_stratum_hours: 1.0         # under this, the corpus page calls a stratum thin (D69)
+  min_stratum_voices: 5          # under this many voices, a stratum is an anecdote, not a group (D91)
 
 queue:
   weights:                       # must sum to 1.0; validated at load. Provisional (D74).

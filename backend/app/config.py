@@ -146,6 +146,10 @@ class DatasetSettings(BaseModel):
     #: floor rather than a target share: there is no defensible ideal share for "speech from
     #: 60-79 year olds", but there is a point below which a stratum supports no claim at all.
     min_stratum_hours: float = Field(default=1.0, gt=0)
+    #: Voices below which a stratum supports no comparison between people (D91). The unit of a
+    #: sociolinguistic claim is a speaker, not an hour: five voices is the smallest group the
+    #: corpus page will call a group rather than an anecdote.
+    min_stratum_voices: int = Field(default=5, ge=1)
 
 
 class QueueWeights(BaseModel):

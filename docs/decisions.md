@@ -1853,6 +1853,10 @@ measured stop meaning anything.
 
 ## D69 — The analytics page answers what to record next, and the scoreboard is deleted
 
+*Superseded in part by D91: the inventory's unit is now the clip and the person is the voice,
+so the per-episode attribution below no longer applies. The rest — no scoreboard, a floor rather
+than a target distribution, every recommendation carrying its number — stands.*
+
 The dashboard's progress display -- levels, streaks, a daily goal, fourteen achievements -- is
 removed: `app/services/gamify.py`, `GamifySettings`, the `gamify` block in `config/settings.yaml`,
 the `progress` key on the status report, and the panel that rendered them. Nothing was stored, so
@@ -2842,3 +2846,65 @@ podcasts, the most whole episodes the corpus allows at 10%.
 
 **Reversal:** restore the splits from `data/backups/harness_2026-09-17_pre_val_redraw.dump`, or
 reverse the `split_changed` audit rows.
+
+## D91 — The corpus page counts clips and voices, not episodes, and advises per category
+
+`app/services/inventory/` is rewritten and the analytics page is replaced. The unit of every
+count is the **clip**, and the person is the **voice**. Every clip carries one bucket on each of
+sixteen categories — gender, age, role, voice and its exposure in train; topic, genre, show and
+code-mixing; speaking speed, clip length, crosstalk and speakers in the clip; noise (SNR), room
+(C50) and bandwidth — so hours cut by any category sum to the corpus. The payload also ships the
+clip table itself (one compact row per clip, a few hundred kilobytes), and the page re-cuts every
+card client-side when a bucket, a cross-tab cell, a recommendation or a voice is clicked.
+
+**Why the episode attribution of D69 went.** It existed because no route diarized, so an episode
+with a male host and a female guest had to count its whole duration on both sides. Every episode
+is diarized now (D79) and its speakers are linked into anonymous voices across episodes (D87), so
+a clip has one dominant voice and the voice has one gender where the episode's rows force it.
+Shares sum to one, the gender-by-age grid is one cell of a general cross-tab, and "how many
+people" is a count of voices rather than a floor over `(show, role, gender, age)` tuples.
+
+**Declared rows reach voices only where the episode forces the match** (`resolve.py`): one row and
+one voice; one declared host and exactly one recurring voice; or every remaining row agreeing on a
+field, and never when more voices than rows remain. Gender and age travel with the voice to every
+episode it appears in; two episodes that disagree make a `conflict`, reported rather than
+averaged. Role stays per episode. These are the three rules the sociolinguistics notebook has
+applied by hand since 2026-09-18, moved into the harness so the page and the paper agree; on the
+2026-09-18 corpus they reach the same 30 of 59 usable voices with gender and 24 with age. Nothing
+is inferred from audio (D58) and no name exists to link to (D56).
+
+**Speaking speed** is reference words per second of VAD speech, from the current label's text
+where a clip has one and the fused seed otherwise. It is computed here rather than in
+`clip_classes.py`, whose axes never read the reference (D87). Edges 2.0 / 2.6 / 3.2 / 3.8 sit
+near the 10th, 30th, 70th and 93rd percentiles of the corpus (median 2.9 w/s).
+
+**Advice is per category and per purpose.** Each recommendation names the category and bucket it
+came from and whether it hurts the recogniser, the paper or both, so the page can be read for one
+purpose at a time. A bucket is thin in its own unit: `dataset.min_stratum_voices` (5, new) for
+people and content, where the claim is about speakers, and `dataset.min_stratum_hours` for speech
+and acoustic conditions. A voice counts toward a bucket once it has 300 reference words attributed
+inside it, the notebook's floor for a usable voice. Gold is asked for only on speech and acoustic
+conditions: gold holds voices train never sees (D76), so a people bucket with no gold is the
+design. A paper bucket resting on screened labels is asked to verify a sample, because the mixing
+variable is the script choice the fused seed made (docs/sociolinguistics.md). Shows are not asked
+for more speakers; a show is where audio comes from, not a stratum anyone fills. The diarizer's
+"nobody heard" clip is a defect, not a condition, and is excluded from every rule.
+
+**Voices are followed.** One profile per voice: talk time inside the corpus's clips, attributed
+words, episodes with minutes and share and the other voices in the room, shows, roles, hours by
+pot, verified share, mean CMI, speaking rate, first and last date. The page draws each voice's
+episodes as a strip and lets a co-voice be followed with a click. The recurrence the accommodation
+design needs — hosts with five or more host–guest episodes, guests who appear with more than one
+host — is measured and asked for; a monologue host in twenty episodes accommodates nobody.
+
+**Not built: the manual voice-to-row link.** docs/sociolinguistics.md ranks it first among the
+metadata worth adding. It needs a listen-and-click UI and a stored link on `diarization_runs`;
+the forced rules above cover the podcasts whose structure decides it, and the page now shows,
+per voice, that the rest are unresolved rather than absent.
+
+**Cost.** One request builds everything in under a second on 7.6k clips; the payload is ~850 KB.
+`/stats/report` is unchanged and no longer read by the page. The old panels are deleted, not
+hidden.
+
+**Reversal:** restore `app/services/inventory/` and `frontend/src/components/analytics/` from
+before this commit; drop `dataset.min_stratum_voices`. No schema change was made.

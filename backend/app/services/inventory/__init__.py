@@ -1,211 +1,230 @@
-"""What the corpus contains, what it is missing, and what to go and record next (D69).
+"""What the corpus contains, cut every way it can be cut, and what to record next (D91).
 
-The status report next door answers *how much is done*. This module answers a different question,
-and the one that actually decides what to do with an afternoon: **is this corpus any good, and
+The status report next door answers *how much is done*. This package answers a different
+question, and the one that decides what to do with an afternoon: **is this corpus any good for
+its two purposes -- fine-tuning an ASR model and describing Nepali-English code-mixing -- and
 what would make it better?**
 
-Three sections, in the order the question is asked.
+The unit is the **clip**, and the person is the **voice**. Every clip carries one bucket on each
+of sixteen categories -- gender, age, role, voice and its exposure in train; topic, genre, show
+and code-mixing; speaking speed, clip length, crosstalk and speakers; noise, room and bandwidth
+-- so hours cut by any of them sum to the corpus. D69 attributed an episode's hours to every
+value it carried because no route diarized; every episode is diarized now (D79) and its speakers
+are linked into voices across episodes (D87), so a clip has one dominant voice and the voice
+has one gender, where the episode's declared rows force it (:mod:`resolve`).
 
-* **Inventory** -- hours, episodes and segments cut by every variable the corpus records: show,
-  topic, speaker gender, speaker age bracket, speaker role, code-switching band, episode length.
-* **Gaps** -- strata that are empty or thin, values the metadata never filled in, values that are
-  spelled outside their closed vocabulary, and how concentrated the corpus is in its largest show.
-* **Recommendations** -- the gaps turned into a ranked shopping list, each row saying what to look
-  for and the number that says why.
-
-Two measurement decisions run through all of it, and both are stated here because either one read
-the wrong way turns a useful number into a false one.
-
-**Hours are attributed per episode, to every value the episode carries.** An episode with a male
-host and a female guest contributes its whole duration to *both* genders, because nothing in the
-schema says which speaker held the microphone for how long -- no route diarizes (D52), so
-per-speaker time does not exist. Shares therefore do not sum to 1 on any speaker dimension. The
-alternative, splitting an episode's hours evenly between its speakers, would invent a number that
-looks precise and is not.
-
-**A stratum is judged by absence and thinness, never against a target distribution.** There is no
-principled target share for "hours of speech from 60-79 year olds", so this module does not
-pretend to one. It reports what is missing entirely, what sits under
-``dataset.min_stratum_hours``, and where one value dominates -- three things that are true
-independent of anyone's opinion about what the ideal corpus looks like.
+Three things come out: the categories totalled up, one profile per voice followed across
+episodes, and per-category advice tagged with the purpose it serves. And the clip table itself,
+compact enough to ship, so the page can cut everything by anything without a round trip.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.llm.topic import TOPIC_LABELS
-from app.services.inventory.constants import DOMINANT_SHARE, NARROW_SHOW_SPREAD
-from app.services.inventory.dimensions import (
-    Dimension,
-    DimensionValue,
-    _round,
-    _speaker_profiles,
-    build_dimension,
-    build_length_profile,
-    build_metadata_completeness,
-    build_shows,
-    build_speaker_matrix,
-    collect_register,
+from app.services.inventory.categories import (
+    BucketStats,
+    CategoryReport,
+    assign_buckets,
+    attributed_words,
+    build_categories,
+    build_category,
+    clip_table,
+    speaking_rate_bucket,
 )
-from app.services.inventory.facts import EpisodeFacts, load_episode_facts
-from app.services.inventory.recommendations import Recommendation, recommend_sources
+from app.services.inventory.constants import CATEGORIES, GROUPS, Category
+from app.services.inventory.facts import ClipRow, EpisodeRow, count_words, load_rows, now_iso
+from app.services.inventory.recommendations import Recommendation, recommend
+from app.services.inventory.resolve import (
+    Resolution,
+    VoiceIdentity,
+    resolve_corpus,
+    resolve_episode,
+)
+from app.services.inventory.voices import VoiceProfile, build_voices, summarize_voices
 
 __all__ = [
-    "DOMINANT_SHARE",
-    "NARROW_SHOW_SPREAD",
-    "Dimension",
-    "DimensionValue",
-    "EpisodeFacts",
+    "CATEGORIES",
+    "GROUPS",
+    "BucketStats",
+    "Category",
+    "CategoryReport",
+    "ClipRow",
+    "EpisodeRow",
     "Inventory",
     "Recommendation",
-    "build_dimension",
-    "build_length_profile",
-    "build_metadata_completeness",
-    "build_shows",
-    "build_speaker_matrix",
+    "Resolution",
+    "VoiceIdentity",
+    "VoiceProfile",
+    "assemble",
+    "assign_buckets",
+    "attributed_words",
+    "build_categories",
+    "build_category",
+    "build_voices",
+    "clip_table",
     "collect_inventory",
-    "collect_register",
-    "load_episode_facts",
-    "recommend_sources",
+    "count_words",
+    "load_rows",
+    "recommend",
+    "resolve_corpus",
+    "resolve_episode",
+    "speaking_rate_bucket",
+    "summarize_voices",
 ]
+
+
+def _round(value: float, digits: int = 3) -> float:
+    return round(float(value), digits)
 
 
 @dataclass
 class Inventory:
-    """The whole answer: what is here, what is missing, what to record next."""
+    """The whole answer, ready for the API."""
 
     generated_at: str = ""
     totals: dict[str, Any] = field(default_factory=dict)
-    dimensions: dict[str, Dimension] = field(default_factory=dict)
-    #: ``gender x age_bracket`` hours, as ``{gender: {age_bracket: hours}}``. The cells that are
-    #: empty are the point of it.
-    speaker_matrix: dict[str, dict[str, float]] = field(default_factory=dict)
-    register: dict[str, Any] = field(default_factory=dict)
-    length_profile: dict[str, Any] = field(default_factory=dict)
-    metadata_completeness: list[dict[str, Any]] = field(default_factory=list)
-    episodes: list[dict[str, Any]] = field(default_factory=list)
-    shows: list[dict[str, Any]] = field(default_factory=list)
+    groups: list[dict[str, str]] = field(default_factory=list)
+    categories: list[CategoryReport] = field(default_factory=list)
+    voices: list[VoiceProfile] = field(default_factory=list)
+    voice_summary: dict[str, Any] = field(default_factory=dict)
     recommendations: list[Recommendation] = field(default_factory=list)
+    episodes: list[dict[str, Any]] = field(default_factory=list)
+    records: list[dict[str, Any]] = field(default_factory=list)
+    clips: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        """Plain JSON-serializable data, for the API and the report."""
         return {
             "generated_at": self.generated_at,
             "totals": self.totals,
-            "dimensions": {key: asdict(value) for key, value in self.dimensions.items()},
-            "speaker_matrix": self.speaker_matrix,
-            "register": self.register,
-            "length_profile": self.length_profile,
-            "metadata_completeness": self.metadata_completeness,
-            "episodes": self.episodes,
-            "shows": self.shows,
+            "groups": self.groups,
+            "categories": [c.as_dict() for c in self.categories],
+            "voices": [v.as_dict() for v in self.voices],
+            "voice_summary": self.voice_summary,
             "recommendations": [asdict(r) for r in self.recommendations],
+            "episodes": self.episodes,
+            "records": self.records,
+            "clips": self.clips,
         }
 
 
-def collect_inventory(session: Session, *, settings: Settings | None = None) -> Inventory:
-    """Assemble the whole inventory: what is here, what is missing, what to record next.
+def _records(episodes: list[EpisodeRow]) -> list[dict[str, Any]]:
+    """Which episode records are incomplete, field by field, and which episodes to go and fix.
 
-    Reads only. Opening the analytics page must never change what the corpus holds -- the same
-    rule ``pot_status`` follows for the same reason (D63).
-
-    Args:
-        session: Open session.
-        settings: Configuration override.
-
-    Returns:
-        An :class:`Inventory`; call :meth:`Inventory.as_dict` for the API payload.
+    An unfilled variable is paperwork, not a fact about the world, and the two look identical in
+    every chart until this table separates them.
     """
-    settings = settings or get_settings()
-    # Imported here rather than at module scope: `pots` imports from `stats`, and keeping the
-    # dependency one-directional at import time is what stops a cycle when either grows.
-    from app.services.pots import pot_status
+    checks = (
+        ("show_id", lambda e: bool(e.show_id)),
+        ("genre", lambda e: bool(e.genre)),
+        ("topic", lambda e: bool(e.topic)),
+        ("topic_in_taxonomy", lambda e: bool(e.topic_in_taxonomy)),
+        ("speakers", lambda e: bool(e.declared)),
+        ("published_at", lambda e: bool(e.published_at)),
+        ("diarized", lambda e: e.diarized),
+        ("voices_linked", lambda e: bool(e.voices) or not e.diarized),
+    )
+    total = len(episodes)
+    return [
+        {
+            "field": name,
+            "filled": total - len(missing),
+            "total": total,
+            "missing_episodes": missing,
+        }
+        for name, predicate in checks
+        for missing in [[e.external_id for e in episodes if not predicate(e)]]
+    ]
 
-    facts = load_episode_facts(session)
-    corpus_hours = sum(f.hours for f in facts)
-    keys = ("show_id", "topic", "gender", "age_bracket", "role")
-    dimensions = {key: build_dimension(facts, key) for key in keys}
-    shows = build_shows(facts)
-    register = collect_register(session, shows)
-    length_profile = build_length_profile(facts)
-    pots = pot_status(session, settings=settings)
 
-    profiles = _speaker_profiles(facts)
-    labeled_hours = sum(f.labeled_hours for f in facts)
-    verified_hours = sum(f.verified_hours for f in facts)
+def assemble(
+    episodes: list[EpisodeRow],
+    clips: list[ClipRow],
+    *,
+    min_stratum_hours: float,
+    min_stratum_voices: int,
+    gold_target_hours: float,
+) -> Inventory:
+    """Everything after the database: resolve, bucket, total, profile, advise. Pure."""
+    by_id = {e.external_id: e for e in episodes}
+    per_episode, per_voice = resolve_corpus(episodes)
+    clips = assign_buckets(clips, by_id, per_episode, per_voice)
+    categories = build_categories(clips, by_id)
+    voices = build_voices(clips, by_id, per_episode, per_voice)
+    summary = summarize_voices(voices)
 
+    hours = sum(c.duration for c in clips) / 3600
+    verified = sum(c.duration for c in clips if c.tier == "verified") / 3600
+    screened = sum(c.duration for c in clips if c.tier == "screened") / 3600
     totals = {
-        "episodes": len(facts),
-        "segments": sum(f.segments for f in facts),
-        "hours": _round(corpus_hours),
-        "labeled_hours": _round(labeled_hours),
-        "verified_hours": _round(verified_hours),
-        "screened_hours": _round(sum(f.screened_hours for f in facts)),
-        "labeled_fraction": _round(labeled_hours / corpus_hours, 4) if corpus_hours else 0.0,
-        "verified_fraction": _round(verified_hours / labeled_hours, 4) if labeled_hours else 0.0,
-        "shows": len(dimensions["show_id"].values),
-        # A floor, not a count -- see `_speaker_profiles`.
-        "speaker_profiles": len(profiles),
-        "gender_values": len(dimensions["gender"].values),
-        "age_values": len(dimensions["age_bracket"].values),
-        "topics_carried": len(dimensions["topic"].values),
-        "topics_total": len(TOPIC_LABELS),
-        "gold_hours": _round(pots.buckets["gold"]["hours"]),
-        "gold_target_hours": pots.gold_target_hours,
-        "train_hours": _round(
-            pots.buckets["train"]["hours"] + pots.buckets["val"]["hours"],
-        ),
-        "train_target_hours": pots.train_target_hours,
-        "unassigned_hours": _round(pots.buckets["unassigned"]["hours"]),
-        "min_stratum_hours": settings.dataset.min_stratum_hours,
+        "hours": _round(hours),
+        "speech_hours": _round(sum(c.speech_seconds or 0.0 for c in clips) / 3600),
+        "clips": len(clips),
+        "episodes": len(episodes),
+        "shows": len({e.show_id for e in episodes if e.show_id}),
+        "words": sum(c.words or 0 for c in clips),
+        "verified_hours": _round(verified),
+        "screened_hours": _round(screened),
+        "unlabeled_hours": _round(max(0.0, hours - verified - screened)),
+        "gold_hours": _round(sum(c.duration for c in clips if c.pot == "gold") / 3600),
+        "val_hours": _round(sum(c.duration for c in clips if c.pot == "val") / 3600),
+        "train_hours": _round(sum(c.duration for c in clips if c.pot == "train") / 3600),
+        "gold_target_hours": gold_target_hours,
+        "min_stratum_hours": min_stratum_hours,
+        "min_stratum_voices": min_stratum_voices,
     }
-
+    episode_index = {e.external_id: i for i, e in enumerate(episodes)}
+    voice_index = {v.voice: i for i, v in enumerate(voices)}
     return Inventory(
-        generated_at=dt.datetime.now(dt.UTC).isoformat(),
+        generated_at=now_iso(),
         totals=totals,
-        dimensions=dimensions,
-        speaker_matrix=build_speaker_matrix(facts),
-        register=register,
-        length_profile=length_profile,
-        metadata_completeness=build_metadata_completeness(facts),
+        groups=[{"key": key, "label": label} for key, label in GROUPS],
+        categories=list(categories.values()),
+        voices=voices,
+        voice_summary=summary,
+        recommendations=recommend(
+            categories,
+            summary,
+            min_stratum_hours=min_stratum_hours,
+            min_stratum_voices=min_stratum_voices,
+        ),
         episodes=[
             {
-                "external_id": f.external_id,
-                "title": f.title,
-                "show_id": f.show_id,
-                "published_at": f.published_at,
-                "pot": f.pot,
-                "gold_segments": f.gold_segments,
-                "split": f.split,
-                "hours": _round(f.hours),
-                "minutes": _round(f.hours * 60, 1),
-                "segments": f.segments,
-                "labeled_hours": _round(f.labeled_hours),
-                "verified_hours": _round(f.verified_hours),
-                "labeled_fraction": _round(f.labeled_hours / f.hours, 4) if f.hours else 0.0,
-                "topic": f.topic,
-                "topic_source": f.topic_source,
-                "topic_in_taxonomy": f.topic in TOPIC_LABELS if f.topic else None,
-                "speakers": [dict(s) for s in f.speakers],
-                "mean_cmi": _round(f.mean_cmi, 4) if f.mean_cmi is not None else None,
-                "min_cmi": _round(f.min_cmi, 4) if f.min_cmi is not None else None,
-                "max_cmi": _round(f.max_cmi, 4) if f.max_cmi is not None else None,
+                "external_id": e.external_id,
+                "title": e.title,
+                "show_id": e.show_id,
+                "genre": e.genre,
+                "topic": e.topic,
+                "topic_in_taxonomy": e.topic_in_taxonomy,
+                "published_at": e.published_at,
+                "split": e.split,
+                "declared": [dict(r) for r in e.declared],
+                "voices": list(e.voices),
+                "diarized": e.diarized,
             }
-            for f in facts
+            for e in episodes
         ],
-        shows=shows,
-        recommendations=recommend_sources(
-            dimensions=dimensions,
-            register=register,
-            length_profile=length_profile,
-            gold_coverage_gaps=pots.gold_coverage_gaps,
-            corpus_hours=corpus_hours,
-            min_stratum_hours=settings.dataset.min_stratum_hours,
-        ),
+        records=_records(episodes),
+        clips=clip_table(clips, categories, episode_index, voice_index),
+    )
+
+
+def collect_inventory(session: Session, *, settings: Settings | None = None) -> Inventory:
+    """Read the corpus and assemble the page's payload.
+
+    Reads only. Opening the corpus page must never change what the corpus holds -- the same rule
+    ``pot_status`` follows for the same reason (D63).
+    """
+    settings = settings or get_settings()
+    episodes, clips = load_rows(session)
+    return assemble(
+        episodes,
+        clips,
+        min_stratum_hours=settings.dataset.min_stratum_hours,
+        min_stratum_voices=settings.dataset.min_stratum_voices,
+        gold_target_hours=settings.dataset.gold_hours_target,
     )
