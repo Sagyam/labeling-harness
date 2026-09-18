@@ -23,7 +23,6 @@ import {
   EpisodeSegmentSummary,
   YouTubeProbe,
   YouTubeIngestIn,
-  AnalyticsReport,
   CorpusInventory,
   ExportResponse,
   ExportHistoryItem,
@@ -337,9 +336,7 @@ export const api = {
     })
   },
 
-  getReport: (): Promise<AnalyticsReport> => request<AnalyticsReport>('/stats/report'),
-
-  /** What the corpus contains, what it is missing, and what to record next (D69). */
+  /** The corpus cut by every category, its voices, and what to record next (D91). */
   getInventory: (): Promise<CorpusInventory> => request<CorpusInventory>('/stats/inventory'),
 
   /** Put one clip in gold, or take it back out (D71). A screened clip is refused with 409. */

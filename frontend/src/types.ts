@@ -453,97 +453,11 @@ export interface EpisodeSegmentSummary {
   peaks_url: string | null
 }
 
-export interface AnalyticsReport {
-  generated_at: string
-  corpus: {
-    episodes: number
-    segments: number
-    audio_hours: number
-    segments_by_status: Record<string, number>
-    episode_titles: Array<{ external_id: string; title: string | null; split: string }>
-  }
-  labels: {
-    total: number
-    accepted_unchanged: number
-    edited: number
-    unusable_audio: number
-    uncertain: number
-    [key: string]: number
-  }
-  accept_rate: number | null
-  accept_rate_by_day: Array<{
-    day: string
-    labeled: number
-    accepted: number
-    accept_rate: number | null
-  }>
-  throughput: {
-    median_seconds_per_segment: number | null
-    segments_per_hour: number | null
-    annotator_hours: number
-    events: number
-  }
-  queue: {
-    backlog: number
-    by_queue: Record<string, number>
-    projected_hours_to_finish: number | null
-  }
-  scores: {
-    mean_word_disagreement_rate: number | null
-    mean_script_conflict_rate: number | null
-    mean_code_switch_density: number | null
-    mean_cer_between_hypotheses: number | null
-  }
-  split_balance: Record<string, { episodes: number; segments: number; hours: number }>
-  pots: PotPanel
-  verification: VerificationPanel
-  word_timestamp_coverage: {
-    hypotheses_total: number
-    hypotheses_with_words: number
-    fraction: number
-  }
-}
-
 /** Which pot a clip belongs to (D71). Gold is the benchmark, chosen per clip by hand. */
 export type PotName = 'gold' | 'train'
 
-/** The four rows the dashboard shows: the two pots, with the train pot split into train and val. */
-export type BucketName = 'gold' | 'train' | 'val' | 'unassigned'
-
-export interface PotBucket {
-  episodes: number
-  segments: number
-  /** Audio ingested into this bucket. Moves when something is ingested. */
-  hours: number
-  /** Audio in this bucket that carries a current label. Moves when the annotator works. */
-  labeled_hours: number
-}
-
-export interface PotPanel {
-  gold_target_hours: number
-  train_target_hours: number
-  /** Gold is counted by clip; train, val and unassigned by the episode's split. */
-  buckets: Record<BucketName, PotBucket>
-  /** Episodes with clips on both sides of the train/test line: same speaker, same topic. */
-  gold_episodes_spanning_pots: number
-  gold_segments_in_spanning_episodes: number
-  /** `{coverage key: {value: episodes in gold carrying it}}`. */
-  gold_coverage: Record<string, Record<string, number>>
-  corpus_coverage: Record<string, Record<string, number>>
-  /** Values the corpus has that the gold pot does not cover at all. */
-  gold_coverage_gaps: Record<string, string[]>
-  coverage_complete: boolean
-}
-
 /** How much attention a label got: `verified` was listened to, `screened` was not. */
 export type VerificationTier = 'verified' | 'screened'
-
-export interface VerificationPanel {
-  verified: number
-  screened: number
-  total: number
-  hours: Record<VerificationTier, number>
-}
 
 export interface ExportOutItem {
   kind: string
@@ -662,171 +576,201 @@ export interface CostRequestsResponse {
 
 
 
-// --- Corpus inventory (D69) ---------------------------------------------------------------
-// What the corpus contains, what it is missing, and what to record next. Hours on a speaker
-// dimension are attributed per episode to every value the episode carries, so those shares do
-// not sum to 1: nothing in the schema says which speaker held the microphone for how long.
+// --- Corpus page (D91) -----------------------------------------------------------------------
+// Every clip carries one bucket on each category, so hours cut by any category sum to the
+// corpus. People are voices linked across episodes; a declared gender or age reaches a voice
+// only when its episode forces the match (see app/services/inventory/resolve.py).
 
-/** One value of one dimension, with the audio that carries it. */
-export interface DimensionValue {
-  value: string
+export type Goal = 'asr' | 'paper'
+export type CategoryGroup = 'people' | 'content' | 'speech' | 'acoustics'
+
+/** One bucket of one category, with the audio and the people in it. */
+export interface BucketStats {
+  bucket: string
   hours: number
+  clips: number
   episodes: number
-  segments: number
-  labeled_hours: number
-  /** Distinct shows carrying it. One show means the value is not independent of that show. */
   shows: number
-  /** Share of corpus hours. */
+  /** Distinct linked voices with any clip here. */
+  voices: number
+  /** Voices with 300+ reference words attributed inside this bucket: the usable n. */
+  usable_voices: number
+  verified_hours: number
+  screened_hours: number
+  gold_hours: number
+  val_hours: number
+  train_hours: number
+  /** Share of the category's measured hours; unknown buckets excluded, so these sum to 1. */
   share: number
+  /** A topic outside the taxonomy: dirt, not a stratum. */
+  off_vocabulary: boolean
 }
 
-export interface Dimension {
+export interface CategoryReport {
   key: string
-  values: DimensionValue[]
-  /** Vocabulary values with no audio at all. Empty for an open dimension like `show_id`. */
+  label: string
+  group: CategoryGroup
+  goals: Goal[]
+  /** What a thin bucket is short of. */
+  unit: 'voices' | 'hours'
+  why: string
+  /** Measured buckets nobody should record more of (the diarizer's empty clip). */
+  defect: string[]
+  buckets: BucketStats[]
+  /** Closed-vocabulary buckets with no audio at all. */
   absent: string[]
-  /** Values present that the closed vocabulary does not contain — dirt, not a gap. */
-  off_vocabulary: string[]
-  /** Share held by the largest value, over attributed value-hours (these do sum to 1). */
-  top_share: number
-  hhi: number
-  unknown_episodes: number
+  /** Buckets meaning not measured or not declared. */
+  unknown: string[]
+  measured_hours: number
   unknown_hours: number
+  top_bucket: string | null
+  top_share: number
 }
 
-/** One line of the shopping list: what to look for, and the number that says why. */
+export interface VoiceEpisode {
+  external_id: string
+  title: string | null
+  show_id: string | null
+  genre: string | null
+  published_at: string | null
+  split: string
+  minutes: number
+  /** This voice's share of all linked talk in the episode's clips. */
+  share: number
+  clips: number
+  role: string | null
+  resolved_by: string | null
+  with_voices: string[]
+}
+
+export interface VoiceProfile {
+  voice: string
+  talk_minutes: number
+  clips: number
+  words: number
+  usable: boolean
+  episodes: VoiceEpisode[]
+  episode_count: number
+  shows: string[]
+  genres: string[]
+  gender: string | null
+  age_bracket: string | null
+  identity: 'resolved' | 'conflict' | 'unresolved'
+  resolved_by: Record<string, number>
+  roles: Record<string, number>
+  hours: Record<'gold' | 'train' | 'val', number>
+  verified_minutes: number
+  screened_minutes: number
+  mean_cmi: number | null
+  words_per_second: number | null
+  exposure: string
+  first_seen: string | null
+  last_seen: string | null
+  co_voices: Record<string, number>
+}
+
+export interface VoiceSummary {
+  voices: number
+  usable: number
+  recurring: number
+  single_episode: number
+  recurring_hosts: number
+  recurring_host_voices: string[]
+  guests_on_two_shows: number
+  gender_resolved: number
+  age_resolved: number
+  conflicts: number
+  talk_hours: number
+  top_voice: string | null
+  top_voice_share: number
+}
+
+export type RecommendationKind =
+  | 'absent'
+  | 'thin'
+  | 'recurrence'
+  | 'dominant'
+  | 'no_gold'
+  | 'single_show'
+  | 'unverified'
+  | 'unmeasured'
+
+/** One line of the shopping list, tied to the category it came from and the purpose it serves. */
 export interface Recommendation {
-  kind:
-    | 'gender'
-    | 'age_bracket'
-    | 'register'
-    | 'register_spread'
-    | 'show_concentration'
-    | 'gold_coverage'
-    | 'episode_length'
-    | 'topic'
+  category: string
+  bucket: string | null
+  goal: Goal | 'both'
+  kind: RecommendationKind
   target: string
   reason: string
-  /** 0-1: weight of the gap kind times how severe this instance of it is. */
   priority: number
   hours_present: number
+  voices_present: number
   hours_needed: number
-}
-
-export interface RegisterBand {
-  name: 'low' | 'mid' | 'high'
-  lower: number
-  upper: number
-  description: string
-  hours: number
-  segments: number
-}
-
-export interface RegisterData {
-  measured_hours: number
-  mean: number | null
-  /** Hours-weighted mean code-switch density per show, ascending. */
-  show_means: Array<{ show_id: string; mean_cmi: number; hours: number }>
-  show_mean_min: number | null
-  show_mean_max: number | null
-  /** Distance between the least and most code-switched show. Null below two shows. */
-  show_mean_spread: number | null
-  histogram: Array<{ lower: number; upper: number; hours: number; segments: number }>
-  bands: RegisterBand[]
-}
-
-export interface LengthProfile {
-  buckets: Array<{ name: string; episodes: number; hours: number }>
-  median_minutes: number | null
-  long_episode_hours: number
-  long_episode_share: number
-}
-
-export interface MetadataCompleteness {
-  field: string
-  filled: number
-  total: number
-  fraction: number
-  missing_hours: number
-  missing_episodes: string[]
+  voices_needed: number
 }
 
 export interface InventoryEpisode {
   external_id: string
   title: string | null
   show_id: string | null
-  published_at: string | null
-  /** `mixed` when some but not all of the episode's clips are in gold. */
-  pot: PotName | 'mixed'
-  gold_segments: number
-  split: string
-  hours: number
-  minutes: number
-  segments: number
-  labeled_hours: number
-  verified_hours: number
-  labeled_fraction: number
+  genre: string | null
   topic: string | null
-  topic_source: string | null
   topic_in_taxonomy: boolean | null
-  speakers: Array<{ role?: string; gender?: string; age_bracket?: string }>
-  mean_cmi: number | null
-  min_cmi: number | null
-  max_cmi: number | null
+  published_at: string | null
+  split: string
+  declared: Array<{ role?: string; gender?: string; age_bracket?: string }>
+  voices: string[]
+  diarized: boolean
 }
 
-export interface InventoryShow {
-  show_id: string
-  episodes: number
-  hours: number
-  segments: number
-  labeled_hours: number
-  verified_hours: number
-  /** Distinct (role, gender, age) combinations — a lower bound on people, never a count. */
-  speaker_profiles: number
-  genders: string[]
-  age_brackets: string[]
-  topics: string[]
+export interface RecordCheck {
+  field: string
+  filled: number
+  total: number
+  missing_episodes: string[]
+}
+
+/**
+ * The clips as a columnar table. Each row is
+ * `[segment_id, episode index, seconds, words, tier index, pot index, voice index, ...bucket index per category]`,
+ * with `-1` for no words or no voice. Bucket indexes point into `buckets[category]`.
+ */
+export interface ClipTable {
+  columns: string[]
+  tiers: string[]
   pots: string[]
-  mean_cmi: number | null
-  min_cmi: number | null
-  max_cmi: number | null
+  buckets: Record<string, string[]>
+  rows: number[][]
 }
 
 export interface CorpusInventory {
   generated_at: string
   totals: {
-    episodes: number
-    segments: number
     hours: number
-    labeled_hours: number
+    speech_hours: number
+    clips: number
+    episodes: number
+    shows: number
+    words: number
     verified_hours: number
     screened_hours: number
-    labeled_fraction: number
-    verified_fraction: number
-    shows: number
-    /** A floor on the number of individuals, not a count of them. */
-    speaker_profiles: number
-    gender_values: number
-    age_values: number
-    topics_carried: number
-    topics_total: number
+    unlabeled_hours: number
     gold_hours: number
-    gold_target_hours: number
+    val_hours: number
     train_hours: number
-    train_target_hours: number
-    unassigned_hours: number
+    gold_target_hours: number
     min_stratum_hours: number
+    min_stratum_voices: number
   }
-  dimensions: Record<string, Dimension>
-  /** `{gender: {age_bracket: hours}}`, every cell present. The empty ones are the point. */
-  speaker_matrix: Record<string, Record<string, number>>
-  register: RegisterData
-  length_profile: LengthProfile
-  metadata_completeness: MetadataCompleteness[]
-  episodes: InventoryEpisode[]
-  shows: InventoryShow[]
+  groups: Array<{ key: CategoryGroup; label: string }>
+  categories: CategoryReport[]
+  voices: VoiceProfile[]
+  voice_summary: VoiceSummary
   recommendations: Recommendation[]
+  episodes: InventoryEpisode[]
+  records: RecordCheck[]
+  clips: ClipTable
 }
 
 /** Result of moving one clip into or out of gold. */

@@ -208,3 +208,100 @@ export function PanelHeading({
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section className={`rounded-lg border bg-card p-4 ${className}`}>{children}</section>
 }
+
+/** One segment of a stacked bar: a quantity and the fill that identifies it. */
+export interface StackSegment {
+  value: number
+  fill: string
+  title?: string
+}
+
+/**
+ * A stacked horizontal bar in one line with its label and caption. Segments are drawn left to
+ * right against a shared peak, so bars in one list compare by length and the split inside a
+ * bar compares by colour. Identity lives in the fill and the caption, never in the fill alone.
+ */
+export function StackRow({
+  label,
+  segments,
+  peak,
+  caption,
+  onClick,
+  active = false,
+  muted = false,
+  marker,
+}: {
+  label: ReactNode
+  segments: StackSegment[]
+  peak: number
+  caption?: ReactNode
+  onClick?: () => void
+  active?: boolean
+  /** An unknown or absent bucket: drawn quieter so the measured ones carry the card. */
+  muted?: boolean
+  /** A small mark before the label -- the thin-stratum dot. */
+  marker?: ReactNode
+}) {
+  const Element = onClick ? 'button' : 'div'
+  const total = segments.reduce((sum, s) => sum + s.value, 0)
+  return (
+    <Element
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      aria-pressed={onClick ? active : undefined}
+      className={`group w-full space-y-0.5 rounded px-1 py-0.5 text-left ${
+        onClick ? 'hover:bg-muted/60' : ''
+      } ${active ? 'bg-muted ring-1 ring-indigo-500/50' : ''} ${muted ? 'opacity-70' : ''}`}
+    >
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="flex min-w-0 items-center gap-1.5 truncate">
+          {marker}
+          <span className="truncate">{label}</span>
+        </span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums">{caption}</span>
+      </div>
+      <div className="flex h-2 w-full overflow-hidden rounded-sm bg-muted">
+        {peak > 0 &&
+          segments.map((segment, i) =>
+            segment.value > 0 ? (
+              <div
+                key={i}
+                title={segment.title}
+                className={`h-full ${segment.fill}`}
+                style={{ width: `${Math.max(total > 0 ? 0.6 : 0, (segment.value / peak) * 100)}%` }}
+              />
+            ) : null
+          )}
+      </div>
+    </Element>
+  )
+}
+
+/** Which of the corpus's two purposes something serves. Same words everywhere on the page. */
+export function GoalBadge({ goal, title }: { goal: 'asr' | 'paper' | 'both'; title?: string }) {
+  const styles = {
+    asr: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+    paper: 'bg-violet-500/15 text-violet-700 dark:text-violet-300',
+    both: 'bg-muted text-foreground/80',
+  }[goal]
+  const text = { asr: 'ASR', paper: 'paper', both: 'both' }[goal]
+  return (
+    <span title={title} className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${styles}`}>
+      {text}
+    </span>
+  )
+}
+
+/** A quiet key: swatch and word, for a stacked bar's fills. */
+export function Legend({ items }: { items: Array<{ fill: string; label: string }> }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      {items.map((item) => (
+        <span key={item.label} className="flex items-center gap-1">
+          <span className={`inline-block size-2 rounded-sm ${item.fill}`} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}

@@ -112,14 +112,16 @@ which candidate you picked and ranks it first next time.
 **Episodes** lets you browse what has been ingested and delete an episode or a single segment,
 audio and all.
 
-**Corpus** answers three questions in the order you ask them: what is in the dataset, what is
-missing from it, and what to go and record next. It opens with a ranked shopping list — the
-speaker strata that are empty or thin, the code-switching pole nothing sits at, the show holding
-too much of the corpus — each row carrying the measurement that produced it. Below that is the
-evidence: a gender-by-age grid whose empty cells are drawn rather than omitted, hours by show,
-topic and speaker, the distribution of English mixed in and how far apart the shows are on it, the
-two pots against their targets, which episode records have unfilled or off-taxonomy fields, and a
-sortable row per show and per episode. Everything is derived on read; nothing is stored.
+**Corpus** (the Analytics tab) subdivides every clip by who is talking (gender, age, role, voice
+and whether a model has seen it), what the recording is (topic, genre, show, code-mixing), how it
+was said (speaking speed, clip length, crosstalk, speakers in the clip) and how it was recorded
+(noise, room, bandwidth). Click any bucket, cross-tab cell or voice and every other card re-cuts
+to those clips; the bars split by label tier, by pot or by voices. It opens with what to record
+next, one line per gap, each naming its category, whether it hurts the recogniser or the paper,
+and the number behind it. The voices table follows each anonymous voice across clips and
+episodes — talk time, words, the shows and the people it shared a room with, and the declared
+gender and age where the episode forces the match — with a strip of its episodes. Everything is
+derived on read; nothing is stored.
 
 **Models** (`8`) is for iterating on the ASR fine-tune. After a 04c run, copy its `harness/`
 folder from Drive to `data/models/asr/<slug>/` and press **Rescan**. The page scores the model's

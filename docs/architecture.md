@@ -529,7 +529,7 @@ the same inputs and filters produce byte-identical output.
 | `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
 | `GET /stats/report` | Pipeline status: pots, coverage, verification mix, agreement, accept-rate trend |
-| `GET /stats/inventory` | Corpus inventory: hours by every recorded dimension, gaps, and ranked sourcing recommendations (D69) |
+| `GET /stats/inventory` | The corpus page's payload (D91): every clip bucketed on sixteen categories, per-bucket hours by tier and pot and voices, one profile per voice across episodes, per-category recommendations tagged ASR / paper, the paperwork checks, and the clip table itself for client-side cross-filtering |
 | `POST /segments/{id}/pot` | Put one clip in gold or take it out (D71); 409 for a screened clip |
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
@@ -576,6 +576,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodeManagerModal.tsx` | Browse episodes and segments, delete either |
 | Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the clips worst first with audio and the folded diff (D83) |
+| Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One cross-filter over the clip table from `/stats/inventory` (D91): a card per category in four rows (people, content, speech, acoustics), a goal switch (ASR / paper), a measure switch (labels / pots / voices), any-by-any cross-tab, the voices table with each voice's episode strip, per-category advice, and the records check |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
 
 Audio is never decoded in the browser to draw a waveform (D8), and clips are streamed from
