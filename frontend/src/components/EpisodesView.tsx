@@ -50,6 +50,12 @@ type PendingDelete =
   | { kind: 'episode'; episode: EpisodeSummary }
   | { kind: 'segment'; segment: EpisodeSegmentSummary }
 
+/** Every clip is in gold, so the episode's train/val split governs none of them (D71). */
+const isAllGold = (ep: EpisodeSummary) => ep.segment_count > 0 && ep.gold_count === ep.segment_count
+
+/** Where the episode's clips export: `gold` when all are gold, else the episode's split. */
+const episodeBadge = (ep: EpisodeSummary) => (isAllGold(ep) ? 'gold' : ep.split)
+
 export function EpisodesView({
   onOpenEditor,
   onTriageEpisode,
@@ -152,7 +158,9 @@ export function EpisodesView({
         (ep.title && ep.title.toLowerCase().includes(episodeSearch.toLowerCase())) ||
         (ep.show_id && ep.show_id.toLowerCase().includes(episodeSearch.toLowerCase()))
 
-      const matchesSplit = splitFilter === 'all' || ep.split === splitFilter
+      const matchesSplit =
+        splitFilter === 'all' ||
+        (splitFilter === 'gold' ? ep.gold_count > 0 : !isAllGold(ep) && ep.split === splitFilter)
       return matchesSearch && matchesSplit
     })
   }, [episodes, episodeSearch, splitFilter])
@@ -250,7 +258,7 @@ export function EpisodesView({
         return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
       case 'val':
         return 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20'
-      case 'test':
+      case 'gold':
         return 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20'
       default:
         return 'bg-muted text-muted-foreground'
@@ -298,20 +306,20 @@ export function EpisodesView({
           </div>
 
           <Tabs value={splitFilter} onValueChange={setSplitFilter}>
-            <TabsList className="grid w-full grid-cols-5 h-7">
-              <TabsTrigger value="all" className="text-[11px]">
+            <TabsList className="flex w-full h-7">
+              <TabsTrigger value="all" className="flex-1 px-1.5 text-[11px]">
                 All
               </TabsTrigger>
-              <TabsTrigger value="train" className="text-[11px]">
+              <TabsTrigger value="train" className="flex-1 px-1.5 text-[11px]">
                 Train
               </TabsTrigger>
-              <TabsTrigger value="val" className="text-[11px]">
+              <TabsTrigger value="val" className="flex-1 px-1.5 text-[11px]">
                 Val
               </TabsTrigger>
-              <TabsTrigger value="test" className="text-[11px]">
-                Test
+              <TabsTrigger value="gold" className="flex-1 px-1.5 text-[11px]">
+                Gold
               </TabsTrigger>
-              <TabsTrigger value="unassigned" className="text-[11px]">
+              <TabsTrigger value="unassigned" className="flex-1 px-1.5 text-[11px]">
                 Unassigned
               </TabsTrigger>
             </TabsList>
@@ -367,11 +375,21 @@ export function EpisodesView({
                         <span
                           className={cn(
                             'rounded px-1.5 py-0.2 font-mono text-[9px] uppercase border',
-                            getSplitBadgeColor(ep.split),
+                            getSplitBadgeColor(episodeBadge(ep)),
                           )}
                         >
-                          {ep.split}
+                          {episodeBadge(ep)}
                         </span>
+                        {ep.gold_count > 0 && !isAllGold(ep) && (
+                          <span
+                            className={cn(
+                              'rounded px-1.5 py-0.2 font-mono text-[9px] uppercase border',
+                              getSplitBadgeColor('gold'),
+                            )}
+                          >
+                            {ep.gold_count} gold
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -426,11 +444,21 @@ export function EpisodesView({
                     <span
                       className={cn(
                         'rounded-md px-2 py-0.5 font-mono text-xs uppercase border font-medium',
-                        getSplitBadgeColor(selectedEpisode.split),
+                        getSplitBadgeColor(episodeBadge(selectedEpisode)),
                       )}
                     >
-                      {selectedEpisode.split} split
+                      {isAllGold(selectedEpisode) ? 'all gold' : `${selectedEpisode.split} split`}
                     </span>
+                    {selectedEpisode.gold_count > 0 && !isAllGold(selectedEpisode) && (
+                      <span
+                        className={cn(
+                          'rounded-md px-2 py-0.5 font-mono text-xs uppercase border font-medium',
+                          getSplitBadgeColor('gold'),
+                        )}
+                      >
+                        {selectedEpisode.gold_count} gold
+                      </span>
+                    )}
                   </div>
 
                   <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
