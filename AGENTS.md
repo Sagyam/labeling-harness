@@ -12,8 +12,8 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/            architecture, decisions, roadmap, findings
-notebooks/       EDA and fine-tuning (04c, Indic-Transcribe; generated from notebooks/src/)
+docs/            architecture, decisions, roadmap, findings, sociolinguistics
+notebooks/       EDA, sociolinguistics and fine-tuning (04c, Indic-Transcribe; generated from notebooks/src/)
 ```
 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
@@ -220,7 +220,7 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Documentation
 
-Six documents, and no others: this file, `README.md`, and the four under `docs/`. When behaviour
+Seven documents, and no others: this file, `README.md`, and the five under `docs/`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
 its reversal cost; supersede an old entry in place rather than deleting it.
