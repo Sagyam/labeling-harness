@@ -40,10 +40,9 @@ env: $(STAMP)  ## Create notebooks/.venv and register its Jupyter kernel
 
 $(STAMP): notebooks/requirements.txt
 	@test -x $(PY) || uv venv --python 3.13 $(VENV)
-	@# torch comes from the CPU index; unsafe-best-match lets the rest resolve from PyPI, which
-	@# uv otherwise refuses because the first index that carries a name wins.
+	@# unsafe-best-match: resolve every name from whichever index has the best match.
 	VIRTUAL_ENV=$(VENV) uv pip install --quiet -r notebooks/requirements.txt \
-		--extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+		--index-strategy unsafe-best-match
 	$(PY) -m ipykernel install --user \
 		--name $(KERNEL_NAME) --display-name "labeling-harness (EDA)"
 	@touch $@
