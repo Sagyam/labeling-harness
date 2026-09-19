@@ -11,7 +11,7 @@ take gold from ~11.5% to ~8.8% (fold-v1). Item 1 is the measuring stick for item
 makes the benchmark worth measuring against. On the 2026-09-16 split, crosstalk costs val 5.46
 points and the speaker-held-out gold 0.17. Item 6, the spelling convention, is folded (fold-v3).
 
-## 1. Classify every clip by acoustic condition
+## ~~1. Classify every clip by acoustic condition~~
 
 **In the standard pipeline since 2026-09-15 (D87).** Every clip has a bucket on every axis, every
 model run is split by all of them, and the Models page shows each axis's verdict (*splits* /
@@ -71,7 +71,7 @@ Look for models that are realtime (streaming, unlike Flex, which decodes whole u
 resilient to crosstalk. Judge each on the bucketed WER from item 1 and on CPU cost: the CPU
 numbers for the current model are the bar (findings.md, CPU inference).
 
-## 5. New held-out voices and microphones for the gold pot
+## ~~5. New held-out voices and microphones for the gold pot~~
 
 **Done 2026-09-16.** Gold is now 505 clips from 82 shorts that share no recording with train or
 val, with 93 linked voices and none shared with train. The old 706 gold clips moved into train.
@@ -89,7 +89,7 @@ Gold today shares speakers and episodes with train: 36 of 42 episodes have clips
   `set_segment_pot` with an audit row (invariant 4, D71). A screened clip cannot enter gold
   (invariant 5).
 
-## 6. Decide a spelling convention for spoken Nepali
+## ~~6. Decide a spelling convention for spoken Nepali~~
 
 **Folded 2026-09-17 (D89, fold-v3).** The owner chose to fold every colloquial form the error
 mining found, in ten groups, and to tighten later if a listening check by native speakers finds the

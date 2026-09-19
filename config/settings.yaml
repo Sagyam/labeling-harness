@@ -45,7 +45,7 @@ dataset:
   gold_hours_target: 3.0         # ~3 h is ~27k reference words, which holds the standard error
                                  # on WER under a point -- ample to rank three systems. What
                                  # limits this benchmark is speakers, not hours (D69).
-  train_hours_target: 20.0       # informational. Down from 50 h: the from-scratch scaling curve
+  train_hours_target: 50.0       # informational.
                                  # behind that figure does not apply to domain adaptation on a
                                  # pretrained model, and the corpus is limited by speakers.
   val_fraction: 0.1              # share of episodes whose non-gold clips are val; redrawable
