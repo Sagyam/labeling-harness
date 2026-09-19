@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM bun:latest
 
 WORKDIR /app/frontend
 
@@ -8,4 +8,4 @@ RUN npm install
 COPY . .
 
 EXPOSE 5173
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+CMD ["bun", "run", "dev", "--", "--host", "0.0.0.0"]
