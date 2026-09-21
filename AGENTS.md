@@ -227,7 +227,9 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 Seven documents, and no others: this file, `README.md`, and the five under `docs/`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
-its reversal cost; supersede an old entry in place rather than deleting it.
+its reversal cost. When a later entry overrides an old one, delete the old entry and add one line
+for it to the file's "Retired entries" list, so code comments citing it still resolve; trim an
+entry that is only partly superseded down to what still holds.
 
 Do not reintroduce per-session progress, TODO or verification files. Git history is the session
 log, and the test suite is the verification record.

@@ -59,7 +59,7 @@ const SORT_LABELS: Record<TriageSortBy, string> = {
 }
 
 //: What the priority score is made of since D74. These names must track `ScoreInputs` in the
-//: backend; the D67 formula still rides along in `reason_jsonb`, but under `legacy`.
+//: backend.
 const PRIORITY_COMPONENTS: ReadonlyArray<[string, string]> = [
   ['unsupported_rate', 'unheard words'],
   ['dropped_rate', 'dropped words'],

@@ -2,6 +2,52 @@
 
 Each entry: the decision, why, and what it would cost to reverse.
 
+## Retired entries
+
+Entries a later decision overrode, or that only recorded a removal, are deleted. Code comments
+still cite some of them, so each keeps one line here; the full text is in git history before the
+commit that added this list. D59–D61 were never used.
+
+- **D5** Frozen episode-level splits drawn by hash. Replaced by D63, D71 and D90: train/val is
+  per episode and redrawable, gold is chosen per clip.
+- **D10** All inference through OpenRouter, because it is prepaid. Replaced by D34.
+- **D21** The provider rule is "prepaid", and ElevenLabs Scribe is called directly. The prepaid
+  rule went in D34. What survives: retries, dry run and the `llm_requests` write live in
+  `app/llm/base.py`, so every provider inherits them.
+- **D24** Whisper large-v3 dropped: poor on code-switched Nepali, no word spans or confidence.
+- **D28** Microsoft MAI-Transcribe 2 added, on OpenRouter's `/audio/transcriptions`.
+- **D29, D30** Gemini 3.5 Transcribe on AI Studio's Live API, and VAD macro-windowing to survive
+  its 100 requests/day quota (about four hours of audio a day). Replaced by D31.
+- **D35** Gemini on Vertex AI through Application Default Credentials. Replaced by D39.
+- **D36** Gemini 3.5 Transcribe as a fourth system, with word-level diarization; the origin of
+  `hypothesis_words.speaker`. The route went in D51, diarization in D52.
+- **D38** Gemini back on AI Studio under an API key. Replaced by D39 (quota is per key there).
+- **D40** Gemini 3.5 Transcribe held out of disagreement for writing English in Devanagari.
+  Replaced by D41, then D51.
+- **D41** The Gemini composite: the recogniser heard, a text model rewrote each token's script,
+  one token in and one token out, with the raw Devanagari kept as `text_devanagari`. Its two
+  Gemini failure modes (one language code only; an empty 200 is a failure) are in AGENTS.md.
+  Removed in D51.
+- **D44** The script-restore route ran with thinking off: thinking truncated its JSON answers.
+  The route is gone (D73 below, D81).
+- **D49** Scribe asked to diarize, for a second source of speaker labels. Reversed by D52.
+- **D50** The composite held out again, for omitting English speech. Replaced by D51.
+- **D54** Priority on `seed_outvoted` (time-aligned disagreement with the seed);
+  `code_switch_density` dropped from ranking because it anti-correlated with edits (ρ −0.77).
+  Replaced by D67, then D74.
+- **D65** Script restoration on the seed route, and screened episodes kept out of gold. Replaced
+  by D73 and D71; the screened-never-gold rule stands in D63.
+- **D67** Queue ranked on `seed_orphan_rate` and `roman_gap`. Replaced by D74: every term measured
+  the seed against the recognisers, and a fused seed is built from them.
+- **D68** One episode demoted out of gold by a one-off script. Replaced by D71.
+- **D73** Script restoration taken off the seed route: the fused seed writes the script policy
+  itself (D74), and a restored Scribe would have been a second, dependent vote in fusion.
+- **D80** Batch URL submission removed; see D75.
+- **D81** `app/llm/script_restore.py` deleted: no route used it after D73.
+- **D82** The recorded D67 `legacy` score deleted from `reason_jsonb`: structurally zero on a
+  fused seed.
+- **D92** The playground starts with the stack; see D85.
+
 ## D1 — Postgres is the source of truth; migrations are the only schema change mechanism
 Every schema change ships as an Alembic revision with a working `downgrade`. The test suite builds
 its schema by running the real migrations rather than `create_all`, so a migration that works only
@@ -23,13 +69,6 @@ The harness must be usable with MinIO stopped, so `ObjectStorage` has a local im
 S3-specific extra, because HTTP range support in the audio endpoint depends on it. **Reversal:**
 none needed; both implementations are kept.
 
-## D5 — Frozen episode-level splits, assigned once at import
-Stored in `episodes.split` from `hash(episode_id, split_seed)`. Recomputing at export time would let
-segments migrate between train and test as episodes are added, which silently invalidates every
-earlier benchmark. Splits are per episode, never per segment, because segments from one episode
-share speaker, room and topic. **Reversal:** would invalidate all existing exports; treat as
-permanent.
-
 ## D6 — Hypotheses are immutable; labels are append-only
 A correction never overwrites a hypothesis, and a re-label never updates a `segment_labels` row; the
 latest row per `(segment_id, label_version_id)` is current. This keeps the door open for
@@ -49,19 +88,6 @@ as a JSON object next to the clip. **Reversal:** cheap, but the latency is the p
 The source is already lossy and re-encoding the exact audio that will be trained on is not
 acceptable. Rejection happens during validation, before any row is written. **Reversal:** would
 require re-importing every episode.
-
-## D10 — All LLM and cloud-ASR inference goes through OpenRouter
-OpenRouter is prepaid, which removes the possibility of a surprise invoice. The client, its retry
-and dry-run behaviour and the `llm_requests` log were built before any route existed, so when the
-ingestion pipeline started calling cloud ASR (D18) it inherited all three. Routes live in
-`config/llm_routes.yaml`; every route named `asr*` becomes one ASR system during ingestion.
-No direct calls to OpenAI, Anthropic, Google, Groq or Mistral, ever.
-**Superseded part:** the original MVP made no LLM calls at all and shipped `routes: {}` with
-`enabled: false`. Prioritization still uses only multi-system disagreement and rule flags — nothing
-in scoring, policy checking or correction suggestion calls a model.
-**Superseded part:** "through OpenRouter" was always a proxy for "prepaid". D21 restates the rule
-in the terms that actually matter and admits one direct provider on them. OpenRouter remains the
-default and still carries all text inference. **Reversal:** n/a.
 
 ## D11 — Validation by JSON Schema at the manifest boundary
 `backend/app/schemas/episode.schema.json` and `segment.schema.json` are the executable form of the input
@@ -138,29 +164,6 @@ the commit-per-segment invariant was preserved via `LockedSession`, ensuring tha
 threads safely commit each completed segment independently without holding long-lived global transactions.
 **Reversal:** trivial, but it would make a long job all-or-nothing.
 
-## D21 — The provider rule is "prepaid", not "OpenRouter"; ElevenLabs Scribe is called directly
-**The prepaid half is superseded by D34.** The half that survives is the one that mattered in
-practice: `app/llm/base.py` holds the retry policy, the dry-run switch and the `llm_requests`
-write, so a new provider inherits the guarantees instead of reimplementing them.
-
-The point of routing everything through OpenRouter (D10) was never the vendor. It was that
-OpenRouter is topped up rather than invoiced, so the worst outcome of a runaway ingest is an
-exhausted balance the owner chose to fund. ElevenLabs bills the same way, which means sending
-Scribe through a proxy would buy nothing and cost accuracy: Scribe is the only transcriber the
-harness has that returns word spans and per-word log probabilities, and it is not reachable
-through OpenRouter at all.
-
-So the invariant is restated as its own justification — every provider must be prepaid — and
-`app/llm/base.py` now holds the retry policy, the dry-run switch and the `llm_requests` write, so
-a second provider inherits the guarantees rather than reimplementing them. Scribe's key is
-`ELEVEN_LABS_API_KEY` and should be scoped to speech-to-text only.
-
-Scribe has no free-text prompt parameter, so the transcript policy cannot be stated to it in
-prose the way it is to the other two. Its steering is `language_code: ne` plus a key-term list.
-**Reversal:** delete the route and the client; nothing else depends on it. Hypotheses already
-imported under `elevenlabs-scribe-v2` stay valid, and the word-level confidence signal disappears
-with it.
-
 ## D22 — Transcribers run on synchronous endpoints; OpenRouter's Batch API cannot carry audio
 Batch pricing is half the synchronous rate, so a `:batch` slug is the obvious thing to reach for
 on a corpus this size. It does not work, and it fails in the most expensive possible way:
@@ -210,21 +213,6 @@ endpoints leaves the upload path exactly as it was; nothing downstream and no ta
 beyond `episodes.source_uri` carrying a URL instead of a `file://` name for episodes ingested this
 way.
 
-## D24 — Drop Whisper large-v3 from cloud ASR; upgrade secondary to Gemini 3.8 Flash
-Real-world testing showed OpenAI's Whisper large-v3 having poor performance on Nepali-English
-code-switched audio. It returned text without word spans or confidence signals and produced frequent
-transcription errors compared to ElevenLabs Scribe.
-
-Whisper was removed completely from the cloud ASR pipeline, reducing transcription from three calls
-per clip to two (Scribe v2 and Gemini 3.8 Flash) and halving OpenRouter spend per segment.
-Simultaneously, the general LLM audio-chat route was upgraded from `google/gemini-3.5-flash-lite` to
-`google/gemini-3.8-flash` (`asr_gemini_flash`), retaining its role as a disagreement signal and prompt
-follower.
-
-**Reversal:** Re-add `asr_whisper_large_v3` or another dedicated recogniser route to
-`config/llm_routes.yaml`. Historical hypotheses under `whisper-large-v3` remain immutable in
-`asr_hypotheses`.
-
 ## D25 — Two-pass linear loudnorm, raised-cosine edge fade, and speech padding in VAD
 Audio clips ingested through the pipeline occasionally exhibited audible clicking artifacts.
 Acoustic analysis identified four contributing causes:
@@ -247,7 +235,39 @@ The fix introduces:
 `app/services/silero_vad.py` and `app/services/ingest.py`. Reverting them restores the previous single-pass
 and linear-fade behavior without schema changes.
 
+### Anti-aliased downsampling with libsoxr (was a second D39)
 
+The four boundary fixes above hold — measured on shipped clips, every cut lands in silence, the first and
+last samples are zero, and the second pass applies a constant 1.5101x gain with no pumping
+whatsoever (106 dB against a no-loudnorm control). The clicking nevertheless remained, because it
+was never at the boundaries: it was spread through the body of every clip.
+
+The cause was the last filter in stage 1, `aresample=16000`. FFmpeg's built-in resampler defaults to
+a short filter with the cutoff at 0.97 of Nyquist, and its stopband is far too shallow for a 3:1
+decimation. Measured with pure tones through the real pipeline, it passes 8.2 kHz at -15 dB and
+8.5 kHz at -26 dB. Nothing above 8 kHz can survive a move to 16 kHz — it folds back, mirrored, on
+top of the audio that is kept. The source episode carries -24 dB of its energy in the 8-10 kHz
+band, which is exactly where sibilants live, so every /s/ and /ʃ/ deposited a burst of
+near-Nyquist noise into the 7-8 kHz band: about 1.2 audible ticks per second, and roughly an
+eighth of all energy in the clips' top octave.
+
+The fix routes the resample through libsoxr:
+`aresample=resampler=soxr:precision=28:cutoff=0.95:osr=16000`. It rejects the same tones at
+-158 dB. End to end through `normalize_audio`, out-of-band content that previously folded down at
+-35 dB now lands at -125 dB; on the real episode, mean alias falls from -48 dB to -139 dB. The
+speech band is untouched (96 dB agreement below 6 kHz) and the passband stays flat to 7.6 kHz.
+
+`_resample_filter` probes for libsoxr once per process by running the filter on a tenth of a second
+of silence, and falls back to a lengthened built-in filter (`filter_size=256:cutoff=0.91`, which
+measures -55 dB) with a loud warning rather than degrading in silence. Debian's `ffmpeg`, which the
+backend image installs, is built `--enable-libsoxr`, so the fallback should stay unused.
+
+**Clips ingested before this change carry the alias baked in and must be re-ingested to benefit.**
+
+**Reversal:** `SOXR_RESAMPLE` and `SWR_RESAMPLE_FALLBACK` in `app/services/ingest.py` are the whole
+change. `test_normalization_discards_content_above_nyquist_instead_of_folding_it` guards it by
+comparing an out-of-band probe against an anchor-only control; on the old chain it fails with a
+50 dB excess.
 
 ## D26 — Word timings are clip-relative; the segment's own span is episode-relative
 `hypothesis_words.start_time` and `end_time` count seconds from the start of the **clip**, while
@@ -281,7 +301,6 @@ wrong; the contract now says so.
 `hypothesis_words` rows. Cheap while the table is small, and there is no consumer to break today —
 no API endpoint exposes word times, and only the `analytics` export emits them.
 
-
 ## D27 — Word-level acoustic boundary cross-verification runs automatically on analytics export
 Rather than requiring annotators to manually adjust word boundary sliders in the browser (which slows
 annotation down by 10x and violates the "no word-level editing UI" guidance in AGENTS.md), word-level
@@ -297,103 +316,21 @@ divergence exceeds 200ms are isolated in the report as an audit triage queue.
 the automated export report has zero runtime database dependency and runs entirely in memory over the export
 batch.
 
-## D28 — Swap secondary transcriber to Microsoft MAI-Transcribe 2 on OpenRouter
-The secondary cloud ASR route (`asr_gemini_flash`), which used `google/gemini-3.8-flash` via chat
-completions with audio attachments (`audio_chat`), is replaced by `microsoft/mai-transcribe-2`
-(`asr_mai_transcribe_2`) routed through OpenRouter's `/audio/transcriptions` endpoint.
+## D31 — Gemini 3.8 Flash transcribes from the audio alone
+`asr_gemini_flash` is an `api: audio_chat` route: a general model asked to transcribe, which
+`config.py` documents as liable to editorialise or hallucinate over silence. Naming the shape
+keeps that risk in configuration rather than buried in a client. It is not asked for word
+timestamps; its spans come from the forced aligner (D32). It reports no `avg_logprob`. It
+replaced a Live API recogniser whose quota covered about four hours of audio a day (D29, D30), and
+it is served from Vertex (D39).
 
-**Why:** MAI-Transcribe 2 is a dedicated multilingual speech-to-text model with native support for
-code-switching and automatic language identification. Routing it through OpenRouter adheres strictly to
-Invariant 5 (prepaid billing control), preserves the commit-per-segment and 2-call-per-clip ingestion
-budget (paired with ElevenLabs Scribe v2 as primary), and tests lower WER performance against real
-Nepali-English conversational speech.
+It is given **only the audio** — never the other hypotheses. Feeding it Scribe's and MAI's
+transcripts to reconcile would collapse three independent opinions into one correlated output,
+and every recogniser-to-recogniser comparison depends on them staying independent. It also caps a
+hallucination at one hypothesis of three. Reconciling is fusion's job (D72), which runs afterwards
+and is kept out of disagreement by `asr_systems.kind`.
 
-**Reversal:** Revert `config/llm_routes.yaml` to configure `asr_gemini_flash` under `google/gemini-3.8-flash`.
-Existing hypotheses in `asr_hypotheses` recorded under `gemini-3.8-flash` remain immutable.
-
-## D29 — Add Google AI Studio as third ASR provider with Gemini 3.5 Transcribe
-**Superseded by D31.** The model was right about code-switching and wrong about quota: its
-Live API tier allows 100 requests a day, about four hours of audio. Google AI Studio remains
-the third provider; the model and endpoint changed.
-
-Google AI Studio is admitted as the third cloud inference provider alongside OpenRouter and ElevenLabs,
-wiring `gemini-3.5-transcribe` (`asr_gemini_transcribe`) as a third cloud ASR route.
-
-**Why:** Gemini 3.5 Transcribe is a dedicated speech-to-text model based on Gemini audio understanding.
-It natively handles intra-sentence code-switching, verbatim transcription, and word-level timestamps
-via the Google Interactions API (`POST /v1beta/interactions`). Operating alongside ElevenLabs Scribe v2
-and Microsoft MAI-Transcribe 2 on OpenRouter, all three configured models now emit verbatim transcripts
-and word-level timestamps, creating a rich three-way disagreement signal during ingestion.
-The provider adheres to Invariant 5 (prepaid provider guarantee) under monitored, prepaid billing terms.
-
-**Reversal:** Remove `asr_gemini_transcribe` from `config/llm_routes.yaml` and delete `app/llm/google.py`.
-Existing hypotheses under `gemini-3.5-transcribe` remain immutable in `asr_hypotheses`.
-
-## D30 — VAD-aligned macro-windowing and demultiplexing for Gemini Transcribe under Tier 1 quotas
-**Superseded by D31.** Removed with the model whose quota it existed to work around. Kept
-here because the arithmetic is worth remembering: a per-clip transcriber against a 100 RPD
-cap exhausts a day's quota in about fifteen minutes of audio.
-
-Google AI Studio Tier 1 restricts Live API models (`gemini-3.5-transcribe`) to 10 RPM, 10K TPM, and
-100 RPD (requests per day). Calling Gemini per-clip on 2s–20s utterances exhausts the daily quota after
-only ~15 minutes of audio, while ElevenLabs Scribe v2 and Microsoft MAI-Transcribe 2 have no 100 RPD
-cap and operate best on short clips.
-
-**Why macro-windowing:**
-1. **Token & Duration Sweet Spot**: Gemini audio tokenization (~32 tokens/sec) consumes ~4,800 tokens for
-   a 150s (2.5 min) window, using ~48% of the 10,000 TPM limit while pacing at 2–3 RPM (well under 10 RPM).
-2. **Quota Multiplication**: 100 RPD provides 250 minutes (>4.1 hours) of audio per day (~10 full episodes)
-   instead of failing halfway through a single episode.
-3. **Natural Silence Boundaries**: Consecutive VAD segments are clustered up to 150s. Because boundaries
-   align strictly with VAD segment boundaries (which snap to conversational pauses), zero words are ever
-   sliced across window cuts.
-4. **Timestamp Demultiplexing**: Gemini's verbatim word timestamps (`start_offset`, `end_offset`) are mapped
-   back to their constituent segments and converted to clip-relative timestamps, strictly satisfying
-   Invariant D26.
-5. **Independent Scribe & MAI Dispatch**: Scribe and MAI continue receiving short clips concurrently,
-   preserving their low hallucination rates.
-
-**Reversal:** Remove the window clustering and demultiplexing block from `app/services/ingest.py` to restore
-direct per-clip dispatch for all routes if quota limits are lifted in higher tiers.
-
-## D31 — Gemini 3.8 Flash on AI Studio generateContent, audio only
-`asr_gemini_transcribe` (`gemini-3.5-transcribe`, `POST /v1beta/interactions`) is replaced by
-`asr_gemini_flash` (`gemini-3.8-flash`, `POST /v1beta/models/{model}:generateContent`), declared
-`api: audio_chat` and carrying the clip inline. Google AI Studio remains the third provider and
-`GOOGLE_API_KEY` is unchanged.
-
-**Why:** the Live API's Tier 1 quota is 10 RPM / 10K TPM / **100 RPD** — roughly four hours of
-audio a day. Every hack in D30 existed to survive that number. `generateContent` has no daily cap
-of that shape, so the clip goes out per segment on the same thread pool as every other route, and
-the windowing, the demuxing and the ten-second pacing sleep all go away.
-
-Two consequences, both deliberate:
-
-- **The corpus prompt applies for the first time.** `transcription.py` accepted a `prompt` and
-  dropped it on the google branch. That was invisible because the Live API's transcription model
-  took no free-text prompt anyway — so the transcript policy had never once been stated to this
-  provider. `generateContent` obeys one, and a test now guards it. The route's `language` code
-  rides on the prompt, as `generateContent` has no parameter for one.
-- **The model is no longer asked for word timestamps**, and `AsrResult.words` is `None` on every
-  real call. Spans come from the forced aligner instead (D32). This is the trade: an endpoint with
-  no daily cap, in exchange for timings measured locally rather than claimed by the model.
-
-The route is `audio_chat` rather than `transcription` because that is what it is — `config.py`
-already documents that shape as "a general LLM being asked to transcribe, [which] may also
-editorialise or hallucinate over silence". Naming it so keeps the risk in configuration instead of
-buried in a client. It also means Flash reports no `avg_logprob` and can never win the seed
-comparison, exactly as its predecessor could not.
-
-It is given **only the audio** — never the other two hypotheses. Feeding it Scribe's and MAI's
-transcripts to reconcile would have been cheaper and would have produced a better single
-transcript, but it would collapse three independent opinions into one correlated output, and
-`word_disagreement_rate` carries 0.40 of the priority score. A queue built on an echo is worse than
-a queue built on a noisier but genuine measurement. It also caps the blast radius of a
-hallucination at one hypothesis out of three.
-
-**Reversal:** restore the `/interactions` payload in `app/llm/google.py` and the route block in
-`config/llm_routes.yaml`. The D30 windowing would have to come back with it; see the git history
-at `eda3562`.
+**Reversal:** hand the route the other transcripts, and lose its independence.
 
 ## D32 — Word timestamps from a local CTC forced aligner, not from the model
 `app/services/forced_align.py` places a known transcript back onto its own clip and reports where
@@ -483,100 +420,6 @@ A GCP budget alert is the owner's job and lives outside this repository.
 code enforced the rule — no test asserted it and no client checked it — so the reversal is
 documentation plus a routing table, which is exactly why it was worth so little.
 
-## D35 — Google models are served from Vertex AI; the AI Studio client is removed
-`app/llm/google.py` and `provider: google` are deleted. `app/llm/vertex.py` and
-`provider: vertex` replace them, and `asr_gemini_flash` now calls `gemini-3.8-flash` at
-`publishers/google/models/{model}:generateContent` on `{location}-aiplatform.googleapis.com`
-rather than at `generativelanguage.googleapis.com`. The model, the `audio_chat` route shape, the
-`system_id` and the forced-alignment arrangement of D31 and D32 are all unchanged — only the
-transport is different, so hypotheses already recorded under `gemini-3.8-flash` stay comparable
-with the ones recorded after it.
-
-**Why:** AI Studio's quotas were a running tax on this project. D29 hit the Live API's 100
-requests a day and D30 built VAD macro-windowing and timestamp demultiplexing to survive it; D31
-abandoned that model and endpoint entirely. Vertex AI is the same models on project-scoped quota
-that can be raised, and it is where the transcription models live. The prepaid rule that had kept
-it out is gone (D34).
-
-Authentication changes shape with the transport: Application Default Credentials, not an API key.
-`google-auth` is added for exactly that — the credential lookup and the token refresh — and the
-requests themselves stay plain `httpx` like every other client here. `GOOGLE_API_KEY` is no longer
-read by anything.
-
-Everything D30 left behind is also removed. The windowing and demultiplexing went with D31; what
-remained was `max_retries: 4` and `retry_backoff_seconds: 2.0` in `config/llm_routes.yaml`, raised
-to absorb 429s, and those are back at 3 and 0.5. The `Retry-After` handling in
-`app/llm/base.py` stays: honouring a header the server sent is not a way round a rate limit, it is
-the documented way to obey one, and it is provider-agnostic.
-
-**Reversal:** the AI Studio client is at `f607de2:backend/app/llm/google.py` and needs
-`GOOGLE_API_KEY` back in the environment. Its quota problem comes back with it.
-
-## D36 — Gemini 3.5 Transcribe on Vertex AI as a fourth ASR system, with word-level diarization
-`asr_gemini_transcribe` calls `gemini-3.5-transcribe` at `interactions:create` on Vertex AI, with
-a `transcriptionConfig` asking for word timestamps and speaker diarization. It is the fourth
-`asr*` route and the second transcriber in the corpus to report word spans of its own.
-
-**Why the model:** it is a dedicated recogniser that handles intra-sentence code-switching, and
-`languageCodes: [ne-NP, en-US]` says so in the request rather than hoping a single hint covers
-both halves. D29 already judged the model right for this corpus and was defeated by AI Studio's
-quota, not by the transcription; D35 removes that obstacle.
-
-**Why it does not replace Gemini 3.8 Flash.** Flash stays, on its own route, unchanged. The two
-answer different questions — Flash is a general model whose failure mode is editorialising, and
-the recogniser's is mishearing — and the owner has not yet seen a Flash transcript on this corpus.
-Four routes is four paid calls per clip, a third more than before, and that is the price of the
-comparison. Dropping a route is one line in `config/llm_routes.yaml` once the answer is in.
-
-**Verbatim has no field on this API.** Vertex's `TranscriptionConfig` carries `languageCodes`,
-`diarizationMode`, `timestampGranularities` and `customVocabulary`, and nothing that selects
-verbatim over the "smart" mode that strips disfluencies — which are exactly what this corpus is
-collecting. So the instruction is prose, in `systemInstruction`, from the same `SCRIPT_POLICY` the
-other prompted routes get. The no-transliteration rule rides there too, stated in both directions,
-because a multilingual model's default is to normalise a code-switched utterance into one script
-and that would silently destroy the measurement the corpus exists to make.
-
-**Speaker labels get a column.** `hypothesis_words.speaker`, nullable, migration `facb0b37b4f8`.
-Requesting diarization and discarding it would have been the more expensive way to buy nothing.
-The label is clip-local and hypothesis-local: `spk_1` here is not `spk_1` in the hypothesis beside
-it, and it is not `segments.speaker_id`, which names a person from an upstream manifest. Its use
-is the comparison *within* one clip — two labels mean a turn boundary the VAD segmenter assumed
-was not there, which is a rule flag waiting to be written and a reason a clip may be unusable.
-Null means "not diarized" and stays null for the other three systems; nothing backfills it.
-
-The route does not set `forced_align`. It reports its own timings, and D32's rule holds: the
-aligner fills spans that are missing, it never overwrites spans a model measured.
-
-**Reversal:** delete the route. Hypotheses already recorded under `gemini-3.5-transcribe` stay
-immutable, and `scripts/purge_asr_system.py` removes them if they are not wanted. The column would
-outlive the route and should — it costs a nullable string and it is what any future diarizing
-transcriber writes to.
-
-### Status: configured, and not yet reachable
-
-The route is written and tested but **this project cannot call it.** `interactions:create` answers
-`400 RESOURCE_PROJECT_INVALID` — measured against the live API, and the diagnosis is not a guess:
-
-- The same error comes back for a **deliberately nonsense model name**, so it is not the model id,
-  and not `gemini-3.5-transcribe-preview` either.
-- The same error comes back from `global`, `us-central1`, `us-east4`, `europe-west4` and
-  `asia-southeast1`, with the project **id** and with the project **number**.
-- `generateContent` against `gemini-3.8-flash` on the same project, same credentials, same
-  location returns `200` and a transcript. Auth, billing, the quota project and the Vertex path
-  are all fine.
-- `aiplatform.googleapis.com` *is* "Agent Platform API" and is enabled. There is no second API to
-  turn on; `gcloud services list --available` offers nothing else that would gate this.
-
-So the Interactions surface is allowlist-gated, and the fix is access rather than code. The route
-is deliberately left configured while that is chased — which means **ingestion is broken until it
-lands**, because a raising route aborts the segment and stage 3 fails the job. Comment the block
-out in `config/llm_routes.yaml` to ingest in the meantime.
-
-The alternative considered and not taken: making ingestion skip a failing route and continue on
-the hypotheses that succeeded. That is a genuine robustness improvement against any provider
-outage, but it silently changes the disagreement denominator per clip, so it is its own decision
-rather than a bug fix smuggled in here.
-
 ## D37 — Unified multi-vendor AI cost tracking and dashboard
 A centralized pricing calculation engine (`app/llm/cost.py`) and analytics service
 (`app/services/costs.py`) compute, record, and aggregate inference spend across ElevenLabs,
@@ -590,65 +433,7 @@ atomically, and offers real-time auditability in the UI.
 
 **Reversal:** None. Costs remain append-only in `llm_requests`.
 
-## D38 — Gemini models switch to Google AI Studio API key and Interactions API fix (supersedes D35 and D36 Vertex endpoint)
-Both Google models (`gemini-3.5-transcribe` and `gemini-3.8-flash`) authenticate with a single,
-standard API key (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) targeting the public Gemini Developer API
-at `https://generativelanguage.googleapis.com/v1beta`. All Vertex AI Application Default Credentials
-(ADC), service account json paths, and `google-auth` token refresh plumbing are removed.
-
-**Why:**
-1. **Single standard API key:** Consistent with ElevenLabs and OpenRouter, eliminating machine-local
-   GCloud token caches, ADC configurations, and IAM permissions.
-2. **Interactions API URL and schema:** The previous implementation failed with `400 RESOURCE_PROJECT_INVALID`
-   because it incorrectly targeted `interactions:create` (an invalid custom verb on Google REST endpoints)
-   and wrapped parameters in fabricated nested structures. The real Gemini Developer API endpoint is
-   `POST /v1beta/interactions` accepting a flat schema (`model`, `input`, and `generation_config`).
-3. **Dropping custom vocabulary:** Google's Interactions API explicitly disallows combining
-   `custom_vocabulary` with `diarization_mode` or `timestamp_granularities` (throwing 400 Bad Request).
-   The harness prioritizes word-level timestamps and speaker diarization for downstream scoring and
-   boundary alignment, so `custom_vocabulary` is omitted entirely.
-
-**Reversal:** Reintroducing Vertex ADC would require restoring `google-auth` and `app/llm/vertex.py`.
-The flat payload schema and exclusion of `custom_vocabulary` remain mandatory under Google's API specification.
-
-
-
-## D39 — Anti-aliased downsampling to 16 kHz with libsoxr (completes D25)
-D25 chased audible clicking in ingested clips and fixed four real problems at the cut boundaries:
-speech padding, a raised-cosine edge fade, energy-aware pause snapping, and two-pass linear
-`loudnorm`. Those fixes hold — measured on shipped clips, every cut lands in silence, the first and
-last samples are zero, and the second pass applies a constant 1.5101x gain with no pumping
-whatsoever (106 dB against a no-loudnorm control). The clicking nevertheless remained, because it
-was never at the boundaries: it was spread through the body of every clip.
-
-The cause was the last filter in stage 1, `aresample=16000`. FFmpeg's built-in resampler defaults to
-a short filter with the cutoff at 0.97 of Nyquist, and its stopband is far too shallow for a 3:1
-decimation. Measured with pure tones through the real pipeline, it passes 8.2 kHz at -15 dB and
-8.5 kHz at -26 dB. Nothing above 8 kHz can survive a move to 16 kHz — it folds back, mirrored, on
-top of the audio that is kept. The source episode carries -24 dB of its energy in the 8-10 kHz
-band, which is exactly where sibilants live, so every /s/ and /ʃ/ deposited a burst of
-near-Nyquist noise into the 7-8 kHz band: about 1.2 audible ticks per second, and roughly an
-eighth of all energy in the clips' top octave.
-
-The fix routes the resample through libsoxr:
-`aresample=resampler=soxr:precision=28:cutoff=0.95:osr=16000`. It rejects the same tones at
--158 dB. End to end through `normalize_audio`, out-of-band content that previously folded down at
--35 dB now lands at -125 dB; on the real episode, mean alias falls from -48 dB to -139 dB. The
-speech band is untouched (96 dB agreement below 6 kHz) and the passband stays flat to 7.6 kHz.
-
-`_resample_filter` probes for libsoxr once per process by running the filter on a tenth of a second
-of silence, and falls back to a lengthened built-in filter (`filter_size=256:cutoff=0.91`, which
-measures -55 dB) with a loud warning rather than degrading in silence. Debian's `ffmpeg`, which the
-backend image installs, is built `--enable-libsoxr`, so the fallback should stay unused.
-
-**Clips ingested before this change carry the alias baked in and must be re-ingested to benefit.**
-
-**Reversal:** `SOXR_RESAMPLE` and `SWR_RESAMPLE_FALLBACK` in `app/services/ingest.py` are the whole
-change. `test_normalization_discards_content_above_nyquist_instead_of_folding_it` guards it by
-comparing an out-of-band probe against an anchor-only control; on the old chain it fails with a
-50 dB excess.
-
-## D39 — Gemini runs on Vertex AI under one restricted API key (supersedes D38, restores D35/D36)
+## D39 — Gemini runs on Vertex AI under one restricted API key
 Both Google models move back to Vertex AI. `app/llm/google.py` and `provider: google` are deleted;
 `app/llm/vertex.py` and `provider: vertex` replace them. `asr_gemini_transcribe` calls
 **`gemini-3.5-transcribe-preview`** and `asr_gemini_flash` calls `gemini-3.8-flash`, both at
@@ -702,106 +487,6 @@ segment's label onto its own words to keep `hypothesis_words.speaker` a per-word
 **Reversal:** returning to AI Studio is `provider`, the base URL, the model id and the payload
 builder — and it re-enters the quota trap that caused this. Moving to ADC would mean restoring
 `google-auth` and a credential mount for no gain now that a key authenticates the same endpoint.
-
-## D40 — Gemini 3.5 Transcribe is held out of the disagreement scores, not out of the corpus
-`asr_gemini_transcribe` carries `exclude_from_disagreement: true`. Its hypothesis is still
-requested, stored, exported and shown; it simply does not enter `word_disagreement_rate` or
-`cer_between_hypotheses`.
-
-**Why:** the route writes English words in Devanagari and cannot be told otherwise (D39).
-`mean_pairwise_disagreement` is a raw `difflib` comparison over tokens with no script
-normalisation, so this system disagrees with the other three on *every* English token without
-anything having been misheard. `word_disagreement_rate` is the heaviest term in the priority score
-at 0.40, so counting it would push the most heavily code-switched segments up the annotation queue
-for a reason that is not difficulty — a bias aimed precisely at the phenomenon the corpus exists
-to study. Measured on one segment: 0.0 with the hold-out, 0.3333 without, from orthography alone.
-
-Stage 4's CMI and Devanagari/Latin ratio were never at risk: they read `hypotheses[0]`, which is
-`asr_scribe_v2`.
-
-**Why keep the hypothesis at all.** It is the only transcriber reporting speaker labels, and its
-self-reported spans are the second timing reference the D33 boundary report compares. Beyond that,
-a whole-corpus transcript that renders every English word phonetically in Devanagari, time-aligned
-against three transcripts that keep Latin, is a parallel resource that cannot easily be bought:
-see the uses recorded against this decision. Deleting it to tidy the score would throw that away.
-
-**Implementation.** The flag lives on `LlmRoute`, and both places that compute disagreement --
-`ingest.py` at transcribe time and `purge.py` when a purge changes a segment's hypothesis set --
-read the hold-out set from `disagreement_excluded_system_ids()` in `app/llm/transcription.py`.
-They must never name a system independently: a system excluded at ingest and counted at rescore
-would silently rewrite every score a purge touched.
-
-**Reversal:** drop the flag. If the disagreement metric ever becomes script-aware, the hold-out
-stops being necessary and the route rejoins the comparison with no other change.
-
-## D41 — Gemini Composite: the recogniser hears, a reasoning model spells (supersedes D40's hold-out)
-`asr_gemini_transcribe` becomes `asr_gemini_composite`, `system_id: gemini-composite`. Gemini 3.5
-Transcribe on Vertex still hears the clip and still supplies the text, the word spans and the
-speaker labels. Its token list is then passed to Gemini 3.8 Flash on **OpenRouter**, which rewrites
-each token into the script its own language uses. The result is recorded as one system, named so
-the seam is visible; the paper discloses the two-model pipeline.
-
-**Why:** D39 established that this recogniser accepts no steering of any kind, and therefore writes
-English phonetically in Devanagari (`active` → `एक्टिभ`) with no lever to stop it. D40 dealt with
-that by holding it out of the disagreement scores. Restoring the script instead fixes the cause
-rather than the symptom, so `exclude_from_disagreement` is dropped and the corpus is back to
-**four voting systems**. Measured on a 30 s clip: 93 tokens in, 93 out, 18 restored, 0 same-script
-edits.
-
-**One token in, one token out.** This is the whole design, and it is enforced in code, not asked
-for in the prompt. Each restored word inherits the span the recogniser measured for it, so there is
-no re-alignment and the forced aligner is not involved — `forced_align` stays false here (D33). A
-rewrite returning a different token count is retried and then fails the segment: padding or
-truncating would give every word after the first divergence someone else's timing, which is far
-worse than a segment that fails loudly. `app/llm/script_restore.py` owns this.
-
-**The rewrite runs on OpenRouter, not Vertex.** It is text inference, which is where OpenRouter
-belongs in this harness, and Vertex answers Flash with a spurious `blockReason: SAFETY` often
-enough to matter (below). Only the audio call needs Vertex, because only Vertex serves the
-recogniser at all.
-
-**A reasoning layer can lie, so its lying is measured.** A token that comes back in the *same*
-script but different (`मिटिङ` → `बैठक`) is the model correcting the recogniser rather than
-transliterating it. That is counted per hypothesis as `script_restore_same_script_edits` and
-carried in `metadata_jsonb`, so a suspect segment can be found again. It is reported rather than
-raised: one disputed token must not cost an episode. Standalone `asr_gemini_flash` is retained
-partly as the control on this layer — it is the only route that hears audio and writes Latin
-directly, so where it and the composite disagree on a script decision is the audit set.
-
-**The raw Devanagari is kept as provenance, not as a hypothesis.** It rides in the hypothesis's
-`metadata_jsonb` as `text_devanagari` and never reaches `text_raw`, the disagreement comparison,
-the analysis or the queue. Its value is a word-aligned Devanagari/Latin parallel corpus that the
-pipeline now produces for free.
-
-### Two Gemini failure modes found while building this, both silent
-
-**One language code, not two.** Sending two or more `languageCodes` makes the recogniser return
-HTTP 200 with *no content* for any clip past roughly 15 seconds. Deterministic, three runs per
-cell:
-
-| `languageCodes` | 15 s | 18 s | 20 s | 25 s | 30 s |
-|---|---|---|---|---|---|
-| `[ne-NP, en-US]` | 45 w | EMPTY | EMPTY | EMPTY | EMPTY |
-| `[ne-NP]` | 49 w | 59 w | 64 w | 77 w | 93 w |
-| `[en-US]` | EMPTY | EMPTY | EMPTY | EMPTY | 2 w |
-| `[ne-NP, en-US, hi-IN]` | 42 w | 1 w | EMPTY | EMPTY | 4 w |
-
-`MAX_SEG_SECONDS = 20.0`, so a second code silently blanks the long end of every episode. This
-supersedes D36's "send both codes" reasoning: that was right about the corpus and wrong about what
-the API can do, and `en-US` was never buying script correctness anyway — the restore step is what
-buys it. Scribe and MAI were swept at the same durations and are clean, so the cliff is Gemini's,
-not the audio's.
-
-**An empty 200 is not a success.** Both Gemini routes could return one — the recogniser past the
-duration limit, and `audio_chat` on a spurious `blockReason: SAFETY` that clears on retry with the
-request unchanged (observed on 4 of 7 clips in one sweep, then not reproducible on the same clip
-minutes later; `OFF` is a valid threshold and the categories are correct, so it is not a
-configuration error). `_send_with_retries` only ever sees a 200, so emptiness is now judged and
-retried in `vertex.py`. An empty `audio_chat` answer with *no* block reason is still accepted:
-`ASR_PROMPT` asks for an empty string when there is no intelligible speech.
-
-**Reversal:** drop `restore_script_route` and the composite is the raw recogniser again — at which
-point D40's hold-out has to come back with it, because the orthography artefact returns.
 
 ## D42 — The aligner model downloads itself, pinned and digest-checked
 `ForcedAligner` fetches `mms_fa.onnx` and its vocabulary when they are missing, instead of warning
@@ -863,39 +548,6 @@ and `uv` itself is pinned by image tag rather than digest. Both are build-time t
 change runtime behaviour, which is where the reproducibility argument actually bites.
 
 **Reversal:** delete the lockfile and restore `pip install -e .`; nothing else depends on it.
-
-## D44 — The script-restore route runs with thinking off
-`script_restore` sends OpenRouter's `reasoning: {enabled: false}`. Routes carry a
-`reasoning_enabled` field for this; it is unset everywhere else, so every other route keeps
-whatever the provider does by default.
-
-**Why:** the first full ingest failed at `script restoration failed: unparseable rewrite: no JSON
-array in the response`, and the rewrite was not unparseable — it was truncated. Gemini 3.8 Flash
-thinks by default, and on a task that is a dictionary lookup it thought until the budget ran out:
-24 of the run's 51 rewrites returned `finish_reason: length` with the JSON array stopping
-mid-token, a mean 2,843 reasoning tokens against a 4,096 cap and 3,929 on the worst call. A
-partial array cannot be aligned to the spans, so each of those failed its segment, and
-`temperature: 0.0` made all three retry attempts the same draw.
-
-**The thinking was not neutral, either.** The 3,929-token trace was spent circling one token,
-`ट्युन`, over whether the speaker said "tune" or "tuned", and it concluded that it should restore
-the *intended* orthography rather than the heard one — rule 2 of the instruction reasoned away in
-the open, on a route whose entire premise is that it changes script and nothing else.
-`count_same_script_edits` does not catch that class of drift: it only sees Devanagari that came
-back as different Devanagari, not Devanagari that came back as the wrong Latin word. Turning
-thinking off removes the surface the argument happened on.
-
-**Cost, measured against that run:** ~469 prompt and ~206 completion tokens per segment, ~$0.0011
-a call, against $3.31 per hour of audio with thinking on — about a sixteenth, with the retries
-gone.
-
-**What this does not fix.** `_extract_array` still reports a truncated response as "no JSON array",
-which is what sent the diagnosis to the wrong place; `finish_reason` is never read. Raising
-`max_tokens` was rejected as the fix — it buys headroom for the rambling rather than removing it —
-but 4,096 now has a large margin over a 391-token worst case, so it stays.
-
-**Reversal:** drop `reasoning_enabled: false` from the route; the field going unset restores the
-provider default.
 
 ## D45 — A Gemini block arrives on `finishReason`, and the audio route stops thinking too
 `vertex.py` judges a response through `withheld_reason`, which reads **both**
@@ -1050,148 +702,31 @@ either way now that the lever is known not to work.
 and the `DEFAULT_KEYTERMS` tuple, and drop the `dedicated` guard in `transcription.transcribe` so
 the prompt reaches the transcription endpoint again. The measurements above are the reason not to.
 
-## D49 — Scribe is asked to diarize, because one source of speaker labels is not evidence
-
-`asr_scribe_v2` sets `diarize: true`. Speaker labels now come from two systems instead of one,
-and `LlmRoute.diarize` is the flag that says which.
-
-**Why:** the composite's recogniser was the only transcriber reporting who said each word (D36),
-and a label no other system can be checked against cannot be validated, only believed. Scribe
-diarizes at no extra charge and its word spans are already the most trustworthy in the table
-(D48), so it is the natural second opinion. Two sources make per-clip speaker agreement a
-measurable quantity; one made it an assertion.
-
-**The other two cannot supply a third.** MAI-Transcribe-2 returns no speaker field at all —
-probed live against `/audio/transcriptions` with `diarize=true` and `response_format=verbose_json`,
-the response carries `text`, `usage`, `language`, `duration`, `segments` and `words`, and neither
-the word entries (`word`, `start`, `end`) nor the segment entries (`id`, `start`, `end`, `text`)
-name a speaker. `asr_gemini_flash` returns no word timings of its own, so there is nothing to hang
-a label on; its spans come from the CTC aligner afterwards, which knows about acoustics and not
-about speakers.
-
-**What these labels are, and what they are not.** They are clip-local. The pipeline cuts on speech
-turns first and transcribes each clip independently, so `speaker_0` in one clip has no relation to
-`speaker_0` in the next, and neither has any relation to `segments.speaker_id`. That supports one
-question — do two systems agree about how many voices are in *this* clip, and where they change —
-and not the question a sociolinguistic read actually asks, which is whether a given speaker's
-code-switching rate differs from another's across a whole episode. Answering that needs *global*
-speaker identity, which this pipeline cannot produce at all: it would take either a diarization
-pass over the full episode before segmentation, with segments joining to it by time, or speaker
-embeddings clustered across clips. Both are a new pipeline stage, not a flag. Nothing here should
-be read as having delivered it.
-
-**Not yet measured.** The one ingested episode is a single-presenter TV review — 1283 words
-labelled `spk:0` against 6 labelled `spk:1` — so it contains no diarization signal to score
-either system on. Agreement between Scribe and the composite is measurable only on multi-speaker
-audio, and no such episode has been ingested.
-
-**Reversal:** one line in `config/llm_routes.yaml`. The column already existed and null already
-meant "not diarized", so no schema change and nothing already imported is affected.
-
-## D50 — The composite is held out of the disagreement scores again, for a different defect
-
-`asr_gemini_composite` carries `exclude_from_disagreement: true`. Its hypothesis is still
-requested, stored, exported and shown; it does not enter `word_disagreement_rate` or
-`cer_between_hypotheses`.
-
-**This is not D40 returning.** D40 held the raw recogniser out because it wrote English in
-Devanagari, so it disagreed with every other system on every English token without anything having
-been misheard. D41 fixed that cause with the restore step and put all four systems back in the
-comparison. **The restore step still works** — recogniser token count equals restored token count
-on all 23 clips of the pilot episode, and the composite is not collapsed onto the model that does
-the restoring (composite-vs-flash disagreement 0.273, mid-pack among the six pairs; the most
-similar pair is mai-vs-flash at 0.211). D41's reasoning stands and is not superseded.
-
-**The defect is upstream of the restore step.** Gemini 3.5 Transcribe omits speech it heard. On
-8 of 23 clips it returns a transcript more than 10% shorter than the median of the other three —
-worst cases −42% (seg 16), −35% (seg 20), −27% (seg 30). The omission is in the recogniser, not
-the rewrite: seg 16's raw `text_devanagari` is already 36 tokens where the other systems have ~62.
-
-**And the omission is not random.** Aligned against each of the other three systems in turn, the
-tokens the composite lacks are 71–75% Latin, where the tokens it keeps are 32–34% Latin
-(Flash 74.8%, Scribe 71.1%, MAI 75.2% — kept 32.7/32.5/34.3%). It is dropping the English-dominant
-stretches: seg 16 loses `you will definitely appreciate this` and `But then this one is very close`
-while keeping the Nepali between them. Of the 123 tokens missing against Flash, ~80 are absent by
-raw token count and the remainder may be alignment artefacts, so the direction is firm and the
-magnitude is approximate.
-
-**It is deterministic, so it is not a retry problem.** Three repeats of the bare recogniser per
-clip returned identical token counts every time — 36/36/36 and 35/35/35 on the truncated clips,
-66/66/66 and 60/60/60 on clean ones. Not duration-driven (mean 19.44 s truncated against 19.08 s
-not). The only remaining lever is `language_codes`, which D41 locked to `ne-NP` because two or more
-codes blank long clips outright.
-
-**Why that justifies a hold-out.** `word_disagreement_rate` carries 0.40 of the priority score. A
-system that deletes English manufactures disagreement precisely where the corpus is most
-interesting — the same class of bias D40 objected to, arriving by a different route.
-Spearman(`code_switch_density`, `word_disagreement_rate`) over the pilot episode is **−0.616** with
-this system held out and **−0.229** with it counted: held out, the measure carries a clean signal
-(code-switch-dense segments are ones the systems agree on, English being acoustically distinct),
-and counting the composite cancels half of it.
-
-**Why keep the hypothesis.** It is one of only two systems that report speaker labels (D49), and
-MAI cannot supply a third. Its self-reported spans are no longer a trustworthy timing reference —
-see the triangulation in D48's follow-up — but the transcript remains a parallel resource and the
-diarization is half the only cross-check there is.
-
-**Evidence is one episode.** 23 clips, one presenter, consumer-tech Nepali, which is unusually
-loanword-dense and therefore the condition most likely to expose an English-dropping failure. The
-hold-out is cheap and reversible, so it is applied now rather than after replication; replicating
-the drop rate across speakers and domains is still outstanding.
-
-**Reversal:** drop the flag. Already-imported scores are unaffected until something recomputes
-them — `purge.py` is the only path that does, and it reads the same hold-out set, so the two
-computation sites cannot disagree.
-
 ## D51 — The Gemini composite is removed, not held out
-
 `asr_gemini_composite` and the `script_restore` route it drove are gone from
 `config/llm_routes.yaml`. Three ASR systems remain: Scribe, MAI and Flash. The hold-out set
-`disagreement_excluded_system_ids()` returns is now empty, which is the honest state rather than a
-forgotten flag — nothing else has ever needed holding out.
+`disagreement_excluded_system_ids()` returns is empty, which is the honest state rather than a
+forgotten flag.
 
-**D50 held it rather than removed it, and said why:** it was one of only two systems reporting
-speaker labels, so it was "half the only cross-check there is". That argument is gone. Measured on
-a two-speaker episode, 51 of 68 clips are single-speaker for *both* systems and agree trivially at
-100%; the 17 contested clips agree at 94.8%. The headline 98.3% is an artefact of clips where
-there is nothing to disagree about. Clip-local diarization cannot measure speaker agreement,
-because the pipeline segments before it transcribes and a 20-second window of a podcast almost
-always holds one speaker. More two-speaker episodes will not change that — the ceiling comes from
-the segmentation order, not the corpus.
+**Why.** Its recogniser deletes the English half of code-switched speech, deterministically.
+Measured without aligning anything, Spearman(clip Latin share, token shortfall) was **+0.670**
+against Scribe, **+0.612** against Flash and **+0.598** against MAI (n=68): three references with
+different failure modes agree. Clips more than 10% short were 35% of both episodes measured. On
+leave-one-out consensus agreement it trailed the other three (0.538 against 0.610–0.623, which sit
+within noise of each other). D50 had held it out rather than removed it because it was one of two
+sources of speaker labels; that argument fell when clip-local diarization proved unable to measure
+speaker agreement (51 of 68 clips were single-speaker for both systems; see D52).
 
-**What was left once that argument fell.** On leave-one-out consensus agreement over 68 clips,
-script-blind: Scribe 0.623, Flash 0.620, MAI 0.610, composite **0.538**. The other three sit
-within 0.013 of each other — noise — and the composite trails them by seven times that spread. It
-was the least accurate of the four, and biased in the one direction that matters here.
+**Why removal rather than a disabled flag.** A route configured but unused leaves
+`exclude_from_disagreement` as the only thing between its hypotheses and the score, and the two
+computation sites (`ingest.py`, `purge.py`) desynchronise silently when a system is named in one
+and not the other. A route that must never be used is better deleted than remembered.
 
-**The defect replicated, on a better measure than D50 used.** D50's evidence was the Latin share
-of tokens the composite "dropped" under alignment. On this episode that method reports 702–772
-dropped tokens against an actual shortfall of 221–235, so roughly two-thirds of the "dropped" set
-is lexical disagreement rather than omission — and English is exactly where two systems most often
-disagree on spelling. That statistic is retired. The replacement never aligns anything:
-Spearman(clip Latin share, composite token shortfall) is **+0.670** against Scribe, **+0.612**
-against Flash and **+0.598** against MAI, n=68. Three references with different failure modes
-agree. Clips more than 10% short: 24 of 68, against the pilot's 8 of 23 — 35% both times.
+**The hypotheses are evidence.** `scripts/purge_asr_system.py` wrote every row to JSONL before
+deleting; the dump is the record the English-deletion finding rests on.
 
-**Why removal rather than a disabled flag.** Leaving the route configured but unused would leave
-`exclude_from_disagreement` as the only thing standing between its hypotheses and the score, and
-AGENTS.md already warns that the two computation sites desynchronise silently when a system is
-named in one place and not the other. A route that must never be used is better deleted than
-remembered.
-
-**The already-collected hypotheses are evidence and are dumped, not discarded.**
-`scripts/purge_asr_system.py` writes every row to JSONL before deleting, and the composite's
-output is the subject of the corpus's headline claim — that a Nepali-configured recogniser deletes
-the English half. The dump is the record that claim rests on.
-
-**`app/llm/script_restore.py` stayed** even though nothing routes to it now (kept per D51;
-*deleted in D81*). Any recogniser that transliterates English into Devanagari and cannot be told
-not to needs exactly this repair, and another one is being evaluated.
-
-**Evidence is two episodes and three speakers.** Both are pilot data.
-
-**Reversal:** restore the two route blocks from git history and re-ingest. Hypotheses already
-purged come back only from the JSONL dump or by re-transcribing, which costs money.
+**Reversal:** restore the route blocks from git and re-ingest. Purged hypotheses come back only
+from the dump or by paying to re-transcribe.
 
 ## D52 — No cloud ASR route is asked to diarize, reversing D49
 
@@ -1269,67 +804,6 @@ with a human.
 
 **Reversal:** delete the service and the `disputes` field. Nothing else reads it, no data is
 written by it, and no stored column changes.
-
-## D54 — The priority score is measured against the seed, on the clock
-
-The queue formula becomes `0.60 * seed_outvoted + 0.25 * low_confidence + 0.15 * rule_flag_score`.
-`word_disagreement_rate` and `code_switch_density` are dropped from ranking. `logprob_floor` moves
-from −2.0 to −0.5.
-
-**The formula it replaces ranked worse than shuffling.** Scored against the 22 labels available,
-using realized WER from seed text to final human text as the target, the old `priority_score`
-reached Spearman **−0.281**, and its top half captured 44.7% of all editing done against a 50%
-baseline. Component by component the reason is unambiguous:
-
-| Component | weight | ρ vs. realized edits | observed range |
-|---|---|---|---|
-| `word_disagreement_rate` | 0.40 | +0.123 | [0.20, 0.46] |
-| `low_confidence` | 0.25 | +0.461 | [0.03, 0.10] |
-| `code_switch_density` | 0.20 | **−0.768** | [0.09, 0.47] |
-| `rule_flag_score` | 0.15 | 0.000 | [0.00, 0.00] |
-
-A weak positive at full weight, a strong positive squashed to nothing, a strong **negative** at
-full weight, and a term that was identically zero on every labelled segment. It summed to a
-ranking that was slightly worse than random.
-
-**Why code-switch density had to go.** It was the strongest signal in the formula and pointed the
-wrong way. English is acoustically distinct, so code-switched speech is what the recognisers
-*agree* on; boosting it spent annotator time on the easy segments. D50 saw the same correlation
-(ρ(csd, wdr) = −0.616) and read it as the disagreement measure working. It was the code-mixing
-term failing. Note this is a claim about *review order only* — code-switching is what the corpus
-is for, it is still measured, stored and exported, and every segment is still labelled.
-
-**Two of the four terms could never reach their stated weight.** `code_switch_density` is
-`cmi/100`, and CMI is `100·(n − majority)/n` where the minority can never exceed half the tokens —
-so it is structurally capped at 0.5 and its 0.20 weight bought at most 0.10. Real data: mean 0.201,
-max exactly 0.500. `rule_flag_score` divides by seven flags, two of which are mutually exclusive.
-`test_scoring.py` now asserts every term can reach its full weight; the old suite missed this
-because it passed `code_switch_density=1.0` directly instead of going through the generator.
-
-**Why the floor moved.** Scribe is the only system reporting an `avg_logprob`, and it spans about
-−0.68 to −0.004. Against a −2.0 floor the term used the bottom third of 0–1, and on labelled data
-only [0.03, 0.10] — so the one component that actually correlated was multiplied by ~0.065. −0.5
-spans the observed range without fitting it exactly.
-
-**What replaces them.** `seed_outvoted` — the share of slot time where every other system
-contradicts the seed. Measured on its own it reached ρ **+0.558** and captured 80.5% of editing in
-its top half (p = 0.006 against 20k random rankings). Through the live code path the assembled
-formula reaches ρ **+0.577** and 77.8%. It is measured in *time* rather than words because the
-systems disagree about how many words there are, so a word count cannot also be the unit.
-
-**Fixing the old formula's bugs was not enough.** Dropping the anti-correlated term and
-recalibrating the floor lifted it to ρ +0.238 / 61.3%, which is still statistically
-indistinguishable from random (p = 0.188). The time-aligned signal is what moved it.
-
-**The evidence is thin and the old score is kept because of it.** 22 labels, one episode, one
-annotator, one seed system. That is enough to choose a direction and not enough to settle
-parameters. The superseded formula is computed and written to `reason_jsonb.legacy` on every task,
-so the first full run adjudicates on its own data. `queue.legacy_weights` exists only for that and
-deliberately does not sum to 1. (The recorded score was removed in D82, before that run happened.)
-
-**Reversal:** restore the old weights in `config/settings.yaml` and `QueueWeights`, and read the
-legacy components back out of `reason_jsonb`. Nothing stored changes shape, and re-running the
-queue builder rescores every active task, so it is a config edit plus one command.
 
 ## D55 — The VAD's speech spans are stored, so silence can be told from a dropped phrase
 
@@ -1495,91 +969,52 @@ no time budget and be re-run when it improves. That is what D62 exports the epis
 **Reversal:** none needed — the inference code is gone rather than switched off. The form fields
 are ordinary metadata and the allowlist in `speaker_meta.py` is what governs them.
 
+## D62 — The whole episode's audio is kept and exported
+Only the clips used to survive an ingest: the normalised full recording was deleted with the job's
+work directory, so nothing downstream could look at an episode as a whole. The importer now
+uploads it to `episodes/<id>/audio.flac` and records `episodes.audio_object_key`, and every export
+with an object store to read from copies each episode's recording into `episodes/` beside the
+rows, listed in the manifest with a digest.
 
-## D63 — Two pots, filled to a duration; the tier records how hard a label was looked at
+**Why.** Speaker identity needs a whole recording, not a bag of clips (D58). It is also what every
+later per-episode pass reads without re-ingesting: the Modal diarizer's re-runs (D79), and the
+overlap and acoustics backfills (D77, D87).
 
-> **Superseded by D71 for how gold is chosen.** Gold is now picked per clip, by hand; the
-> episode-level assigner, the hours-target selection and the one-directional rule are gone. The
-> verification tier, and the rule that gold holds only verified labels, stand.
+**Copied, not referenced by key**, so an export directory stays self-contained and can move to a
+machine with no access to this deployment's object store. A missing object is a warning, never a
+failed export: episodes imported before the column have nothing to point at, and the metadata is
+complete without the audio.
 
-Supersedes D5. `episodes.pot` (`gold` / `train` / `unassigned`) replaces the hashed split as the
-thing the corpus is organised by, and `segment_labels.verification_tier` (`verified` / `screened`)
-records how much attention each decision actually got. `episodes.split` survives as a derived
-label, tied to the pot by a CHECK: gold is always `test`, train is always `train` or `val`.
+**Reversal:** drop the column and the export step. Exports already written keep their copies.
 
-**D5's rule was right and its reason was wrong.** D5 forbade segment-level splits because "segments
-from one episode share speaker, room and topic". The room half is already dead — D25's two-pass
-loudnorm and D39's libsoxr resample to 16 kHz mono destroy most of what distinguishes one
-professionally-produced podcast mic from another, so the pipeline had closed that leak before the
-split ever ran. What actually justifies the rule is two things D5 barely mentions:
+## D63 — The tier records how hard a label was looked at
+> **How gold is chosen is superseded by D71**: this entry also filled episode-level pots to an
+> hours target with a coverage-first assigner, which is gone. What stands is below.
 
-1. **Adjacency.** VAD cuts are contiguous and D25 *pads* speech at the edges, so consecutive clips
-   share audio samples. Shuffling at clip level puts two halves of one sentence in train and test.
-2. **Lexical clustering.** Within an episode the same names, jargon and rare words recur, and for a
-   code-switching corpus the English switch points cluster by topic, so clip-level shuffling
-   inflates every CMI number the corpus exists to report.
+`segment_labels.verification_tier` is `verified` (played and read) or `screened` (accepted on
+cross-ASR disagreement without listening). It defaults to `verified`, every export row carries it,
+and the manifest reports the mix per split.
 
-And D5 does not achieve what it claims. "Segments from one episode share speaker" — so do segments
-from *every episode of the same show*. A host appearing across forty episodes is in the test set
-however the episodes are sliced. The grouping key was never the episode; it is the show. Episode
-granularity is kept because it is the unit ingestion produces, and the coverage-first selection
-below is what actually spreads the benchmark across shows.
+**The tier is the corpus's claim about itself.** The train pot is meant to be screened: that is
+the only way a large corpus is affordable. But a screened row written as `accepted_unchanged` by
+`annotator: owner` asserts a human verified it. That is false, and it costs twice — a reviewer
+asking about the verification protocol gets a wrong answer, and the disagreement gate can never be
+measured, because its decision was overwritten by a confirmation nobody made. The audit sample
+(`queue.audit_sample_rate`) is the instrument: re-verify a sample of screened clips and the gate's
+error rate falls out.
 
-**A ratio cannot express what anyone wants from a corpus.** `assign_split()` hashed the episode id
-into train/val/test by ratio. Three problems, in the order they hurt:
+**Gold holds only what was listened to.** A screened decision on a gold clip is refused at
+`record_decision` with a 409, moving a screened clip into gold is refused (D71), and the `gold`
+export refuses to write at all if a screened row reaches it — belt and braces, because the failure
+is silent and the artefact outlives the session that made it.
 
-- The ratio was over episode **count**, not duration, and episodes run from minutes to the
-  four-hour ingest ceiling. "Five hours of benchmark audio" was not expressible.
-- A hash only hits its ratios in the limit. At the 30–60 episodes this corpus is heading for,
-  `test: 0.1` is a coin flip that lands anywhere from two episodes to nine.
-- Nothing stratified. A hash can hand back an all-one-show test set and no part of the system
-  would object.
+**Deletion is not offered.** Bad audio is flagged `unusable_audio`. Deleting would lose "what
+fraction of real Nepanglish podcast audio is untranscribable", which is a publishable number, and a
+delete key used casually in train and carefully in gold is a biased filter applied to one
+distribution and not the other, with nothing recording that it happened.
 
-So `assign_pots` fills gold to an **hours** target, greedily, **coverage first**: of the episodes
-that still fit, take the one adding the most unseen show / gender / age bracket / topic. Duration
-alone would take the longest episodes, which is the fastest route to five hours and the most likely
-route to five hours of one show.
-
-**Three rules, each guarding a number that would otherwise look fine and be wrong.**
-
-1. **The pot is assigned before any clip is seen.** Ingestion calls `assign_pots` between import and
-   queue build. A pot chosen per clip *while looking at it* correlates with how hard the clip turned
-   out to be — route the hard ones to gold and the benchmark reads pessimistic, route the quick ones
-   and it reads optimistic — and nothing recorded afterwards can separate the two. Assigning ahead
-   of time makes the routing independent of content by construction.
-2. **Whole episodes.** The surviving half of D5, for the two reasons above.
-3. **Gold is one-directional.** An episode never leaves gold, and by default never enters it from
-   train: a recording that was trained on and later promoted to the benchmark turns it into a
-   memorization test, silently. `allow_promote_from_train` exists for the window before anything has
-   trained and names itself at every call site. The consequence is real and intended — once
-   everything is placed, raising the gold target does nothing until new episodes arrive.
-
-**The tier is the corpus's claim about itself.** The train pot is meant to be screened: accepted on
-cross-ASR disagreement without listening, which is the only way 50 hours is affordable. But a
-screened row written as `accepted_unchanged` by `annotator: owner` asserts a human verified it. That
-is false, and it costs twice — a reviewer asking about the verification protocol gets a wrong
-answer, and the disagreement gate can never be measured, because its decision was overwritten by a
-confirmation nobody made. So the tier is a column, every export row carries it, and the manifest
-reports the mix per split. The 5% audit sample (`queue.audit_sample_rate`) becomes an instrument:
-re-verify a sample of screened clips and the gate's error rate falls out.
-
-Screening a gold segment is refused at `record_decision` with a 409, and the `gold` export refuses
-to write at all if a screened row reaches it — belt and braces, because the failure is silent and
-the artefact outlives the session that made it.
-
-**Deletion is not offered.** Bad audio is flagged `unusable_audio`, as before. Deleting would lose
-"what fraction of real Nepanglish podcast audio is untranscribable", which is a publishable number,
-and — worse — a delete key used casually in the train pot and carefully in gold is a biased filter
-applied to one distribution and not the other, with nothing recording that it happened.
-
-**Milestones** were part of this entry and are gone; see D69. `app/services/gamify.py` computed a
-level, a streak, a daily goal and a set of achievements on read. Nothing was stored, so removing it
-was a deletion and not a migration.
-
-**Reversal:** the migration has a working `downgrade`, and it backfilled rather than reassigned —
-existing episodes took their pot from the split they already had, so nothing moved. Reversing now is
-cheap because no real corpus is committed to a split yet; after a gold pot has been annotated and
-exported, treat the pot assignment as permanent for the same reason D5 said to.
+**Reversal:** the migration has a working `downgrade`. Dropping the tier makes every screened row
+indistinguishable from a verified one, which is the thing this entry exists to prevent.
 
 ## D64 — Orthography is normalized at export, not in the database
 
@@ -1633,292 +1068,48 @@ evaluating against this dataset means applying the same table to the reference s
 **Reversal:** delete the `tokens` block and re-export. There is no migration to undo and no label
 to recover, because none was ever overwritten.
 
-## D65 — Script restoration moves to the seed route; screening and gold are made mutually exclusive
+## D66 — An ingest has a stop button (AZ-5)
+`POST /ingest/{job_id}/scram` sets a flag. The pipeline reads it at each stage boundary and,
+crucially, at the top of `_process_segment` — every route of every clip is dispatched below that
+line, so a scram is inference that is never billed. Requests already on the wire are left to
+return rather than having the client torn down under them, because they are billed either way and
+their `llm_requests` rows are the only record of it.
 
-> **Script restoration superseded by D73**: the fused transcript is the seed, and the fuser writes
-> the script policy itself. The screening/gold rule stands (per clip since D71).
+A scrammed run **imports nothing**. That is the D46 argument: half an episode is not a cheaper
+episode, it is a differently-sampled one, and nothing downstream would ever say so. The abort
+summary reports how many segments were transcribed before the stop, so the spend is visible.
 
-Three changes that came out of the first episode's numbers. `asr_scribe_v2` gains
-`restore_script_route: script_restore`, partially reversing D51. `assign_pots` refuses to place a
-screened episode in gold and takes back one already there. The queue tooltip reads the components
-D54 actually computes.
+It was built during an outage in which a failing script-restore call (since removed, D73) failed
+every segment of a run that could not be stopped.
 
-**The seed is where a respelling pays.** Scribe writes English loanwords phonetically in
-Devanagari — `क्याप्टन` for Captain, `टिम` for team, `टनलमा` for tunnel — and the corpus policy is
-English in Latin, Nepali in Devanagari. In the first 340 labels that was corrected by hand 67
-times. It is the same repair `app/llm/script_restore.py` already performs, which D51 kept in the
-tree for exactly this: *"Any recogniser that transliterates English into Devanagari and cannot be
-told not to needs exactly this repair, and another one is being evaluated."* Scribe is that
-recogniser; the evaluation is 67 manual corrections in one episode.
-
-**What D51 removed was the composite, not the repair.** The composite lost to every other system
-on leave-one-out consensus (0.538 against 0.610–0.623) because the *recogniser* deleted English
-before the restore step ever saw it — Spearman +0.670 between a clip's Latin share and its token
-shortfall. Scribe has no such defect: it spells English wrongly rather than dropping it, which is
-what the restore step is for. D51's other reason for deleting rather than disabling was that an
-idle *recogniser* leaves `exclude_from_disagreement` as the only thing between its hypotheses and
-the score. `script_restore` is a chat route with no `asr_` prefix and no `system_id`, so it cannot
-enter the disagreement signal however the flags are set, and a test asserts that rather than the
-route's absence.
-
-**The cost is real and was accepted deliberately.** This is one extra call per clip, and it puts
-text in front of the annotator that no human wrote — the failure mode D64 declined to take for
-orthography. It is taken here because the alternative is measured: 67 corrections at roughly half
-a minute each. `reasoning_enabled: false` and `max_tokens: 2048` are not decoration — D44 found
-47% of restorations truncated mid-array with 96% of the budget spent on thinking. The one-token-in
-one-token-out contract is what keeps every word's span, and a mismatched count is rejected rather
-than patched.
-
-**Screening and gold could both be true, and nothing caught it.** `record_decision` refuses a
-screened decision on a gold segment, and the gold export refuses to write one. Neither fires when
-the order is reversed: screen an episode while it is `unassigned`, which is legal, then run the
-assigner, which places it in gold on the hours target. This repository walked into exactly that —
-562 screened labels in a 3.1 h episode, assigned to gold five minutes after the last of them was
-written. The state is unreachable by any single illegal action and survives every existing check
-until export.
-
-So the assigner now excludes any episode holding a screened label from gold selection, and
-**demotes one already there**. That is a narrow exception to D63's rule 3, and it is worth being
-precise about why it is not a hole in it. Rule 3 stops a recording that has been trained on from
-becoming the benchmark, and stops the benchmark being cherry-picked after the fact. An episode
-that gold's own definition excludes was never validly in the pot; leaving it there does not
-protect a measurement, it invalidates one. The demotion is reported by name — `gold_demoted` on
-the report, printed by the CLI — because quietly shrinking a benchmark is the kind of thing that
-needs saying out loud.
-
-**The tooltip was reporting a formula that no longer exists.** D54 replaced
-`word_disagreement_rate` and `code_switch_density` with `seed_outvoted`, `low_confidence` and
-`rule_flag_score`, moving the old pair under `reason_jsonb.legacy`. The triage table kept reading
-them from `components`, where they are now `undefined`, and a `?? '0'` fallback rendered every row
-as a confident `0.00`. A missing measurement that renders as a real one is worse than a blank, so
-the fallback is now `--` and the tooltip lists the components the score is actually made of.
-
-**Reversal:** drop `restore_script_route` from the Scribe block to stop restoring (already-written
-hypotheses keep their Latin, and `text_devanagari` in `metadata_jsonb` holds what Scribe said).
-The pot guard reverses by deleting `screened_episode_ids` and its two call sites; the episode it
-demoted does not go back on its own.
-
-## D66 — Script restoration moves to Vertex, and an ingest gains a stop button
-
-Two changes forced by one outage. `script_restore` moves from OpenRouter to Vertex, and the
-ingest pipeline gains AZ-5: a control that halts a run in flight.
-
-**OpenRouter stopped accepting "do not think" on this model.** D65 turned the restore hook on for
-the seed route, so every clip Scribe transcribes now makes a second call — and every one of them
-came back `400 Reasoning is mandatory for this endpoint and cannot be disabled.` The route sends
-`reasoning: {enabled: false}` because D44 measured what happens without it: 47% of restorations
-truncated mid-array with 96% of a 2048-token budget spent thinking, against an output that is a
-JSON array of tokens and nothing else. Verified live during the outage, the same request without
-the field returns 200 and spends the whole `max_tokens` on reasoning with `content: null` — so
-dropping the flag trades a 400 for D44's failure, not for a fix.
-
-Vertex spells the same switch `thinkingBudget: 0` and still honours it. `_client_for` has
-dispatched on `provider` since D45 precisely so this is a route setting rather than a code path,
-which is why the fix is four lines of YAML. `classify_topic` and `asr_gemini_flash` already run
-the same model there with reasoning off.
-
-**A failing restore failed the whole episode, and it looked like ElevenLabs' fault.** The restore
-runs inside `transcribe` for the primary route, so its `LlmRequestFailed` surfaced as
-`asr_scribe_v2` failing. One route short of a full set discards the segment (D46); every segment
-discarded fails the run. The user-visible symptom was "ElevenLabs is rejecting requests" while
-Scribe answered 200 to all 447 calls it was paid for.
-
-**AZ-5.** There was no way to stop that run. `POST /ingest/{job_id}/scram` sets a flag; the
-pipeline reads it at each stage boundary and, crucially, at the top of `_process_segment` — every
-route of every clip is dispatched below that line, so a scram is inference that is never billed.
-Requests already on the wire are left to return rather than having the client torn down under
-them, because they are billed either way and their `llm_requests` rows are the only record of it.
-
-A scrammed run **imports nothing**. That is deliberate and it is the same argument as D46: half an
-episode is not a cheaper episode, it is a differently-sampled one, and nothing downstream would
-ever say so. The abort summary reports how many segments were transcribed before the stop, so the
-spend is visible rather than silently discarded.
-
-**Known gap, not fixed here.** `_log` flushes; the commit is per segment (D20) and happens only
-after a segment's transcripts are all in hand. When every segment fails, nothing commits and the
-whole run's `llm_requests` rows roll back — which is how 447 paid Scribe calls left no billing
-record at all. The rows survive an abort, because a scram only follows segments that succeeded.
-Fixing it means committing the log row independently of the segment's transaction.
-
-**Reversal:** set `provider: openrouter` and `model: google/gemini-3.8-flash` back on
-`script_restore` if OpenRouter starts honouring the switch again. AZ-5 reverses by deleting the
-endpoint and the `job.scrammed` checks; nothing persists a scram beyond the job's own memory.
-
-## D67 — The queue ranks on whether a clip is wrong, not on how much of it is
-
-> **Superseded by D74.** Every D67 term measures the seed against the recognisers, and the seed is
-> now built from them. The formula is still computed, against the recogniser it would have seeded
-> with, and recorded under `reason_jsonb.legacy`.
-
-`seed_outvoted` weights disagreement by speech time (D54). That answers "how much of this
-transcript is wrong", which is not the quantity that costs the annotator anything. A clip whose
-seed needs one two-word fix scores near zero and still costs a full open-listen-edit-save cycle.
-
-The consequence is measurable on the 1,363 verified labels collected so far. The old score's top
-and bottom deciles work — 60% and 1% edit rates against a 30% base — and deciles 4 through 7, some
-40% of the queue, sit at 24-28%, indistinguishable from the base rate and from each other. That
-band is where the annotator reported the experience as "rubber stamp, rubber stamp, oh a mistake".
-
-Two token-set signals go in beside it, both in `app/services/lexical.py`, both pure functions of
-`text_raw`:
-
-- **`seed_orphan_rate`** — the share of seed tokens that *no* other system produced anywhere in
-  the clip. It is `seed_outvoted` with the clock removed. On its own it scores AUC 0.740 against
-  realized edits, against 0.747 for the entire superseded formula.
-- **`roman_gap`** — Latin-script tokens every other system agreed on and the seed lacks,
-  saturating at four. This is the English-in-Latin policy (D64) as a ranking signal: when the
-  others write `traffic police` and the seed writes `ट्राफिक पुलिस`, the annotator will retype it.
-
-Weights become `0.30 seed_outvoted + 0.30 seed_orphan_rate + 0.20 roman_gap + 0.125
-low_confidence + 0.075 rule_flag_score`. The old three keep their relative proportions — this
-halves the old formula and spends the freed half on the two new terms — so the sum stays 1.0 and
-the score stays in 0-1.
-
-Pooled AUC goes 0.747 → 0.805. Pooling flatters it, so the check that matters is per-episode,
-which removes any credit for merely separating easy episodes from hard ones: +0.108, +0.054 and
-+0.115 on the three episodes with enough labels to measure, mean +0.095. Against 650 clips of the
-*pending* queue ranked by hand — different episodes, a different labeller, nothing the weights were
-fitted on — rank agreement goes 0.497 → 0.568.
-
-**Unanimity among the others is required in both terms.** One system disagreeing is ordinary
-recogniser noise; MAI transliterates English into Devanagari wholesale, and counting a lone
-dissent would rank on that habit rather than on the seed's errors.
-
-**`numword_gap` was built and rejected.** Spelled-out numerals where the others use digits is a
-real and frequent edit in the tech episodes, and it scored AUC 0.463 — below chance — because those
-episodes are almost absent from the labelled set (`claude_for_beginners_in_nepal`: 2 labels against
-555 queued). It is left out rather than fitted on four clips. Revisit once those episodes are
-labelled; the same caveat applies in weaker form to the two terms that were kept.
-
-**An LLM pass was measured and rejected for now.** Claude Haiku 4.5 scored 120 of the
-hand-ranked clips blind against the same rubric. Rank agreement was 0.383, and the range collapsed:
-across three independent runs it never once used the top of the scale (maxima 35, 45, 80; means
-32.5, 15.3, 27.7 on comparable data). It scored none of the 30 clips flagged as near-certain errors
-above 60, including three it would have auto-approved. The failures were exactly the semantic ones
-— `Cloud` for `Claude`, `Nahas` for `नयाँ आश`, a polarity inversion — which is the only place a
-model would have earned its cost over the deterministic terms above.
-
-**Reversal:** set the five weights back to `0.60 / 0.25 / 0.15` with the two new ones at zero.
-Nothing is stored — both signals are recomputed from `text_raw` at queue build, so a re-ranking is
-`scripts/build_queue.py`, not a migration.
-
-## D68 — One episode is demoted out of gold, once, while the benchmark still measures nothing
-
-> **Superseded by D71.** `scripts/demote_from_gold.py` is deleted: taking a clip out of gold is
-> now the same button that put it there.
-
-`ep_602_do_higher_traffic_fines_reduce_ro` moves from the gold pot to train. Gold goes 5.42 h → 3.06 h
-across three episodes; train goes 5.47 h → 7.83 h. This overrides D63 rule 3 and is not a general
-capability — `scripts/demote_from_gold.py` takes one episode by name, refuses a blank reason, and
-writes an `audit_logs` row.
-
-**The reason is composition, not size.** Gold held four episodes and **80% of its audio was one
-show** — 4.31 of 5.42 hours from `sushant_pradhan`, in two long episodes. The coverage-first
-assigner did what it could; it had five shows and two episodes over two hours each to work with, and
-D63's own argument says why that is fatal: *a five-hour benchmark drawn from one show measures that
-show*. The corpus is now pivoting to short YouTube videos across many channels, so the gap between
-what gold spans and what the corpus spans was about to get wider, not narrower.
-
-Shrinking gold was not the goal and is not the benefit. The 2.36 h that moves is a rounding error on
-the training curve — the corpus is heading for ~20 h, not 50 h, and the marginal value of an hour of
-training data at that point is small. What the move buys is a benchmark that is 64% one show instead
-of 80%, and room under `gold_max_corpus_fraction` for the new material to enter gold and pull the
-share down further. Gold regrows from the short videos on the next ingest; no config changes.
-
-**Rule 3 permits this, in the window it already names.** Rule 3 forbids leaving gold to stop two
-specific failures: a recording the model trained on becoming the benchmark, and the benchmark being
-cherry-picked once its numbers are known. Nothing has been trained. No WER has been measured against
-gold. Neither failure is reachable, and this is the last moment that will be true — the first
-fine-tuning run closes the window permanently. D65 already established the shape of the exception,
-for an episode "that gold's own definition excludes": *leaving it there does not protect a
-measurement, it invalidates one.* That argument is about validity, not about screening, and a gold
-pot that is 80% one show fails gold's own coverage-first definition the same way.
-
-**What it costs.** Gold loses the topic `traffic_accidents` entirely — the demoted episode was its
-only carrier, and the demotion names the loss rather than discovering it later. `sushant_pradhan`
-stays represented through `claude_for_beginners_in_nepal`, which is deliberate: he is roughly half
-the training distribution, and a benchmark that cannot measure half of training is worse than an
-unbalanced one. That is why one episode moves and not both.
-
-**Why it is not part of `assign_pots`.** The assigner runs on every ingest. A demotion that can
-happen automatically is exactly the silent benchmark-shrinking rule 3 exists to prevent, and the
-judgement here — that no number has been measured yet — is not one the code can check. So it is a
-separate script, it names D63 in its own docstring, and it says out loud that it stops being safe
-the moment a model is trained.
-
-**Reversal:** `scripts/assign_pots.py --allow-promote-from-train` puts it back, and is correct only
-for as long as this entry's premise holds. After the first training run neither direction is
-reversible: promote and the benchmark becomes a memorization test, demote and the numbers already
-measured stop meaning anything.
+**Reversal:** delete the endpoint and the `job.scrammed` checks; nothing persists a scram beyond
+the job's own memory.
 
 ## D69 — The analytics page answers what to record next, and the scoreboard is deleted
+> **The inventory itself is rebuilt by D91**: the unit is the clip and the person is the voice.
+> What stands is below.
 
-*Superseded in part by D91: the inventory's unit is now the clip and the person is the voice,
-so the per-episode attribution below no longer applies. The rest — no scoreboard, a floor rather
-than a target distribution, every recommendation carrying its number — stands.*
+The dashboard's levels, streaks, daily goal and achievements (`app/services/gamify.py`) are
+deleted. Nothing was stored, so there was no migration. The corpus is short of *speakers*, not
+hours, and a scoreboard of cleared audio rewards the one axis that was already sufficient. A page
+whose most prominent number is the wrong number is worse than one with no number, because it is
+read as advice.
 
-The dashboard's progress display -- levels, streaks, a daily goal, fourteen achievements -- is
-removed: `app/services/gamify.py`, `GamifySettings`, the `gamify` block in `config/settings.yaml`,
-the `progress` key on the status report, and the panel that rendered them. Nothing was stored, so
-this is a deletion rather than a migration; there is no schema change and no downgrade to write.
+Three rules from the page that replaced it still hold, each because its opposite produces a number
+that looks fine and is false:
+- **A stratum is judged by absence, thinness and dominance, never against a target
+  distribution.** There is no defensible ideal share of any stratum; there is a floor below which
+  it supports no claim (`dataset.min_stratum_hours`).
+- **Every recommendation carries the measurement that produced it.** A recommendation whose number
+  is not visible is an opinion.
+- **Off-taxonomy values are reported as dirt, not as gaps.** A free-typed topic cannot be
+  stratified on, and otherwise looks exactly like a topic that is simply rare.
 
-In its place, `app/services/inventory.py` and `GET /stats/inventory` answer a question the harness
-could not previously answer without SQL: **what is in this corpus, what is missing from it, and
-what should the next recording be?**
+`dataset.train_hours_target` dropped from 50 h to 20 h in the same change: the work is domain
+adaptation onto a pretrained model, which saturates roughly an order of magnitude earlier than a
+from-scratch curve.
 
-**Why the scoreboard went.** It was built on the argument that a backlog only ever counts down, and
-that argument was sound. What made it wrong here is what the corpus turned out to be limited by.
-The corpus is short of *speakers*, not hours -- twelve individuals, ten of them male, two age
-brackets, every show between 13% and 36% English -- so the binding constraint is the composition of
-what gets recorded, and a scoreboard measuring cleared audio rewards the one axis that was already
-sufficient. A page whose most prominent number is the wrong number is worse than one with no
-number, because it is read as advice.
-
-**What replaced it.** Three sections, in the order the question is asked: an inventory cut by every
-variable the corpus records; the gaps in it; and those gaps ranked into a shopping list. The ranking
-is `weight x severity`, where weight is how much a kind of gap matters and severity is 1.0 for
-something absent and `deficit / min_stratum_hours` for something thin. Every row carries the
-measurement that produced it, because a recommendation whose number is not visible is an opinion.
-
-Three measurement decisions carry the module, and each exists because its opposite produces a
-number that looks fine and is false.
-
-* **Hours are attributed per episode to every value the episode carries.** An episode with a male
-  host and a female guest counts its whole duration on both sides. No route diarizes (D52), so
-  per-speaker time does not exist, and splitting an episode's hours evenly between its speakers
-  would invent a precision the schema cannot support. The consequence -- speaker shares that do not
-  sum to 1 -- is stated on the page rather than normalised away.
-* **A stratum is judged by absence, thinness and dominance, never against a target distribution.**
-  There is no defensible ideal share of "hours of speech from 60-79 year olds". There is a point
-  below which a stratum supports no claim at all, and that is `dataset.min_stratum_hours` (1.0 h),
-  the one new setting.
-* **Register variance is measured across shows, not across clips.** Clip-level code-switch density
-  spans nearly the full range inside any single show, so the clip histogram is wide even when every
-  speaker recorded is the same kind of speaker. The spread across show means is the number that
-  says whether the dependent variable has any variance left to explain.
-
-**The speaker count is reported as a floor.** Distinct `(show, role, gender, age)` combinations
-undercount: two guests of one show in the same bracket collapse into one, and there is no way to
-separate them, because no route diarizes and no name is stored (D56). It is rendered as `>= 11`
-rather than `11`. An undercount that says so is usable; one that does not is a lie.
-
-**Off-taxonomy values are reported as dirt, not as gaps.** Six of sixteen episodes carry a topic
-typed as free text into the ingest form -- `phone_review`, `traffic_accidents`, `cooking` -- rather
-than chosen from D57's closed list. Those cannot be stratified on, and until this page they were
-invisible: they looked exactly like a topic that was simply rare.
-
-**`dataset.train_hours_target` drops from 50 h to 20 h in the same change.** It is informational --
-it drives this page's bar and nothing in the assigner -- but a target on the page is read as advice,
-and 50 h was left over from a from-scratch scaling curve that does not apply. Nepali already has
-~160 h public (OpenSLR SLR54) and the work here is domain adaptation onto a pretrained model, which
-saturates roughly an order of magnitude earlier. The figure that matters is not on that axis anyway:
-twelve speakers, ten of them male, is not fixed by any number of additional hours from the same
-twelve people.
-
-**Reversal:** delete the module, the endpoint and the `analytics/` components; the old page is in
-git. Restoring the scoreboard would mean restoring `gamify.py` from history -- it read only tables
-that still exist, so it would work unchanged. `dataset.min_stratum_hours` is the only configuration
-added and defaults are safe to drop.
+**Reversal:** restore `gamify.py` from git; it read only tables that still exist.
 
 ## D70 — The gender vocabulary narrows to two values
 
@@ -2044,24 +1235,6 @@ cost about $3.47, because thinking was left out of the estimate. That is fixed i
 **Reversal:** set `fusion.route: ""`. Ingests go back to three recognisers and a recogniser seed;
 fused hypotheses already imported stay (hypotheses are immutable) and can be ignored by kind.
 
-## D73 — Scribe is fed to the fuser raw; script restoration comes off the seed route
-
-Supersedes D65's script restoration. `asr_scribe_v2` loses `restore_script_route`, and the
-`script_restore` route leaves `config/llm_routes.yaml`. (`app/llm/script_restore.py` stayed in
-the tree, as D51 kept it, until D81 deleted it.)
-
-D65's argument was the seed: Scribe's `क्याप्टन` for Captain was what the annotator had to retype,
-and a one-token-in, one-token-out rewrite kept every span. Neither holds now. The seed is the fused
-text, which writes English in Latin itself, and its spans come from the aligner, so nothing is
-left for the restoration to protect. What it would still buy is worse than nothing: the pilot fed
-the fuser restored Scribe, so Scribe's respelling entered as a second, dependent vote on exactly
-the question the fuser is there to settle. It also cost one call per clip. Scribe's Devanagari
-English no longer inflates disagreement either -- D74's comparison is script-folded.
-
-**Reversal:** put `restore_script_route: script_restore` back on the Scribe block and restore the
-route and `app/llm/script_restore.py` from git (the module is gone since D81). Restored hypotheses
-would then feed the fuser again, which is the double vote above.
-
 ## D74 — The fused transcript is the seed, and the queue looks for what fusion got catastrophically wrong
 
 The seed -- what the editor opens with -- is the newest fused hypothesis, for every clip,
@@ -2128,43 +1301,28 @@ instruction forbids it, and the harness cannot check.
 into `queue.weights` (from git; the legacy plumbing was removed in D82). The gates are independent
 of the seed and could be kept.
 
-## D75 — Ingest Queue, Bot Detection Backlog, and 8-Core Multithreading
+## D75 — Ingest runs from a persistent queue, with a backlog for YouTube bot checks
+`IngestionManager` (`app/services/ingest/manager.py`) separates submission from execution. It
+holds pending, running, backlogged and past jobs and writes them atomically to
+`queue_state.json`, so a browser disconnect neither halts nor hides a pipeline. Several jobs run
+at once since D88, and interrupted jobs resume at startup since D93.
 
-> **Batch URL submission is removed by D80**: one video at a time, each with its own metadata,
-> into the same queue.
+**A bot check backlogs one job, not the queue.** YouTube periodically answers with a CAPTCHA,
+"Sign in to confirm you're not a bot", or a 429. `_fetch_source_audio` traps `YouTubeBotDetected`
+and moves the job to `backlog`, and the queue goes on to the next episode. Backlogged jobs are
+retried one at a time (`POST /ingest/{id}/retry`) or all together (`POST /ingest/retry-all`).
 
-To scale video ingestion to ~50 hours in 48 hours, the ingestion pipeline separates job
-submission from execution through an in-memory and disk-persisted FIFO queue with rich
-inspection endpoints, automatic quarantine of YouTube bot verification challenges, batch
-URL submission, and multi-core CPU parallelization across VAD, audio normalization, and ONNX
-aligner runtimes.
+**One video per submission, each with its own metadata.** A batch endpoint that took a list of
+URLs with one show, genre and topic and no speakers was removed (D80): every video in it was
+diarized with a guessed speaker count. The submit button stays enabled while another episode
+ingests and reads "Add to queue".
 
-**Why a persistent queue with background runner.** Previous ingestion executed in synchronous
-or single-task memory state where errors or browser disconnection risked halting or obscuring
-pipelines. The `IngestionManager` manages pending, running, backlog, and past jobs, serializing
-queue state atomically to `data/ingest_state.json`.
+**CPU work is parallel.** Clip extraction (slicing, edge fades, FLAC encoding, checksums) runs on
+a `ThreadPoolExecutor` of up to `min(8, os.cpu_count())`; the VAD and aligner ONNX sessions set
+`intra_op_num_threads` up to 8; loudnorm passes run FFmpeg with `-threads 0`.
 
-**Why a dedicated backlog for bot detection.** YouTube periodically serves CAPTCHAs, bot
-verification gates ("Sign in to confirm you're not a bot"), or HTTP 429 Too Many Requests.
-Crashing the pipeline or failing the entire batch on a bot challenge halts processing for all
-other pending jobs. Instead, `_fetch_source_audio` traps `YouTubeBotDetected` (and bot signature
-patterns) and immediately quarantines the job to `backlog`. The queue proceeds without delay to
-subsequent episodes. Backlogged jobs can be retried individually or in bulk via `POST /ingest/{id}/retry`
-and `POST /ingest/retry-all`.
-
-**8-core CPU parallelization.** Ingestion involves CPU-intensive tasks that previously ran
-single-threaded or under-utilized multi-core hosts:
-1. `SileroVAD.extract_clips`: Slicing, edge cosine fading, mono 16 kHz FLAC encoding, and SHA256
-   checksum hashing are now parallelized using `ThreadPoolExecutor` sized up to `min(8, os.cpu_count())`.
-2. ONNX Runtime: Both `SileroVAD` and `ForcedAligner` configure `SessionOptions.intra_op_num_threads`
-   to utilize available CPU cores (up to 8).
-3. FFmpeg loudnorm passes specify `-threads 0` to utilize all CPU execution threads.
-4. Concurrency settings in `settings.yaml` default `max_segment_concurrency` to 8 (supporting up to 32)
-   and configure `cpu_workers: 8`.
-
-**Reversal:** Replace `IngestionManager` with simple synchronous runs; set `intra_op_num_threads = 1`
-and single-threaded list comprehension in `extract_clips`.
-
+**Reversal:** replace `IngestionManager` with synchronous runs; set `intra_op_num_threads = 1`
+and extract clips in a plain loop.
 
 ## D76 — A training row never holds gold audio
 
@@ -2245,49 +1403,41 @@ read. The threshold is a setting.
 Downgrade the migration to drop the column. Nothing ranked on the flag, so no queue or label
 changes.
 
-## D78 — Speaker turns are imported from a diarizer run after export, not computed by the harness
+## D78 — Speaker turns are stored per diarization run, never computed in the harness
+> **Where and when the diarizer runs is D79**: ingest calls it on a Modal GPU for every new
+> episode. Turns made outside the harness are not accepted (D86).
 
-> **Where and when the diarizer runs is superseded by D79**: ingest calls it on a Modal GPU for
-> every new episode, and the Colab notebook is gone. The tables, the import and the editor are
-> unchanged. **`scripts/import_diarization.py` is deleted by D86**: turns made outside the harness
-> are no longer accepted; `scripts/diarize_episode.py` re-runs the Modal diarizer instead.
-
-Two new tables hold who spoke when:
+Two tables hold who spoke when:
 - `diarization_runs`: one diarization of one episode, with its model, source file, a checksum,
   and the speakers ordered by talk time;
 - `speaker_turns`: the run's episode-relative turns, which may overlap.
 
-`scripts/import_diarization.py` loads them from the JSON that `notebooks/05-diarize.ipynb`
-writes, running pyannote's `speaker-diarization-community-1` over the retained episode audio on a
-GPU. The editor uses the newest run of the clip's episode to colour each word by its speaker.
+The editor uses the newest run of the clip's episode to colour each word by its speaker. This is
+D58's plan and D52's "full-episode pass, joined by time": a word's episode time is
+`segment.start_time + word.start_time`. No torch, no embeddings and no diarizer in the harness
+process.
 
-**This is D58's plan, carried out.** D58 took diarization out of ingest and said a serious tool
-should run after export, against the full episode, and be re-run when it improves. That is what
-this is. The harness stores the result and never runs the diarizer: no torch, no embeddings in
-the ingest path, no new stage. D52's "full-episode pass, joined by time" is the same design: a
-word's episode time is `segment.start_time + word.start_time`.
+**Why it can be trusted.** pyannote's `speaker-diarization-community-1` and the EDA's ECAPA voice
+prints are independent systems. They agreed on who is talking in 97.3% of 41,285 three-second
+windows across 16 multi-speaker episodes, and in 99.2% of the windows pyannote calls
+single-speaker. The disagreements sit in turn changes and overlap, which the editor marks
+separately (D77).
 
-**Why it can be trusted now.** pyannote and the EDA's ECAPA voice prints are independent systems.
-They agree on who is talking in 97.3% of 41,285 three-second windows across the 16 multi-speaker
-episodes, and in 99.2% of the windows pyannote calls single-speaker. The disagreements sit in turn
-changes and overlap, which the editor marks separately (D77).
-
-**Runs are append-only, like hypotheses.** A newer diarization of an episode is a new run, and the
-older one stays. "Current" is the newest run per episode. The same file imported twice is a no-op,
-keyed by a checksum over the model and the turns. Episodes in the file that the harness does not
-hold are reported and skipped, so one file can serve several databases.
+**Runs are append-only, like hypotheses.** A newer diarization is a new run and the older one
+stays; "current" is the newest run per episode. The same answer stored twice is a no-op, keyed by
+a checksum over the model and the turns.
 
 **Speaker numbers, not names.** A run's labels (`SPEAKER_00`) mean nothing outside that run, and
 diarization cannot say which voice is the declared host. The editor shows "Speaker 1, 2, ..." in
-talk-time order, which is stable across every clip of the episode. `segments.speaker_id` is
-untouched and still `spk0` (D56, D58). Per-speaker embeddings are stored with the run, so voices can
-be linked across episodes later; nothing reads them yet.
+talk-time order, stable across every clip of the episode. `segments.speaker_id` is untouched and
+still `spk0` (D56, D58). Per-speaker embeddings are stored with the run; D87 links them into
+voices across episodes.
 
 **Cost.** About 1,000 turns per hour of audio: roughly 100 KB per hour in Postgres including the
-index, ~2.5 MB for today's corpus.
+index.
 
-**Reversal:** drop the two tables (the migration's `downgrade`), the import script and the notebook.
-Without turns the editor falls back to uncoloured words, as it was before.
+**Reversal:** drop the two tables (the migration's `downgrade`). Without turns the editor falls
+back to uncoloured words.
 
 ## D79 — Ingest diarizes every new episode on a remote GPU
 
@@ -2360,65 +1510,8 @@ free $30 a month covers the whole corpus several times over. Upload is the FLAC,
 minute. Storage is D78's.
 
 **Reversal:** set `diarization.enabled: false`. Episodes then land without turns until someone runs
-`scripts/diarize_episode.py` or imports a file with `scripts/import_diarization.py`. Delete the
+`scripts/diarize_episode.py`. Delete the
 Modal app with `modal app stop nepanglish-diarization`. No schema changed.
-
-## D80 — Each queued video carries its own metadata; batch submission is gone
-
-The ingest form's submit button stays enabled while another episode ingests. A new job waits its
-turn in D75's FIFO queue, and the button says "Add to queue" when anything is running or waiting.
-After a submit, the form clears for the next video. A job that starts at once takes over the
-monitor; one that waits leaves it on the running job. The button used to be disabled for the
-whole of the running ingest, because one flag meant both "request in flight" and "watched job
-still running". Now it means only the first.
-
-`POST /ingest/youtube/batch` and the batch tab are removed. A batch took a list of URLs with one
-show, genre and topic for all of them, and no speakers, so every video in it was diarized with a
-guessed speaker count. Speakers differ per episode, which is why the batch never fit how episodes
-arrive. Queueing one video at a time, each with its own form, does what the batch was for without
-the shared metadata. `POST /ingest/retry-all`, which requeues backlogged jobs, is not batch
-submission and stays.
-
-**Reversal:** restore the endpoint and tab from git. Its jobs would again be diarized without a
-declared speaker count.
-
-## D81 — script_restore.py is deleted, not kept
-
-D51 removed the composite Vertex recogniser and kept `app/llm/script_restore.py` in the tree
-"for a recogniser whose spans must survive a respelling"; D73 removed the only route to it. The
-evaluation D51 pointed at is over: the two recognisers that might have needed it are either gone
-or no longer used, the fuser (D74) writes the script policy itself, and nothing in
-`config/llm_routes.yaml` sets `restore_script_route`. The module had zero production callers and
-one test asserting the hook stayed unset.
-
-The module, the `restore_script_route` hook on `LlmRoute`, `test_script_restore.py` and the
-restoration branch in `transcribe()` are deleted. Keeping dead-but-wired code so a *future*
-recogniser can lean on it was costing more comprehension than the copy-paste its return would
-cost: the whole step is one commit in git history.
-
-**Reversal:** restore `app/llm/script_restore.py`, `restore_script_route` on `LlmRoute`, the
-`_maybe_restore` branch in `app/llm/transcription.py`, and their tests from git, then set
-`restore_script_route` on whichever route needs it.
-
-## D82 — The recorded D67 legacy score is deleted
-
-D67's queue formula measured the seed against the recognisers. D74 made the seed the fused
-transcript, which was *built* from the recognisers, so every D67 term is structurally zero there
-and the recorded `reason_jsonb.legacy` numbers read as quality while measuring nothing (the exact
-failure AGENTS.md warns about). D74 kept the computation anyway, "so the first labelled run can
-compare what each formula would have surfaced" — but the comparison can never be informative on
-fused-seed clips, which is all of them, and it was kept costing code on every queue build:
-`LegacyInputs`, `_legacy_reason`, `LegacyQueueWeights`, `queue.legacy_weights` and the `_seed_outvoted`
-consensus computation.
-
-No labelled run has adjudicated on it. The formula is in git history, D67 is intact, and bringing
-it back is one commit if a run ever wants it — but then it should be computed once, offline,
-against the labels, not written on every task forever.
-
-`reason_jsonb` loses the `legacy` key; everything else about the payload is unchanged.
-
-**Reversal:** restore `LegacyQueueWeights`, `LegacyInputs`, `_legacy_reason`, the `legacy`
-argument of `priority_score` and the `_seed_outvoted` helper from git (D54/D74 record the weights).
 
 ## D83 — Fine-tuned models are scored in the harness from the notebook's text, never run in it
 
@@ -2560,8 +1653,9 @@ model locally would need its own decision. This is that decision.
 **Where the model runs: a sidecar, not the backend.** D32 and D79 keep torch out of the harness
 process, and that holds here. The model runs in `playground/`, a compose service with CPU PyTorch
 and nothing else. The backend sends it one HTTP call per recording, as it does for the Modal
-diarizer. The service is behind a compose profile (`docker-compose --profile playground up -d
-playground`), because a loaded model holds 1.3–2.5 GB of RAM.
+diarizer. It first sat behind a compose profile, because a loaded model holds 1.3–2.5 GB of RAM;
+since D92 it starts with the stack, because `server.py` loads a model lazily and holds one at a
+time, so an idle container is a Python process and nothing more.
 
 **Which weights: 04c's CPU export, copied next to the card.**
 - Weight-only int8 goes in `data/models/asr/<slug>/cpu/` when the notebook accepted it (val WER
@@ -2909,15 +2003,6 @@ hidden.
 **Reversal:** restore `app/services/inventory/` and `frontend/src/components/analytics/` from
 before this commit; drop `dataset.min_stratum_voices`. No schema change was made.
 
-## D92 — The playground starts with the stack
-
-D85 put the `playground` service behind a compose profile because a loaded model holds 1.3–2.5 GB
-of RAM. The owner wants `docker compose up -d` to bring it up with everything else. The profile is
-removed. The cost D85 guarded against is paid only after the first recording: `server.py` loads a
-model lazily and holds one at a time, so an idle container is a Python process and nothing more.
-
-**Reversal:** put `profiles: ["playground"]` back on the service.
-
 ## D93 — An interrupted ingest resumes by itself and never pays twice
 
 A power cut on 2026-09-21 stopped three running jobs and stranded three queued ones. Postgres
@@ -2961,4 +2046,3 @@ measured 1.8 ms per clip, and 0.58 s per hour of episode for the diarization key
 
 **Reversal:** set `resume_interrupted: false` to stop resuming. Removing the checkpoint means
 reverting `checkpoint.py` and its three call sites in `pipeline.py` and `fusion.py`.
-
