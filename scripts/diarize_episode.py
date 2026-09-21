@@ -6,6 +6,7 @@ re-running one after the diarizer changes. A new run is appended; the newest is 
 
 python scripts/diarize_episode.py show-a_ep012
 python scripts/diarize_episode.py show-a_ep012 show-a_ep013 --num-speakers 2
+python scripts/diarize_episode.py show-a_ep012 --auto   # pyannote counts, e.g. a field report
 """
 
 from __future__ import annotations
@@ -27,8 +28,14 @@ from app.storage import build_storage
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("episodes", nargs="+", help="external ids of the episodes to diarize")
-    parser.add_argument(
+    count = parser.add_mutually_exclusive_group()
+    count.add_argument(
         "--num-speakers", type=int, help="fix the speaker count (default: the declared speakers)"
+    )
+    count.add_argument(
+        "--auto",
+        action="store_true",
+        help="let pyannote choose the count, for an episode whose declared speakers are not all",
     )
     parser.add_argument("--actor", default="diarize_episode", help="recorded in audit_logs")
     args = parser.parse_args(argv)
@@ -48,7 +55,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{external_id}: {'not found' if episode is None else 'no retained audio'}")
                 failed += 1
                 continue
-            num_speakers = args.num_speakers or declared_speaker_count(episode.metadata_jsonb)
+            num_speakers = (
+                None
+                if args.auto
+                else args.num_speakers or declared_speaker_count(episode.metadata_jsonb)
+            )
             result = diarize_audio(
                 storage.get_bytes(episode.audio_object_key),
                 num_speakers=num_speakers,

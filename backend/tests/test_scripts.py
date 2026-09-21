@@ -177,6 +177,13 @@ def test_diarize_script_stores_a_run_and_reports_what_it_could_not_do(
     assert sent["num_speakers"] == 3
     assert "unchanged, already stored" in capsys.readouterr().out
 
+    # A field report interviews passers-by nobody declared: let pyannote count them.
+    assert script.main(["cli_diar", "--auto"]) == 0
+    assert sent["num_speakers"] is None
+    assert "(asked auto)" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        script.main(["cli_diar", "--auto", "--num-speakers", "2"])
+
 
 def test_models_script_imports_one_folder_and_refuses_a_bad_card(
     cli, tmp_path: Path, capsys: pytest.CaptureFixture[str]
