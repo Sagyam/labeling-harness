@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.config import LlmRoutes, Settings
+from app.config import LlmRoute, LlmRoutes, Settings
 from app.llm.base import LlmResult
 from app.llm.openrouter import OpenRouterClient
 from app.llm.topic import classify_topic, sample_transcript
@@ -21,6 +21,7 @@ from app.services.forced_align import ForcedAligner
 from app.services.fusion_stage import FUSION_KIND, fuse_records
 from app.utils.logging import get_logger
 
+from .checkpoint import Checkpoint, request_key
 from .job import IngestJob, LockedSession
 
 logger = get_logger(__name__)
@@ -54,6 +55,35 @@ def _fusion_completer(
     return lambda messages: client.complete(route_name, messages)
 
 
+def _checkpointed(
+    complete: Callable[[list[dict[str, Any]]], LlmResult],
+    checkpoint: Checkpoint,
+    session: Session,
+    route: LlmRoute,
+) -> Callable[[list[dict[str, Any]]], LlmResult]:
+    """``complete``, answering from the checkpoint what an interrupted run already paid for.
+
+    Windows run in order and each carries the previous one's answer forward, so a resumed run
+    rebuilds exactly the requests the first one sent -- until the first it never finished, which
+    is paid for as usual. Each fresh answer is committed before it is kept: its ``llm_requests``
+    row used to wait for the end of the stage, and a power cut lost the record of every window
+    already bought (invariant 6).
+    """
+
+    def complete_once(messages: list[dict[str, Any]]) -> LlmResult:
+        key = request_key("fusion", route.model_dump(mode="json"), messages)
+        replayed = checkpoint.load_completion(key)
+        if replayed is not None:
+            return replayed
+        result = complete(messages)
+        session.commit()
+        if not result.dry_run:
+            checkpoint.save_completion(key, result)
+        return result
+
+    return complete_once
+
+
 def _run_fusion_stage(
     job: IngestJob,
     segment_records: list[dict[str, Any]],
@@ -63,6 +93,7 @@ def _run_fusion_stage(
     *,
     routes: LlmRoutes,
     aligner: ForcedAligner | None,
+    checkpoint: Checkpoint | None = None,
 ) -> dict[str, Any] | None:
     """Stage 4: fuse the episode's recognisers into one hypothesis per clip (D72).
 
@@ -86,6 +117,8 @@ def _run_fusion_stage(
             if complete is None:
                 job.log("Stage 4/6: Fusion skipped on a dry run -- canned text has nothing to fuse")
                 return None
+            if checkpoint is not None:
+                complete = _checkpointed(complete, checkpoint, session, route)
             job.log(
                 f"Stage 4/6: Fusing {len(segment_records)} segments with {route.model} "
                 f"(windows of ~{settings.fusion.window_target_words} words sent)..."
@@ -103,12 +136,15 @@ def _run_fusion_stage(
                 max_workers=settings.ingest.max_segment_concurrency,
             )
             session.commit()
+            reused = checkpoint.reused.get("completion", 0) if checkpoint is not None else 0
     except Exception as exc:  # the recognisers' work is paid for; see the docstring
         logger.warning("fusion_stage_failed", error=str(exc))
         job.log(f"Fusion failed ({type(exc).__name__}: {exc}); seeds fall back to one recogniser",
                 "warn")  # fmt: skip
         return {"error": f"{type(exc).__name__}: {exc}"}
 
+    if reused:
+        job.log(f"Reused {reused} fusion request(s) paid for before the interruption", "success")
     job.log(
         f"Fusion: {report.fused}/{report.segments} segments fused in {report.windows} window(s), "
         f"{report.requests} request(s), {report.thought_tokens:,} thought tokens, "

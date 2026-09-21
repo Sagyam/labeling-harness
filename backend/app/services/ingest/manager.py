@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings
@@ -20,9 +21,13 @@ from app.utils.logging import get_logger
 from app.utils.rate_limit import gate_snapshots
 
 from . import pipeline as _pipeline
+from .checkpoint import write_durably
 from .job import IngestJob
 
 logger = get_logger(__name__)
+
+#: The error an interrupted job is restored with, and how `resume_interrupted` recognises it.
+INTERRUPTED = "Interrupted by server restart"
 
 
 @dataclass
@@ -50,9 +55,10 @@ class IngestionManager:
     services, so a few in flight finish the queue sooner without sending more than the gates
     allow. The import stage still runs one job at a time (see the pipeline).
 
-    The queue lives in this process and nowhere else, which is the same limitation the job log has
-    always had: if the server dies, everything still waiting dies with it and there is no record
-    the work was ever asked for. Persisting it is a separate change.
+    The queue and every job's log are written to ``queue_state.json`` in the work root. When the
+    server dies -- a crash, a power cut -- the next process reads it back, and
+    :meth:`resume_interrupted` queues again whatever was running or waiting, in its old order. Each
+    job's checkpoint means the resumed run pays only for what the dead one had not finished (D93).
     """
 
     #: How many finished jobs to keep for the status endpoint to look back at.
@@ -78,6 +84,8 @@ class IngestionManager:
         self._workers: list[threading.Thread] = []
         self._state_file: Path | None = None
         self._state_loaded: bool = False
+        #: Jobs a previous process died in the middle of, in the order they were to run.
+        self._interrupted: list[str] = []
 
     def init_state(self, work_root: Path) -> None:
         """Initialize state persistence file and load previous state if present."""
@@ -98,6 +106,7 @@ class IngestionManager:
             self._state_file = None
             self._state_loaded = False
             self._pending.clear()
+            self._interrupted.clear()
 
     def _save_state(self) -> None:
         """Persist jobs and queue state to disk atomically. Caller should hold _lock."""
@@ -110,10 +119,9 @@ class IngestionManager:
                 "running_ids": list(self._running),
                 "jobs": [job.to_dict() for job in self._jobs.values()],
             }
-            temp_file = self._state_file.with_suffix(".tmp")
-            state_json = json.dumps(payload, indent=2, ensure_ascii=False)
-            temp_file.write_text(state_json, encoding="utf-8")
-            temp_file.replace(self._state_file)
+            # Flushed to disk, not only renamed: after a power cut an unflushed rename can leave
+            # an empty file, which loses the whole queue rather than the last change (D93).
+            write_durably(self._state_file, json.dumps(payload, indent=2, ensure_ascii=False))
         except Exception as exc:
             logger.debug("ingest_save_state_failed", error=str(exc))
 
@@ -124,19 +132,28 @@ class IngestionManager:
         try:
             content = self._state_file.read_text(encoding="utf-8")
             data = json.loads(content)
+            interrupted: list[IngestJob] = []
             for j_data in data.get("jobs", []):
                 try:
                     job = IngestJob.from_dict(j_data)
                     # A job the dead process was running, or had queued, is failed rather than
                     # stuck: the queue itself died with that process, so nothing will ever pick a
                     # restored 'pending' job up, and retry only accepts a finished one.
+                    # `resume_interrupted` then puts them back in the queue (D93).
                     if job.status in ("pending", "processing"):
                         job.status = "failed"
                         job.stage = "failed"
-                        job.error = "Interrupted by server restart"
+                        job.error = INTERRUPTED
+                        interrupted.append(job)
                     self._jobs[job.job_id] = job
                 except Exception as exc:
                     logger.warning("ingest_job_restore_failed", error=str(exc))
+
+            # Resumed in the order they would have run: what was running, then the queue.
+            order = [*data.get("running_ids", []), *data.get("waiting", [])]
+            rank = {job_id: index for index, job_id in enumerate(order)}
+            interrupted.sort(key=lambda job: (rank.get(job.job_id, len(rank)), job.created_at))
+            self._interrupted = [job.job_id for job in interrupted]
 
             for jid in data.get("backlog", []):
                 if jid in self._jobs and jid not in self._backlog:
@@ -206,12 +223,76 @@ class IngestionManager:
             job.log(f"Queued: {ahead} job(s) ahead of this one.")
         return ahead
 
+    def resume_interrupted(
+        self,
+        session_factory: Callable[[], Session],
+        storage: ObjectStorage,
+        settings: Settings,
+    ) -> list[str]:
+        """Queue again every job the previous process died in the middle of (D93).
+
+        Each one starts over, but its work directory survived, so the download, transcripts,
+        fusion windows and diarization it had paid for are taken from its checkpoint instead of
+        bought again (:mod:`.checkpoint`). A job whose episode is already in the database got as
+        far as the import's commit before the cut and is marked complete, not run twice.
+
+        Returns:
+            The ids queued, in the order they will start. Empty when
+            ``ingest.resume_interrupted`` is off: the jobs stay failed, for a person to retry.
+        """
+        self.init_state(settings.ingest.work_root)
+        with self._lock:
+            candidates = [jid for jid in self._interrupted if jid in self._jobs]
+            self._interrupted = []
+        if not settings.ingest.resume_interrupted or not candidates:
+            return []
+
+        landed = self._already_imported(
+            session_factory, [self._jobs[jid].episode_id for jid in candidates]
+        )
+        resumed: list[str] = []
+        for job_id in candidates:
+            job = self._jobs[job_id]
+            if job.status != "failed" or job.error != INTERRUPTED:
+                continue  # somebody already retried or removed it
+            if job.episode_id in landed:
+                with self._lock:
+                    job.status = "completed"
+                    job.stage = "complete"
+                    job.error = None
+                    job.progress = 100.0
+                    job.log("Already imported before the server stopped; not run again", "success")
+                    self._save_state()
+                continue
+            self.retry_job(
+                job_id, session_factory, storage, settings, note="Resuming after a server restart"
+            )
+            resumed.append(job_id)
+        if resumed:
+            logger.info("ingest_jobs_resumed", count=len(resumed))
+        return resumed
+
+    @staticmethod
+    def _already_imported(
+        session_factory: Callable[[], Session], episode_ids: list[str]
+    ) -> set[str]:
+        from app.models import Episode
+
+        with session_factory() as session:
+            return set(
+                session.scalars(
+                    sa.select(Episode.external_id).where(Episode.external_id.in_(episode_ids))
+                )
+            )
+
     def retry_job(
         self,
         job_id: str,
         session_factory: Callable[[], Session],
         storage: ObjectStorage,
         settings: Settings,
+        *,
+        note: str = "Job requeued for retry by user",
     ) -> int:
         """Retry a failed, aborted, or backlogged job."""
         self.init_state(settings.ingest.work_root)
@@ -245,7 +326,7 @@ class IngestionManager:
             if job.source_url:
                 job.audio_path = None
 
-            job.log("Job requeued for retry by user", "info")
+            job.log(note, "info")
             self._waiting.append(job.job_id)
             self._max_jobs = settings.ingest.max_concurrent_jobs
             ahead = self._ahead(len(self._waiting) - 1)

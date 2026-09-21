@@ -376,6 +376,10 @@ class IngestSettings(BaseModel):
     #: only when the form left the topic blank. Empty disables it; a name that is not in
     #: `llm_routes.yaml` is logged and skipped, because a metadata field never fails an ingest.
     topic_route: str = "classify_topic"
+    #: Queue again, at startup, every job a previous process died in the middle of (D93). A
+    #: resumed job reuses what its checkpoint holds and pays only for the rest; off, those jobs
+    #: stay failed until someone retries them.
+    resume_interrupted: bool = True
 
     @field_validator("work_root")
     @classmethod

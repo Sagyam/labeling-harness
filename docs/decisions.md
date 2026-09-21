@@ -2918,3 +2918,47 @@ model lazily and holds one at a time, so an idle container is a Python process a
 
 **Reversal:** put `profiles: ["playground"]` back on the service.
 
+## D93 — An interrupted ingest resumes by itself and never pays twice
+
+A power cut on 2026-09-21 stopped three running jobs and stranded three queued ones. Postgres
+recovered cleanly and nothing was half-imported: an episode is held in memory until stage 6 writes
+it in one transaction. But the two episodes in flight lost every transcript and fusion window they
+had paid for, and the queue could not be continued. Jobs saved as `pending` came back in no
+category: not listed, not retryable, never run. The saved state was also read only on the next
+submission, so after a restart the Ingest page showed nothing.
+
+**What changed.**
+- **Paid results are checkpointed** in the job's work directory as they arrive
+  (`app/services/ingest/checkpoint.py`). This covers transcripts, fusion requests, the Modal
+  diarization, and a marker for a finished download. Each entry is keyed by exactly what was sent,
+  so a changed clip, route or prompt is a miss, paid for again, never a stale answer.
+  - Transcripts are keyed on the clip's decoded samples, not its bytes. Two FFmpeg versions
+    normalising one source gave different files and identical samples.
+  - Fusion is keyed on the request's messages. Windows run in order, each carrying the previous
+    answer forward, so a resumed run rebuilds the same requests up to the first one never
+    answered.
+- **Fusion's `llm_requests` rows are committed per request**, not at the end of the stage. A cut
+  mid-fusion used to lose the record of every window already bought (invariant 6). A result is
+  checkpointed only after its row is committed, so nothing is ever replayed that is not on record.
+- **Writes are durable.** Checkpoint entries and `queue_state.json` are fsynced before they are
+  renamed into place, and the directory after. A torn entry reads as a miss.
+- **Interrupted jobs resume at startup** (`ingest.resume_interrupted`, default on). Running jobs
+  come first, then the queue, in their old order. A job whose episode is already in the database
+  is marked complete instead. With the setting off, the jobs come back failed and retryable. The
+  Ingest API also loads the saved state on its first request.
+
+**Why automatic.** The work was already asked for, and the checkpoint caps what a resume can
+spend at what the dead run had not yet bought. Needing a person to notice and click retry is the
+failure this is meant to remove.
+
+**Not covered.** A replay writes no `llm_requests` row and reports zero cost; the first call's row
+stands. A call cut off after the vendor answered but before its row was committed is paid and lost;
+that window is a request's round trip. Topic classification ($0.002) is not checkpointed. A job
+that fails normally still deletes its work directory, checkpoint included.
+
+**Cost.** One small JSON file per paid result, gone when the job finishes. Hashing the samples
+measured 1.8 ms per clip, and 0.58 s per hour of episode for the diarization key.
+
+**Reversal:** set `resume_interrupted: false` to stop resuming. Removing the checkpoint means
+reverting `checkpoint.py` and its three call sites in `pipeline.py` and `fusion.py`.
+

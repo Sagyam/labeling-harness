@@ -10,6 +10,7 @@ import concurrent.futures
 import contextlib
 import datetime as dt
 import json
+import os
 import shutil
 import threading
 from collections.abc import Callable
@@ -58,6 +59,7 @@ from app.utils.logging import get_logger
 from app.utils.rate_limit import provider_gate
 
 from .audio import normalize_audio
+from .checkpoint import Checkpoint, audio_key, request_key
 from .fusion import _classify_episode_topic, _run_fusion_stage
 from .job import DiscardedSegment, IngestJob, LockedSession
 
@@ -135,6 +137,24 @@ def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
 
     job.status = "processing"
     job.set_progress("downloading", 0.0)
+
+    # A download that finished before an interruption is used again, but only one the marker
+    # vouches for: yt-dlp renames a file into place when it completes, and a power cut can still
+    # leave that name on a torn file (D93).
+    checkpoint = Checkpoint(job.work_dir)
+    marker_key = request_key("download", job.source_url)
+    marker = checkpoint.load("download", marker_key)
+    if marker is not None:
+        kept = job.work_dir / str(marker.get("file", ""))
+        if (
+            kept.is_file()
+            and kept.stat().st_size == marker.get("size")
+            and sha256_file(kept) == marker.get("sha256")
+        ):
+            job.audio_path = kept
+            job.log(f"Reusing {kept.name}, downloaded before the interruption", "success")
+            return True
+
     job.log(f"Fetching audio from {job.source_url} (yt-dlp)...")
 
     last_decile = -1
@@ -194,7 +214,31 @@ def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
 
     size_mb = job.audio_path.stat().st_size / (1024 * 1024)
     job.log(f"Downloaded {job.audio_path.name} ({size_mb:.1f} MB)", "success")
+    with open(job.audio_path, "rb") as downloaded:
+        os.fsync(downloaded.fileno())
+    checkpoint.save(
+        "download",
+        marker_key,
+        {
+            "file": job.audio_path.name,
+            "size": job.audio_path.stat().st_size,
+            "sha256": sha256_file(job.audio_path),
+        },
+    )
     return True
+
+
+def _route_dump(routes: Any, route_name: str) -> dict[str, Any] | None:
+    """A route's whole configuration, so a changed route is a different checkpoint key."""
+    route = routes.routes.get(route_name)
+    return route.model_dump(mode="json") if route is not None else None
+
+
+def _keep_paid(checkpoint: Checkpoint, keys: dict[str, str], fresh: dict[str, AsrResult]) -> None:
+    """Checkpoint the transcripts this segment just paid for. A dry run's canned text is not."""
+    for route_name, result in fresh.items():
+        if not result.dry_run:
+            checkpoint.save_asr(keys[route_name], result)
 
 
 def _halted(job: IngestJob, *, segments_detected: int = 0, segments_transcribed: int = 0) -> bool:
@@ -236,6 +280,25 @@ def _await_speaker_turns(
     except Exception as exc:
         job.log(f"Diarization skipped: {type(exc).__name__}: {exc}", "warn")
         return None
+
+
+def _diarize_once(
+    checkpoint: Checkpoint,
+    norm_flac: Path,
+    *,
+    num_speakers: int | None,
+    settings: Settings,
+) -> dict[str, Any] | None:
+    """The remote diarizer's answer, from the checkpoint when an interrupted run already paid."""
+    conf = settings.diarization
+    key = request_key("diarize", audio_key(norm_flac), num_speakers, conf.model, conf.endpoint_url)
+    stored = checkpoint.load("diarization", key)
+    if stored is not None:
+        return stored.get("result")
+    result = diarize_audio(norm_flac, num_speakers=num_speakers, settings=settings)
+    if result:
+        checkpoint.save("diarization", key, {"result": result})
+    return result
 
 
 def _import_speaker_turns(
@@ -351,6 +414,8 @@ def _run_stages(
         return
 
     norm_flac = job.work_dir / f"{job.episode_id}_normalized.flac"
+    #: What this run has paid for, kept so a run resumed after a power cut does not pay again.
+    checkpoint = Checkpoint(job.work_dir)
 
     # Stage 1: Normalize Audio
     try:
@@ -375,7 +440,7 @@ def _run_stages(
         job.log(f"Diarizing the episode remotely (speakers: {num_speakers or 'auto'})...")
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         diarize_future = executor.submit(
-            diarize_audio, norm_flac, num_speakers=num_speakers, settings=settings
+            _diarize_once, checkpoint, norm_flac, num_speakers=num_speakers, settings=settings
         )
         # The submitted call still runs to completion; this only lets its thread go when it does.
         executor.shutdown(wait=False)
@@ -463,6 +528,22 @@ def _run_stages(
                     # Rec 1: Concurrent model dispatch per segment across every ASR route
                     clip_results: dict[str, AsrResult] = {}
                     route_failures: list[dict[str, str]] = []
+
+                    # A transcript an interrupted run already bought for these exact samples on
+                    # this exact route is used again rather than bought twice (D93).
+                    clip_key = audio_key(seg.clip_path)
+                    keys = {
+                        r_name: request_key(
+                            "asr", clip_key, r_name, _route_dump(routes, r_name), ASR_PROMPT
+                        )
+                        for r_name in asr_routes
+                    }
+                    for r_name in asr_routes:
+                        replayed = checkpoint.load_asr(keys[r_name])
+                        if replayed is not None:
+                            clip_results[r_name] = replayed
+                    fresh: dict[str, AsrResult] = {}
+
                     with concurrent.futures.ThreadPoolExecutor(
                         max_workers=max(1, len(asr_routes))
                     ) as route_pool:
@@ -477,11 +558,12 @@ def _run_stages(
                                 client=http_client,
                             ): r_name
                             for r_name in asr_routes
+                            if r_name not in clip_results
                         }
                         for f in concurrent.futures.as_completed(future_to_route):
                             r_name = future_to_route[f]
                             try:
-                                clip_results[r_name] = f.result()
+                                clip_results[r_name] = fresh[r_name] = f.result()
                             except Exception as exc:  # recorded, then the segment is discarded
                                 route_failures.append(
                                     {
@@ -513,6 +595,7 @@ def _run_stages(
                         # The failed attempts' llm_requests rows are only flushed. Commit them, or
                         # a run whose every clip fails leaves no record of its attempts (inv. 6).
                         locked_session.commit()
+                        _keep_paid(checkpoint, keys, fresh)
                         # The clip is dead: nothing will reference it, and leaving it in the work
                         # directory would put it in the manifest's clip upload by accident.
                         with contextlib.suppress(OSError):
@@ -586,6 +669,9 @@ def _run_stages(
 
                     # Commit per segment (Decision D20). Thread-safe under LockedSession.
                     locked_session.commit()
+                    # After the commit: a kept transcript must never be one with no llm_requests
+                    # row saying what it cost.
+                    _keep_paid(checkpoint, keys, fresh)
 
                     # Progress & logging under lock
                     with progress_lock:
@@ -683,6 +769,12 @@ def _run_stages(
 
             segment_records = [r for r in records_by_idx if r is not None]
 
+        if checkpoint.reused.get("asr"):
+            job.log(
+                f"Reused {checkpoint.reused['asr']} transcripts paid for before the interruption",
+                "success",
+            )
+
         if _halted(job, segments_detected=len(segments), segments_transcribed=len(segment_records)):
             return
 
@@ -712,7 +804,14 @@ def _run_stages(
     # clip the fuser did not answer is seeded from a recogniser and sent to review instead.
     job.set_progress("fusing", 76.0)
     fusion_summary = _run_fusion_stage(
-        job, segment_records, segments, session_factory, settings, routes=routes, aligner=aligner
+        job,
+        segment_records,
+        segments,
+        session_factory,
+        settings,
+        routes=routes,
+        aligner=aligner,
+        checkpoint=checkpoint,
     )
 
     if _halted(job, segments_detected=len(segments), segments_transcribed=len(segment_records)):

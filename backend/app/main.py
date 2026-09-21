@@ -2,11 +2,37 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings, load_dotenv
 from app.utils.logging import configure_logging, get_logger
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Resume the ingest jobs a crash or power cut interrupted, before serving anything (D93).
+
+    The collaborators are resolved through the app's dependency overrides, so a test that points
+    the app at a scratch work root and database resumes from there, not from the real ones.
+    """
+    from app.api.deps import get_config, get_object_storage, get_session_factory
+    from app.services.ingest import manager
+
+    def resolve(dependency: Callable[[], Any]) -> Any:
+        return app.dependency_overrides.get(dependency, dependency)()
+
+    try:
+        manager.resume_interrupted(
+            resolve(get_session_factory), resolve(get_object_storage), resolve(get_config)
+        )
+    except Exception as exc:  # a failed resume leaves the jobs retryable; never block startup
+        get_logger(__name__).warning("ingest_resume_failed", error=str(exc))
+    yield
 
 
 def create_app() -> FastAPI:
@@ -20,6 +46,7 @@ def create_app() -> FastAPI:
         title="Nepanglish Annotation Harness",
         version="0.1.0",
         summary="Single-annotator annotation harness for a Nepali-English code-switching corpus",
+        lifespan=_lifespan,
     )
     app.add_middleware(
         CORSMiddleware,

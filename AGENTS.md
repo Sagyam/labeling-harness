@@ -206,6 +206,10 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   `HARNESS_ALIGNER_MODEL_DIR` moves it (the container uses `/app/data/models`, inside the bind
   mount, so it survives `up`); `HARNESS_ALIGNER_NO_DOWNLOAD=1` refuses it.
 - The transcribe stage commits per segment on purpose (D20). Do not "tidy" it into one transaction.
+- **A paid result is checkpointed only after its `llm_requests` row is committed** (D93). Move a
+  new paid call into ingest the same way — through `Checkpoint` in `app/services/ingest/`,
+  keyed by everything that was sent — or a power cut throws it away. Interrupted jobs resume at
+  startup; `ingest.resume_interrupted: false` stops that.
 - `/tasks/next` marks the task `in_progress` — that is what makes resume work. A partial unique
   index enforces one active task per segment, so a second one raises `IntegrityError` from the
   database, not from application code.

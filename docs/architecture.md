@@ -379,9 +379,20 @@ downloaded file keeps whichever container YouTube served -- stage 1 re-encodes i
 nothing transcodes twice -- and the canonical URL is stored as the episode's `source_uri`.
 
 `GET /ingest/{id}` reports stage, progress and error state; `GET /ingest/{id}/events` streams the
-same log lines the backend writes, over SSE, into a terminal panel in the browser. Clips are
-committed per segment rather than in one transaction around the whole stage, so a job that fails
-halfway leaves the work it already did.
+same log lines the backend writes, over SSE, into a terminal panel in the browser. Each segment's
+`llm_requests` rows are committed as it finishes, rather than in one transaction around the stage
+(D20), so what a job spent is on record even if it never reaches the import.
+
+**Surviving a crash or power cut (D93).** The episode itself lives in memory until stage 6 writes
+it, so every paid result is also written, as it arrives, to `<work_dir>/checkpoint/`: each
+transcript keyed by the clip's samples and the route's whole configuration, each fusion request by
+its messages, the diarization by the episode's samples, and a marker for a finished download.
+Every entry, and `queue_state.json`, is flushed to disk before it is renamed into place. At startup
+the app reads the queue back and, with `ingest.resume_interrupted` on (the default), queues again
+whatever was running or waiting, in the old order; a resumed run takes what its checkpoint holds
+and pays only for the rest. A job whose episode is already in the database is marked complete
+instead. A replayed result writes no `llm_requests` row -- the original call already did -- and
+is reported at zero cost. The work directory still goes when a job finishes, checkpoint with it.
 
 These two, a YouTube URL and an uploaded file, are the only ways an episode enters (D86). Nothing
 processed outside the harness is imported; the manifest importer (below) is ingest's own last stage.
