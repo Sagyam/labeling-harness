@@ -75,6 +75,31 @@ bf16 run on the old clips (6.61 against 6.51 on the same 69 clips), and made 0 l
 - **Caveats.** The 3x calibration comes from the whole of old gold and may be worse on a bucket
   dominated by three episodes. The overlap detector is still unchecked by ear.
 
+**Update the same day: 86 more crosstalk clips from one episode.** The owner added one Prime
+Television talk show (72.5 min, two voices v192/v193), kept 86 clips (17.9 min, 85 with
+crosstalk, 18% of their audio overlapped) as gold and deleted the rest. Labels keep the stronger
+voice and never invent words, but drop some of the weaker one. The same int8 model and noise
+model were used, and the recalibrated clustering factor is 3.07.
+
+| bucket | clips (before → now) | episodes | Kish effective episodes | WER now | detectable change |
+|---|---|---|---|---|---|
+| any crosstalk | 176 → 261 | 45 → 46 | 12.2 → 8.3 | 20.67 | 3.56 → 3.13 pts (15% rel) |
+| ≥5% | 120 → 205 | 27 → 28 | 7.5 → 5.3 | 24.04 | 4.80 → 3.84 pts (16% rel) |
+| >15% | 70 → 118 | 24 → 25 | 6.7 → 5.3 | 28.68 | 6.82 → 5.46 pts (19% rel) |
+
+- The new episode scores 19.29 at 5–15% and 27.99 at >15%, close to chill_pill's 29.46. It has
+  one clean clip, so it gives no within-episode baseline.
+- **More clips, fewer effective rooms.** The detectable change shrinks by about a fifth if noise is
+  per clip. But the new episode now holds 41% of the >15% clips, so the bucket's effective number
+  of independent episodes fell from 6.7 to 5.3. Whether a fix generalises across rooms is no better
+  known than before.
+- **The references penalise hearing the second voice.** A model that transcribes the weaker
+  speaker is charged with insertions for the words the label dropped (93 of the model's 783
+  errors on these clips are insertions). Score augmentation by deletions and substitutions as well
+  as WER, or a real gain can read as a loss.
+- Verdict unchanged in kind: gold can confirm a gain of about 5.5 points (a fifth) at >15%, not
+  a 10% one, and it speaks for about five rooms.
+
 ---
 
 ## The retrain on fold-v3 and the redrawn val (2026-09-17)
