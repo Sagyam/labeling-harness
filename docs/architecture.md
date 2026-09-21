@@ -539,6 +539,7 @@ the same inputs and filters produce byte-identical output.
 | `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |
 | `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
+| `POST /segments/bulk-delete` | Delete several segments, all or none; 409 if any is gold (D94) |
 | `GET /stats/report` | Pipeline status: pots, coverage, verification mix, agreement, accept-rate trend |
 | `GET /stats/inventory` | The corpus page's payload (D91): every clip bucketed on sixteen categories, per-bucket hours by tier and pot and voices, one profile per voice across episodes, per-category recommendations tagged ASR / paper, the paperwork checks, and the clip table itself for client-side cross-filtering |
 | `POST /segments/{id}/pot` | Put one clip in gold or take it out (D71); 409 for a screened clip |

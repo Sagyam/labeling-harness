@@ -12,6 +12,16 @@ import {
 } from '@remixicon/react'
 
 import { Chip } from '@/components/Chip'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -123,6 +133,8 @@ interface TriageViewProps {
     durationMs: number,
   ) => Promise<void>
   onBulkAccept: (taskIds: number[], tier?: VerificationTier) => Promise<void>
+  /** Permanently delete the selected rows' clips; gold is refused (D94). */
+  onBulkDelete: (taskIds: number[]) => Promise<void>
   /** Put the clip in gold, or take it back out (D71). */
   onToggleGold: (segmentId: number, currentPot: PotName) => Promise<void>
 }
@@ -168,9 +180,12 @@ export function TriageView({
   onOpenEditor,
   onFlagRow,
   onBulkAccept,
+  onBulkDelete,
   onToggleGold,
 }: TriageViewProps) {
   const [playingTaskId, setPlayingTaskId] = useState<number | null>(null)
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([])
   const focusedRowOpenedAtRef = useRef<number>(Date.now())
@@ -225,6 +240,8 @@ export function TriageView({
       ) {
         return
       }
+      // The delete confirmation owns the keyboard while it is open.
+      if (isDeleteOpen) return
 
       if (rows.length === 0) return
       const focusedRow = rows[focusedIndex]
@@ -337,7 +354,7 @@ export function TriageView({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [rows, focusedIndex, selectedIds, playingTaskId])
+  }, [rows, focusedIndex, selectedIds, playingTaskId, isDeleteOpen])
 
   // Stop audio when unmounting
   useEffect(() => {
@@ -347,6 +364,20 @@ export function TriageView({
   }, [])
 
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds.has(r.task_id))
+  // Gold clips are never bulk-deleted (D94); the server refuses the whole batch if one is in it.
+  const selectedGoldCount = rows.filter(
+    (r) => selectedIds.has(r.task_id) && r.pot === 'gold',
+  ).length
+
+  const confirmBulkDelete = async () => {
+    setIsDeleting(true)
+    try {
+      await onBulkDelete(Array.from(selectedIds))
+    } finally {
+      setIsDeleting(false)
+      setIsDeleteOpen(false)
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -453,6 +484,21 @@ export function TriageView({
           >
             Accept selected ({selectedIds.size})
             <Kbd className="ml-1 bg-primary-foreground/15 text-primary-foreground">⇧ ↵</Kbd>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={selectedIds.size === 0 || selectedGoldCount > 0}
+            onClick={() => setIsDeleteOpen(true)}
+            className="h-8 gap-1.5 text-xs"
+            title={
+              selectedGoldCount > 0
+                ? `Deselect ${selectedGoldCount} gold clip(s) first: gold is never bulk-deleted`
+                : 'Permanently delete the selected clips'
+            }
+          >
+            Delete selected ({selectedIds.size})
           </Button>
 
           <Separator orientation="vertical" className="h-4" />
@@ -883,6 +929,34 @@ export function TriageView({
           <Kbd>?</Kbd>
         </KbdGroup>
       </footer>
+
+      <AlertDialog
+        open={isDeleteOpen}
+        onOpenChange={(open) => !isDeleting && setIsDeleteOpen(open)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} clips?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Their audio, hypotheses, tasks and labels will be permanently removed. An audit entry
+              is kept for each. Bad audio is better flagged unusable (f): a deleted clip no longer
+              counts towards how much of the audio could not be transcribed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeleting}
+              onClick={(e) => {
+                e.preventDefault()
+                confirmBulkDelete()
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

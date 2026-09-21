@@ -336,6 +336,13 @@ export const api = {
     })
   },
 
+  /** Delete several clips in one transaction; any gold clip refuses the whole batch (D94). */
+  bulkDeleteSegments: (segmentIds: number[]): Promise<{ deleted: number[]; count: number }> =>
+    request(`/segments/bulk-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ segment_ids: segmentIds }),
+    }),
+
   /** The corpus cut by every category, its voices, and what to record next (D91). */
   getInventory: (): Promise<CorpusInventory> => request<CorpusInventory>('/stats/inventory'),
 

@@ -1008,10 +1008,8 @@ error rate falls out.
 export refuses to write at all if a screened row reaches it — belt and braces, because the failure
 is silent and the artefact outlives the session that made it.
 
-**Deletion is not offered.** Bad audio is flagged `unusable_audio`. Deleting would lose "what
-fraction of real Nepanglish podcast audio is untranscribable", which is a publishable number, and a
-delete key used casually in train and carefully in gold is a biased filter applied to one
-distribution and not the other, with nothing recording that it happened.
+**Bad audio is flagged, not deleted.** `unusable_audio` keeps "what fraction of real Nepanglish
+podcast audio is untranscribable", which is a publishable number. Deletion exists for junk (D94).
 
 **Reversal:** the migration has a working `downgrade`. Dropping the tier makes every screened row
 indistinguishable from a verified one, which is the thing this entry exists to prevent.
@@ -2046,3 +2044,25 @@ measured 1.8 ms per clip, and 0.58 s per hour of episode for the diarization key
 
 **Reversal:** set `resume_interrupted: false` to stop resuming. Removing the checkpoint means
 reverting `checkpoint.py` and its three call sites in `pipeline.py` and `fusion.py`.
+
+## D94 — Clips can be deleted in bulk, and never from gold
+
+`POST /segments/bulk-delete` takes a list of segment ids and deletes them in one transaction,
+all or none, from "Delete selected" on the triage toolbar, which acts on the rows already ticked
+for bulk accept. Each clip leaves an `audit_logs` row (`action: delete`,
+`old_values_jsonb.bulk: true`, with its pot) that outlives it. Storage
+objects are removed only after the commit, so a refused batch leaves every clip playable. A gold
+clip anywhere in the batch refuses the whole batch with 409, and the button stays disabled while
+one is selected.
+
+**Why.** Single-clip delete already existed (`DELETE /segments/{id}`, in the editor and on each
+row), and D63's "deletion is not offered" was not true of the code. Removing junk clips one dialog
+at a time was the owner's actual workflow, so this overrides that paragraph of D63.
+
+**What it costs.** D63's two warnings still hold for anything deleted this way. A deleted clip is
+missing from the untranscribable-audio count, so bad audio should still be flagged
+`unusable_audio`. Deleting is also a filter applied to train and not to gold. The audit rows are
+what make that filter countable after the fact. Refusing gold keeps the benchmark out of it.
+
+**Reversal:** delete the endpoint, its schema and the triage button. Nothing persists apart from the
+audit rows, and the deleted clips do not come back.

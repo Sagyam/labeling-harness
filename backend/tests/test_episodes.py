@@ -195,3 +195,62 @@ def test_deleting_an_episode_writes_an_audit_entry(
     assert entry.action == "delete"
     assert entry.old_values_jsonb["external_id"] == imported_episode
     assert entry.old_values_jsonb["segments"] > 0
+
+
+# --- bulk delete -----------------------------------------------------------------------------
+
+
+def test_bulk_delete_removes_every_segment_its_objects_and_audits_each(
+    client: TestClient, db_session: Session, imported_episode: str, object_storage
+) -> None:
+    segments = db_session.scalars(sa.select(Segment).order_by(Segment.id)).all()[:3]
+    ids = [s.id for s in segments]
+    keys = [k for s in segments for k in (s.clip_object_key, s.peaks_object_key) if k]
+    assert all(object_storage.exists(k) for k in keys)
+
+    body = client.post("/segments/bulk-delete", json={"segment_ids": ids}).json()
+    assert body["count"] == 3
+    assert sorted(body["deleted"]) == sorted(ids)
+
+    db_session.expire_all()
+    remaining = db_session.scalars(sa.select(Segment.id).where(Segment.id.in_(ids))).all()
+    assert remaining == []
+    assert not any(object_storage.exists(k) for k in keys)
+    entries = db_session.scalars(
+        sa.select(AuditLog).where(AuditLog.entity_type == "segments", AuditLog.action == "delete")
+    ).all()
+    assert sorted(int(e.entity_id) for e in entries) == sorted(ids)
+    assert all(e.old_values_jsonb["bulk"] is True for e in entries)
+
+
+def test_bulk_delete_refuses_the_whole_batch_if_any_clip_is_gold(
+    client: TestClient, db_session: Session, imported_episode: str, object_storage
+) -> None:
+    segments = db_session.scalars(sa.select(Segment).order_by(Segment.id)).all()[:3]
+    segments[1].pot = "gold"
+    db_session.flush()
+    ids = [s.id for s in segments]
+
+    response = client.post("/segments/bulk-delete", json={"segment_ids": ids})
+    assert response.status_code == 409
+    assert str(segments[1].id) in response.json()["detail"]
+
+    db_session.expire_all()
+    assert len(db_session.scalars(sa.select(Segment).where(Segment.id.in_(ids))).all()) == 3
+    assert object_storage.exists(segments[0].clip_object_key)
+
+
+def test_bulk_delete_is_all_or_nothing_on_an_unknown_id(
+    client: TestClient, db_session: Session, imported_episode: str, object_storage
+) -> None:
+    segment = db_session.scalars(sa.select(Segment)).first()
+    response = client.post("/segments/bulk-delete", json={"segment_ids": [segment.id, 999999]})
+    assert response.status_code == 404
+
+    db_session.expire_all()
+    assert db_session.get(Segment, segment.id) is not None
+    assert object_storage.exists(segment.clip_object_key)
+
+
+def test_bulk_delete_requires_at_least_one_segment(client: TestClient) -> None:
+    assert client.post("/segments/bulk-delete", json={"segment_ids": []}).status_code == 422

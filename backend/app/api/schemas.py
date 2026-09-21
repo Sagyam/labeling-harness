@@ -234,6 +234,19 @@ class BulkAcceptOut(BaseModel):
     count: int
 
 
+class BulkDeleteSegmentsIn(BaseModel):
+    """Delete several clips at once, from the episode clip list."""
+
+    segment_ids: list[int] = Field(min_length=1)
+
+
+class BulkDeleteSegmentsOut(BaseModel):
+    """Result of a bulk delete. All or nothing: one transaction."""
+
+    deleted: list[int]
+    count: int
+
+
 class TranslitIn(BaseModel):
     """A Latin token to transliterate."""
 

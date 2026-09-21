@@ -255,6 +255,22 @@ export default function App() {
     }
   }
 
+  // Triage: Bulk delete. The API is keyed by segment; the selection is keyed by task.
+  const handleBulkDelete = async (taskIds: number[]) => {
+    const idSet = new Set(taskIds)
+    const segmentIds = queueRows.filter((r) => idSet.has(r.task_id)).map((r) => r.segment_id)
+    if (segmentIds.length === 0) return
+    try {
+      const { count } = await api.bulkDeleteSegments(segmentIds)
+      toast.success(`Deleted ${count} clips`)
+      setQueueRows((prev) => prev.filter((r) => !idSet.has(r.task_id)))
+      setSelectedIds(new Set())
+      refreshStats()
+    } catch (err: any) {
+      toast.error(err.detail || err.message || 'Bulk delete failed')
+    }
+  }
+
   // Triage: Selection toggles
   const handleToggleSelect = (taskId: number) => {
     setSelectedIds((prev) => {
@@ -526,6 +542,7 @@ export default function App() {
           onOpenEditor={handleOpenEditor}
           onFlagRow={handleFlagRow}
           onBulkAccept={handleBulkAccept}
+          onBulkDelete={handleBulkDelete}
           onToggleGold={handleToggleGold}
         />
       )}

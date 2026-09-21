@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_config, get_object_storage, get_session, require_auth
-from app.api.schemas import SegmentOut
+from app.api.schemas import BulkDeleteSegmentsIn, BulkDeleteSegmentsOut, SegmentOut
 from app.api.serializers import serialize_segment
 from app.config import Settings
 from app.models import AsrHypothesis, AuditLog, Segment
@@ -189,22 +189,64 @@ def delete_segment(
 
     external_id = segment.external_id
     delete_objects(storage, segment.clip_object_key, segment.peaks_object_key)
-
-    session.add(
-        AuditLog(
-            entity_type="segments",
-            entity_id=str(segment_id),
-            action="delete",
-            actor=settings.labels.default_annotator,
-            old_values_jsonb={
-                "external_id": external_id,
-                "episode_id": segment.episode_id,
-                "pipeline_status": segment.pipeline_status,
-            },
-            new_values_jsonb=None,
-        )
-    )
-
+    session.add(_delete_audit(segment, actor=settings.labels.default_annotator))
     session.delete(segment)
     session.flush()
     return {"deleted": True, "segment_id": segment_id, "external_id": external_id}
+
+
+@router.post("/segments/bulk-delete", response_model=BulkDeleteSegmentsOut)
+def bulk_delete_segments(
+    body: BulkDeleteSegmentsIn,
+    session: Session = Depends(get_session),
+    storage: ObjectStorage = Depends(get_object_storage),
+    settings: Settings = Depends(get_config),
+) -> BulkDeleteSegmentsOut:
+    """Delete several segments in one transaction: all of them, or none.
+
+    A gold clip anywhere in the batch refuses the whole batch with 409 (D94): deleting is a
+    filter, and gold must not be filtered by the same quick hand that filters train. Storage
+    objects go only after the commit, so a refused or failed batch leaves every clip playable.
+    """
+    ids = list(dict.fromkeys(body.segment_ids))
+    segments = session.scalars(sa.select(Segment).where(Segment.id.in_(ids))).all()
+    missing = sorted(set(ids) - {s.id for s in segments})
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"segments not found: {missing}"
+        )
+    gold = sorted(s.id for s in segments if s.pot == "gold")
+    if gold:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"gold clips cannot be bulk-deleted: {gold}",
+        )
+
+    keys = [(s.clip_object_key, s.peaks_object_key) for s in segments]
+    for segment in segments:
+        session.add(_delete_audit(segment, actor=settings.labels.default_annotator, bulk=True))
+        session.delete(segment)
+    session.commit()
+    for clip_key, peaks_key in keys:
+        delete_objects(storage, clip_key, peaks_key)
+    return BulkDeleteSegmentsOut(deleted=ids, count=len(ids))
+
+
+def _delete_audit(segment: Segment, *, actor: str, bulk: bool = False) -> AuditLog:
+    """The ``audit_logs`` row a segment deletion leaves behind; it outlives the segment."""
+    old_values: dict[str, Any] = {
+        "external_id": segment.external_id,
+        "episode_id": segment.episode_id,
+        "pipeline_status": segment.pipeline_status,
+        "pot": segment.pot,
+    }
+    if bulk:
+        old_values["bulk"] = True
+    return AuditLog(
+        entity_type="segments",
+        entity_id=str(segment.id),
+        action="delete",
+        actor=actor,
+        old_values_jsonb=old_values,
+        new_values_jsonb=None,
+    )
