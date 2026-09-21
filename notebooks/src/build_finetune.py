@@ -625,8 +625,7 @@ mkdir -p data/models/asr/<RUN_NAME>
 cp exports/<RUN_NAME>/<RUN_NAME>/harness/* data/models/asr/<RUN_NAME>/
 cp -r exports/<RUN_NAME>/<RUN_NAME>/cpu data/models/asr/<RUN_NAME>/   # mic playground (D85)
 ```
-Press **Rescan** on the Models page, and start the playground sidecar with
-`docker-compose --profile playground up -d playground`.
+Press **Rescan** on the Models page. The playground sidecar starts with `docker compose up -d`.
 """),
     code(r"""
 from huggingface_hub import HfApi

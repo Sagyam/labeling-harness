@@ -2908,3 +2908,13 @@ hidden.
 
 **Reversal:** restore `app/services/inventory/` and `frontend/src/components/analytics/` from
 before this commit; drop `dataset.min_stratum_voices`. No schema change was made.
+
+## D92 — The playground starts with the stack
+
+D85 put the `playground` service behind a compose profile because a loaded model holds 1.3–2.5 GB
+of RAM. The owner wants `docker compose up -d` to bring it up with everything else. The profile is
+removed. The cost D85 guarded against is paid only after the first recording: `server.py` loads a
+model lazily and holds one at a time, so an idle container is a Python process and nothing more.
+
+**Reversal:** put `profiles: ["playground"]` back on the service.
+

@@ -89,8 +89,8 @@ The page's playground (D85) is the one place a model runs. A recording made on t
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an
 episode, then sends it to the `playground` compose service: CPU PyTorch reading the model's
 `cpu/` or `best/` weights. The route is `playground_transcribe`, and each attempt writes an
-`llm_requests` row. Nothing else is stored. The service is opt-in:
-`docker-compose --profile playground up -d playground`.
+`llm_requests` row. Nothing else is stored. The service starts with `docker compose up -d` and loads a model only
+on the first recording (D92).
 
 ### Annotation
 
