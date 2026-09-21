@@ -52,7 +52,9 @@ def download_dataset(local: str | None = None) -> Path:
 
     return Path(
         snapshot_download(
-            REPO, repo_type="dataset", allow_patterns=["training/*", "gold/*", "harness/*"]
+            REPO,
+            repo_type="dataset",
+            allow_patterns=["training/*", "gold/*", "harness/*", "analytics/*"],
         )
     )
 
@@ -71,6 +73,18 @@ def load_splits(data: Path) -> dict[str, list[dict]]:
     trained = {r["segment_id"] for r in rows}
     assert not trained & {r["segment_id"] for r in gold}, "a gold clip is in the training export"
     return splits
+
+
+def attach_speaker_turns(data: Path, rows: Sequence[dict]) -> int:
+    """Copy each row's diarized turns, with their linked voices (D78, D87), from the analytics
+    export: the training export does not carry them. Returns how many rows have turns."""
+    want = {r["segment_id"]: r for r in rows}
+    with (data / "analytics" / "analytics.jsonl").open(encoding="utf-8") as fh:
+        for line in fh:
+            a = json.loads(line)
+            if a["segment_id"] in want:
+                want[a["segment_id"]]["speaker_turns"] = a.get("speaker_turns")
+    return sum(bool(r.get("speaker_turns")) for r in rows)
 
 
 def duration(row: dict) -> float:
@@ -205,10 +219,13 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
         return " ".join(t if dev.search(t) else t.lower() for t in fold_tokens(text))
 
     def score(refs: Sequence[str], hyps: Sequence[str]) -> dict:
-        words = werr = rwords = rerr = nchars = cerr = loops = 0
+        words = werr = rwords = rerr = nchars = cerr = loops = subs = dels = ins = 0
         for ref, hyp in zip(refs, hyps, strict=True):
             words += len(fold_tokens(ref))
-            werr += word_errors(ref, hyp).errors
+            folded = word_errors(ref, hyp)
+            werr += folded.errors
+            subs, dels = subs + folded.substitutions, dels + folded.deletions
+            ins += folded.insertions
             raw = word_errors(ref, hyp, folded=False)
             rerr, rwords = rerr + raw.errors, rwords + raw.ref_words
             nchars += len(chars(ref))
@@ -218,6 +235,11 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
             "wer": 100 * werr / max(words, 1),
             "raw_wer": 100 * rerr / max(rwords, 1),
             "cer": 100 * cerr / max(nchars, 1),
+            # folded, per 100 reference words: in crosstalk the labels drop the other voice, so a
+            # model that hears it is charged insertions; read deletions and substitutions too
+            "sub": 100 * subs / max(words, 1),
+            "del": 100 * dels / max(words, 1),
+            "ins": 100 * ins / max(words, 1),
             "loops": loops,
             "clips": len(refs),
         }

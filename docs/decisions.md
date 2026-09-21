@@ -2066,3 +2066,37 @@ what make that filter countable after the fact. Refusing gold keeps the benchmar
 
 **Reversal:** delete the endpoint, its schema and the triage button. Nothing persists apart from the
 audit rows, and the deleted clips do not come back.
+
+## D95 — Synthetic crosstalk is mixed on the fly, labelled as the clip's own speaker, and cut from the same room
+
+The fine-tune notebook (`notebooks/src/xtalk.py`, on when `XTALK_P > 0`) gives a fresh 30% of the
+train clips measured clean short bursts of another voice every epoch, in the DataLoader workers.
+Each mixed clip keeps its label unchanged.
+
+- **The label is the clip's own speaker.** The references in real overlap keep the main voice and
+  drop some of the other's. A synthetic target that transcribed both voices would contradict every
+  real label, and Flex's decoder has no speaker-attributed output.
+- **Measured shape, not LibriMix defaults** (findings.md, *Overlap windows*). Window durations
+  come from the measured deciles, with a median of 0.42 s. The level gap is within ±3 dB (median
+  |gap| 1.6), and either voice can be louder. The model cannot learn "drop the quieter voice".
+  It has to learn "follow the voice that holds the clip".
+- **The other voice comes from the same episode** when it has another voice with a solo stretch
+  long enough. Same room, microphone and level, so the channel gives nothing away. Otherwise it
+  comes from another train episode. On the 2026-09-21 export, 55% of windows come from the same
+  episode: 27 of the 52 train episodes have one voice.
+- **Weighted toward the error buckets.** An augmented clip draws its overlapped share with weights
+  40/30/30 over 1–5%, 5–15% and 15–40%. Realised on the export, the split is 30/34/36. Real overlap
+  is 3% of audio, but the errors sit above 5%.
+- **What is never touched.** Clips with real crosstalk keep it, and unmeasured or undiarized clips
+  are not assumed clean. Donors come only from train clips' solo speech: `DonorPool` raises on a
+  val or gold row (D76). Val and gold are never mixed.
+
+**Why on the fly.** It needs no new export and no new HF upload. Every epoch sees different mixes,
+it costs 2.7 ms of worker CPU per clip, and `XTALK_P = 0` gives the old run back exactly.
+
+**How it is judged.** The gold cell reports WER, substitutions, deletions and insertions per
+crosstalk bucket, and the Models page reports the within-episode ratios (D87). Gold can see a
+change of about 5.5 points at >15% (findings.md, 2026-09-21), and overall WER is not the test.
+
+**Reversal:** set `XTALK_P = 0`. To remove it entirely, delete `xtalk.py`, its cell and the
+mixer lines in `collate`.

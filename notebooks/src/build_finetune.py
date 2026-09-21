@@ -8,6 +8,7 @@ from pathlib import Path
 HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
 CPUKIT = (HERE / "cpukit.py").read_text()
+XTALK = (HERE / "xtalk.py").read_text()
 OUT_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent
 
 
@@ -170,6 +171,17 @@ others needs Bodhan AI's written sign-off. Keep the weights private.
 
 **Choices.** Peak LR 1e-5. Linear decay, 10% warmup, up to 6 epochs.
 
+**Synthetic crosstalk (roadmap item 3), on when `XTALK_P > 0`.** Each epoch, a fresh `XTALK_P`
+share of the train clips measured clean gets short bursts of another voice mixed over it, in the
+DataLoader workers (`xtalk.py`). The label is unchanged, so the model learns to write only the
+clip's own speaker. Durations and level gaps are the measured ones (findings.md, *Overlap
+windows*). Bursts have a median of ~0.4 s, and the two voices are within 3 dB with either one
+louder. The interrupter comes from the same episode when it has another voice, so it cannot be told
+apart by room or microphone. Clips with real crosstalk are left as they are. Val and gold are never
+mixed, and never used as a source. Most of the overlapped share goes to the 5–15% and >15% buckets,
+where the errors are. Judge the run on the gold crosstalk buckets, and on the Models page's
+within-episode ratios, not on overall WER.
+
 **Decoding: greedy, plus a loop retry.** A clip whose greedy output repeats a 3-word sequence 5+
 times is decoded again, alone, with a repetition penalty, no repeated 6-token phrase and a
 length cap from its duration. The trigger reads only the model's own output (the idea of
@@ -187,9 +199,11 @@ LANG, MODE = "ne", "mixed"
 USE_DRIVE = False          # outputs stay on the VM and go to OUT_REPO at the end; True also keeps them on Drive
 OUT_REPO = "Sagyam/nepanglish-asr-flex-ft"  # private HF model repo; every run lands in <RUN_NAME>/
 EPOCHS, LR, WARMUP = 6, 1e-5, 0.1
+XTALK_P = 0.3              # share of measured-clean train clips given synthetic crosstalk each epoch; 0 = off
 # Shown on the harness's Models page (D83). Say what is different about this run.
 MODEL_NAME = "Indic-Transcribe-Flex FT"
-MODEL_DESCRIPTION = "04c full fine-tune, standard settings."
+MODEL_DESCRIPTION = (f"04c full fine-tune, standard settings + synthetic crosstalk (xtalk.py, p={XTALK_P})"
+                     if XTALK_P else "04c full fine-tune, standard settings.")
 EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
 PAD_TO_S = 1.0
 PROBE_FRACTION = 0.9
@@ -199,6 +213,7 @@ EVAL_BUDGET_S, EVAL_ITEMS = 1200.0, 96
     md("## Setup"),
     code(SETUP_COMMON),
     code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
+    code("%%writefile /content/ft/xtalk.py\n" + XTALK),
     code(r'''
 sys.path.insert(0, str(FT))
 import warnings
@@ -249,6 +264,9 @@ for name in ("train", "val"):
             kept.append(r)
     print(f"{name}: dropped {len(splits[name]) - len(kept)} clip(s) the tokenizer cannot write")
     splits[name] = kept
+if XTALK_P:
+    n = ftkit.attach_speaker_turns(DATA, splits["train"])
+    print(f"speaker turns for {n} of {len(splits['train'])} train clips")
 r = splits["train"][0]
 assert tk.decode(r["ids"][:-1]) == normalize(r["text"]).strip(), "target encoding does not round-trip"
 print("prompt", PROMPT, "| longest target", max(len(r["ids"]) for r in splits["train"]), "tokens")
@@ -318,11 +336,27 @@ print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_t} tokens: {max
     code(r"""
 import math
 
+import numpy as np
+
+import xtalk
+
 N_PROMPT = len(PROMPT)
+MIXER = None
+if XTALK_P:
+    MIXER = xtalk.Mixer(xtalk.DonorPool(splits["train"]),
+                        lambda ep, s, e: store.audio[ep][round(s * ftkit.SR):round(e * ftkit.SR)], p=XTALK_P)
+
+
+def train_clip(row, rng):
+    clip = store.clip(row)
+    return MIXER(row, clip, rng) if MIXER else (clip, None)
 
 
 def collate(rows):
-    clips = [torch.from_numpy(store.clip(r).copy()) for r in rows]
+    # torch reseeds each DataLoader worker per epoch, so every epoch draws fresh mixes, and the
+    # run is still repeatable from cfg.seed
+    rng = np.random.default_rng(torch.randint(2**62, (1,)).item())
+    clips = [torch.from_numpy(train_clip(r, rng)[0].copy()) for r in rows]
     wav = torch.zeros(len(rows), ftkit.pad_len(max(len(c) for c in clips), PAD_TO_S), dtype=torch.int16)
     for i, c in enumerate(clips):
         wav[i, :len(c)] = c
@@ -400,6 +434,63 @@ def make_batches(epoch):
 monitor = ftkit.GpuMonitor().start()
 """),
     md("""
+## Synthetic crosstalk: check it before training
+
+What the mixer does to 2,000 train clips drawn at random, against what it was built to do.
+- **Windows.** Median ~0.3 s: light targets redraw long bursts, so this is a little under the
+  measured 0.42 s.
+- **Level gaps.** Within ±3 dB.
+- **Share of each mixed clip.** Spread over the <5%, 5–15% and >15% buckets.
+- **Same episode.** How often the other voice came from the clip's own episode. Single-voice
+  episodes have to borrow one from another show.
+
+Six examples go to `OUT/xtalk_examples/`, each saved clean and mixed, and three play below.
+**Listen to them before starting the run.** If the other voice is inaudible, or clearly from
+another room, stop and fix the mixer.
+"""),
+    code(r"""
+import soundfile as sf
+from IPython.display import Audio, display
+
+if MIXER:
+    rng = np.random.default_rng(0)
+    eligible = [r for r in splits["train"] if r["overlap_spans"] == [] and r.get("speaker_turns")]
+    always = xtalk.Mixer(MIXER.pool, MIXER.fetch, p=1.0)
+    infos = [always(r, store.clip(r), rng)[1] for r in rng.choice(eligible, 2000, replace=False)]
+    infos = [i for i in infos if i]
+    wins = [w for i in infos for w in i["windows"]]
+    shares = np.array([i["share"] for i in infos])
+    stats = {
+        "pool_stretches": len(MIXER.pool), "pool_voices": len(MIXER.pool.voices),
+        "eligible_clips": len(eligible), "train_clips": len(splits["train"]),
+        "mixed_of_2000": len(infos),
+        "window_s_median": float(np.median([w["seconds"] for w in wins])),
+        "gap_db_abs_median": float(np.median([abs(w["gap_db"]) for w in wins])),
+        "same_episode": float(np.mean([w["same_episode"] for w in wins])),
+        "share_buckets": {"<5%": float(np.mean(shares < 0.05)),
+                          "5-15%": float(np.mean((shares >= 0.05) & (shares <= 0.15))),
+                          ">15%": float(np.mean(shares > 0.15))},
+    }
+    (OUT / "xtalk_stats.json").write_text(json.dumps(stats, indent=1))
+    print(json.dumps(stats, indent=1))
+    ex = OUT / "xtalk_examples"
+    ex.mkdir(exist_ok=True)
+    picks = [r for r in rng.choice(eligible, 60, replace=False) if 6 <= ftkit.duration(r) <= 15][:6]
+    for k, r in enumerate(picks):
+        clean = store.clip(r)
+        mixed, info = always(r, clean, rng)
+        sf.write(ex / f"{k}_clean.flac", clean, ftkit.SR)
+        sf.write(ex / f"{k}_mixed.flac", mixed, ftkit.SR)
+        (ex / f"{k}.json").write_text(json.dumps({**(info or {}), "text": r["text"]}, ensure_ascii=False, indent=1))
+        if k < 3:
+            print(f"\n{r['segment_id']}: {r['text']}")
+            print("  windows:", [(round(w["offset"], 2), round(w["seconds"], 2), round(w["gap_db"], 1),
+                                  "same ep" if w["same_episode"] else "other ep") for w in (info or {}).get("windows", [])])
+            display(Audio(mixed, rate=ftkit.SR))
+else:
+    print("XTALK_P = 0: no synthetic crosstalk in this run")
+"""),
+    md("""
 ## One clip per call vs batched
 
 The zero-shot comparisons decoded one clip per call (`asr(path)`), at about 1.4 s per clip
@@ -455,9 +546,19 @@ gold["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in splits["gold"])
 first = {sid: text for sid, text, _ in decode.log}  # the same run's greedy output, before any retry
 gold["greedy_only"] = score(refs, [first.get(r["segment_id"], t) for r, t in zip(splits["gold"], texts)])
 gold["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in decode.log]
-(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1, ensure_ascii=False))
 ftkit.write_hyps(OUT / "hyps" / f"{RUN_NAME}.jsonl", splits["gold"], texts, compute)
-print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_only", "retried")})
+BUCKETS = ("none", "0-5%", "5-15%", ">15%")
+gold["by_overlap"] = {}
+for bucket in BUCKETS:
+    idx = [i for i, r in enumerate(splits["gold"]) if (r.get("classes") or {}).get("overlap") == bucket]
+    if idx:
+        gold["by_overlap"][bucket] = score([refs[i] for i in idx], [texts[i] for i in idx])
+(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1, ensure_ascii=False))
+print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_only", "retried", "by_overlap")})
+print("by crosstalk (folded, per 100 ref words):")
+for bucket, m in gold["by_overlap"].items():
+    print(f"  {bucket:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  sub {m['sub']:5.2f}  del {m['del']:5.2f}  "
+          f"ins {m['ins']:5.2f}")
 print("greedy only:    ", gold["greedy_only"])
 for s, f, t in decode.log:
     print(f"\n{s}\n  greedy: ...{f[-90:]}\n  retry:  ...{t[-90:]}")
@@ -494,6 +595,7 @@ card = {
     "epochs": EPOCHS,
     "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
     "lr": LR,
+    "xtalk_p": XTALK_P,
     "val_wer": result["best_val_wer"],
     "gold_wer": gold["wer"],
     "train_export": {k: export.get(k) for k in ("exported_at", "git_commit", "row_count",
@@ -643,7 +745,7 @@ print(f"{size / 2**30:.2f} GiB -> https://huggingface.co/{OUT_REPO}/tree/main/{R
 ]
 
 
-for name, cells in [("04c-finetune-indic-transcribe.ipynb", flex)]:
+for name, cells in [("Finetune.ipynb", flex)]:
     (OUT_DIR / name).write_text(
         json.dumps(notebook(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
     )
