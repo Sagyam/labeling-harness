@@ -485,4 +485,66 @@ def test_retry_and_cancel_endpoints_api(
     manager.reset()
 
 
+def _state_left_by_a_dead_server(tmp_path: Path) -> dict[str, str]:
+    """A queue_state.json as a server leaves it when the power goes mid-run.
+
+    One job mid-transcription, one picked up but still downloading (so still ``pending``), one
+    waiting its turn, and one that had finished.
+    """
+    from app.services.ingest import IngestionManager
+
+    dead = IngestionManager()
+    ids = {}
+    for name in ("transcribing", "downloading", "waiting", "finished"):
+        job = dead.create_job(
+            episode_id=f"{name}_ep",
+            show_id="demo",
+            title=name,
+            work_dir=tmp_path / f"{name}_ep",
+            source_url=f"https://www.youtube.com/watch?v={name[:11]:0<11}",
+        )
+        ids[name] = job.job_id
+    with dead._lock:
+        dead._jobs[ids["transcribing"]].status = "processing"
+        dead._jobs[ids["finished"]].status = "completed"
+        dead._running = [ids["transcribing"], ids["downloading"]]
+        dead._waiting = [ids["waiting"]]
+        dead._save_state()
+    return ids
+
+
+def test_every_job_a_restart_interrupted_comes_back_retryable(tmp_path: Path) -> None:
+    from app.services.ingest import IngestionManager
+
+    ids = _state_left_by_a_dead_server(tmp_path)
+    revived = IngestionManager()
+    revived.init_state(tmp_path)
+
+    for name in ("transcribing", "downloading", "waiting"):
+        job = revived.get_job(ids[name])
+        assert job is not None
+        assert job.status == "failed", name
+        assert job.error == "Interrupted by server restart"
+    assert revived.get_job(ids["finished"]).status == "completed"
+
+    past = {row["job_id"] for row in revived.queue_snapshot_rich()["past"]}
+    assert past == set(ids.values())
+
+
+def test_the_ingest_api_shows_and_retries_jobs_from_before_a_restart(
+    client: TestClient, settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.services.ingest.pipeline.run_pipeline", lambda *args, **kwargs: None)
+    manager.reset()
+    ids = _state_left_by_a_dead_server(settings.ingest.work_root)
+
+    listed = client.get("/ingest").json()
+    assert ids["waiting"] in {row["job_id"] for row in listed["past"]}
+
+    retried = client.post("/ingest/retry-all", json={"status": "failed"}).json()
+    assert retried["retried_count"] == 3
+    _drain()
+    manager.reset()
+
+
 # --- overlapped speech at ingest (D77) --------------------------------------------------------

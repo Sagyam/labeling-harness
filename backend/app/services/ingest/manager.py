@@ -127,8 +127,10 @@ class IngestionManager:
             for j_data in data.get("jobs", []):
                 try:
                     job = IngestJob.from_dict(j_data)
-                    # If process was terminated while processing, mark as failed rather than stuck
-                    if job.status == "processing":
+                    # A job the dead process was running, or had queued, is failed rather than
+                    # stuck: the queue itself died with that process, so nothing will ever pick a
+                    # restored 'pending' job up, and retry only accepts a finished one.
+                    if job.status in ("pending", "processing"):
                         job.status = "failed"
                         job.stage = "failed"
                         job.error = "Interrupted by server restart"

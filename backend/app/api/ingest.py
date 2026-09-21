@@ -38,7 +38,21 @@ from app.utils.rate_limit import provider_gate
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/ingest", tags=["ingest"], dependencies=[Depends(require_auth)])
+
+def _restore_queue(settings: Settings = Depends(get_config)) -> None:
+    """Load the jobs a previous server process left behind, before any endpoint reads the queue.
+
+    Otherwise they appear only once something new is submitted, and a restart looks like an
+    empty history with nothing to retry.
+    """
+    manager.init_state(settings.ingest.work_root)
+
+
+router = APIRouter(
+    prefix="/ingest",
+    tags=["ingest"],
+    dependencies=[Depends(require_auth), Depends(_restore_queue)],
+)
 
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".flac", ".aac", ".ogg"}
 
