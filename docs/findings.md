@@ -24,6 +24,59 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Can gold measure a crosstalk fix? Only a large one (2026-09-21)
+
+The owner added 26 recordings (155 clips, all verified by ear, 12 edited) from `chill_pill_clips`
+to gold on 2026-09-19 to measure the synthetic-crosstalk augmentation of roadmap item 3. The
+09-17 fine-tune's int8 CPU export (playground sidecar, not stored as a run) transcribed all 660
+labeled gold clips, scored under fold-v3 against the current labels. It agrees with the stored
+bf16 run on the old clips (6.61 against 6.51 on the same 69 clips), and made 0 loops.
+
+- **Gold now has crosstalk.** Before the batch it had 49 overlapped clips, 2 of them >15%. It now
+  has 172 (45 episodes): 55 at 0–5%, 50 at 5–15%, 67 at >15%. Overlap is 3.4% of gold audio (the
+  corpus is 3.1%); the new clips alone are 13.7%.
+
+  | crosstalk | clips | episodes | WER [95% CI, episodes] |
+  |---|---|---|---|
+  | none | 488 | 89 | 6.97 [5.79, 8.20] |
+  | 0–5% | 55 | 26 | 9.30 [6.18, 12.63] |
+  | 5–15% | 50 | 16 | 16.57 [11.74, 22.73] |
+  | >15% | 67 | 23 | 28.85 [24.52, 32.86] |
+
+- **Most of the gap is the show, not the overlap.** The new show's clean clips score 17.33 (old
+  gold's 6.48). Within the same episode (Mantel-Haenszel) the new clips' ratio against clean is
+  0.86 at 0–5%, 1.00 at 5–15% and **1.54 at >15%**; across all gold, 1.23 / 1.24 / 1.61. Only the
+  >15% bucket carries a clear crosstalk penalty, and eliminating it entirely would take that
+  bucket from ~29 to ~18, about 11 points.
+- **The bucket is narrow.** 41 of the 67 >15% clips, and 62% of that bucket's errors, come from
+  three long episodes (183–185) of one show, which share a host (v002). Only 8 of the new episodes
+  have both clean and crosstalk clips.
+- **Smallest detectable paired change** (two-sided 5%, 80% power, clustered by episode). The
+  per-clip noise is the disagreement between the 09-16 and 09-17 fine-tunes on old gold. It is
+  heavy-tailed, since a handful of clips where one model collapses carry most of the variance, so
+  the standardized differences were resampled rather than assumed Gaussian. Simulating clips
+  independently understates the noise 3x: it predicts a 0.64-point CI on old gold where the real
+  09-16 to 09-17 comparison has 1.93. The limits below are scaled by that 3x. Voice clustering
+  gives the same numbers.
+
+  | bucket | clips | WER | detectable change |
+  |---|---|---|---|
+  | none (regression guard) | 488 | 6.97 | ~1.5 pts (21% rel) |
+  | any crosstalk | 172 | 18.95 | ~3.7 pts (20% rel) |
+  | ≥5% | 117 | 23.74 | ~5.1 pts (21% rel) |
+  | >15% | 67 | 28.85 | ~7.1 pts (25% rel) |
+
+- **Verdict.** Gold can confirm an augmentation that removes about two thirds of the >15%
+  penalty (7 of ~11 points). A 10–15% relative gain is within noise. Any result would be mostly
+  a statement about one show's roundtables. Halving the detectable change takes about four times
+  as many independent rooms with heavy crosstalk (many shows, many hosts), not more clips from
+  183–185. Read any augmentation result as a within-episode contrast (crosstalk clips against
+  clean clips from the same episodes) so the show's own difficulty cancels.
+- **Caveats.** The 3x calibration comes from the whole of old gold and may be worse on a bucket
+  dominated by three episodes. The overlap detector is still unchecked by ear.
+
+---
+
 ## The retrain on fold-v3 and the redrawn val (2026-09-17)
 
 `indic-transcribe-flex-ft-2026-09-17` is 04c with the standard settings, trained on the D90 split
