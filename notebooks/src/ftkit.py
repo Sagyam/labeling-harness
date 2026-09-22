@@ -203,10 +203,21 @@ class RetryLoops:
 
 def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[str]], dict]:
     """fold.py from the dataset's harness/, imported from a real copy: the HF cache stores files as
-    symlinks into its blob store, and normalize.py finds its config via its resolved path."""
-    dst = work / "harness"
+    symlinks into its blob store, and normalize.py finds its config via its resolved path.
+
+    Two layouts are accepted: the repo's (backend/app/services/, config/), and the flat one the
+    2026-09-21 export uploaded (fold.py, normalize.py, normalization.yaml side by side), which
+    is laid back out here because normalize.py looks for ../../../config/."""
+    src, dst = data / "harness", work / "harness"
     if not dst.exists():
-        shutil.copytree(data / "harness", dst)
+        if (src / "fold.py").exists():
+            (dst / "backend" / "app" / "services").mkdir(parents=True)
+            (dst / "config").mkdir()
+            for name in ("fold.py", "normalize.py"):
+                shutil.copyfile(src / name, dst / "backend" / "app" / "services" / name)
+            shutil.copyfile(src / "normalization.yaml", dst / "config" / "normalization.yaml")
+        else:
+            shutil.copytree(src, dst)
     for name in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
         del sys.modules[name]
     sys.path.insert(0, str(dst / "backend"))
