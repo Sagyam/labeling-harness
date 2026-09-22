@@ -2141,5 +2141,9 @@ before any point has run.
   trained for single-speaker recordings. Overlapped speech proper (cpWER, tcpWER, ORC-WER,
   diarization-conditioned models) is left to separate work.
 
+**Run 2026-09-22: cut short, rule not applied.** Only p = 0, 0.1, 0.2 and 0.5 ran (seed 0), so
+there was no seed noise to apply the rule with. No winner was chosen and no weights were kept.
+Results are in findings.md.
+
 **Reversal:** set `SWEEP` to one point, which runs a plain single fine-tune. Delete `sweep.py`, its
 tests and the sweep cells to remove it entirely.

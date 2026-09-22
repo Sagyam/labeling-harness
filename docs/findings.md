@@ -24,6 +24,62 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Synthetic crosstalk does not move real crosstalk (2026-09-22)
+
+The D96 sweep on the 2026-09-21 export (8,575 train, 1,198 val, 750 gold clips), fold-v3, one
+A100 run per point from the same base weights. WER is folded, with S/D/I per 100 reference words.
+The 2026-09-17 model was decoded on the same val and gold as the reference.
+
+| run | best epoch | val | gold | gold none (489) | gold 0–5% (56) | gold 5–15% (87) | gold >15% (118) |
+|---|---|---|---|---|---|---|---|
+| p = 0 | 5 | 7.19 | 11.56 | 6.58 (4.87/1.02/0.69) | 9.28 (6.61/1.39/1.28) | 17.26 (10.76/4.62/1.88) | 29.25 (17.46/7.67/4.12) |
+| p = 0.1 | 5 | 7.22 | 11.41 | 6.51 (4.85/1.00/0.67) | 9.39 (6.76/1.31/1.31) | 16.99 (10.44/4.65/1.90) | 28.68 (17.25/7.59/3.85) |
+| p = 0.2 | 3 | 7.25 | 11.73 | 6.65 (4.94/1.03/0.69) | 9.53 (6.87/1.46/1.21) | 17.53 (10.44/5.19/1.90) | 29.68 (17.21/8.48/4.00) |
+| p = 0.5 | 5 | 7.21 | 11.40 | 6.45 (4.76/0.99/0.70) | 9.57 (6.32/1.64/1.61) | 17.26 (10.68/4.92/1.66) | 28.57 (16.81/8.40/3.35) |
+| 09-17 model | — | 7.28 | 11.87 | 7.07 (5.02/0.97/1.07) | 10.15 (6.43/1.13/2.59) | 17.26 (10.66/4.81/1.79) | 28.74 (17.36/7.77/3.61) |
+
+Paired on gold against p = 0, 95% interval from resampling episodes:
+
+| gold | p = 0.1 | p = 0.2 | p = 0.5 | 09-17 model |
+|---|---|---|---|---|
+| all | −0.15 [−0.28, 0.00] | +0.17 [0.00, +0.36] | −0.16 [−0.38, +0.08] | +0.31 [−0.19, +1.11] |
+| none | −0.06 [−0.22, +0.08] | +0.08 [−0.09, +0.24] | −0.12 [−0.26, +0.03] | +0.49 [−0.15, +1.68] |
+| 5–15% | −0.27 [−0.70, +0.38] | +0.27 [−0.26, +1.19] | 0.00 [−0.54, +1.20] | 0.00 [−0.63, +0.82] |
+| >15% | −0.57 [−1.12, +0.06] | +0.43 [−0.33, +1.85] | −0.69 [−1.41, +0.80] | −0.51 [−1.15, +0.63] |
+
+**The sweep was cut short, so the D96 rule was not applied.** p = 0.3 was lost mid-run to a power
+cut and the owner then stopped the sweep: p = 0.3 and the second p = 0 seed never ran. No winner
+was chosen and no weights were kept (`best/` is uploaded only for a winner). The 2026-09-17
+model stays the deployed one. Every point's metrics, transcripts and per-clip counts are in
+`Sagyam/nepanglish-asr-flex-ft/flex-xtalk-sweep-2026-09-22/`.
+
+- **No crosstalk bucket improved, and there is no dose response.** Every interval holds zero. At
+  >15% the change runs −0.57, +0.43, −0.69 as p goes 0.1, 0.2, 0.5: putting synthetic crosstalk
+  into up to about 36% of each epoch did nothing distinguishable from run-to-run noise. Val agrees
+  (p = 0.5: +0.01 [−0.13, +0.13]).
+- **No spillover.** Clean clips hold (`none` −0.12 at p = 0.5), and so do their deletions (1.02 →
+  0.99), the D95 check that the model had not learnt to drop its own speaker's short words.
+- **What the augmentation did change: fewer insertions, more deletions.** At >15%, p = 0 → 0.5 moves
+  insertions 4.12 → 3.35 and substitutions 17.46 → 16.81, but deletions 7.67 → 8.40. The model
+  writes less of the other voice, as the labels it trained on ask. Gold labels in overlap keep
+  what was audible (D95), sometimes the other voice's words too, and leaving those out counts as
+  deletions. So in these buckets gold WER cannot show the gain this augmentation was designed for,
+  whether or not the model learned it.
+- **Val cannot select for crosstalk.** It has 4 clips over 15% overlap. A crosstalk experiment
+  needs a selection split that holds crosstalk, or its winner is chosen on clean speech.
+- **The added data.** p = 0 against the 09-17 model (7,052 → 9,774 clips): gold −0.31 [−1.11,
+  +0.19], clean clips −0.49 [−1.68, +0.15], both within noise. The crosstalk buckets are
+  identical (5–15%: 17.26 against 17.26).
+- **Verdict.** More of this augmentation does not help this model on real crosstalk. What is not
+  ruled out: (1) the mismatch in shape, since the mixer's bursts have a median of 0.30 s while the
+  >15% clips are sustained talk-over; (2) the mismatch in target, since training rewards leaving
+  the other voice out while gold sometimes rewards writing it. A model that writes one stream of
+  text for one speaker cannot be right both ways. Overlapped speech proper needs a
+  speaker-attributed or serialized output, scored with cpWER, tcpWER or ORC-WER (roadmap items 2
+  and 4).
+
+---
+
 ## Can gold measure a crosstalk fix? Only a large one (2026-09-21)
 
 The owner added 26 recordings (155 clips, all verified by ear, 12 edited) from `chill_pill_clips`

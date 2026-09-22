@@ -65,12 +65,12 @@ Compare against the current model (findings.md) on the same buckets as item 2, w
 unchanged, so the gain is attributable. Gold audio must never be a source of mixed-in speech or
 noise (D76).
 
-**Crosstalk: built 2026-09-21, swept next (D95, D96).** `notebooks/src/xtalk.py` mixes bursts of
-another voice into the clean train clips, shaped by the measured overlap windows. The notebook
-sweeps `XTALK_P` over 0, 0.1, 0.2, 0.3 and 0.5, with a second seed at 0, on the 2026-09-21 export,
-and decodes the 2026-09-17 model beside them, so the effects of the augmentation and of the added
-data are both measured on the same gold. The winner is chosen on val. Noise augmentation is not
-built yet.
+**Crosstalk: swept 2026-09-22, no effect (D95, D96).** `notebooks/src/xtalk.py` mixes bursts of
+another voice into the clean train clips, shaped by the measured overlap windows. p = 0, 0.1, 0.2
+and 0.5 ran before the owner stopped the sweep. No crosstalk bucket moved and there is no dose
+response (findings.md, *Synthetic crosstalk does not move real crosstalk*). The owner's next step is
+to look for models and techniques built for overlapped speech (items 2 and 4), not more of this
+augmentation. Noise augmentation is not built.
 
 ## 4. Explore newer architectures
 
