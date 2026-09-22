@@ -28,7 +28,7 @@ comments still cite.
 
 ## A. Separation-assisted per-speaker labelling (priority 1; pilot failed 2026-09-22)
 
-**Result: no-go, and A2 is not built.** The A1 listening pilot (findings.md, *Separation does not
+**Result: no-go, and A2 is not built.** A3 has the two paths left to explore. The A1 listening pilot (findings.md, *Separation does not
 give per-speaker labels*) found MossFormer2 good on light to moderate crosstalk and poor on heavy
 crosstalk. It also found that a separated track sometimes holds two different people, so a track
 cannot say who said what. Round 1 had 13 of 30 two-voice clips useless (43%, against a 20% bar).
@@ -149,6 +149,32 @@ downgrade (invariant 1).
   - how a clip with three or more voices is handled;
   - whether a failed or useless separation falls back to the current single-stream labelling;
   - whether the parent keeps its own recogniser hypotheses for single-stream comparisons.
+
+### A3. What is left to explore (2026-09-22)
+
+Two paths the owner picked out after the pilot failed. Both give per-speaker references without a
+separator, and neither is started.
+
+1. **Attribute words instead of separating audio.** Transcribe the mix as one stream -- everything
+   audible, in time order -- then have the annotator only *assign* the words inside the overlapped
+   spans to a voice. Deciding which of two familiar voices said a word you can already read is a
+   far easier listening task than making out two people at once. Three things the harness already
+   has make it cheap: the diarized turns pre-assign most words (D78, D79), word timings exist
+   (`forced_align` and the routes that report their own, D33), and the voices are familiar from the
+   rest of the episode. This is what cpWER and tcpWER need. It affects ~205 gold clips over 5%
+   overlap, and it needs an editor mode and a decision entry replacing D95's vague convention
+   ("the stronger voice, plus some of the weaker one"). Simple listening aids belong here: the
+   overlapped span slowed down and looped, and each speaker's surrounding solo speech played first.
+2. **Synthetic overlap with known truth.** Mix two solo clips from the corpus; who said what is
+   known by construction, and the measured mixer already exists (`notebooks/src/xtalk.py`, D96).
+   This proves nothing about real overlap -- D96 showed synthetic crosstalk does not transfer --
+   but it is scaffolding: it can tell whether an attribution tool, an editor mode or a metric works
+   at all before any ears are spent on real clips.
+
+Set aside for now: another audio-only separator or target speaker extraction (the pilot and the
+literature both say no, findings.md); audio-visual extraction from the episodes' YouTube video,
+which is the one signal audio-only models lack, but needs video ingest (D86 allows audio only) and
+both speakers on screen; and simply dropping attribution in favour of a single-stream convention.
 
 ## B. Distil the Flex fine-tune into other architectures (priority 2)
 
