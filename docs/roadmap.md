@@ -65,11 +65,12 @@ Compare against the current model (findings.md) on the same buckets as item 2, w
 unchanged, so the gain is attributable. Gold audio must never be a source of mixed-in speech or
 noise (D76).
 
-**Crosstalk: built 2026-09-21, first run pending (D95).** `notebooks/src/xtalk.py` mixes bursts of
-another voice into 30% of the clean train clips each epoch, shaped by the measured overlap windows.
-The notebook's `XTALK_P` turns it on and off. No baseline retrain is planned: the 2026-09-17 run
-(gold >15%: 28.68 on the 118 clips after the Prime Television batch, int8) is the comparison, so a gain must clear run-to-run noise as well as the
-~5.5-point detectable change. Noise augmentation is not built yet.
+**Crosstalk: built 2026-09-21, swept next (D95, D96).** `notebooks/src/xtalk.py` mixes bursts of
+another voice into the clean train clips, shaped by the measured overlap windows. The notebook
+sweeps `XTALK_P` over 0, 0.1, 0.2, 0.3 and 0.5, with a second seed at 0, on the 2026-09-21 export,
+and decodes the 2026-09-17 model beside them, so the effects of the augmentation and of the added
+data are both measured on the same gold. The winner is chosen on val. Noise augmentation is not
+built yet.
 
 ## 4. Explore newer architectures
 
@@ -112,7 +113,8 @@ metric too kind. Gain: gold 6.58 → 6.25, val 12.59 → 12.05 (findings.md, *fo
 ## Standing practice
 
 - **Decoder.** Every model is decoded with the standard decoder: greedy + length cap + loop retry.
-- **Reporting.** Report folded and raw WER side by side, with the fold version.
+- **Reporting.** Report folded and raw WER side by side, with the fold version, and split every
+  WER into substitutions, deletions and insertions (per 100 folded reference words).
 - **After every fine-tune:**
   - copy 04c's `<RUN_NAME>-playground.tar` into `data/models/asr/` and press **Rescan**;
   - the Models page shows its worst clips (D83) and its split by every clip class (D87);

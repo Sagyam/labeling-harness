@@ -247,8 +247,8 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
             "wer": 100 * werr / max(words, 1),
             "raw_wer": 100 * rerr / max(rwords, 1),
             "cer": 100 * cerr / max(nchars, 1),
-            # folded, per 100 reference words: in crosstalk the labels drop the other voice, so a
-            # model that hears it is charged insertions; read deletions and substitutions too
+            # folded, per 100 reference words. In crosstalk a label keeps what was audible, which is
+            # not always both voices, so a model that writes the other one can be charged insertions
             "sub": 100 * subs / max(words, 1),
             "del": 100 * dels / max(words, 1),
             "ins": 100 * ins / max(words, 1),
@@ -256,6 +256,23 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
             "clips": len(refs),
         }
 
+    def per_clip(refs: Sequence[str], hyps: Sequence[str]) -> list[dict]:
+        """Folded counts per clip, for paired comparisons: errors = sub + del + ins."""
+        out = []
+        for ref, hyp in zip(refs, hyps, strict=True):
+            a = word_errors(ref, hyp)
+            out.append(
+                {
+                    "words": len(fold_tokens(ref)),
+                    "errors": a.errors,
+                    "sub": a.substitutions,
+                    "del": a.deletions,
+                    "ins": a.insertions,
+                }
+            )
+        return out
+
+    score.per_clip = per_clip
     return score
 
 

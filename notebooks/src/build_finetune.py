@@ -1,4 +1,4 @@
-"""Build notebooks/04c: `python notebooks/src/build_finetune.py`. Shared code lives in ftkit.py, written out by
+"""Build notebooks/Finetune.ipynb: `python notebooks/src/build_finetune.py`. Shared code lives in ftkit.py, written out by
 a %%writefile cell in each notebook."""
 
 import json
@@ -9,6 +9,7 @@ HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
 CPUKIT = (HERE / "cpukit.py").read_text()
 XTALK = (HERE / "xtalk.py").read_text()
+SWEEPKIT = (HERE / "sweep.py").read_text()
 OUT_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent
 
 
@@ -92,49 +93,95 @@ if IN_COLAB:
         drive.mount("/content/drive")
 FT = Path("/content/ft") if IN_COLAB else Path.cwd() / ".cache-ft"
 FT.mkdir(parents=True, exist_ok=True)
-OUT = (Path("/content/drive/MyDrive/nepanglish-asr") if IN_COLAB and USE_DRIVE else FT / "out") / RUN_NAME
-OUT.mkdir(parents=True, exist_ok=True)
+OUT_ROOT = (Path("/content/drive/MyDrive/nepanglish-asr") if IN_COLAB and USE_DRIVE else FT / "out") / RUN_PREFIX
+OUT_ROOT.mkdir(parents=True, exist_ok=True)
+OUT = OUT_ROOT  # each run points this at its own folder
 !nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-print("run:", RUN_NAME, "| outputs:", OUT)
+print("sweep:", RUN_PREFIX, "|", len(SWEEP), "run(s) | outputs:", OUT_ROOT)
 """
 
-RESULTS = r"""
-import json
-
+SWEEP_REPORT = r"""
 import matplotlib.pyplot as plt
 
-hist = json.loads((OUT / "history.json").read_text())
-steps = [h for h in hist if "loss" in h]
-evals = [h for h in hist if "val_wer" in h]
-fig, axes = plt.subplots(1, 4, figsize=(16, 3.2))
-axes[0].plot([h["step"] for h in steps], [h["loss"] for h in steps], color="#2a78d6")
-axes[0].set_title("train loss per unit", loc="left")
-axes[1].plot([h["epoch"] for h in evals], [h["val_wer"] for h in evals], marker="o", color="#2a78d6")
-axes[1].set_title("val folded WER %", loc="left")
-epochs = [h["epoch"] for h in evals]
-for key, label, colour in (("sub", "S", "#2a78d6"), ("del", "D", "#eb6834"), ("ins", "I", "#1baf7a")):
-    ys = [h[f"val_{key}"] for h in evals]
-    axes[2].plot(epochs, ys, marker="o", color=colour, label=label)
-    if ys:
-        axes[2].annotate(label, (epochs[-1], ys[-1]), xytext=(6, 0), textcoords="offset points",
-                         va="center", color="#52514e")
-axes[2].set_ylim(bottom=0)
-axes[2].legend(frameon=False, ncols=3, loc="upper center", bbox_to_anchor=(0.5, -0.12))
-axes[2].set_title("val S / D / I per 100 ref words", loc="left")
-axes[3].plot([h["step"] for h in steps], [h["gpu_util"] for h in steps], color="#2a78d6")
-axes[3].set_ylim(0, 100)
-axes[3].set_title("GPU utilisation %", loc="left")
-for ax in axes:
+trained = [r for r in sweep_rows if not r.get("reference")]
+reference = next((r for r in sweep_rows if r.get("reference")), None)
+winner, why = sweep.choose_winner(trained)
+base = min((r for r in trained if r["xtalk_p"] == 0 and r["seed"] == 0), key=lambda r: r["val_wer"], default=None)
+gold_eps = [r["episode_id"] for r in splits["gold"]]
+bucket_of = [(r.get("classes") or {}).get("overlap") for r in splits["gold"]]
+
+
+def counts(row, idx):
+    return [dict(zip(("errors", "words"), row["per_clip"]["gold"][splits["gold"][i]["segment_id"]])) for i in idx]
+
+
+def compare(a, b):
+    # WER(b) - WER(a) on gold, overall and per crosstalk bucket, paired and resampled by episode
+    out = {}
+    for name in ("all",) + BUCKETS:
+        idx = [i for i, bk in enumerate(bucket_of) if name == "all" or bk == name]
+        if idx:
+            out[name] = sweep.paired_bootstrap(counts(a, idx), counts(b, idx), [gold_eps[i] for i in idx])
+    return out
+
+
+def line(m):
+    return f"{m['wer']:6.2f} ({ftkit.sid(m)})"
+
+
+print("folded WER, S + D + I per 100 ref words. Winner chosen on val only (D96):", why)
+print(f"\n{'run':<22}{'epoch':>6}  {'val':<34}{'gold':<34}")
+for r in sweep_rows:
+    tag = " <- winner" if r is winner else ""
+    label = "09-17 on this export" if r.get("reference") else f"p={r['xtalk_p']:.2f} seed {r['seed']}"
+    print(f"{label:<22}{str(r.get('best_epoch') or '-'):>6}  {line(r['val']):<34}{line(r['gold']):<34}{tag}")
+print("\ngold by crosstalk bucket:")
+for bucket in BUCKETS:
+    print(f"  {bucket}  ({winner['gold']['by_overlap'].get(bucket, {}).get('clips', 0)} clips)")
+    for r in sweep_rows:
+        m = r["gold"]["by_overlap"].get(bucket)
+        if m:
+            label = "09-17" if r.get("reference") else f"p={r['xtalk_p']:.2f} s{r['seed']}"
+            print(f"    {label:<12} {line(m)}")
+
+comparisons = {}
+if base:
+    print("\npaired against p=0 seed 0 on gold, WER(other) - WER(p=0) [95% CI, episodes resampled]:")
+    for r in sweep_rows:
+        if r is base:
+            continue
+        label = "09-17 (old data)" if r.get("reference") else f"p={r['xtalk_p']:.2f} seed {r['seed']}"
+        comparisons[r["run_name"]] = compare(base, r)
+        cells = "  ".join(f"{k} {d:+.2f} [{lo:+.2f},{hi:+.2f}]" for k, (d, lo, hi) in comparisons[r["run_name"]].items())
+        print(f"  {label:<18} {cells}")
+    if reference:
+        print("  (09-17 minus p=0 is the effect of the data added since, with the sign flipped: positive = new data helps)")
+
+fig, axes = plt.subplots(1, len(BUCKETS) + 1, figsize=(18, 3.4), sharex=True)
+for ax, name in zip(axes, ("all",) + BUCKETS):
+    pick = (lambda r: r["gold"]) if name == "all" else (lambda r, n=name: r["gold"]["by_overlap"].get(n))
+    for seed, style in ((0, dict(marker="o", color="#2a78d6", label="seed 0")),
+                        (1, dict(marker="o", mfc="none", color="#2a78d6", linestyle="none", label="seed 1"))):
+        pts = sorted((r["xtalk_p"], pick(r)["wer"]) for r in trained if r["seed"] == seed and pick(r))
+        if pts:
+            ax.plot(*zip(*pts), **style)
+    if reference and pick(reference):
+        ax.axhline(pick(reference)["wer"], color="#8a8983", linestyle="--", linewidth=1.5, label="09-17")
+    ax.set_title(f"gold {name}: folded WER %", loc="left")
+    ax.set_xlabel("XTALK_P")
     ax.grid(color="#ecebe7")
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
+axes[0].legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.22), ncols=3)
 fig.tight_layout()
 plt.show()
-gold_m = json.loads((OUT / "gold_metrics.json").read_text())
-print("gold, folded, per 100 ref words (S + D + I = WER):")
-for name, m in [("all", gold_m)] + list(gold_m.get("by_overlap", {}).items()):
-    print(f"  {name:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  {ftkit.sid(m)}")
-print(json.dumps(gold_m, indent=1))
+
+summary = {"sweep": RUN_PREFIX, "rule": "val WER; augmentation must beat p=0 by more than the p=0 seed gap (D96)",
+           "winner": winner["run_name"], "why": why,
+           "rows": [{k: v for k, v in r.items() if k != "per_clip"} for r in sweep_rows],
+           "paired_vs_p0_seed0_gold": comparisons}
+(OUT_ROOT / "sweep.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
+print("\nwrote", OUT_ROOT / "sweep.json")
 """
 
 SPEED_NOTE = """
@@ -146,21 +193,25 @@ that fine-tuning has to beat. No optimizer step runs, so no weight moves. If the
 too long, or GPU utilisation is low, stop here and fix it.
 """
 
-BAKEOFF_LINK = """
-The gold hypotheses go to `OUT/hyps/<RUN_NAME>.jsonl`, in the bake-off's cache format. Copy them to
-the bake-off checkout's `hyps/` folder to score them beside the zero-shot systems.
-"""
-
-
 flex = [
     md(
         """
 # 04c — Fine-tune Indic-Transcribe-Flex (mixed-script mode)
 
 A full fine-tune of `bodhan-ai/indic-transcribe-flex`: a 1.2 B Canary-style encoder-decoder with
-a 32-layer conformer encoder and a 24-layer transformer decoder. It trains on the 18.3 h train
+a 32-layer conformer encoder and a 24-layer transformer decoder. It trains on the train
 split with the `ne` + mixed-script prompt, uses val for model selection and gold for the final
 score.
+
+**A sweep (D96).** `SWEEP` lists `(XTALK_P, seed)` points. Each is trained from the same base
+weights on the same export and batch budget, scored on val and gold, and uploaded as it finishes
+(metrics, transcripts, harness folder; no weights), so a dropped session resumes where it stopped.
+The winner is chosen **on val alone**, by a rule fixed before any result was read: augmentation has
+to beat p = 0 by more than the gap between the two p = 0 seeds, otherwise p = 0 is kept. Gold never
+takes part, so every gold number stays a held-out score. Only the winner's weights are exported
+for the CPU and uploaded. `REFERENCE_RUN` (the 2026-09-17 model) is decoded on this export's val
+and gold under the same decoder: against p = 0 it measures the data added since. One entry in
+`SWEEP` is a plain single run.
 
 **Why this model.** It led the zero-shot comparisons at 18.2% folded WER on gold (CI 14.0–21.2),
 flat across code-mixing tiers. Its mixed mode already writes the corpus's convention: 33.6% Latin
@@ -193,8 +244,7 @@ windows*). Bursts have a median of ~0.4 s, and the two voices are within 3 dB wi
 louder. The interrupter comes from the same episode when it has another voice, so it cannot be told
 apart by room or microphone. Clips with real crosstalk are left as they are. Val and gold are never
 mixed, and never used as a source. Most of the overlapped share goes to the 5–15% and >15% buckets,
-where the errors are. Judge the run on the gold crosstalk buckets, and on the Models page's
-within-episode ratios, not on overall WER.
+where the errors are. The report gives gold WER with S/D/I per crosstalk bucket for every point.
 
 **Every score splits into S, D and I** (`ftkit.sid`): substitutions, deletions and insertions per
 100 folded reference words, which add up to the folded WER. They are printed each epoch, stored in
@@ -213,17 +263,19 @@ Run 2026-09-12: gold 13.20% greedy -> 11.44% with the retry (7 loops -> 0); val 
     ),
     md("## Config"),
     code(r"""
-RUN_NAME = "indic-transcribe-flex-ft-YYYY-MM-DD"  # the date makes the folder in OUT_REPO and on the Models page unique
+RUN_PREFIX = "flex-xtalk-sweep-YYYY-MM-DD"  # OUT_REPO/<RUN_PREFIX>/<RUN_PREFIX>-p<share>-s<seed>/ per run
 MODEL_ID = "bodhan-ai/indic-transcribe-flex"
 LANG, MODE = "ne", "mixed"
-USE_DRIVE = False          # outputs stay on the VM and go to OUT_REPO at the end; True also keeps them on Drive
-OUT_REPO = "Sagyam/nepanglish-asr-flex-ft"  # private HF model repo; every run lands in <RUN_NAME>/
+USE_DRIVE = False          # outputs stay on the VM and go to OUT_REPO; True also keeps them on Drive
+OUT_REPO = "Sagyam/nepanglish-asr-flex-ft"  # private HF model repo
 EPOCHS, LR, WARMUP = 6, 1e-5, 0.1
-XTALK_P = 0.3              # share of measured-clean train clips given synthetic crosstalk each epoch; 0 = off
-# Shown on the harness's Models page (D83). Say what is different about this run.
+# (XTALK_P, seed) per run. XTALK_P is the share of measured-clean train clips given synthetic
+# crosstalk each epoch (0 = off). The second p=0 seed measures run-to-run noise, which the winner
+# rule needs (D96). Fixed before the sweep: do not edit it after reading results.
+SWEEP = [(0.0, 0), (0.1, 0), (0.2, 0), (0.3, 0), (0.5, 0), (0.0, 1)]
+REFERENCE_RUN = "indic-transcribe-flex-ft-2026-09-17"  # in OUT_REPO; decoded here for the added-data comparison, None to skip
+# Shown on the harness's Models page (D83).
 MODEL_NAME = "Indic-Transcribe-Flex FT"
-MODEL_DESCRIPTION = (f"04c full fine-tune, standard settings + synthetic crosstalk (xtalk.py, p={XTALK_P})"
-                     if XTALK_P else "04c full fine-tune, standard settings.")
 EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
 PAD_TO_S = 1.0
 PROBE_FRACTION = 0.9
@@ -234,6 +286,7 @@ EVAL_BUDGET_S, EVAL_ITEMS = 1200.0, 96
     code(SETUP_COMMON),
     code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
     code("%%writefile /content/ft/xtalk.py\n" + XTALK),
+    code("%%writefile /content/ft/sweep.py\n" + SWEEPKIT),
     code(r'''
 sys.path.insert(0, str(FT))
 import warnings
@@ -259,8 +312,24 @@ FLEX_DIR = snapshot_download(MODEL_ID)
 sys.path.insert(0, FLEX_DIR)
 from indic_transcribe import MODES, IndicTranscribe  # noqa: E402
 
-asr = IndicTranscribe.from_pretrained(FLEX_DIR, device="cuda", dtype=torch.float32)
-model, featurize, tk = asr.model, asr.fe, asr.tokenizer
+
+
+def load_model(path):
+    """Fresh weights on the GPU, as `model` (which transcribe and the loss read)."""
+    global asr, model, featurize
+    asr = IndicTranscribe.from_pretrained(str(path), device="cuda", dtype=torch.float32)
+    model, featurize = asr.model, asr.fe
+    if GRAD_CKPT:
+        for layer in model.model.encoder.layers:
+            layer._forward = layer.forward
+            layer.forward = lambda *a, _l=layer, **k: torch.utils.checkpoint.checkpoint(_l._forward, *a, use_reentrant=False, **k)
+    return model
+
+
+import torch.utils.checkpoint  # noqa: E402
+
+load_model(FLEX_DIR)
+tk = asr.tokenizer
 itn, romanized = MODES[MODE]
 PROMPT = tk.encode_prompt(LANG, itn=itn, romanized=romanized)
 EOS, PAD, OFFSET = tk.eos_id, tk.pad_id, tk.spl_size
@@ -284,7 +353,7 @@ for name in ("train", "val"):
             kept.append(r)
     print(f"{name}: dropped {len(splits[name]) - len(kept)} clip(s) the tokenizer cannot write")
     splits[name] = kept
-if XTALK_P:
+if any(p for p, _ in SWEEP):
     n = ftkit.attach_speaker_turns(DATA, splits["train"])
     print(f"speaker turns for {n} of {len(splits['train'])} train clips")
 r = splits["train"][0]
@@ -293,12 +362,8 @@ print("prompt", PROMPT, "| longest target", max(len(r["ids"]) for r in splits["t
 '''),
     md("## Model, optimizer and the batch-size probe"),
     code(r'''
-import torch.utils.checkpoint
-
-if GRAD_CKPT:
-    for layer in model.model.encoder.layers:
-        layer._forward = layer.forward
-        layer.forward = lambda *a, _l=layer, **k: torch.utils.checkpoint.checkpoint(_l._forward, *a, use_reentrant=False, **k)
+# The probe runs on the base weights loaded in Setup; every sweep run reloads fresh ones and uses
+# the budget measured here, so all runs see the same batches.
 model.train()
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.0, fused=True)
 ftkit.init_optimizer_state(model, optimizer)
@@ -361,10 +426,13 @@ import numpy as np
 import xtalk
 
 N_PROMPT = len(PROMPT)
-MIXER = None
-if XTALK_P:
-    MIXER = xtalk.Mixer(xtalk.DonorPool(splits["train"]),
-                        lambda ep, s, e: store.audio[ep][round(s * ftkit.SR):round(e * ftkit.SR)], p=XTALK_P)
+SEED = 0
+MIXER = None  # set per run
+POOL = xtalk.DonorPool(splits["train"]) if any(p for p, _ in SWEEP) else None
+
+
+def fetch(ep, s, e):
+    return store.audio[ep][round(s * ftkit.SR):round(e * ftkit.SR)]
 
 
 def train_clip(row, rng):
@@ -374,7 +442,7 @@ def train_clip(row, rng):
 
 def collate(rows):
     # torch reseeds each DataLoader worker per epoch, so every epoch draws fresh mixes, and the
-    # run is still repeatable from cfg.seed
+    # run is still repeatable from its seed
     rng = np.random.default_rng(torch.randint(2**62, (1,)).item())
     clips = [torch.from_numpy(train_clip(r, rng)[0].copy()) for r in rows]
     wav = torch.zeros(len(rows), ftkit.pad_len(max(len(c) for c in clips), PAD_TO_S), dtype=torch.int16)
@@ -447,8 +515,9 @@ def save_best(model):
 
 
 def make_batches(epoch):
+    # seed 0 keeps the order every earlier run used; another seed also reorders the batches
     return ftkit.bucket_batches(splits["train"], budget_s=BUDGET_S, max_items=256, pad_to_s=PAD_TO_S,
-                                shuffle=True, seed=epoch)
+                                shuffle=True, seed=epoch + 1000 * SEED)
 
 
 monitor = ftkit.GpuMonitor().start()
@@ -464,7 +533,7 @@ What the mixer does to 2,000 train clips drawn at random, against what it was bu
 - **Same episode.** How often the other voice came from the clip's own episode. Single-voice
   episodes have to borrow one from another show.
 
-Six examples go to `OUT/xtalk_examples/`, each saved clean and mixed, and three play below.
+Six examples go to `OUT_ROOT/xtalk_examples/`, each saved clean and mixed, and three play below.
 **Listen to them before starting the run.** If the other voice is inaudible, or clearly from
 another room, stop and fix the mixer.
 """),
@@ -472,10 +541,10 @@ another room, stop and fix the mixer.
 import soundfile as sf
 from IPython.display import Audio, display
 
-if MIXER:
+if POOL:
     rng = np.random.default_rng(0)
     eligible = [r for r in splits["train"] if r["overlap_spans"] == [] and r.get("speaker_turns")]
-    always = xtalk.Mixer(MIXER.pool, MIXER.fetch, p=1.0)
+    always = xtalk.Mixer(POOL, fetch, p=1.0)
     infos = [always(r, store.clip(r), rng)[1] for r in rng.choice(eligible, 2000, replace=False)]
     infos = [i for i in infos if i]
     wins = [w for i in infos for w in i["windows"]]
@@ -491,9 +560,9 @@ if MIXER:
                           "5-15%": float(np.mean((shares >= 0.05) & (shares <= 0.15))),
                           ">15%": float(np.mean(shares > 0.15))},
     }
-    (OUT / "xtalk_stats.json").write_text(json.dumps(stats, indent=1))
+    (OUT_ROOT / "xtalk_stats.json").write_text(json.dumps(stats, indent=1))
     print(json.dumps(stats, indent=1))
-    ex = OUT / "xtalk_examples"
+    ex = OUT_ROOT / "xtalk_examples"
     ex.mkdir(exist_ok=True)
     picks = [r for r in rng.choice(eligible, 60, replace=False) if 6 <= ftkit.duration(r) <= 15][:6]
     for k, r in enumerate(picks):
@@ -508,7 +577,7 @@ if MIXER:
                                   "same ep" if w["same_episode"] else "other ep") for w in (info or {}).get("windows", [])])
             display(Audio(mixed, rate=ftkit.SR))
 else:
-    print("XTALK_P = 0: no synthetic crosstalk in this run")
+    print("every XTALK_P in SWEEP is 0: no synthetic crosstalk")
 """),
     md("""
 ## One clip per call vs batched
@@ -544,92 +613,209 @@ print(f"one clip per call: {(t1 - t0) / len(sample):.2f} s per clip | batched: {
 speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
                           loss_fn=loss_fn, evaluate=evaluate, val_rows=splits["val"], gold_rows=splits["gold"],
                           epochs=EPOCHS, monitor=monitor)
-(OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
-"""),
-    md("## Train"),
-    code(r"""
-cfg = ftkit.TrainConfig(name=RUN_NAME, out=str(OUT), epochs=EPOCHS, lr=LR, warmup_frac=WARMUP,
-                        effective_s=EFFECTIVE_S, patience=2)
-result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
-                     loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
-                     monitor=monitor)
-print("best val WER", result["best_val_wer"])
-"""),
-    md("## Gold" + BAKEOFF_LINK),
-    code(r"""
-decode = ftkit.RetryLoops(transcribe, retry_one)
-texts, compute = ftkit.transcribe_rows(splits["gold"], decode, budget_s=EVAL_BUDGET_S,
-                                       max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
-refs = [r["text"] for r in splits["gold"]]
-gold = score(refs, texts)
-gold["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in splits["gold"])
-first = {sid: text for sid, text, _ in decode.log}  # the same run's greedy output, before any retry
-gold["greedy_only"] = score(refs, [first.get(r["segment_id"], t) for r, t in zip(splits["gold"], texts)])
-gold["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in decode.log]
-ftkit.write_hyps(OUT / "hyps" / f"{RUN_NAME}.jsonl", splits["gold"], texts, compute)
-BUCKETS = ("none", "0-5%", "5-15%", ">15%")
-gold["by_overlap"] = {}
-for bucket in BUCKETS:
-    idx = [i for i, r in enumerate(splits["gold"]) if (r.get("classes") or {}).get("overlap") == bucket]
-    if idx:
-        gold["by_overlap"][bucket] = score([refs[i] for i in idx], [texts[i] for i in idx])
-(OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1, ensure_ascii=False))
-print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_only", "retried", "by_overlap")})
-print("greedy only:    ", gold["greedy_only"])
-print("\nfolded, per 100 ref words (S + D + I = WER):")
-print(f"  {'all':>6}: {gold['clips']:4d} clips  WER {gold['wer']:6.2f}  {ftkit.sid(gold)}")
-for bucket, m in gold["by_overlap"].items():
-    print(f"  {bucket:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  {ftkit.sid(m)}")
-for s, f, t in decode.log:
-    print(f"\n{s}\n  greedy: ...{f[-90:]}\n  retry:  ...{t[-90:]}")
+(OUT_ROOT / "speed_check.json").write_text(json.dumps(speed, indent=1))
+print(f"sweep: {len(SWEEP)} run(s) -> about {len(SWEEP) * speed['projected_h']:.1f} h of training and gold, "
+      "plus val decoding per run and the reference")
 """),
     md("""
-## Harness model folder
+## Sweep: train, score and upload every point
 
-Everything the harness's **Models** page needs to show this run (D83): the model card, plus gold
-and val transcripts from the best weights under the same decoder. No weights: the page scores
-text, it never runs the model. After the upload at the end, the files of `harness/` go into the
-harness checkout as `data/models/asr/<RUN_NAME>/` (the folder name becomes the model's id); press **Rescan** on the
-Models page. The harness scores the text against its *current* labels, so a clip relabeled since
-this export is scored against the new label.
+For each `(XTALK_P, seed)` in `SWEEP`: fresh base weights, train with early stopping on val, then
+decode gold and val with the best weights under the same decoder, and score them overall and per
+crosstalk bucket, with S/D/I. Each run's folder goes to `OUT_REPO/<RUN_PREFIX>/<run>/` as soon as it
+finishes: metrics, `history.json`, transcripts, per-clip counts and the harness folder (D83), but
+not `best/`. The weights stay on the VM until the winner is known. A run already uploaded is
+skipped, so after a dropped session, run the notebook again with the same `RUN_PREFIX`. If the
+winner then turns out to be a run whose weights were on the old VM, the export cell says so, and
+that point has to be trained again.
+
+The harness scores text against its *current* labels, so a clip relabeled since this export is
+scored against the new label on the Models page.
 """),
     code(r"""
 import datetime as dt
+import gc
 
-HARNESS = OUT / "harness"
-val_decode = ftkit.RetryLoops(transcribe, retry_one)
-val_texts, val_compute = ftkit.transcribe_rows(splits["val"], val_decode, budget_s=EVAL_BUDGET_S,
-                                               max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
-ftkit.write_hyps(HARNESS / "gold.jsonl", splits["gold"], texts, compute)
-ftkit.write_hyps(HARNESS / "val.jsonl", splits["val"], val_texts, val_compute)
-evals = [h for h in result["history"] if "val_wer" in h]
-val_scores = score([r["text"] for r in splits["val"]], val_texts)
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+
+import sweep
+
+api = HfApi(token=os.environ["HF_TOKEN"])
+api.create_repo(OUT_REPO, repo_type="model", private=True, exist_ok=True)
 export = json.loads((DATA / "training" / "manifest.json").read_text())
-card = {
-    "name": MODEL_NAME,
-    "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-    "description": MODEL_DESCRIPTION,
-    "architecture": "Canary-style enc-dec: 32L conformer + 24L transformer decoder, 1.2B",
-    "base_model": MODEL_ID,
-    "decoder": "greedy+retry",
-    "run_name": RUN_NAME,
-    "epochs": EPOCHS,
-    "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
-    "lr": LR,
-    "xtalk_p": XTALK_P,
-    "val_wer": result["best_val_wer"],
-    "gold_wer": gold["wer"],
-    # folded, per 100 reference words; S + D + I = WER
-    "val_sid": {k: val_scores[k] for k in ("sub", "del", "ins")},
-    "gold_sid": {k: gold[k] for k in ("sub", "del", "ins")},
-    "train_export": {k: export.get(k) for k in ("exported_at", "git_commit", "row_count",
-                                                "normalization_version", "label_version")},
-}
-(HARNESS / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
-print(f"val {val_scores['wer']:.2f}% ({ftkit.sid(val_scores)}) | wrote", HARNESS)
+BUCKETS = ("none", "0-5%", "5-15%", ">15%")
+
+
+def free_model():
+    for name in ("optimizer", "model", "asr"):
+        globals().pop(name, None)
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+def decode(rows):
+    d = ftkit.RetryLoops(transcribe, retry_one)
+    texts, compute = ftkit.transcribe_rows(rows, d, budget_s=EVAL_BUDGET_S, max_items=EVAL_ITEMS, pad_to_s=PAD_TO_S)
+    return texts, compute, d.log
+
+
+def score_split(rows, texts, compute, log):
+    refs = [r["text"] for r in rows]
+    m = score(refs, texts)
+    m["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in rows)
+    first = {sid: text for sid, text, _ in log}  # the same run's greedy output, before any retry
+    m["greedy_only"] = score(refs, [first.get(r["segment_id"], t) for r, t in zip(rows, texts)])
+    m["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in log]
+    m["by_overlap"] = {}
+    for bucket in BUCKETS:
+        idx = [i for i, r in enumerate(rows) if (r.get("classes") or {}).get("overlap") == bucket]
+        if idx:
+            m["by_overlap"][bucket] = score([refs[i] for i in idx], [texts[i] for i in idx])
+    per = score.per_clip(refs, texts)
+    return m, {r["segment_id"]: [c["errors"], c["words"]] for r, c in zip(rows, per)}
+
+
+def score_and_write(out, run, *, p, seed, history, description, reference=False):
+    # decode gold and val with the weights in `model`, write every result file, return the sweep row
+    model.eval()
+    results, per_clip = {}, {}
+    for name in ("gold", "val"):
+        texts, compute, log = decode(splits[name])
+        results[name], per_clip[name] = score_split(splits[name], texts, compute, log)
+        ftkit.write_hyps(out / "harness" / f"{name}.jsonl", splits[name], texts, compute)
+        if name == "gold":  # the bake-off's cache format, to score beside the zero-shot systems
+            ftkit.write_hyps(out / "hyps" / f"{run}.jsonl", splits[name], texts, compute)
+        (out / f"{name}_metrics.json").write_text(json.dumps(results[name], indent=1, ensure_ascii=False))
+    evals = [h for h in history if "val_wer" in h]
+    gold, val = results["gold"], results["val"]
+    card = {
+        "name": MODEL_NAME if not reference else f"{MODEL_NAME} ({REFERENCE_RUN})",
+        "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "description": description,
+        "architecture": "Canary-style enc-dec: 32L conformer + 24L transformer decoder, 1.2B",
+        "base_model": MODEL_ID,
+        "decoder": "greedy+retry",
+        "run_name": run,
+        "sweep": RUN_PREFIX,
+        "epochs": EPOCHS,
+        "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
+        "lr": LR,
+        "xtalk_p": p,
+        "seed": seed,
+        "val_wer": val["wer"],
+        "gold_wer": gold["wer"],
+        # folded, per 100 reference words; S + D + I = WER
+        "val_sid": {k: val[k] for k in ("sub", "del", "ins")},
+        "gold_sid": {k: gold[k] for k in ("sub", "del", "ins")},
+        "train_export": {k: export.get(k) for k in ("exported_at", "git_commit", "row_count",
+                                                    "normalization_version", "label_version")},
+    }
+    (out / "harness" / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
+    keep = ("wer", "raw_wer", "cer", "sub", "del", "ins", "loops", "clips", "by_overlap")
+    row = {"run_name": run, "xtalk_p": p, "seed": seed, "reference": reference,
+           "best_epoch": card["best_epoch"], "val_wer": val["wer"],
+           "val": {k: val[k] for k in keep}, "gold": {k: gold[k] for k in keep}, "per_clip": per_clip}
+    (out / "sweep_row.json").write_text(json.dumps(row, ensure_ascii=False))
+    print(f"{run}: val {val['wer']:.2f} ({ftkit.sid(val)}) | gold {gold['wer']:.2f} ({ftkit.sid(gold)})")
+    for bucket, m in gold["by_overlap"].items():
+        print(f"  gold {bucket:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  {ftkit.sid(m)}")
+    return row
+
+
+def uploaded_row(run):
+    remote = f"{RUN_PREFIX}/{run}/sweep_row.json"
+    if not api.file_exists(OUT_REPO, remote):
+        return None
+    return json.loads(Path(hf_hub_download(OUT_REPO, remote, token=os.environ["HF_TOKEN"])).read_text())
+
+
+def upload_run(out, run, message):
+    api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
+                      ignore_patterns=["best/*"], commit_message=message)
+
+
+free_model()  # the probe's weights and optimizer
+sweep_rows = []
+for p, seed in SWEEP:
+    run = sweep.run_name(RUN_PREFIX, p, seed)
+    if (row := uploaded_row(run)) is not None:
+        print(f"{run}: already in {OUT_REPO}, skipped")
+        sweep_rows.append(row)
+        continue
+    OUT = OUT_ROOT / run
+    OUT.mkdir(parents=True, exist_ok=True)
+    SEED = seed
+    MIXER = xtalk.Mixer(POOL, fetch, p=p) if p else None
+    load_model(FLEX_DIR).train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.0, fused=True)
+    ftkit.init_optimizer_state(model, optimizer)
+    cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=EPOCHS, lr=LR, warmup_frac=WARMUP,
+                            effective_s=EFFECTIVE_S, patience=2, seed=seed)
+    print(f"\n=== {run}: XTALK_P={p}, seed {seed}")
+    result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
+                         loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
+                         monitor=monitor)
+    description = f"04c sweep {RUN_PREFIX}: synthetic crosstalk p={p}, seed {seed}"
+    sweep_rows.append(score_and_write(OUT, run, p=p, seed=seed, history=result["history"], description=description))
+    upload_run(OUT, run, f"{run}: {description}")
+    free_model()
+MIXER, SEED = None, 0
 """),
-    md("## Results"),
-    code(RESULTS),
+    md("""
+## Reference: the 2026-09-17 model on this export
+
+The same decoder on this export's val and gold, so it pairs clip for clip with the sweep. Against
+p = 0 seed 0 it is the effect of the data added since 09-17. The val set also grew with the new
+episodes, which changes which epoch early stopping picks, so read the gold comparison.
+"""),
+    code(r"""
+if REFERENCE_RUN:
+    ref_run = f"{RUN_PREFIX}-reference"
+    if (row := uploaded_row(ref_run)) is None:
+        OUT = OUT_ROOT / ref_run
+        OUT.mkdir(parents=True, exist_ok=True)
+        ref_dir = snapshot_download(OUT_REPO, allow_patterns=[f"{REFERENCE_RUN}/best/*"], token=os.environ["HF_TOKEN"])
+        load_model(Path(ref_dir) / REFERENCE_RUN / "best")
+        row = score_and_write(OUT, ref_run, p=None, seed=None, history=[], reference=True,
+                              description=f"{REFERENCE_RUN}, decoded on the {export.get('exported_at', '')[:10]} export")
+        upload_run(OUT, ref_run, f"{ref_run}: {REFERENCE_RUN} on this export")
+        free_model()
+    sweep_rows.append(row)
+"""),
+    md("""
+## Sweep report
+
+Every point on val and gold, with S/D/I, then gold per crosstalk bucket, then each run paired
+against p = 0 seed 0 by an episode bootstrap (`sweep.paired_bootstrap`). The seed 0/seed 1 gap at
+p = 0 is the noise every other difference has to clear, and the winner rule uses it. The gold
+columns are held-out scores: the winner was chosen on val.
+"""),
+    code(SWEEP_REPORT),
+    md("""
+## Winner: reload its weights
+
+The CPU export below and the final upload work on this run only.
+"""),
+    code(r"""
+run = winner["run_name"]
+OUT, HARNESS = OUT_ROOT / run, OUT_ROOT / run / "harness"
+if not (OUT / "best").exists():
+    raise RuntimeError(f"{run} won, but its weights are not on this VM (it ran in an earlier session). "
+                       f"Train that point again: SWEEP = [({winner['xtalk_p']}, {winner['seed']})] with a new "
+                       "RUN_PREFIX, or delete its folder in OUT_REPO and rerun.")
+load_model(OUT / "best").eval()
+
+
+def read_texts(path):
+    return [json.loads(line)["text"] for line in path.open(encoding="utf-8")]
+
+
+texts, val_texts = read_texts(HARNESS / "gold.jsonl"), read_texts(HARNESS / "val.jsonl")
+card = json.loads((HARNESS / "model_card.json").read_text())
+card["sweep_winner"] = why
+(HARNESS / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
+print("winner:", run, "|", why)
+"""),
     md("""
 ## CPU export: quantize, benchmark, export
 
@@ -736,36 +922,39 @@ card["cpu"] = {
 print("wrote", OUT / "cpu_bench.json", "and the card's cpu block")
 """),
     md("""
-## Upload to Hugging Face
+## Upload the winner and the sweep summary
 
-Every file of this run goes to the private model repo `OUT_REPO`, under `<RUN_NAME>/`: `best/` (bf16),
-`cpu/` (when int8 was accepted), `harness/`, `hyps/`, `int8/` and the metrics json. Nothing has to
-be pulled from Drive, and the VM can be deleted once this prints a commit.
+The winner's whole folder goes to `OUT_REPO/<RUN_PREFIX>/<winner>/`: `best/` (bf16), `cpu/` (when
+int8 was accepted), `int8/`, `cpu_bench.json` and the card with its `cpu` block. The other runs are
+already there without weights. `sweep.json`, the speed check and the crosstalk examples go to
+`OUT_REPO/<RUN_PREFIX>/`. The VM can be deleted once this prints a commit.
 
 **The token must be able to write.** The cell reads the `HF_TOKEN` secret again, because Setup
 cached whatever token was there when it ran, so a secret swapped mid-session is picked up.
 
-Then, in the harness checkout:
+Then, in the harness checkout, every run (and the reference) can go on the Models page for error
+mining; only the winner has `cpu/` for the mic playground:
 ```bash
-hf download Sagyam/nepanglish-asr-flex-ft --include "<RUN_NAME>/*" --local-dir exports/<RUN_NAME>
-mkdir -p data/models/asr/<RUN_NAME>
-cp exports/<RUN_NAME>/<RUN_NAME>/harness/* data/models/asr/<RUN_NAME>/
-cp -r exports/<RUN_NAME>/<RUN_NAME>/cpu data/models/asr/<RUN_NAME>/   # mic playground (D85)
+hf download Sagyam/nepanglish-asr-flex-ft --include "<RUN_PREFIX>/*" --exclude "*/best/*" --local-dir exports/<RUN_PREFIX>
+for d in exports/<RUN_PREFIX>/<RUN_PREFIX>/<RUN_PREFIX>-*/; do
+  run=$(basename "$d"); mkdir -p data/models/asr/$run && cp "$d"harness/* data/models/asr/$run/
+done
+cp -r exports/<RUN_PREFIX>/<RUN_PREFIX>/<winner>/cpu data/models/asr/<winner>/   # mic playground (D85)
 ```
 Press **Rescan** on the Models page. The playground sidecar starts with `docker compose up -d`.
 """),
     code(r"""
-from huggingface_hub import HfApi
-
 if IN_COLAB:
     os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
     (Path.home() / ".cache" / "huggingface" / "token").write_text(os.environ["HF_TOKEN"])
 api = HfApi(token=os.environ["HF_TOKEN"])
-api.create_repo(OUT_REPO, repo_type="model", private=True, exist_ok=True)
-commit = api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT), path_in_repo=RUN_NAME,
-                           commit_message=f"{RUN_NAME}: {MODEL_DESCRIPTION}")
+commit = api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT), path_in_repo=f"{RUN_PREFIX}/{run}",
+                           commit_message=f"{run}: sweep winner ({why})")
+api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT_ROOT), path_in_repo=RUN_PREFIX,
+                  allow_patterns=["sweep.json", "speed_check.json", "xtalk_stats.json", "xtalk_examples/*"],
+                  commit_message=f"{RUN_PREFIX}: sweep summary")
 size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
-print(f"{size / 2**30:.2f} GiB -> https://huggingface.co/{OUT_REPO}/tree/main/{RUN_NAME} @ {commit.oid[:7]}")
+print(f"{size / 2**30:.2f} GiB -> https://huggingface.co/{OUT_REPO}/tree/main/{RUN_PREFIX}/{run} @ {commit.oid[:7]}")
 """),
 ]
 

@@ -2073,9 +2073,14 @@ The fine-tune notebook (`notebooks/src/xtalk.py`, on when `XTALK_P > 0`) gives a
 train clips measured clean short bursts of another voice every epoch, in the DataLoader workers.
 Each mixed clip keeps its label unchanged.
 
-- **The label is the clip's own speaker.** The references in real overlap keep the main voice and
-  drop some of the other's. A synthetic target that transcribed both voices would contradict every
-  real label, and Flex's decoder has no speaker-attributed output.
+- **The label is the clip's own speaker.** The references in real overlap keep what was audible:
+  usually the main voice, sometimes the other one, sometimes both. The owner accepts any of these
+  as long as nothing is written that was not said. A fixed target always takes one acceptable
+  option, the main voice. Writing the other voice's words would need them transcribed, and the only
+  text for a donor excerpt is an unverified recogniser's, which would teach invented words. Flex's
+  decoder has no speaker-attributed output. Measured on 8,406 synthetic bursts against Scribe's
+  word spans (2026-09-22): 58% hold only word fragments, 37% at least one whole word, and 6% no
+  word, so most of what the model learns to leave out could not be written as a word anyway.
 - **Measured shape, not LibriMix defaults** (findings.md, *Overlap windows*). Window durations
   come from the measured deciles, with a median of 0.42 s. The level gap is within ±3 dB (median
   |gap| 1.6), and either voice can be louder. The model cannot learn "drop the quieter voice".
@@ -2094,9 +2099,47 @@ Each mixed clip keeps its label unchanged.
 **Why on the fly.** It needs no new export and no new HF upload. Every epoch sees different mixes,
 it costs 2.7 ms of worker CPU per clip, and `XTALK_P = 0` gives the old run back exactly.
 
-**How it is judged.** The gold cell reports WER, substitutions, deletions and insertions per
-crosstalk bucket, and the Models page reports the within-episode ratios (D87). Gold can see a
-change of about 5.5 points at >15% (findings.md, 2026-09-21), and overall WER is not the test.
+**How it is judged:** by the sweep in D96. Gold WER in the crosstalk buckets also charges
+acceptable choices (a label that kept the other voice counts its omission as deletions), so the
+S/D/I split is read with it, and the deletions on clips without overlap are the check that the
+model has not learnt to drop its own speaker's short words.
 
 **Reversal:** set `XTALK_P = 0`. To remove it entirely, delete `xtalk.py`, its cell and the
 mixer lines in `collate`.
+
+## D96 — XTALK_P is swept on one export, and the kept weights are chosen on val by a rule fixed in advance
+
+The fine-tune notebook trains one model per `(XTALK_P, seed)` point in `SWEEP`:
+`(0, 0), (0.1, 0), (0.2, 0), (0.3, 0), (0.5, 0), (0, 1)`. Every point starts from the same base
+weights, on the same export, with the same batch budget, and is scored on val and gold overall
+and per crosstalk bucket, with S/D/I. The 2026-09-17 model is decoded on the same val and gold
+under the same decoder. The results are meant for a paper, so what may be claimed is fixed here,
+before any point has run.
+
+- **The winner is chosen on val alone** (`sweep.choose_winner`). p = 0 is its better seed. The
+  noise is the gap between the two p = 0 seeds. The best augmented run is kept only if it beats
+  p = 0 on val by more than the noise; otherwise p = 0 is kept, as the simpler recipe. Gold never
+  takes part, so gold stays a held-out score for every point. Choosing on gold would bias every
+  gold number reported.
+- **Two seeds at p = 0.** One run per point cannot tell an effect of p from a different random
+  run. The only earlier estimate (09-16 against 09-17, +0.68 [−0.04, +1.82]) also changed the fold
+  and the val draw. The second seed also reorders the batches: `make_batches` seeds its shuffle
+  with `epoch + 1000 * seed`, so seed 0 keeps the order of every earlier run.
+- **Up to 0.5.** 73% of train clips are eligible to be mixed. At p = 0.5, about 36% of each epoch
+  is synthetic crosstalk, on top of the 27% of clips with real crosstalk, against about 3% of the
+  audio in reality.
+- **Gold comparisons are paired and resampled by episode** (`sweep.paired_bootstrap`). Clips of
+  one episode share a room and voices, so resampling clips would overstate how much gold knows.
+- **What the added data did** is p = 0 seed 0 against the 09-17 model, paired on gold. The export
+  grew from 7,052 to 9,774 clips. Val grew with the new episodes too, which changes which epoch
+  early stopping picks, so the gold pair is the reading.
+- **Only the winner keeps its weights.** Every point uploads its metrics, transcripts, per-clip
+  counts and harness folder as it finishes, so all of them can go on the Models page and a
+  dropped session resumes. `best/` stays on the VM until the winner is known, and is uploaded and
+  exported for the CPU only for the winner.
+- **Crosstalk is a secondary analysis, not the paper's claim.** The model card says the model is
+  trained for single-speaker recordings. Overlapped speech proper (cpWER, tcpWER, ORC-WER,
+  diarization-conditioned models) is left to separate work.
+
+**Reversal:** set `SWEEP` to one point, which runs a plain single fine-tune. Delete `sweep.py`, its
+tests and the sweep cells to remove it entirely.
