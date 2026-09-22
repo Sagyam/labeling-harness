@@ -550,7 +550,7 @@ if POOL:
     wins = [w for i in infos for w in i["windows"]]
     shares = np.array([i["share"] for i in infos])
     stats = {
-        "pool_stretches": len(MIXER.pool), "pool_voices": len(MIXER.pool.voices),
+        "pool_stretches": len(POOL), "pool_voices": len(POOL.voices),
         "eligible_clips": len(eligible), "train_clips": len(splits["train"]),
         "mixed_of_2000": len(infos),
         "window_s_median": float(np.median([w["seconds"] for w in wins])),
