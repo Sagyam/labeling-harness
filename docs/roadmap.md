@@ -18,7 +18,7 @@ This chapter needs two things:
 Depending on how strong the results are, it may become its own paper.
 
 **Priority, set by the owner:**
-1. **A.** Separation-assisted per-speaker labelling.
+1. **A.** Separation-assisted per-speaker labelling. *Pilot failed 2026-09-22; not built.*
 2. **B.** Distilling the Flex fine-tune.
 3. **C.** The augmentation pipeline.
 
@@ -26,7 +26,16 @@ D (models for overlapped speech) is scored on A's labels, so it waits for A. E i
 is measured. Sections are lettered so they do not collide with the retired numbered items that code
 comments still cite.
 
-## A. Separation-assisted per-speaker labelling (priority 1)
+## A. Separation-assisted per-speaker labelling (priority 1; pilot failed 2026-09-22)
+
+**Result: no-go, and A2 is not built.** The A1 listening pilot (findings.md, *Separation does not
+give per-speaker labels*) found MossFormer2 good on light to moderate crosstalk and poor on heavy
+crosstalk. It also found that a separated track sometimes holds two different people, so a track
+cannot say who said what. Round 1 had 13 of 30 two-voice clips useless (43%, against a 20% bar).
+Decoding in the model's 2 s training windows, in round 2, did not change the verdict. Target
+speaker extraction is the obvious next separator, but published results on real conversational
+overlap are poor (REAL-T). What replaces A as priority one is the owner's call. The rest of this
+section is kept as the record of what was planned.
 
 **The problem.** Gold labels in overlap are a single stream: the stronger voice, plus some of the
 weaker one, with no speaker attribution (D95). Every multi-talker model is scored per speaker
@@ -219,6 +228,9 @@ speech or noise (D76).
 
 ## D. Models for overlapped speech (scored on A's labels)
 
+A's labels will not come from separation (A failed, 2026-09-22), so per-speaker references for
+scoring D have to come from somewhere else first.
+
 1. **DiCoW v3.3 and SE-DiCoW** (Brno University of Technology;
    [model](https://huggingface.co/BUT-FIT/DiCoW_v3_3),
    [SE-DiCoW](https://arxiv.org/html/2601.19194v1),
@@ -237,8 +249,8 @@ speech or noise (D76).
    32.1 cpWER on 3-speaker mixtures); on real meetings it loses. A follow-up to D1, not a first
    step.
 3. **Target-voice extraction, then Flex** (the old item 2). Separation in front of the existing
-   Flex. Measured by A1's third measurement at no extra cost; it becomes its own experiment only
-   if that result is promising. The caveat: separation artifacts hurt a recogniser trained on
+   Flex. A1 stopped before its third measurement, and its tracks sometimes held two voices
+   (findings.md, 2026-09-22), so this is not promising with MossFormer2. The caveat: separation artifacts hurt a recogniser trained on
    clean speech ([2025](https://arxiv.org/abs/2503.17886)).
 4. **The multitalker Parakeet method**
    ([NVIDIA, 0.6B](https://huggingface.co/nvidia/multitalker-parakeet-streaming-0.6b-v1)).

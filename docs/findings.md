@@ -24,6 +24,60 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Separation does not give per-speaker labels: MossFormer2 by ear (2026-09-22)
+
+Roadmap A1's first measurement, run as a listening pilot on gold clips with measured crosstalk.
+ClearerVoice-Studio's `MossFormer2_SS_16K` (`clearvoice` 0.1.2, weights at revision `407cb03`, both
+Apache-2.0) splits a clip into two tracks; the owner heard the mix and both tracks together.
+
+**Owner's verdict: no.** Separation is good on light to moderate crosstalk and struggles on heavy
+crosstalk, and -- the part that decides it -- **a track sometimes holds two different people**. A
+track that mixes voices cannot say who said what, which is the only thing roadmap A wanted from it.
+A2 (child clips in the harness) is therefore not built.
+
+Two rounds, 2026-09-22:
+
+| round | clips | decoding | outcome |
+|---|---|---|---|
+| 1 | 36 (30 two-voice + 6 three-plus, `>15%` bucket, most overlapped first) | whole clip in one pass | 30 two-voice clips rated: 11 clean, 6 bleeding but usable, **13 useless (43%)** |
+| 2 | 50 most overlapped with any crosstalk (38 two-voice, 12 three-plus, 24-50% overlap) | 2 s windows, 1 s hop, stitched | verdict above, by ear; no per-clip ratings |
+
+Round 1 missed A1's proposed bar (at most 20% useless) by more than a factor of two. Both rounds
+ran the aggressive setting the owner chose after hearing the model as released: the masks sharpened
+x4, a p = 4 post-filter, and a gate muting a track where the diarization has only the other voice
+talking (applied only where the track-to-voice pairing was unambiguous, 30/36 and 36/50 clips).
+
+**What predicted a failed split, in round 1's ratings:** not how much the clip overlaps (5/10
+useless above 35% overlap against 8/20 below), but the episode (11/19 useless in one heated
+interview against 2/11 elsewhere) and the **pairing margin** -- how clearly each track's loudness
+follows one diarized voice's turns, computed without listening. Margin >= 0.5: 1/15 useless.
+Margin < 0.5: 12/15 useless, none clean. The 0.5 cut-off was read off the ratings afterwards, on 30
+clips from few rooms, and was never confirmed on fresh clips.
+
+**Two mistakes worth not repeating.**
+- **ClearVoice's own windowing silently swaps voices.** Its wrapper cuts anything over 2 s into 2 s
+  windows and concatenates them without matching which output is which voice, so a track can change
+  speaker every 1.5 s. Round 1 avoided it by separating each clip in one pass; round 2 did it the
+  way continuous speech separation does, rescaling each window to the mix and re-ordering it to
+  agree with the previous window on the overlap.
+- **One pass was itself out of distribution.** ClearerVoice's training recipe crops to 2 s
+  (`max_length: 2`), and the released weights' data is undescribed ("large scale ... open-sourced
+  and private"), so a 20 s clip is far longer than anything the model is known to have been trained
+  on. Round 2 removed that doubt, and the verdict did not change.
+
+**Why the next separator is unlikely to be enough either.** Target speaker extraction, which takes
+a sample of one voice and pulls that voice out, is the natural way to bring episode-level identity
+into separation, and the corpus already has enrolment audio in the diarized solo turns. But REAL-T
+(Interspeech 2025), built from real AMI/AliMeeting/CHiME-6/DipCo conversations, reports systems
+trained on simulated mixtures getting 58-66% of words wrong on real conversational overlap;
+performance collapses when the target speaks under 20% of the mixture, swings by 86 points across
+different enrolment samples of the same speaker, and falls from 43% to 79% word error going from
+two speakers to four. The SLT 2026 REAL-TSE challenge exists because this is unsolved.
+
+**What this leaves for per-speaker references in overlap:** a labelling decision (transcribe the
+main voice only, and flag the overlap), or models that write every speaker without separating the
+audio first (speaker-attributed or serialised output), scored with cpWER/tcpWER/ORC-WER.
+
 ## Synthetic crosstalk does not move real crosstalk (2026-09-22)
 
 The D96 sweep on the 2026-09-21 export (8,575 train, 1,198 val, 750 gold clips), fold-v3, one
