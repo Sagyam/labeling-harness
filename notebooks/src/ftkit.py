@@ -242,6 +242,7 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
             nchars += len(chars(ref))
             cerr += Levenshtein.distance(chars(ref), chars(hyp))
             loops += is_loop(hyp)
+        assert subs + dels + ins == werr, "S + D + I must add up to the folded errors"
         return {
             "wer": 100 * werr / max(words, 1),
             "raw_wer": 100 * rerr / max(rwords, 1),
@@ -451,6 +452,12 @@ def group_steps(rows, batches, effective_s: float) -> list[list[list[int]]]:
     return steps
 
 
+def sid(m: dict) -> str:
+    """A score's error split, per 100 reference words: S + D + I is its folded WER. Read all three
+    on crosstalk: the labels drop the other voice, so hearing it costs insertions."""
+    return f"S {m['sub']:.2f}  D {m['del']:.2f}  I {m['ins']:.2f}"
+
+
 def retry_note(val: dict) -> str:
     """For an `evaluate` that wraps its decode in RetryLoops and reports the greedy score too."""
     if "retried" not in val:
@@ -541,7 +548,7 @@ def speed_check(
         f"GPU {rec['gpu_util']:.0f}% util, {rec['gpu_mem_gib']:.1f} GiB\n"
         f"val:   {val_dt:.0f} s for {len(val_rows)} clips = "
         f"{rec['val_ms_per_clip']:.0f} ms per clip "
-        f"(batched decode); WER before training {val['wer']:.2f}, loops {val['loops']}"
+        f"(batched decode); WER before training {val['wer']:.2f} ({sid(val)}), loops {val['loops']}"
         f"{retry_note(val)}\n"
         f"projected: {rec['epoch_min']:.1f} min per epoch + {val_dt / 60:.1f} min val -> "
         f"at most {rec['projected_h']:.2f} h for {epochs} epochs and gold "
@@ -647,8 +654,8 @@ def train(
         )
         improved = val["wer"] < best
         print(
-            f"== epoch {epoch + 1}: val WER {val['wer']:.2f}  CER {val['cer']:.2f}  raw WER "
-            f"{val['raw_wer']:.2f}  loops {val['loops']}{retry_note(val)}"
+            f"== epoch {epoch + 1}: val WER {val['wer']:.2f} ({sid(val)})  CER {val['cer']:.2f}  "
+            f"raw WER {val['raw_wer']:.2f}  loops {val['loops']}{retry_note(val)}"
             + ("  (best)" if improved else ""),
             flush=True,
         )

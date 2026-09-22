@@ -134,7 +134,11 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   CMI is measured on the fused text.
 - **Every text comparison goes through `app/services/fold.py`.** A plain token comparison charges
   `टिम`/`team` and `गर्नुभयो`/`गर्नु भयो` as errors, which was about half of every system's
-  substitutions on the gold pot. Report folded and raw WER side by side, with `fold_version()`.
+  substitutions on the gold pot. Report folded and raw WER side by side, with `fold_version()`,
+  and split every WER into substitutions, deletions and insertions (per 100 folded reference
+  words, summing to the WER): error mining reads all three, because a change can move errors
+  between kinds without moving WER, and on crosstalk the labels charge hearing the other voice as
+  insertions.
 - Word spans have two sources and they must not be confused. Scribe, MAI and Gemini 3.5
   Transcribe *report* their own; Gemini Flash's are *measured* afterwards by the local CTC aligner
   in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.

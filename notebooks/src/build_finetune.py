@@ -106,21 +106,35 @@ import matplotlib.pyplot as plt
 hist = json.loads((OUT / "history.json").read_text())
 steps = [h for h in hist if "loss" in h]
 evals = [h for h in hist if "val_wer" in h]
-fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
+fig, axes = plt.subplots(1, 4, figsize=(16, 3.2))
 axes[0].plot([h["step"] for h in steps], [h["loss"] for h in steps], color="#2a78d6")
 axes[0].set_title("train loss per unit", loc="left")
 axes[1].plot([h["epoch"] for h in evals], [h["val_wer"] for h in evals], marker="o", color="#2a78d6")
 axes[1].set_title("val folded WER %", loc="left")
-axes[2].plot([h["step"] for h in steps], [h["gpu_util"] for h in steps], color="#2a78d6")
-axes[2].set_ylim(0, 100)
-axes[2].set_title("GPU utilisation %", loc="left")
+epochs = [h["epoch"] for h in evals]
+for key, label, colour in (("sub", "S", "#2a78d6"), ("del", "D", "#eb6834"), ("ins", "I", "#1baf7a")):
+    ys = [h[f"val_{key}"] for h in evals]
+    axes[2].plot(epochs, ys, marker="o", color=colour, label=label)
+    if ys:
+        axes[2].annotate(label, (epochs[-1], ys[-1]), xytext=(6, 0), textcoords="offset points",
+                         va="center", color="#52514e")
+axes[2].set_ylim(bottom=0)
+axes[2].legend(frameon=False, ncols=3, loc="upper center", bbox_to_anchor=(0.5, -0.12))
+axes[2].set_title("val S / D / I per 100 ref words", loc="left")
+axes[3].plot([h["step"] for h in steps], [h["gpu_util"] for h in steps], color="#2a78d6")
+axes[3].set_ylim(0, 100)
+axes[3].set_title("GPU utilisation %", loc="left")
 for ax in axes:
     ax.grid(color="#ecebe7")
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
 plt.show()
-print(json.dumps(json.loads((OUT / "gold_metrics.json").read_text()), indent=1))
+gold_m = json.loads((OUT / "gold_metrics.json").read_text())
+print("gold, folded, per 100 ref words (S + D + I = WER):")
+for name, m in [("all", gold_m)] + list(gold_m.get("by_overlap", {}).items()):
+    print(f"  {name:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  {ftkit.sid(m)}")
+print(json.dumps(gold_m, indent=1))
 """
 
 SPEED_NOTE = """
@@ -181,6 +195,12 @@ apart by room or microphone. Clips with real crosstalk are left as they are. Val
 mixed, and never used as a source. Most of the overlapped share goes to the 5–15% and >15% buckets,
 where the errors are. Judge the run on the gold crosstalk buckets, and on the Models page's
 within-episode ratios, not on overall WER.
+
+**Every score splits into S, D and I** (`ftkit.sid`): substitutions, deletions and insertions per
+100 folded reference words, which add up to the folded WER. They are printed each epoch, stored in
+`history.json`, `gold_metrics.json` (overall and per crosstalk bucket), `cpu_bench.json` and the
+model card, and plotted under Results. Read them together: a change can move errors between kinds
+without moving WER.
 
 **Decoding: greedy, plus a loop retry.** A clip whose greedy output repeats a 3-word sequence 5+
 times is decoded again, alone, with a repetition penalty, no repeated 6-token phrase and a
@@ -555,11 +575,11 @@ for bucket in BUCKETS:
         gold["by_overlap"][bucket] = score([refs[i] for i in idx], [texts[i] for i in idx])
 (OUT / "gold_metrics.json").write_text(json.dumps(gold, indent=1, ensure_ascii=False))
 print("with loop retry:", {k: v for k, v in gold.items() if k not in ("greedy_only", "retried", "by_overlap")})
-print("by crosstalk (folded, per 100 ref words):")
-for bucket, m in gold["by_overlap"].items():
-    print(f"  {bucket:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  sub {m['sub']:5.2f}  del {m['del']:5.2f}  "
-          f"ins {m['ins']:5.2f}")
 print("greedy only:    ", gold["greedy_only"])
+print("\nfolded, per 100 ref words (S + D + I = WER):")
+print(f"  {'all':>6}: {gold['clips']:4d} clips  WER {gold['wer']:6.2f}  {ftkit.sid(gold)}")
+for bucket, m in gold["by_overlap"].items():
+    print(f"  {bucket:>6}: {m['clips']:4d} clips  WER {m['wer']:6.2f}  {ftkit.sid(m)}")
 for s, f, t in decode.log:
     print(f"\n{s}\n  greedy: ...{f[-90:]}\n  retry:  ...{t[-90:]}")
 """),
@@ -583,6 +603,7 @@ val_texts, val_compute = ftkit.transcribe_rows(splits["val"], val_decode, budget
 ftkit.write_hyps(HARNESS / "gold.jsonl", splits["gold"], texts, compute)
 ftkit.write_hyps(HARNESS / "val.jsonl", splits["val"], val_texts, val_compute)
 evals = [h for h in result["history"] if "val_wer" in h]
+val_scores = score([r["text"] for r in splits["val"]], val_texts)
 export = json.loads((DATA / "training" / "manifest.json").read_text())
 card = {
     "name": MODEL_NAME,
@@ -598,11 +619,14 @@ card = {
     "xtalk_p": XTALK_P,
     "val_wer": result["best_val_wer"],
     "gold_wer": gold["wer"],
+    # folded, per 100 reference words; S + D + I = WER
+    "val_sid": {k: val_scores[k] for k in ("sub", "del", "ins")},
+    "gold_sid": {k: gold[k] for k in ("sub", "del", "ins")},
     "train_export": {k: export.get(k) for k in ("exported_at", "git_commit", "row_count",
                                                 "normalization_version", "label_version")},
 }
 (HARNESS / "model_card.json").write_text(json.dumps(card, indent=1, ensure_ascii=False))
-print(f"val {score([r['text'] for r in splits['val']], val_texts)['wer']:.2f}% | wrote", HARNESS)
+print(f"val {val_scores['wer']:.2f}% ({ftkit.sid(val_scores)}) | wrote", HARNESS)
 """),
     md("## Results"),
     code(RESULTS),
@@ -655,8 +679,9 @@ same = sum(a == b for a, b in zip(val_texts, int8_texts["val"]))
 accept = (int8_scores["val"]["wer"] <= bf16_scores["val"]["wer"] + MAX_WER_COST
           and int8_scores["val"]["loops"] <= bf16_scores["val"]["loops"])
 for name in ("val", "gold"):
-    print(f"{name}: bf16 {bf16_scores[name]['wer']:.2f}% ({bf16_scores[name]['loops']} loops) | "
-          f"int8 {int8_scores[name]['wer']:.2f}% ({int8_scores[name]['loops']} loops)")
+    print(f"{name}: bf16 {bf16_scores[name]['wer']:.2f}% ({ftkit.sid(bf16_scores[name])}, "
+          f"{bf16_scores[name]['loops']} loops) | int8 {int8_scores[name]['wer']:.2f}% "
+          f"({ftkit.sid(int8_scores[name])}, {int8_scores[name]['loops']} loops)")
 print(f"int8 text identical to bf16 on {same}/{len(val_texts)} val clips ->",
       "EXPORT int8" if accept else "int8 rejected; the CPU model is best/ in bf16")
 """),
