@@ -76,7 +76,7 @@ model stays the deployed one. Every point's metrics, transcripts and per-clip co
   the other voice out while gold sometimes rewards writing it. A model that writes one stream of
   text for one speaker cannot be right both ways. Overlapped speech proper needs a
   speaker-attributed or serialized output, scored with cpWER, tcpWER or ORC-WER (roadmap, sections
-  B and C).
+  C and D).
 
 ---
 
