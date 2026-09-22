@@ -68,7 +68,7 @@ noise (D76).
 **Crosstalk: built 2026-09-21, first run pending (D95).** `notebooks/src/xtalk.py` mixes bursts of
 another voice into 30% of the clean train clips each epoch, shaped by the measured overlap windows.
 The notebook's `XTALK_P` turns it on and off. No baseline retrain is planned: the 2026-09-17 run
-(gold >15%: 28.85, int8) is the comparison, so a gain must clear run-to-run noise as well as the
+(gold >15%: 28.68 on the 118 clips after the Prime Television batch, int8) is the comparison, so a gain must clear run-to-run noise as well as the
 ~5.5-point detectable change. Noise augmentation is not built yet.
 
 ## 4. Explore newer architectures
