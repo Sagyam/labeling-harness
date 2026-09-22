@@ -75,8 +75,8 @@ model stays the deployed one. Every point's metrics, transcripts and per-clip co
   >15% clips are sustained talk-over; (2) the mismatch in target, since training rewards leaving
   the other voice out while gold sometimes rewards writing it. A model that writes one stream of
   text for one speaker cannot be right both ways. Overlapped speech proper needs a
-  speaker-attributed or serialized output, scored with cpWER, tcpWER or ORC-WER (roadmap items 2
-  and 4).
+  speaker-attributed or serialized output, scored with cpWER, tcpWER or ORC-WER (roadmap, sections
+  B and C).
 
 ---
 
