@@ -263,7 +263,7 @@ Run 2026-09-12: gold 13.20% greedy -> 11.44% with the retry (7 loops -> 0); val 
     ),
     md("## Config"),
     code(r"""
-RUN_PREFIX = "flex-xtalk-sweep-YYYY-MM-DD"  # OUT_REPO/<RUN_PREFIX>/<RUN_PREFIX>-p<share>-s<seed>/ per run
+RUN_PREFIX = "flex-xtalk-sweep-2026-09-22"  # OUT_REPO/<RUN_PREFIX>/<RUN_PREFIX>-p<share>-s<seed>/ per run
 MODEL_ID = "bodhan-ai/indic-transcribe-flex"
 LANG, MODE = "ne", "mixed"
 USE_DRIVE = False          # outputs stay on the VM and go to OUT_REPO; True also keeps them on Drive
