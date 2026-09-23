@@ -18,7 +18,7 @@ This chapter needs two things:
 Depending on how strong the results are, it may become its own paper.
 
 **Priority, set by the owner:**
-1. **A.** Separation-assisted per-speaker labelling. *Pilot failed 2026-09-22; not built.*
+1. **A.** Per-speaker labelling as a multitrack editor.
 2. **B.** Distilling the Flex fine-tune.
 3. **C.** The augmentation pipeline.
 
@@ -26,16 +26,7 @@ D (models for overlapped speech) is scored on A's labels, so it waits for A. E i
 is measured. Sections are lettered so they do not collide with the retired numbered items that code
 comments still cite.
 
-## A. Separation-assisted per-speaker labelling (priority 1; pilot failed 2026-09-22)
-
-**Result: no-go, and A2 is not built.** A3 has the two paths left to explore. The A1 listening pilot (findings.md, *Separation does not
-give per-speaker labels*) found MossFormer2 good on light to moderate crosstalk and poor on heavy
-crosstalk. It also found that a separated track sometimes holds two different people, so a track
-cannot say who said what. Round 1 had 13 of 30 two-voice clips useless (43%, against a 20% bar).
-Decoding in the model's 2 s training windows, in round 2, did not change the verdict. Target
-speaker extraction is the obvious next separator, but published results on real conversational
-overlap are poor (REAL-T). What replaces A as priority one is the owner's call. The rest of this
-section is kept as the record of what was planned.
+## A. Per-speaker labelling as a multitrack editor (priority 1)
 
 **The problem.** Gold labels in overlap are a single stream: the stronger voice, plus some of the
 weaker one, with no speaker attribution (D95). Every multi-talker model is scored per speaker
@@ -44,137 +35,67 @@ insertions, which is the D96 trap again. Relabelling per speaker is the fix, but
 crosstalk means listening to two people at once. That is the owner's bottleneck, and the reason
 the current labels drop part of the weaker voice.
 
-**The idea (owner's proposal, 2026-09-22).** Split the mix into one track per voice with a speech
-separation model (MossFormer2), transcribe each track as its own clip, and give the annotator the
-original mix and both tracks side by side.
+**The idea (owner's proposal, 2026-09-23).** Attribute words the way a DAW arranges a song from
+tracks. The x axis is time and the y axis is speaker: each speaker is a lane, and each word is a
+block on a lane, spanning the time it was spoken. Played together, the lanes are the seed
+transcript, the "final mix".
 
-Separation is used here as a **listening aid, not a recogniser front end**. Its artifacts, which
-hurt a recogniser trained on clean speech, matter little to a person who also hears the original.
-The mix stays the ground truth; the tracks only make the second voice hearable. The two
-transcripts are **never merged into one label**. Each voice keeps its own stream. The per-speaker
-text is the research value, and a time-ordered merge can always be derived later from the word
-timings.
+It rests on an observation from labelling: the pipeline is usually right about *what* was said
+and *when*. What is disputed is *who* said it, and that comes from the diarizer. So the annotator
+does two things, and only two:
+- **Move a word** to the lane of the person who said it. Every word starts on the lane of the
+  diarized turn it falls in (D78, D79), joined by time as the editor's speaker colours already
+  are, so most words need no move.
+- **Add a word the seed does not have**, usually the weaker voice's in overlap: type it, drop it on
+  a speaker's lane at the moment it was said, and drag its edges to give it a length. The
+  karaoke animation then shows whether the block lines up with what is heard.
 
-The alternatives weighed and set aside:
-- **Relabel per speaker by ear from the mix alone.** The labelling burden this idea removes.
-- **Declare that gold transcribes only the main voice in overlap.** This keeps single-stream
-  models fair but gives multi-talker models nothing to be scored on.
+**Speakers are fixed.** Speaker identity is tracked globally (D78's episode-wide "Speaker 1, 2,
+...", and D87's voices across episodes), so the editor cannot create or delete a speaker. Its lanes
+are the episode's speakers; the annotator moves words between them and adds words to them.
 
-### A1. Pilot first, offline, with no harness changes
+**Time resolution: a 10 ms grid.** Blocks snap to 10 ms. That is finer than anything downstream
+needs: the CTC aligner's frames are coarser, a listener cannot place a word boundary more
+precisely than a few tens of milliseconds, and tcpWER's collar is measured in seconds. Storage cost
+does not depend on the grid: a word is a start and an end whatever their precision, stored as the
+seconds-with-millisecond floats that word spans already use. So 10 ms is a choice about how the
+editor feels, not about storage.
 
-Owner's rule: nothing is built into the harness until a pilot on existing heavy-crosstalk clips has
-passed. The pilot is a notebook built from `notebooks/src/` like the others. It loads data the way
-`Finetune.ipynb` does: `ftkit.download_dataset`, the gold and analytics exports of
-`Sagyam/nepanglish-asr`, and episode audio sliced by `ftkit.AudioStore`. It uploads its outputs to
-`Sagyam/nepanglish-asr-flex-ft` under a pilot prefix. The results go into findings.md and the
-experiment code is discarded afterwards.
+**What this gives.** Every word carries a speaker and a span, so each clip yields per-speaker
+streams with word timings: what cpWER and tcpWER need, and what D is scored on. The single-stream
+text stays derivable (every lane, in time order). The words moved per clip are also a measurement
+of their own: a word-level diarization error rate on Nepanglish conversation.
 
-- **Clips.** The 118 gold clips with `classes.overlap == ">15%"`, then the 87 at 5–15% if the
-  first set passes.
-  - `classes.speakers` gives the voice count. Clips with three or more voices are reported
-    separately: a two-way split does not fit them.
-  - `speaker_turns` (analytics export) gives the diarized turns, and `overlap_spans` the measured
-    overlap.
-- **Separation.** ClearerVoice-Studio's `MossFormer2_SS_16K`
-  ([repo](https://github.com/modelscope/ClearerVoice-Studio)): 16 kHz, two outputs, matching
-  invariant 7's format. Record which model and version was used. The license must be checked
-  before anything is built on it.
-- **Measurements:**
-  1. **Separation by ear.** On about 30 clips, the owner rates each clip clean, bleeding but
-     usable, or useless. The useless share decides whether anything is built.
-  2. **Speaker mapping.** The tracks come out in arbitrary order. Map each to a diarized speaker by
-     how well its energy envelope overlaps that speaker's turns. Report how often the mapping is
-     unambiguous.
-  3. **Recovered words.** Decode both tracks with the 2026-09-17 Flex fine-tune (in
-     `Sagyam/nepanglish-asr-flex-ft`, `best/`). Against the current single-stream labels, report,
-     per crosstalk bucket and with S/D/I:
-     - the WER of the mix;
-     - the WER of the track mapped to the main speaker;
-     - the WER of both tracks' words taken together.
+**What needs settling before it is built** (a decision entry replacing D95's convention, and a
+migration with a working downgrade):
+- **When the diarizer is wrong about speakers, not words.** With speakers fixed, two kinds of
+  diarizer mistake cannot be fixed in this editor. A speaker it invented is only an empty lane,
+  which is harmless. Two people it merged into one speaker cannot be split, because splitting
+  means a new speaker. Such a clip needs a flag, and an episode-level fix outside this editor.
+- **Which lanes a clip shows.** The speakers diarized in the clip, plus a way to bring in another
+  of the episode's speakers when the diarizer missed that person entirely. This shows an existing
+  speaker; it does not create one.
+- **Candidates from the recognisers.** The three ASR routes sometimes hear a word in overlap that
+  fusion dropped. Showing those as unplaced blocks to drag onto a lane would recover weak-voice
+  words without typing. Only words the seed lacks would be offered, so nothing is scored twice.
+- **Both voices saying the same word** (a shared "हो" in crosstalk) is one word in the seed but
+  two in the truth. The editor needs a *copy to lane*, as a DAW duplicates a clip.
+- **Resizing seed words.** Seed timings rarely need touching, but they are least reliable in
+  overlap, where the aligner follows one stream through two voices. The same edge drag that sizes
+  a new word should work on any word.
+- **Storage.** Invariant 2 holds: an attributed label is a new `segment_labels` row, with a speaker
+  and a span per word next to the text, written with its event and audit rows in one transaction
+  (invariant 8). A separate label version keeps the existing single-stream labels current for
+  single-stream scoring. Attribution is always verified by ear, never screened (invariant 5). No
+  new status field (invariant 3). Hypotheses and diarization runs stay untouched; the correction
+  lives only in the label.
+- **Which clips.** Only clips with two or more diarized speakers or measured overlap need lanes:
+  about 250 of 750 gold clips. A single-speaker clip is one lane and no work, unless the diarizer
+  missed a second voice there, which the queue cannot surface.
 
-     Recovered weak-voice words show up as falling deletions. This doubles as the D3 experiment:
-     separation in front of Flex.
-  4. **Bleed.** Words that turn up on both tracks: how often, and how many.
-  5. **Labelling time, second phase.** Only if 1–4 pass. The owner labels about 20 clips from the
-     mix alone and about 20 with the mix and both tracks. Time comes from the client-reported
-     `duration_ms`, the same quantity as the throughput baseline. This phase needs the editor to
-     play the extra tracks: a throwaway prototype, or the first step of A2.
-- **Go/no-go.** Fix the thresholds before the run, in the style of D96: a maximum useless share,
-  and a minimum saving in time per clip. The owner sets them. A reasonable starting proposal is at
-  most 20% useless and at least a 25% time saving.
-
-### A2. What would be built if the pilot passes
-
-This is a design change that needs a decision entry and an Alembic migration with a working
-downgrade (invariant 1).
-
-- **Separated tracks are child clips.** A new parent link on `segments` records each track's
-  parent clip, track index and mapped diarized speaker.
-  - Each child is a real 16 kHz mono FLAC holding one voice (invariant 7), with peaks precomputed
-    at creation.
-  - Each flows through transcription, fusion, hazards and labelling exactly like a single-speaker
-    clip. After separation, a child is no different from a clip with no crosstalk.
-  - No new status field (invariant 3).
-- **Trigger at ingest.** A clip whose overlap share passes a threshold is sent for separation. The
-  threshold is chosen from pilot data, not by feel.
-  - **Where it runs.** Separation runs off the backend, on a Modal GPU like diarization (D79).
-  - **Paid calls.** Each child's recogniser calls are routed and logged (invariant 6) and
-    checkpointed after their `llm_requests` row (D93). `dry_run` is honoured.
-  - **Cost.** Each flagged clip becomes two clips, each transcribed by three routes: six more paid
-    calls per flagged clip. About 27% of gold clips are over 5% overlap.
-- **Word timings per speaker.** Forced alignment on each child gives each speaker's word spans,
-  which tcpWER needs. The D33 rule holds: routes that report their own timings are not
-  overwritten.
-- **Triage and editor.**
-  - Triage already sorts by crosstalk, so a parent stands out.
-  - Opening one shows the family: the original mix and both tracks, each playable, and each track's
-    transcript editable.
-  - The check is "every word is present, **and on the right track**". Bleed means a track's
-    recognisers will sometimes write the other voice's words.
-  - Every decision on a child writes a label, an event and an audit row in one transaction
-    (invariant 8).
-- **Children are always verified by ear.** A screened decision on a child is refused, as on gold
-  (invariant 5).
-- **Pots and splits follow the parent.** A child is in its parent's pot. `set_segment_pot` moves a
-  family together, with an audit row for each clip (invariant 4). Split follows the episode.
-- **What the tracks are for.**
-  - **Training and scoring** happen on the *original mix*, with the per-speaker labels. The
-    separated audio carries artifacts and is never treated as real audio.
-  - **Donors.** Gold tracks are never training donors (D76).
-  - **Export.** The export gains per-speaker streams for a parent (each child's text and word
-    spans, keyed to the diarized speaker). Tracks are exported as audio only behind an explicit
-    flag.
-  - **Existing labels.** A parent's existing single-stream labels stay as history (invariant 2).
-- **Open questions for the decision entry:**
-  - how a clip with three or more voices is handled;
-  - whether a failed or useless separation falls back to the current single-stream labelling;
-  - whether the parent keeps its own recogniser hypotheses for single-stream comparisons.
-
-### A3. What is left to explore (2026-09-22)
-
-Two paths the owner picked out after the pilot failed. Both give per-speaker references without a
-separator, and neither is started.
-
-1. **Attribute words instead of separating audio.** Transcribe the mix as one stream -- everything
-   audible, in time order -- then have the annotator only *assign* the words inside the overlapped
-   spans to a voice. Deciding which of two familiar voices said a word you can already read is a
-   far easier listening task than making out two people at once. Three things the harness already
-   has make it cheap: the diarized turns pre-assign most words (D78, D79), word timings exist
-   (`forced_align` and the routes that report their own, D33), and the voices are familiar from the
-   rest of the episode. This is what cpWER and tcpWER need. It affects ~205 gold clips over 5%
-   overlap, and it needs an editor mode and a decision entry replacing D95's vague convention
-   ("the stronger voice, plus some of the weaker one"). Simple listening aids belong here: the
-   overlapped span slowed down and looped, and each speaker's surrounding solo speech played first.
-2. **Synthetic overlap with known truth.** Mix two solo clips from the corpus; who said what is
-   known by construction, and the measured mixer already exists (`notebooks/src/xtalk.py`, D96).
-   This proves nothing about real overlap -- D96 showed synthetic crosstalk does not transfer --
-   but it is scaffolding: it can tell whether an attribution tool, an editor mode or a metric works
-   at all before any ears are spent on real clips.
-
-Set aside for now: another audio-only separator or target speaker extraction (the pilot and the
-literature both say no, findings.md); audio-visual extraction from the episodes' YouTube video,
-which is the one signal audio-only models lack, but needs video ingest (D86 allows audio only) and
-both speakers on screen; and simply dropping attribution in favour of a single-stream convention.
+**Pilot first.** Owner's rule, as for every A so far: a throwaway prototype on a handful of gold
+clips before anything is built into the harness. It measures words moved, words added and time
+per clip (the client-reported `duration_ms`, as for the throughput baseline).
 
 ## B. Distil the Flex fine-tune into other architectures (priority 2)
 
@@ -226,7 +147,12 @@ speech or noise (D76).
    for a donor burst was an unverified recogniser's. If the second voice is a whole verified train
    clip, or a word-aligned stretch of one (`app/services/forced_align.py`), both transcripts are
    verified. That gives labels for both voices, as serialized output and target-speaker models
-   need.
+   need. The measured mixer already exists (`notebooks/src/xtalk.py`, D96).
+
+   The same mixes have a second use, as a **test bench for A**: who said what is known by
+   construction, so they can tell whether the multitrack editor, its pre-assignment or a metric
+   works at all before any ears are spent on real clips. They prove nothing about real overlap --
+   D96 showed synthetic crosstalk does not transfer.
 2. **Realistic conversation timing, overlap boosted.** Build conversations with a turn-taking
    model (hand-overs, interruptions, backchannels) instead of bursts. The candidate is
    [FastMSS](https://github.com/popcornell/FastMSS), open source, which takes utterances with word
@@ -254,7 +180,7 @@ speech or noise (D76).
 
 ## D. Models for overlapped speech (scored on A's labels)
 
-A's labels will not come from separation (A failed, 2026-09-22), so per-speaker references for
+A's labels will not come from separation (a dead end, 2026-09-22/23), so per-speaker references for
 scoring D have to come from somewhere else first.
 
 1. **DiCoW v3.3 and SE-DiCoW** (Brno University of Technology;
@@ -274,10 +200,12 @@ scoring D have to come from somewhere else first.
    decoder that writes speaker-tagged text. On heavy synthetic overlap it beats DiCoW (17.2 against
    32.1 cpWER on 3-speaker mixtures); on real meetings it loses. A follow-up to D1, not a first
    step.
-3. **Target-voice extraction, then Flex** (the old item 2). Separation in front of the existing
-   Flex. A1 stopped before its third measurement, and its tracks sometimes held two voices
-   (findings.md, 2026-09-22), so this is not promising with MossFormer2. The caveat: separation artifacts hurt a recogniser trained on
-   clean speech ([2025](https://arxiv.org/abs/2503.17886)).
+3. **Target-voice extraction, then Flex** (the old item 2; dead end for now, like the separation
+   pilot). Separation in front of the existing Flex. The pilot stopped before its third
+   measurement, its tracks sometimes held two voices, and on 2026-09-23 three separators gave
+   either bleed or broken words (findings.md). Separation artifacts also hurt a recogniser trained
+   on clean speech ([2025](https://arxiv.org/abs/2503.17886)). Revisit with separation research
+   after the ASR paper.
 4. **The multitalker Parakeet method**
    ([NVIDIA, 0.6B](https://huggingface.co/nvidia/multitalker-parakeet-streaming-0.6b-v1)).
    - **How it works.** Speaker kernels are built from the diarizer's activity and injected into a
@@ -308,10 +236,20 @@ The roadmap before 2026-09-22 numbered its items 1–6. Code comments cite them 
 - **Item 1 — clip classes.** In the standard pipeline since 2026-09-15 (D87). Open when retired:
   listen to the band-limited podcast clips, which score better within their episodes; check the
   voice links by ear.
-- **Item 2 — target-voice extraction.** Now D3, measured inside A1.
+- **Item 2 — target-voice extraction.** Now D3; the separation pilot never reached it.
 - **Item 3 — synthetic augmentation for noise and crosstalk.** Crosstalk swept 2026-09-22 with no
   effect (D95, D96; findings.md). Noise and realistic mixing are now C.
 - **Item 4 — newer architectures.** Now B and D.
 - **Item 5 — held-out voices and microphones for gold.** Done 2026-09-16.
 - **Item 6 — spelling convention.** Folded 2026-09-17 (D89, fold-v3). Open when retired: a
   listening check by native speakers; the references still mix both forms.
+
+The first version of A (2026-09-22) had three parts, which findings.md cites:
+
+- **A1 — separation pilot; A2 — separated tracks as child clips.** A dead end: MossFormer2,
+  TF-GridNet and TF-Locoformer gave either bleed from the other voice or broken words, on every
+  heavy-crosstalk clip (findings.md, 2026-09-22 and 2026-09-23). A2 was never built. Separating
+  voices in a real recording is worth pursuing as research after the ASR paper is published; for
+  now it only adds complexity.
+- **A3 — attribute words instead of separating audio.** Replaced by the multitrack editor, which
+  is the same idea made concrete. Its second path, synthetic overlap as a test bench, moved to C1.
