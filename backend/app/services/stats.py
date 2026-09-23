@@ -20,6 +20,7 @@ from app.models import (
     SegmentLabel,
 )
 from app.models.enums import DISPOSITIONS, PIPELINE_STATUSES, TASK_STATUSES
+from app.services.labeling import speakers_version_ids
 from app.utils.stats_math import median
 
 
@@ -40,7 +41,9 @@ def _counts(
 def latest_labels_subquery():
     """Subquery yielding the current label id per (segment, label version).
 
-    Labels are append-only, so "current" means the newest row, not the only row.
+    Labels are append-only, so "current" means the newest row, not the only row. Per-speaker
+    labels (D98) are left out: every reader of this counts or exports single-stream labels, and a
+    clip attributed to speakers would otherwise count as labelled twice.
     """
     ranked = sa.select(
         SegmentLabel.id.label("id"),
@@ -56,7 +59,8 @@ def latest_labels_subquery():
             order_by=(SegmentLabel.created_at.desc(), SegmentLabel.id.desc()),
         )
         .label("rank"),
-    ).subquery()
+    ).where(SegmentLabel.label_version_id.not_in(speakers_version_ids()))
+    ranked = ranked.subquery()
     return sa.select(ranked).where(ranked.c.rank == 1).subquery()
 
 
@@ -123,7 +127,7 @@ def collect_stats(session: Session, *, session_since: dt.datetime | None = None)
         },
         "audio_hours": round(float(total_seconds or 0.0) / 3600, 3),
         "tasks": {"total": sum(tasks_by_status.values()), **tasks_by_status},
-        "queues": {"review": 0, "audit": 0, "error": 0, **tasks_by_queue},
+        "queues": {"review": 0, "audit": 0, "error": 0, "speakers": 0, **tasks_by_queue},
         "labels": {"total": labeled_total, **labels_by_disposition},
         "accept_rate": round(accept_rate, 4) if accept_rate is not None else None,
         "throughput": {

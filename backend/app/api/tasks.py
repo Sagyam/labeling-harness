@@ -8,9 +8,16 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_config, get_session, require_auth
+from app.api.deps import (
+    get_config,
+    get_object_storage,
+    get_session,
+    get_voice_embedder,
+    require_auth,
+)
 from app.api.schemas import (
     AcceptIn,
+    AttributeIn,
     BulkAcceptIn,
     BulkAcceptOut,
     DecisionOut,
@@ -18,13 +25,17 @@ from app.api.schemas import (
     DisputeOut,
     FlagIn,
     LabelIn,
+    LaneCandidateOut,
+    LanesOut,
+    LaneSpeakerOut,
+    LaneWordOut,
     SkipIn,
     TaskOut,
 )
 from app.api.serializers import serialize_segment
 from app.config import Settings
 from app.models import AnnotationTask, AsrHypothesis, Episode, Segment
-from app.models.enums import ACTIVE_TASK_STATUSES
+from app.models.enums import ACTIVE_TASK_STATUSES, SPEAKERS_QUEUE
 from app.services.consensus import (
     ConsensusHypothesis,
     ConsensusWord,
@@ -32,8 +43,15 @@ from app.services.consensus import (
     seed_disputes,
 )
 from app.services.labeling import Decision, LabelingError, record_decision, record_skip
+from app.services.speaker_attribution import build_lanes, record_attribution
+from app.services.speaker_lanes import LaneWord
+from app.services.voice_clips import VoicePrint, suggest_for_task
+from app.services.voiceprint import Suggestion, VoiceEmbedder
+from app.storage import ObjectStorage
+from app.utils.logging import get_logger
 
 router = APIRouter(tags=["tasks"], dependencies=[Depends(require_auth)])
+logger = get_logger(__name__)
 
 
 def _load_task(session: Session, task_id: int) -> AnnotationTask:
@@ -94,7 +112,76 @@ def _disputes_for(task: AnnotationTask) -> list[DisputeOut]:
     ]
 
 
-def _serialize_task(session: Session, task: AnnotationTask) -> TaskOut:
+def _lanes_for(
+    session: Session,
+    task: AnnotationTask,
+    settings: Settings,
+    storage: ObjectStorage,
+    embedder: VoiceEmbedder,
+) -> LanesOut | None:
+    """The multitrack editor's starting lanes, for a speakers-queue task only (D98).
+
+    Voiceprint suggestions (D99) are advice: when they cannot be made -- no model, no audio --
+    the lanes are served without them rather than not at all.
+    """
+    if task.queue != SPEAKERS_QUEUE:
+        return None
+    lanes = build_lanes(session, task, settings)
+    if lanes is None:
+        return None
+    suggestions: list[Suggestion | None] = [None] * len(lanes.words)
+    prints: dict[int, VoicePrint] = {}
+    voiceprint = False
+    try:
+        suggestions, prints = suggest_for_task(
+            session, task, lanes, storage=storage, embedder=embedder
+        )
+        voiceprint = embedder.available and bool(prints)
+    except Exception as exc:  # advice must never cost the annotator the clip
+        logger.warning("voiceprint_suggestions_failed", task_id=task.id, error=str(exc))
+    return LanesOut(
+        diarization_run_id=lanes.diarization_run_id,
+        diarization_model=lanes.diarization_model,
+        speakers=[
+            LaneSpeakerOut(
+                number=s.number,
+                label=s.label,
+                voice=s.voice,
+                print_source=prints[s.number].source if s.number in prints else None,
+                print_clips=prints[s.number].clips if s.number in prints else 0,
+            )
+            for s in lanes.speakers
+        ],
+        clip_speakers=lanes.clip_speakers,
+        words=[
+            LaneWordOut(
+                word=w.word,
+                start=w.start,
+                end=w.end,
+                speaker=w.speaker,
+                proposed_speaker=w.proposed_speaker,
+                source=w.source,
+                suggested_speaker=s.speaker if s else None,
+                suggestion_margin=s.margin if s else None,
+            )
+            for w, s in zip(lanes.words, suggestions, strict=True)
+        ],
+        candidates=[
+            LaneCandidateOut(word=c.word, start=c.start, end=c.end, systems=list(c.systems))
+            for c in lanes.candidates
+        ],
+        base=lanes.base,
+        voiceprint=voiceprint,
+    )
+
+
+def _serialize_task(
+    session: Session,
+    task: AnnotationTask,
+    settings: Settings,
+    storage: ObjectStorage,
+    embedder: VoiceEmbedder,
+) -> TaskOut:
     seed = task.seed_hypothesis
     return TaskOut(
         id=task.id,
@@ -108,14 +195,18 @@ def _serialize_task(session: Session, task: AnnotationTask) -> TaskOut:
         served_at=dt.datetime.now(dt.UTC),
         segment=serialize_segment(session, task.segment),
         disputes=_disputes_for(task),
+        lanes=_lanes_for(session, task, settings, storage, embedder),
     )
 
 
 @router.get("/tasks/next", response_model=TaskOut)
 def next_task(
     session: Session = Depends(get_session),
-    queue: str = Query(default="review", pattern="^(review|audit|error)$"),
+    queue: str = Query(default="review", pattern="^(review|audit|error|speakers)$"),
     episode: str | None = Query(default=None),
+    settings: Settings = Depends(get_config),
+    storage: ObjectStorage = Depends(get_object_storage),
+    embedder: VoiceEmbedder = Depends(get_voice_embedder),
 ) -> TaskOut:
     """Serve the highest-priority pending task and mark it in progress.
 
@@ -157,13 +248,19 @@ def next_task(
     # Committed here rather than at teardown, so the status this response reports is the status
     # the annotator's next request will read. See `_decide` for what the window costs.
     session.commit()
-    return _serialize_task(session, task)
+    return _serialize_task(session, task, settings, storage, embedder)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskOut)
-def get_task(task_id: int, session: Session = Depends(get_session)) -> TaskOut:
+def get_task(
+    task_id: int,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_config),
+    storage: ObjectStorage = Depends(get_object_storage),
+    embedder: VoiceEmbedder = Depends(get_voice_embedder),
+) -> TaskOut:
     """Fetch one task without changing its status."""
-    return _serialize_task(session, _load_task(session, task_id))
+    return _serialize_task(session, _load_task(session, task_id), settings, storage, embedder)
 
 
 def _decide(
@@ -282,6 +379,56 @@ def flag_task(
             verification_tier=body.verification_tier,
         ),
         settings,
+    )
+
+
+@router.post("/tasks/{task_id}/attribute", response_model=DecisionOut)
+def attribute_task(
+    task_id: int,
+    body: AttributeIn,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_config),
+) -> DecisionOut:
+    """Save a speakers-queue clip's words on their speakers' lanes (D98).
+
+    Refused with 409 when the task is not in the speakers queue, is already decided, the episode
+    was re-diarized since the lanes were served, or a word has no lane or no span in the clip.
+    """
+    task = _load_task(session, task_id)
+    try:
+        label = record_attribution(
+            session,
+            task,
+            [
+                LaneWord(
+                    word=w.word,
+                    start=w.start,
+                    end=w.end,
+                    speaker=w.speaker,
+                    proposed_speaker=w.proposed_speaker,
+                    source=w.source,
+                    suggested_speaker=w.suggested_speaker,
+                )
+                for w in body.words
+            ],
+            diarization_run_id=body.diarization_run_id,
+            annotator=body.annotator,
+            notes=body.notes,
+            opened_at=body.opened_at,
+            duration_ms=body.duration_ms,
+            settings=settings,
+        )
+    except LabelingError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    session.commit()
+    return DecisionOut(
+        task_id=task.id,
+        segment_id=task.segment_id,
+        label_id=label.id,
+        disposition=label.disposition,
+        verification_tier=label.verification_tier,
+        task_status=task.status,
+        duration_ms=body.duration_ms,
     )
 
 

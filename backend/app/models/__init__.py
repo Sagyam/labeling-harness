@@ -4,7 +4,9 @@ from app.models.annotation import (
     AnnotationEvent,
     AnnotationTask,
     LabelVersion,
+    LabelWord,
     SegmentLabel,
+    VoiceConfirmation,
 )
 from app.models.content import (
     AsrHypothesis,
@@ -32,6 +34,7 @@ __all__ = [
     "HypothesisWord",
     "ImportRun",
     "LabelVersion",
+    "LabelWord",
     "LlmRequest",
     "ModelEvalClip",
     "ModelEvalRun",
@@ -40,4 +43,5 @@ __all__ = [
     "SegmentScore",
     "SpeakerTurn",
     "TranslitCacheEntry",
+    "VoiceConfirmation",
 ]

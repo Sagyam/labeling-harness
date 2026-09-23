@@ -27,7 +27,7 @@ def get_queue(
     offset: int = Query(default=0, ge=0),
     episode: str | None = Query(default=None, description="episode external id"),
     min_priority: float | None = Query(default=None, ge=0.0, le=1.0),
-    queue: str | None = Query(default=None, pattern="^(review|audit|error)$"),
+    queue: str | None = Query(default=None, pattern="^(review|audit|error|speakers)$"),
     sort_by: str = Query(
         default="priority",
         pattern="^(priority|cmi|disagreement|duration|overlap|pot)$",

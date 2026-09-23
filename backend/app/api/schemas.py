@@ -143,6 +143,62 @@ class DisputeOut(BaseModel):
     alternatives: list[DisputeAlternativeOut]
 
 
+class LaneSpeakerOut(BaseModel):
+    """One of the episode's speakers: a lane the multitrack editor can show (D98)."""
+
+    number: int
+    label: str
+    voice: str | None = None
+    #: Where this speaker's voiceprint comes from (D99): ``confirmed`` clips, the ``diarizer``'s
+    #: centroid, or null when it has none.
+    print_source: str | None = None
+    print_clips: int = 0
+
+
+class LaneWordBase(BaseModel):
+    """One block on the lanes. Spans are clip-relative seconds; ``speaker`` is a display number."""
+
+    word: str = Field(min_length=1, max_length=200)
+    start: float | None = None
+    end: float | None = None
+    speaker: int | None = None
+    proposed_speaker: int | None = None
+    source: str = Field(default="label", pattern="^(label|recogniser|typed|copy)$")
+    #: The lane a voiceprint suggested when the lanes were served (D99); echoed back on save.
+    suggested_speaker: int | None = None
+
+
+class LaneWordOut(LaneWordBase):
+    """A block as served; ``start``/``end`` are null for a word no span was measured for."""
+
+    #: How much closer the suggested speaker's print was than the next one.
+    suggestion_margin: float | None = None
+
+
+class LaneCandidateOut(BaseModel):
+    """A word the recognisers heard where the verified text has nothing."""
+
+    word: str
+    start: float
+    end: float
+    systems: list[str]
+
+
+class LanesOut(BaseModel):
+    """What the multitrack editor opens a speakers-queue task with (D98)."""
+
+    diarization_run_id: int
+    diarization_model: str
+    speakers: list[LaneSpeakerOut]
+    clip_speakers: list[int]
+    words: list[LaneWordOut]
+    candidates: list[LaneCandidateOut]
+    #: ``speakers`` (an earlier per-speaker label), ``label`` (the verified text) or ``seed``.
+    base: str
+    #: Whether voiceprint suggestions were computed for these lanes (D99).
+    voiceprint: bool = False
+
+
 class TaskOut(BaseModel):
     """A task with its full segment payload, for the editor."""
 
@@ -159,6 +215,8 @@ class TaskOut(BaseModel):
     #: Computed per request from the stored word spans, against this task's seed. Empty when the
     #: seed has no word timings, which is the honest answer rather than a claim of agreement.
     disputes: list[DisputeOut] = Field(default_factory=list)
+    #: Only for a task in the speakers queue whose episode has been diarized (D98).
+    lanes: LanesOut | None = None
 
 
 class DecisionIn(BaseModel):
@@ -199,6 +257,17 @@ class FlagIn(DecisionIn):
     """
 
     disposition: str = Field(pattern="^(unusable_audio|uncertain)$")
+
+
+class AttributeIn(BaseModel):
+    """Save a clip's words on their speakers' lanes (D98). Always a verified decision."""
+
+    diarization_run_id: int
+    words: list[LaneWordBase] = Field(min_length=1, max_length=2000)
+    opened_at: dt.datetime | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+    annotator: str | None = None
+    notes: str | None = None
 
 
 class SkipIn(BaseModel):
@@ -586,3 +655,64 @@ class ModelClipDetailOut(ModelClipOut):
     #: The fold rules changed since the run was imported, so ``ops`` may not add up to the
     #: stored counts.
     fold_version_changed: bool
+
+
+class VoiceEpisodeOut(BaseModel):
+    """An episode a voice speaks in, and which speaker it is there."""
+
+    episode_id: int
+    external_id: str
+    title: str | None = None
+    speaker_number: int
+    talk_seconds: float
+    solo_clips: int
+
+
+class VoiceClipOut(BaseModel):
+    """A clip the diarization hears as one voice alone, and the owner's verdict on it (D99)."""
+
+    segment_id: int
+    external_id: str
+    episode_external_id: str
+    pot: str
+    duration_seconds: float
+    #: What the seed says in the stretch, from its word spans.
+    text: str | None = None
+    verdict: str | None = None
+    audio_url: str
+    #: The stretch of this voice alone that is played and judged, clip-relative seconds.
+    start: float
+    end: float
+    #: The stretch is the whole clip: nobody else diarized in it, no crosstalk detected.
+    whole: bool
+
+
+class VoiceOut(BaseModel):
+    """Everything the voice page shows about one anonymous voice (D87, D99)."""
+
+    voice: str
+    talk_seconds: float
+    episodes: list[VoiceEpisodeOut]
+    clips: list[VoiceClipOut]
+    total_clips: int
+    confirmed: int
+    rejected: int
+    #: ``confirmed`` once the owner has confirmed a clip, else ``diarizer``.
+    print_source: str
+    reference: VoiceClipOut | None = None
+
+
+class VoiceVerdictIn(BaseModel):
+    """Only this voice (``confirmed``), not only this voice (``rejected``), or take it back."""
+
+    verdict: str = Field(pattern="^(confirmed|rejected|cleared)$")
+    annotator: str | None = None
+
+
+class VoiceVerdictOut(BaseModel):
+    voice: str
+    segment_id: int
+    verdict: str
+    embedded: bool
+    confirmed: int
+    rejected: int

@@ -30,6 +30,7 @@ export interface StatsResponse {
     review: number
     audit: number
     error: number
+    speakers?: number
   }
   labels: {
     total: number
@@ -150,7 +151,7 @@ export interface QueueRow {
   segment_id: number
   segment_external_id: string
   episode_external_id: string
-  queue: 'review' | 'audit' | 'error' | string
+  queue: 'review' | 'audit' | 'error' | 'speakers' | string
   status: 'pending' | 'in_progress' | 'done' | 'skipped' | string
   pot: PotName
   priority_score: number
@@ -197,6 +198,120 @@ export interface Task {
   served_at: string
   segment: Segment
   disputes?: Dispute[]
+  /** Only for a task in the speakers queue whose episode has been diarized (D98). */
+  lanes?: SpeakerLanes | null
+}
+
+/** Where a block on a speaker lane came from (D98). */
+export type LaneWordSource = 'label' | 'recogniser' | 'typed' | 'copy'
+
+/** One block on the lanes: clip-relative seconds, `speaker` is a display number. */
+export interface LaneWord {
+  word: string
+  /** Null for a word no span was measured for; it has to be placed before saving. */
+  start: number | null
+  end: number | null
+  /** The lane it sits on; null while it waits to be placed. */
+  speaker: number | null
+  /** The lane the diarization put it on, kept so moves can be counted. */
+  proposed_speaker: number | null
+  source: LaneWordSource
+  /** The lane a voiceprint suggested when served (D99); advice, echoed back on save. */
+  suggested_speaker?: number | null
+  /** How much closer the suggested speaker's print was than the next one. */
+  suggestion_margin?: number | null
+}
+
+/** A word the recognisers heard where the verified text has nothing. */
+export interface LaneCandidate {
+  word: string
+  start: number
+  end: number
+  systems: string[]
+}
+
+export interface LaneSpeaker {
+  number: number
+  /** The diarization run's raw label, e.g. SPEAKER_01. */
+  label: string
+  /** Voice id linked across episodes (D87), when there is one. */
+  voice: string | null
+  /** Where the voiceprint comes from (D99): the owner's `confirmed` clips or the `diarizer`. */
+  print_source?: 'confirmed' | 'diarizer' | null
+  print_clips?: number
+}
+
+/** What the multitrack editor opens a speakers-queue task with (D98). */
+export interface SpeakerLanes {
+  diarization_run_id: number
+  diarization_model: string
+  /** Every speaker of the episode: the only lanes there can be. */
+  speakers: LaneSpeaker[]
+  /** Speakers diarized inside this clip, shown as lanes by default. */
+  clip_speakers: number[]
+  words: LaneWord[]
+  candidates: LaneCandidate[]
+  /** `speakers` (an earlier per-speaker label), `label` (the verified text) or `seed`. */
+  base: 'speakers' | 'label' | 'seed'
+  /** Whether voiceprint suggestions were computed (D99). */
+  voiceprint?: boolean
+}
+
+export type VoiceVerdict = 'confirmed' | 'rejected' | 'cleared'
+
+export interface VoiceEpisode {
+  episode_id: number
+  external_id: string
+  title: string | null
+  speaker_number: number
+  talk_seconds: number
+  solo_clips: number
+}
+
+/** A clip the diarization hears as one voice alone (D99). */
+export interface VoiceClip {
+  segment_id: number
+  external_id: string
+  episode_external_id: string
+  pot: PotName
+  duration_seconds: number
+  text: string | null
+  verdict: 'confirmed' | 'rejected' | null
+  audio_url: string
+  /** The stretch of this voice alone that is played and judged, clip-relative seconds. */
+  start: number
+  end: number
+  /** The stretch is the whole clip. */
+  whole: boolean
+}
+
+export interface VoicePage {
+  voice: string
+  talk_seconds: number
+  episodes: VoiceEpisode[]
+  clips: VoiceClip[]
+  total_clips: number
+  confirmed: number
+  rejected: number
+  print_source: 'confirmed' | 'diarizer'
+  reference: VoiceClip | null
+}
+
+export interface VoiceVerdictOut {
+  voice: string
+  segment_id: number
+  verdict: VoiceVerdict
+  embedded: boolean
+  confirmed: number
+  rejected: number
+}
+
+export interface AttributeIn {
+  diarization_run_id: number
+  words: LaneWord[]
+  opened_at?: string
+  duration_ms?: number
+  notes?: string | null
 }
 
 export interface PeaksPayload {

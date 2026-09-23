@@ -9,6 +9,7 @@ never overwrites a hypothesis, and a re-label never updates an earlier label -- 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import sqlalchemy as sa
@@ -20,14 +21,28 @@ from app.models import (
     AnnotationTask,
     AuditLog,
     LabelVersion,
+    LabelWord,
     Segment,
     SegmentLabel,
 )
-from app.models.enums import APPROVED_DISPOSITIONS, VERIFICATION_TIERS
+from app.models.enums import APPROVED_DISPOSITIONS, SPEAKERS_QUEUE, VERIFICATION_TIERS
 
 
 class LabelingError(RuntimeError):
     """A decision could not be recorded."""
+
+
+@dataclass(frozen=True)
+class SpeakerWord:
+    """One word of a per-speaker label as stored: speakers are the run's raw labels (D98)."""
+
+    word: str
+    start: float
+    end: float
+    speaker: str
+    proposed_speaker: str | None
+    source: str
+    suggested_speaker: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +61,10 @@ class Decision:
     #: disagreement signal without listening). Defaults to ``verified``, so a caller that does not
     #: know about tiers cannot silently downgrade the corpus's claim about itself (D63).
     verification_tier: str = "verified"
+    #: Per-speaker words, in time order, for a task in the speakers queue (D98); None elsewhere.
+    words: Sequence[SpeakerWord] | None = None
+    #: The run whose speaker labels ``words`` use.
+    diarization_run_id: int | None = None
 
 
 #: Which event action each disposition records.
@@ -136,12 +155,18 @@ def record_decision(
             " not screened"
         )
 
-    version = get_or_create_label_version(session, decision.label_version, settings)
+    per_speaker = task.queue == SPEAKERS_QUEUE
+    _check_speaker_words(task, decision, per_speaker=per_speaker)
+    version = get_or_create_label_version(
+        session,
+        settings.labels.speakers_label_version if per_speaker else decision.label_version,
+        settings,
+    )
     annotator = decision.annotator or settings.labels.default_annotator
     opened_at, submitted_at, duration_ms = _timing(decision)
 
     final_text = decision.final_text
-    if decision.disposition == "accepted_unchanged":
+    if decision.disposition == "accepted_unchanged" and not per_speaker:
         if final_text is None and task.seed_hypothesis is not None:
             final_text = task.seed_hypothesis.text_raw
         if final_text is None:
@@ -158,6 +183,20 @@ def record_decision(
         seed_hypothesis_id=task.seed_hypothesis_id,
         annotator=annotator,
         notes=decision.notes,
+        diarization_run_id=decision.diarization_run_id if decision.words is not None else None,
+        words=[
+            LabelWord(
+                position=position,
+                word=w.word,
+                start_time=w.start,
+                end_time=w.end,
+                speaker=w.speaker,
+                proposed_speaker=w.proposed_speaker,
+                suggested_speaker=w.suggested_speaker,
+                source=w.source,
+            )
+            for position, w in enumerate(decision.words or [])
+        ],
     )
     session.add(label)
     session.flush()
@@ -175,7 +214,9 @@ def record_decision(
     )
 
     task.status = "done"
-    if segment is not None:
+    # A clip's lifecycle belongs to its single-stream label. Attributing its words to speakers, or
+    # giving up on that, says nothing about whether the clip is usable as one stream.
+    if segment is not None and not per_speaker:
         segment.pipeline_status = (
             "labeled" if decision.disposition in APPROVED_DISPOSITIONS else "excluded"
         )
@@ -196,11 +237,50 @@ def record_decision(
                 "policy_version": version.policy_version,
                 "seed_hypothesis_id": task.seed_hypothesis_id,
                 "duration_ms": duration_ms,
+                **(
+                    {
+                        "diarization_run_id": decision.diarization_run_id,
+                        "words": len(decision.words),
+                        "moved": sum(
+                            1
+                            for w in decision.words
+                            if w.source == "label" and w.speaker != w.proposed_speaker
+                        ),
+                        "added": sum(1 for w in decision.words if w.source != "label"),
+                    }
+                    if decision.words is not None
+                    else {}
+                ),
             },
         )
     )
     session.flush()
     return label
+
+
+def _check_speaker_words(task: AnnotationTask, decision: Decision, *, per_speaker: bool) -> None:
+    """Words only on the speakers queue, and an approval there only with words (D98).
+
+    A per-speaker label is always listened to: nothing about who said a word in crosstalk can be
+    read off a disagreement score, so screening one is refused whatever the pot.
+    """
+    if not per_speaker:
+        if decision.words is not None:
+            raise LabelingError(f"task {task.id} is not in the speakers queue; it takes no words")
+        return
+    if decision.verification_tier != "verified":
+        raise LabelingError(
+            f"task {task.id} attributes words to speakers, which has to be listened to"
+        )
+    if decision.disposition in APPROVED_DISPOSITIONS:
+        if not decision.words:
+            raise LabelingError(
+                f"task {task.id} attributes words to speakers; open it in the multitrack editor"
+            )
+        if decision.diarization_run_id is None:
+            raise LabelingError(f"task {task.id}: per-speaker words need their diarization run")
+    elif decision.words is not None:
+        raise LabelingError(f"task {task.id}: a flag carries no words")
 
 
 def record_skip(
@@ -252,13 +332,31 @@ def record_skip(
     return event
 
 
+def speakers_version_ids(settings: Settings | None = None) -> sa.Select[tuple[int]]:
+    """The per-speaker label version's id, as a subquery (D98).
+
+    Everything that counts or reads *the* label of a clip means its single-stream label, so the
+    per-speaker version is left out of those by this, rather than by every caller remembering to.
+    """
+    settings = settings or get_settings()
+    return sa.select(LabelVersion.id).where(
+        LabelVersion.name == settings.labels.speakers_label_version
+    )
+
+
 def latest_label(
     session: Session, segment_id: int, label_version_id: int | None = None
 ) -> SegmentLabel | None:
-    """The current label for a segment: the most recent row, since labels are append-only."""
+    """The current label for a segment: the most recent row, since labels are append-only.
+
+    Without a version this is the newest single-stream label; a per-speaker one is only returned
+    when its version is asked for.
+    """
     query = sa.select(SegmentLabel).where(SegmentLabel.segment_id == segment_id)
     if label_version_id is not None:
         query = query.where(SegmentLabel.label_version_id == label_version_id)
+    else:
+        query = query.where(SegmentLabel.label_version_id.not_in(speakers_version_ids()))
     return session.scalars(
         query.order_by(SegmentLabel.created_at.desc(), SegmentLabel.id.desc()).limit(1)
     ).first()

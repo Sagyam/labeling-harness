@@ -4,6 +4,7 @@
 
 import {
   AcceptIn,
+  AttributeIn,
   BulkAcceptIn,
   BulkAcceptOut,
   DecisionOut,
@@ -39,6 +40,9 @@ import {
   ModelRescanOut,
   PlaygroundResult,
   Segment,
+  VoicePage,
+  VoiceVerdict,
+  VoiceVerdictOut,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -154,6 +158,35 @@ export const api = {
 
   labelTask: (taskId: number, body: LabelIn): Promise<DecisionOut> => {
     return request<DecisionOut>(`/tasks/${taskId}/label`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+  },
+
+  /** Where a voice speaks and the clips it speaks alone in (D99). */
+  getVoice: (voice: string, opts: { episode?: string; limit?: number } = {}): Promise<VoicePage> => {
+    const params = new URLSearchParams()
+    if (opts.episode) params.set('episode', opts.episode)
+    if (opts.limit) params.set('limit', String(opts.limit))
+    const qs = params.toString()
+    return request<VoicePage>(`/voices/${encodeURIComponent(voice)}${qs ? `?${qs}` : ''}`)
+  },
+
+  /** Only this voice, not only this voice, or take the verdict back (D99). */
+  setVoiceVerdict: (
+    voice: string,
+    segmentId: number,
+    verdict: VoiceVerdict,
+  ): Promise<VoiceVerdictOut> => {
+    return request<VoiceVerdictOut>(`/voices/${encodeURIComponent(voice)}/clips/${segmentId}`, {
+      method: 'POST',
+      body: JSON.stringify({ verdict }),
+    })
+  },
+
+  /** Save a speakers-queue clip's words on their speakers' lanes (D98). */
+  attributeTask: (taskId: number, body: AttributeIn): Promise<DecisionOut> => {
+    return request<DecisionOut>(`/tasks/${taskId}/attribute`, {
       method: 'POST',
       body: JSON.stringify(body),
     })

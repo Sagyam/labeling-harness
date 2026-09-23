@@ -10,10 +10,12 @@ import { Header, type HeaderMode } from '@/components/Header'
 import { IngestView } from '@/components/IngestView'
 import { ModelsView } from '@/components/ModelsView'
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
+import { MultitrackEditor } from '@/components/MultitrackEditor'
 import { TriageView } from '@/components/TriageView'
 import { api } from '@/services/api'
 import type {
   HealthResponse,
+  LaneWord,
   PotName,
   QueueRow,
   SortOrder,
@@ -22,6 +24,9 @@ import type {
   TriageSortBy,
   VerificationTier,
 } from '@/types'
+
+/** Clips whose words are attributed to speakers in the multitrack editor (D98). */
+const SPEAKERS_QUEUE = 'speakers'
 
 export default function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -194,6 +199,11 @@ export default function App() {
     durationMs: number,
     tier: VerificationTier = 'verified',
   ) => {
+    // A per-speaker label is saved from its lanes, never accepted from a row (D98).
+    if (activeQueue === SPEAKERS_QUEUE) {
+      handleOpenEditor(taskId)
+      return
+    }
     const targetRow = queueRows.find((r) => r.task_id === taskId)
     try {
       await api.acceptTask(taskId, {
@@ -241,6 +251,10 @@ export default function App() {
     tier: VerificationTier = 'verified',
   ) => {
     if (taskIds.length === 0) return
+    if (activeQueue === SPEAKERS_QUEUE) {
+      toast.info('Speaker lanes are saved one clip at a time, in the multitrack editor')
+      return
+    }
     try {
       await api.bulkAccept({ task_ids: taskIds, verification_tier: tier })
       toast.success(
@@ -309,10 +323,10 @@ export default function App() {
    * Bailing out to triage is worse than advancing but far better than stranding the annotator on
    * a clip they have already finished, which is how they end up labelling it twice.
    */
-  const advanceToNextTask = async (finishedTaskId?: number) => {
+  const advanceToNextTask = async (finishedTaskId?: number, queue: string = activeQueue) => {
     try {
       const next = await api.getNextTask({
-        queue: activeQueue,
+        queue,
         episode: episodeFilter || undefined,
       })
       if (next.id === finishedTaskId) {
@@ -420,6 +434,69 @@ export default function App() {
     }
   }
 
+  // Multitrack editor: save the lanes and move on within the speakers queue (D98).
+  const handleAttribute = async (
+    taskId: number,
+    runId: number,
+    words: LaneWord[],
+    durationMs: number,
+  ) => {
+    if (!currentTask) return
+    const externalId = currentTask.segment.external_id
+    try {
+      const result = await api.attributeTask(taskId, {
+        diarization_run_id: runId,
+        words,
+        duration_ms: durationMs,
+        opened_at: new Date(Date.now() - durationMs).toISOString(),
+      })
+      toast.success(
+        result.disposition === 'edited'
+          ? `Saved speakers for ${externalId}`
+          : `Accepted speakers for ${externalId} unchanged`,
+      )
+      refreshStats()
+      await advanceToNextTask(taskId, currentTask.queue)
+    } catch (err: any) {
+      toast.error(err.detail || 'Save failed')
+    }
+  }
+
+  const handleSpeakersFlag = async (
+    taskId: number,
+    disposition: 'unusable_audio' | 'uncertain',
+    durationMs: number,
+    notes?: string,
+  ) => {
+    try {
+      await api.flagTask(taskId, {
+        disposition,
+        notes: notes ?? null,
+        duration_ms: durationMs,
+        opened_at: new Date(Date.now() - durationMs).toISOString(),
+      })
+      toast.warning(notes ? `Flagged: ${notes}` : `Flagged as ${disposition}`)
+      refreshStats()
+      await advanceToNextTask(taskId, currentTask?.queue)
+    } catch (err: any) {
+      toast.error(err.detail || 'Flag failed')
+    }
+  }
+
+  const handleSpeakersSkip = async (taskId: number, durationMs: number) => {
+    try {
+      await api.skipTask(taskId, {
+        duration_ms: durationMs,
+        opened_at: new Date(Date.now() - durationMs).toISOString(),
+      })
+      toast.info('Deferred task')
+      refreshStats()
+      await advanceToNextTask(taskId, currentTask?.queue)
+    } catch (err: any) {
+      toast.error(err.detail || 'Skip failed')
+    }
+  }
+
   // Global keybindings: 1-5 switch views; ? toggles shortcuts modal
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -502,6 +579,17 @@ export default function App() {
         <IngestView onComplete={handleIngestComplete} />
       ) : activeMode === 'models' ? (
         <ModelsView />
+      ) : activeMode === 'editor' && currentTask?.queue === SPEAKERS_QUEUE && currentTask.lanes ? (
+        <MultitrackEditor
+          task={{ ...currentTask, lanes: currentTask.lanes }}
+          onSave={handleAttribute}
+          onFlag={handleSpeakersFlag}
+          onSkip={handleSpeakersSkip}
+          onExitToTriage={() => {
+            setActiveMode('triage')
+            loadQueue(activeQueue)
+          }}
+        />
       ) : activeMode === 'editor' && currentTask ? (
         <EditorView
           task={currentTask}

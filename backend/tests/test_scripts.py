@@ -91,6 +91,29 @@ def test_build_queue_script_accepts_an_episode_filter(cli) -> None:
     assert load("build_queue").main(["--episode", "does-not-exist", "--dry-run"]) == 0
 
 
+def test_queue_speakers_script_reports_what_it_would_queue(
+    cli, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert load("queue_speakers").main(["--limit", "3", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "gold clips qualify" in out
+    assert "DRY RUN -- speakers queue" in out
+
+
+def test_queue_speakers_script_reports_an_unknown_clip_to_reopen(
+    cli, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert load("queue_speakers").main(["--reopen", "no-such-clip"]) == 1
+    assert "no clip" in capsys.readouterr().out
+
+
+def test_voiceprint_report_script_runs_on_an_empty_corpus(
+    cli, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert load("voiceprint_report").main([]) == 0
+    assert "saved with a suggestion" in capsys.readouterr().out
+
+
 def test_export_script_writes_the_requested_kind(cli, tmp_path: Path) -> None:
     script = load("export_dataset")
     assert script.main(["--kind", "training", "--output-root", str(tmp_path)]) == 0

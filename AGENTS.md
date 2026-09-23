@@ -78,7 +78,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (1512 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (1619 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -207,6 +207,11 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   `scripts/export_aligner_onnx.py` remains for provenance; `torch` and `transformers` must never
   enter `backend/pyproject.toml`. A missing *or unfetchable* model is a warning and no word spans,
   never a failed episode -- same contract as `silero_vad.onnx`.
+- The **voiceprint model** (WeSpeaker ResNet34-LM ONNX, 26 MB, D99) downloads itself the same way,
+  on the first speakers-queue clip or voice confirmation; `HARNESS_VOICEPRINT_NO_DOWNLOAD=1` refuses
+  it and the editor simply makes no suggestions. Its fbank is numpy (`voiceprint.fbank`), checked
+  against torchaudio's by a stored fixture, because torch may not enter the backend. A voiceprint
+  follows the louder voice in crosstalk: never use it to attribute overlapped words.
 - The fetch only writes to the **default** path. Passing `model_path`/`vocab_path` explicitly
   disables it, which is what keeps fixtures and the degradation test from pulling 317 MB.
   `HARNESS_ALIGNER_MODEL_DIR` moves it (the container uses `/app/data/models`, inside the bind

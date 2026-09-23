@@ -262,6 +262,9 @@ class LabelSettings(BaseModel):
 
     policy_version: str = "policy_v1"
     default_label_version: str = "v1"
+    #: Where per-speaker labels from the multitrack editor go (D98). A separate version keeps the
+    #: single-stream label current for single-stream scoring.
+    speakers_label_version: str = "speakers-v1"
     default_annotator: str = "owner"
 
 

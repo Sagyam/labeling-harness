@@ -48,7 +48,7 @@ import { resolveUrl } from '@/services/api'
 import { cn } from '@/lib/utils'
 import type { PotName, QueueRow, SortOrder, TriageSortBy, VerificationTier } from '@/types'
 
-const QUEUES = ['review', 'audit', 'error'] as const
+const QUEUES = ['review', 'audit', 'error', 'speakers'] as const
 
 const SORT_OPTIONS: Array<{ id: TriageSortBy; label: string }> = [
   { id: 'priority', label: 'Priority' },

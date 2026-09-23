@@ -97,6 +97,7 @@ translit:
 labels:
   policy_version: policy_v1
   default_label_version: v1
+  speakers_label_version: speakers-v1   # per-speaker labels from the multitrack editor (D98)
   default_annotator: owner
 
 export:

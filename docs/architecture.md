@@ -98,7 +98,9 @@ on the first recording (D92).
 |---|---|
 | `annotation_tasks` | Queue rows with `priority_score`, `reason_jsonb`, `seed_hypothesis_id` |
 | `label_versions` | Named label sets carrying a `policy_version` |
-| `segment_labels` | Append-only human decisions; latest row per (segment, label_version) is current |
+| `segment_labels` | Append-only human decisions; latest row per (segment, label_version) is current. A per-speaker label (`speakers-v1`, D98) also names its `diarization_run_id` |
+| `label_words` | A per-speaker label's words: text, clip-relative span, the run's speaker label, the speaker the diarization proposed, the speaker a voiceprint suggested (D99), and `source` (`label`, `recogniser`, `typed`, `copy`) |
+| `voice_confirmations` | The owner's verdicts on a voice's stretch alone in a clip (`confirmed`, `rejected`, `cleared`; newest per voice and clip current), with the stretch and, when confirmed, its voiceprint embedding (D99) |
 | `annotation_events` | Timing and action per interaction, for throughput measurement |
 | `audit_logs` | Every write, with old and new values |
 | `translit_cache` | Latin token -> ranked Devanagari candidates |
@@ -240,6 +242,13 @@ D74 records what that costs.
 Segments with zero hypotheses go to the `error` queue, never to `review`. An audit queue takes a
 seeded random sample (default 5%) of the low-priority half of the *ungated* clips, so quality on
 the easy majority stays measurable.
+
+The `speakers` queue is never built by the queue builder. `scripts/queue_speakers.py` opens a task
+there for labelled clips of a pot with two or more diarized speakers (or one, with
+`--min-voices 1`), optionally within a crosstalk band, most crosstalk first (D98). `--reopen`
+puts a clip saved by mistake back, starting from its saved lanes.
+Its tasks open in the multitrack editor, and their decisions go to the `speakers-v1` label
+version without touching the clip's pot, pipeline status or single-stream label.
 
 ## Ingestion and Cloud ASR
 
@@ -522,6 +531,9 @@ the same inputs and filters produce byte-identical output.
 | `POST /tasks/{id}/label` | `disposition=edited`, body carries `final_text` |
 | `POST /tasks/{id}/flag` | `unusable_audio` or `uncertain` |
 | `POST /tasks/{id}/skip` | Defer; event only, no label |
+| `POST /tasks/{id}/attribute` | Speakers queue only: every word with a span and a speaker, stored as a `speakers-v1` label (D98) |
+| `GET /voices/{voice}` | A voice's episodes and its longest stretch alone per clip; `episode`, `limit` (D99) |
+| `POST /voices/{voice}/clips/{segment_id}` | `confirmed`, `rejected` or `cleared` for that clip's stretch of the voice; a confirmed one is embedded into the voice's print |
 | `POST /tasks/bulk-accept` | Accept many tasks in one transaction |
 | `POST /translit` | Latin token → ranked Devanagari candidates |
 | `POST /translit/choice` | Record the chosen form for the correction memory |
@@ -581,6 +593,9 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 |---|---|---|
 | Triage | `components/TriageView.tsx` | Dense keyboard-first list over `/queue`; one keystroke per decision |
 | Editor | `components/EditorView.tsx` | Waveform, playback, transcript editing, hypothesis switching, live diff |
+| Multitrack editor | `components/MultitrackEditor.tsx`, `lib/lanes.ts` | Speakers-queue tasks (D98): a lane per diarized speaker, a block per word on a 10 ms grid; move words between lanes (drag or the speaker's number), copy one both voices said (Shift+number), add words by typing at the playhead or taking one the recognisers heard, drag edges to size; undo, and a karaoke line of the mix tagged by speaker. Each lane plays its voice alone and opens its voice page; voiceprint suggestions mark blocks another voice sounds like (`V`, D99) |
+| Voice page | `components/VoiceDialog.tsx` | One voice across episodes (D99): its longest stretch alone in each clip, to play and confirm or reject; confirmed stretches become its print. Opened from the editor's lanes and the Corpus voices table |
+| Playback speed | `lib/playback.ts` | 0.25× to 1.25×, remembered in the browser across clips by both editors |
 | Waveform | `components/Waveform.tsx` | Draws the precomputed peaks; click to seek, playhead follows audio |
 | Karaoke line | `components/KaraokeTranscript.tsx` | Lights and grows the spoken word from `hypothesis_words` spans; click a word to play it. Words are tinted by diarized speaker (numbered, with an `S1`/`S2` tag at each change) and overlapped words get a dashed outline (D77, D78) |
 | Dispute panel | `components/DisputePopover.tsx` | What the other systems heard at a disputed moment; plays it, and swaps the word in one click |

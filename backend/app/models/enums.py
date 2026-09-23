@@ -14,8 +14,22 @@ SPLITS: Final[tuple[str, ...]] = ("train", "val", "test", "unassigned")
 PipelineStatus = Literal["imported", "queued", "labeled", "excluded"]
 PIPELINE_STATUSES: Final[tuple[str, ...]] = ("imported", "queued", "labeled", "excluded")
 
-QueueName = Literal["review", "audit", "error"]
-QUEUE_NAMES: Final[tuple[str, ...]] = ("review", "audit", "error")
+#: ``speakers`` holds clips whose words are being attributed to speakers in the multitrack editor
+#: (D98); the queue builder never writes to it.
+QueueName = Literal["review", "audit", "error", "speakers"]
+QUEUE_NAMES: Final[tuple[str, ...]] = ("review", "audit", "error", "speakers")
+SPEAKERS_QUEUE: Final = "speakers"
+
+#: Where a word on a speaker lane came from (D98): the verified text, a recogniser's word the text
+#: lacked, one the annotator typed, or a copy of a word both voices said.
+LabelWordSource = Literal["label", "recogniser", "typed", "copy"]
+LABEL_WORD_SOURCES: Final[tuple[str, ...]] = ("label", "recogniser", "typed", "copy")
+
+#: What the owner heard in a clip offered as one voice's solo speech (D99): only that voice
+#: (``confirmed``), not only that voice (``rejected``), or a verdict taken back (``cleared``). The
+#: newest row per (voice, segment) is current. A judgement, like a label -- not a status of any row.
+VoiceVerdict = Literal["confirmed", "rejected", "cleared"]
+VOICE_VERDICTS: Final[tuple[str, ...]] = ("confirmed", "rejected", "cleared")
 
 TaskStatus = Literal["pending", "in_progress", "done", "skipped"]
 TASK_STATUSES: Final[tuple[str, ...]] = ("pending", "in_progress", "done", "skipped")

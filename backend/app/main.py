@@ -68,6 +68,7 @@ def create_app() -> FastAPI:
         segments,
         tasks,
         translit,
+        voices,
     )
 
     for module in (
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
         costs,
         pots,
         asr_models,
+        voices,
     ):
         app.include_router(module.router)
 

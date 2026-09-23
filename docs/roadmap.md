@@ -93,9 +93,20 @@ migration with a working downgrade):
   about 250 of 750 gold clips. A single-speaker clip is one lane and no work, unless the diarizer
   missed a second voice there, which the queue cannot surface.
 
-**Pilot first.** Owner's rule, as for every A so far: a throwaway prototype on a handful of gold
-clips before anything is built into the harness. It measures words moved, words added and time
-per clip (the client-reported `duration_ms`, as for the throughput baseline).
+**Built, piloting (2026-09-23, D98).** The owner asked for the editor in the harness rather than
+a throwaway prototype, so the pilot runs there: the 30 gold clips with the most crosstalk (29–50%,
+of 288 that qualify) are in triage's `speakers` queue. The settling points above are answered in
+D98. Each save records words moved, words added and time per clip (`label_words.source` and
+`proposed_speaker`, and the client-reported `duration_ms`). Still open: how long a clip takes, how
+often the diarizer merges two voices, and whether the recogniser candidates recover weak-voice
+words or only add noise.
+
+**Voiceprints (2026-09-23, D99).** A voice page lets the owner hear and confirm a voice's stretches
+alone, and confirmed stretches become its print. Prints suggest a lane for words no second voice
+is heard over; inside crosstalk a print follows the louder voice (findings.md), so it suggests
+nothing there. `scripts/voiceprint_report.py` scores the suggestions against saved lanes. If
+clean-speech diarizer errors turn out to be what costs time, the next step is re-diarizing an
+episode with its confirmed prints as fixed clusters, on the Modal GPU.
 
 ## B. Distil the Flex fine-tune into other architectures (priority 2)
 

@@ -19,19 +19,22 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, utc_now_column, utc_optional_column
-from app.models.content import AsrHypothesis, JsonB, Segment
+from app.models.content import AsrHypothesis, DiarizationRun, JsonB, Segment
 from app.models.enums import (
     ACTIVE_TASK_STATUSES,
     DISPOSITIONS,
     EVENT_ACTIONS,
+    LABEL_WORD_SOURCES,
     QUEUE_NAMES,
     TASK_STATUSES,
     VERIFICATION_TIERS,
+    VOICE_VERDICTS,
     check_in,
 )
 
@@ -135,11 +138,96 @@ class SegmentLabel(Base):
     )
     annotator: Mapped[str] = mapped_column(String(64), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    #: The diarization run whose speaker labels ``words`` use. Null on every single-stream label;
+    #: set on a per-speaker one (D98).
+    diarization_run_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("diarization_runs.id", ondelete="SET NULL")
+    )
     created_at: Mapped[dt.datetime] = utc_now_column()
 
     segment: Mapped[Segment] = relationship()
     label_version: Mapped[LabelVersion] = relationship()
     seed_hypothesis: Mapped[AsrHypothesis | None] = relationship()
+    diarization_run: Mapped[DiarizationRun | None] = relationship()
+    #: Per-speaker words, in time order; empty on a single-stream label.
+    words: Mapped[list[LabelWord]] = relationship(
+        back_populates="label", cascade="all, delete-orphan", order_by="LabelWord.position"
+    )
+
+
+class LabelWord(Base):
+    """One word of a per-speaker label: its text, its span and who said it (D98).
+
+    Written with its label and never changed, like the label. ``speaker`` is the raw label of the
+    label's diarization run (``SPEAKER_01``), so the streams stay separable even if the run's
+    display order changes; ``proposed_speaker`` is where the diarization put the word before the
+    annotator moved it, which makes words moved per clip a count.
+    """
+
+    __tablename__ = "label_words"
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="end_after_start"),
+        CheckConstraint(check_in("source", LABEL_WORD_SOURCES), name="source_allowed"),
+        UniqueConstraint("label_id", "position"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    label_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("segment_labels.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Time order within the label, from 0.
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    word: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Clip-relative seconds, like ``hypothesis_words``.
+    start_time: Mapped[float] = mapped_column(Float, nullable=False)
+    end_time: Mapped[float] = mapped_column(Float, nullable=False)
+    speaker: Mapped[str] = mapped_column(String(64), nullable=False)
+    proposed_speaker: Mapped[str | None] = mapped_column(String(64))
+    #: The speaker a voiceprint suggested when the lanes were served (D99), or null. Kept so the
+    #: suggestions can be scored against where the annotator left the word.
+    suggested_speaker: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    label: Mapped[SegmentLabel] = relationship(back_populates="words")
+
+
+class VoiceConfirmation(Base):
+    """The owner's verdict on whether a stretch of a clip is one voice and nobody else (D99).
+
+    The stretch is what the voice page played: the whole clip when the diarization hears only
+    that voice in it, else its longest stretch alone. Append-only: the newest row per
+    ``(voice, segment_id)`` is current. A ``confirmed`` row carries the stretch's voiceprint
+    embedding, and a voice's confirmed stretches replace the diarizer's centroid as its print.
+    ``voice`` is the anonymous id of D87 and nothing more (D56).
+    """
+
+    __tablename__ = "voice_confirmations"
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="end_after_start"),
+        CheckConstraint(check_in("verdict", VOICE_VERDICTS), name="verdict_allowed"),
+        Index("ix_voice_confirmations_voice", "voice"),
+        Index("ix_voice_confirmations_segment_id", "segment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    voice: Mapped[str] = mapped_column(String(16), nullable=False)
+    segment_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("segments.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The run whose speaker the clip was offered as, and that speaker's raw label.
+    diarization_run_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("diarization_runs.id", ondelete="SET NULL")
+    )
+    speaker: Mapped[str | None] = mapped_column(String(64))
+    #: The stretch judged, clip-relative seconds.
+    start_time: Mapped[float] = mapped_column(Float, nullable=False)
+    end_time: Mapped[float] = mapped_column(Float, nullable=False)
+    verdict: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: Unit 256-d WeSpeaker embedding of the stretch, for a confirmed verdict; null otherwise, or
+    #: when the model was unavailable.
+    embedding_jsonb: Mapped[list[float] | None] = mapped_column(JsonB)
+    annotator: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[dt.datetime] = utc_now_column()
 
 
 class AnnotationEvent(Base):
@@ -173,5 +261,7 @@ __all__ = [
     "AnnotationEvent",
     "AnnotationTask",
     "LabelVersion",
+    "LabelWord",
     "SegmentLabel",
+    "VoiceConfirmation",
 ]

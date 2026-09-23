@@ -36,6 +36,13 @@ def get_object_storage() -> ObjectStorage:
     return get_storage()
 
 
+def get_voice_embedder():
+    """The process's voiceprint model; unavailable, not an error, when it could not be had (D99)."""
+    from app.services.voiceprint import default_embedder
+
+    return default_embedder()
+
+
 def require_auth(
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_config),

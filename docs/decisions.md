@@ -2156,3 +2156,102 @@ suite can see (`notebooks/src` is loaded directly by `test_sweep.py` and `test_c
 `.githooks/pre-push` always runs the full suite, `db` tests included. A commit is therefore not
 proof that the schema and API layers still hold; a push is. **Reversal:** trivial — folding the full
 suite back into pre-commit is a one-line change to one short script.
+
+## D98 — Per-speaker labels are words on fixed speaker lanes, stored as their own label version
+
+Roadmap A, as the owner designed it on 2026-09-23. A clip in the `speakers` queue opens in the
+multitrack editor: a lane for each of the episode's diarized speakers, a block for each word at
+the time it was said, on a 10 ms grid. The annotator moves words between lanes and adds the words
+the transcript lacks. Nothing else.
+
+- **Where the blocks start.** The clip's verified single-stream label, put on the fused seed's
+  word spans by a plain (unfolded) word alignment: a matched or substituted word takes that
+  word's span, a word the seed lacks gets none and must be placed by hand. Folding is wrong here:
+  it merges a word with its neighbour at no cost, which stretches spans across two words. Each
+  word starts on the speaker whose turns cover most of it (not its midpoint, which in crosstalk is
+  a coin toss); a word no turn touches starts on no lane. Without a verified label the seed is
+  used; an earlier per-speaker label of the same run is reopened as saved.
+- **Speakers are fixed.** Lanes are the current diarization run's speakers, so the editor cannot
+  create or delete one. A speaker the diarizer invented is an empty lane. Two people it merged
+  cannot be split here: the clip is flagged `uncertain` with the note "diarizer merged two
+  voices", for an episode-level fix.
+- **Recogniser candidates.** A word at least two recognisers heard, at a moment the verified text
+  has none and with no same word in the text within 0.6 s, is offered in a bottom row to drag onto
+  a lane. With one recogniser enough, the first clip offered 49 candidates for 52 words; with two,
+  the 30 queued clips offer 41 for 1,174.
+- **Storage.** A save is one `segment_labels` row in the `speakers-v1` label version, one
+  `label_words` row per word (span, the run's raw speaker label, the proposed speaker, and where
+  the word came from), and the usual event and audit rows, in one transaction (invariants 2 and
+  8). `diarization_run_id` names the run; a save against a run that has since been replaced is
+  refused. It is always `verified`: who spoke in crosstalk cannot be screened (invariant 5). The
+  disposition is `accepted_unchanged` when the lanes are saved exactly as served, `edited`
+  otherwise. No new status field (invariant 3).
+- **It is not a single-stream label.** `latest_label` and `latest_labels_subquery` leave the
+  `speakers-v1` version out, so stats, reports, pots, the inventory and the export still count and
+  export one label per clip. A speakers-queue decision never changes `pipeline_status`, and an
+  accept or text label on a speakers task is refused: the lanes are saved only through
+  `/tasks/{id}/attribute`. The flat text of the lanes (every word in time order, a shared word
+  twice) is kept in `final_text` for reading, not for scoring.
+- **Which clips.** `scripts/queue_speakers.py` ranks labelled clips of a pot with two or more
+  diarized speakers by the overlap detector's crosstalk share. On 2026-09-23, 288 gold clips
+  qualified; the 30 with the most crosstalk (29–50%) were queued for the owner to try the design.
+  Later that day the owner asked for every gold clip with any measured crosstalk, to judge the
+  diarizer on easy clips as well (sorting by crosstalk in triage): 261 in all. The script takes a
+  crosstalk band and `--min-voices 1` for clips the diarizer heard as one voice.
+- **A save is undone by reopening, never by deleting.** `queue_speakers.py --reopen` puts a saved
+  clip back in the queue with a `reopen` event and an audit row; the editor opens from the saved
+  lanes, and the next save supersedes them.
+  The roadmap asked for a throwaway prototype before any harness build; the owner asked for it in
+  the harness instead, so these 30 clips are the pilot, and words moved, words added and time per
+  clip come from its `label_words` and `annotation_events` rows.
+
+D95 is untouched: synthetic crosstalk in training still keeps the clip's own label.
+
+**Reversal:** moderate. `alembic downgrade` to `a6d0f4c93e18` deletes the speakers tasks, the
+`speakers-v1` labels and their words; then delete the two services, the editor, the endpoint and
+the queue script.
+
+## D99 — Voices get a page, confirmed stretches become their print, and prints only suggest
+
+The owner asked, from the multitrack editor: who is v125, and can clean clips of a voice fix the
+diarizer's mistakes about it? Measured first (findings.md, *Voiceprints on clean speech and in
+crosstalk*); built on what the measurement allows.
+
+- **Playback speed** goes down to 0.25× and is remembered in the browser across clips, in both
+  editors. A preference of one viewer, so browser storage rather than the database.
+- **A voice page.** Every voice (D87's anonymous id) has a page, opened from a lane's voice id in
+  the multitrack editor or from the Corpus voices table: the episodes it speaks in and, for each
+  clip it speaks in, its longest stretch alone (its turns, less every other speaker's turns and
+  every detected overlap span), 1.5 s or longer, longest first. Whole solo clips were tried first
+  and left 55 of 197 voices with nothing to hear; stretches leave 10. Each lane also has a button
+  that plays the voice's best stretch without leaving the editor. Still no name (D56): knowing
+  what a voice sounds like is the point, not who it is.
+- **Confirmations.** The owner marks a played stretch *only this voice*, *not only*, or takes the
+  verdict back: `voice_confirmations`, append-only, newest per (voice, segment) current, with the
+  stretch and an audit row. The stretch is recomputed by the server, never taken from the client.
+  A verdict is a judgement like a label, not a status of any row, so invariant 3 is untouched.
+- **Prints.** WeSpeaker ResNet34-LM as ONNX, with a numpy Kaldi fbank (torch never enters the
+  backend), downloads itself pinned and digest-checked like the aligner and the overlap detector;
+  without it there are no suggestions and nothing fails. It shares pyannote's embedding space, so
+  a voice's print is the mean of its confirmed stretches' embeddings, across episodes, and the
+  diarizer's stored centroid until it has one.
+- **Suggestions, not corrections.** When a speakers-queue clip is served, each word no second
+  voice is heard over (one diarized turn at its middle, no detected overlap) is embedded over 1 s
+  and scored against the prints of the clip's speakers. When another speaker's print is closer by
+  0.1 or more, the block is marked with that speaker; `V` takes one suggestion, `Shift+V` all of
+  them. Nothing moves by itself. Words in crosstalk get no suggestion: there the print follows the
+  louder voice and is confident when wrong.
+- **Scored before trusted.** A saved word keeps the suggestion it was served with
+  (`label_words.suggested_speaker`). `scripts/voiceprint_report.py` reports how many suggested
+  words the owner left on the suggested lane, and how many of the owner's moves a suggestion
+  foresaw. Suggestions may start moving words by themselves only on a new decision entry that
+  cites that report.
+
+**What this does not do:** re-diarize an episode with the prints, or attribute words inside
+crosstalk. The first is possible (constrained clustering on the Modal GPU, D79) and is the next
+step if the report shows the diarizer's clean-speech errors are what costs time; the second needs
+a model that separates or follows a target voice (roadmap D).
+
+**Reversal:** cheap. `alembic downgrade d98a1c5e7f20` drops the confirmations and the stored
+suggestions; delete `voiceprint.py`, `voice_clips.py`, the voices router, `VoiceDialog.tsx` and the
+editor's suggestion code.

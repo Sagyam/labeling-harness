@@ -14,6 +14,7 @@ import { RiArrowDownSLine, RiArrowRightSLine, RiUserVoiceLine } from '@remixicon
 import { GoalBadge, POT_TEXT, Panel, PanelHeading, Stat, percent } from '@/components/analytics/primitives'
 import { bucketLabel, minutes } from '@/components/analytics/labels'
 import { type Filters, type VoiceCut, voiceCuts } from '@/components/analytics/model'
+import { VoiceDialog } from '@/components/VoiceDialog'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import type { CorpusInventory, VoiceProfile } from '@/types'
@@ -81,10 +82,13 @@ function EpisodeStrip({
   voice,
   fills,
   onPickVoice,
+  onOpenVoice,
 }: {
   voice: VoiceProfile
   fills: Map<string, string>
   onPickVoice: (voice: string) => void
+  /** Open the voice's page: its solo clips, to listen to and confirm (D99). */
+  onOpenVoice: (voice: string) => void
 }) {
   const total = voice.episodes.reduce((s, e) => s + e.minutes, 0) || 1
   return (
@@ -129,6 +133,13 @@ function EpisodeStrip({
         ))}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <button
+          type="button"
+          className="font-medium text-info hover:underline"
+          onClick={() => onOpenVoice(voice.voice)}
+        >
+          Listen and confirm solo clips →
+        </button>
         <span>
           {voice.words.toLocaleString()} attributed words
           {voice.usable ? '' : ' (under 300: not a usable voice)'}
@@ -173,6 +184,7 @@ export function VoicesPanel({
   const [recurringOnly, setRecurringOnly] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [all, setAll] = useState(false)
+  const [voicePage, setVoicePage] = useState<string | null>(null)
   const summary = inventory.voice_summary
   const filtered = Object.keys(filters).some((k) => k !== 'voice')
   const cuts = useMemo(() => voiceCuts(inventory, filters), [inventory, filters])
@@ -352,7 +364,12 @@ export function VoicesPanel({
                     <tr className="border-b bg-muted/20">
                       <td />
                       <td colSpan={11}>
-                        <EpisodeStrip voice={voice} fills={fills} onPickVoice={onPickVoice} />
+                        <EpisodeStrip
+                          voice={voice}
+                          fills={fills}
+                          onPickVoice={onPickVoice}
+                          onOpenVoice={setVoicePage}
+                        />
                       </td>
                     </tr>
                   ) : null}
@@ -371,6 +388,7 @@ export function VoicesPanel({
           {all ? `Show the top ${SHOW_AT_FIRST}` : `Show all ${rows.length} voices`}
         </button>
       ) : null}
+      <VoiceDialog voice={voicePage} onClose={() => setVoicePage(null)} />
     </Panel>
   )
 }

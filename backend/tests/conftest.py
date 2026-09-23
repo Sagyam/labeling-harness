@@ -25,6 +25,8 @@ DEFAULT_TEST_DB_URL = "postgresql+psycopg://harness:harness@localhost:5432/harne
 # The suite never downloads the overlap detector: an ingest that finds no model leaves its clips
 # unmeasured, which is a supported state. Tests that need detections inject a stand-in.
 os.environ.setdefault("HARNESS_OVERLAP_NO_DOWNLOAD", "1")
+# Nor the voiceprint model (D99): without it the editor makes no suggestions, which is supported.
+os.environ.setdefault("HARNESS_VOICEPRINT_NO_DOWNLOAD", "1")
 
 
 @pytest.fixture(autouse=True)
@@ -157,13 +159,17 @@ def client(db_session: Session, object_storage, settings):
     """
     from fastapi.testclient import TestClient
 
-    from app.api.deps import get_config, get_object_storage, get_session
+    from app.api.deps import get_config, get_object_storage, get_session, get_voice_embedder
     from app.main import create_app
+    from app.services.voiceprint import VoiceEmbedder
 
     app = create_app()
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides[get_object_storage] = lambda: object_storage
     app.dependency_overrides[get_config] = lambda: settings
+    # An explicit path is never downloaded to, so this is an embedder without a model.
+    offline = VoiceEmbedder(object_storage.root / "no-voiceprint-model.onnx")
+    app.dependency_overrides[get_voice_embedder] = lambda: offline
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

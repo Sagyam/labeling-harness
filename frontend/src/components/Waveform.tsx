@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { useTheme } from 'next-themes'
 
+import { cn } from '@/lib/utils'
 import type { PeaksPayload } from '@/types'
 
 interface WaveformProps {
@@ -8,9 +9,11 @@ interface WaveformProps {
   currentTime: number
   duration: number
   onSeek: (time: number) => void
+  /** Extra classes for the container, e.g. a different height. */
+  className?: string
 }
 
-export function Waveform({ peaks, currentTime, duration, onSeek }: WaveformProps) {
+export function Waveform({ peaks, currentTime, duration, onSeek, className }: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const { resolvedTheme } = useTheme()
@@ -92,7 +95,7 @@ export function Waveform({ peaks, currentTime, duration, onSeek }: WaveformProps
   return (
     <div
       ref={containerRef}
-      className="relative h-28 w-full cursor-ew-resize touch-none bg-muted/40"
+      className={cn('relative h-28 w-full cursor-ew-resize touch-none bg-muted/40', className)}
       onPointerDown={handlePointerDown}
       title="Click or drag to seek"
     >
