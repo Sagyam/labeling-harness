@@ -164,6 +164,20 @@ def canonical_url(raw_url: str) -> str:
     return f"https://www.youtube.com/watch?v={parse_video_id(raw_url)}"
 
 
+def video_url(source_uri: str | None) -> str | None:
+    """The canonical link to an episode's video, or None when it did not come from YouTube.
+
+    Rebuilt from the video id like everything else here (D23): the result reaches an ``href``, so
+    a stored string is never passed through, only an id that matched :data:`VIDEO_ID_RE`.
+    """
+    if not source_uri:
+        return None
+    try:
+        return canonical_url(source_uri)
+    except InvalidYouTubeUrl:
+        return None
+
+
 def _base_command(settings: YouTubeSettings) -> list[str]:
     """The yt-dlp invocation shared by probing and downloading.
 

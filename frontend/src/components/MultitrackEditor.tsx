@@ -6,6 +6,7 @@ import {
   RiArrowLeftLine,
   RiPauseFill,
   RiUserVoiceLine,
+  RiYoutubeLine,
   RiPlayFill,
   RiRepeat2Line,
   RiZoomInLine,
@@ -50,6 +51,7 @@ import {
   toSubmission,
 } from '@/lib/lanes'
 import { SPEEDS, usePlaybackRate } from '@/lib/playback'
+import { LEAD_IN_SECONDS, clock, videoAt } from '@/lib/video'
 import { cn } from '@/lib/utils'
 import { api, resolveUrl } from '@/services/api'
 import type { HypothesisWord, LaneWord, PeaksPayload, SpeakerLanes, Task } from '@/types'
@@ -995,6 +997,26 @@ export function MultitrackEditor({
           </Chip>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {segment.video_url && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="sm" asChild>
+                  <a
+                    href={videoAt(segment.video_url, segment.start_time + currentTime)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => audioRef.current?.pause()}
+                  >
+                    <RiYoutubeLine data-icon="inline-start" />
+                    Watch at {clock(segment.start_time + currentTime - LEAD_IN_SECONDS)}
+                  </a>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Open the video {LEAD_IN_SECONDS} s before the playhead, to see who is talking
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

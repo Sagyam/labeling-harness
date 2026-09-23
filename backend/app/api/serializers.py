@@ -17,6 +17,7 @@ from app.models import AnnotationTask, AsrHypothesis, Segment
 from app.services.clip_classes import overlap_share
 from app.services.diarization_import import segment_speaker_turns
 from app.services.labeling import latest_label
+from app.services.youtube import video_url
 
 
 def audio_url(segment_id: int) -> str:
@@ -70,6 +71,7 @@ def serialize_segment(session: Session, segment: Segment) -> SegmentOut:
         external_id=segment.external_id,
         episode_id=segment.episode_id,
         episode_external_id=segment.episode.external_id,
+        video_url=video_url(segment.episode.source_uri),
         split=segment.episode.split,
         pot=segment.pot,
         speaker_id=segment.speaker_id,

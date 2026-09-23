@@ -75,6 +75,9 @@ class SegmentOut(BaseModel):
     external_id: str
     episode_id: int
     episode_external_id: str
+    #: The episode's YouTube video, rebuilt from its id; null for an uploaded file. Clip times
+    #: are episode-relative, so ``start_time`` is the moment in the video.
+    video_url: str | None = None
     split: str
     #: ``gold`` or ``train``, for this clip (D71). The editor reads this to decide whether
     #: screening is even offered: a gold clip has to be listened to.

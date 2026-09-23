@@ -5,6 +5,7 @@ import {
   RiPauseFill,
   RiPlayFill,
   RiRepeat2Line,
+  RiYoutubeLine,
 } from '@remixicon/react'
 import { toast } from 'sonner'
 
@@ -34,6 +35,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { api, resolveUrl } from '@/services/api'
 import { karaokeWords, stripEdgePunctuation, wordVoices } from '@/lib/karaoke'
 import { SPEEDS, usePlaybackRate } from '@/lib/playback'
+import { LEAD_IN_SECONDS, clock, videoAt } from '@/lib/video'
 import { cn } from '@/lib/utils'
 import type { Dispute, PeaksPayload, PotName, Task } from '@/types'
 
@@ -394,6 +396,26 @@ export function EditorView({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {segment.video_url && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="sm" asChild>
+                  <a
+                    href={videoAt(segment.video_url, segment.start_time + currentTime)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => audioRef.current?.pause()}
+                  >
+                    <RiYoutubeLine data-icon="inline-start" />
+                    Watch at {clock(segment.start_time + currentTime - LEAD_IN_SECONDS)}
+                  </a>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Open the video {LEAD_IN_SECONDS} s before the playhead, to see who is talking
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Button
             variant={segment.pot === 'gold' ? 'secondary' : 'ghost'}
             size="sm"

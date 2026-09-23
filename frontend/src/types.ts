@@ -102,6 +102,8 @@ export interface Segment {
   external_id: string
   episode_id: number
   episode_external_id: string
+  /** The episode's YouTube video, rebuilt from its id; null for an uploaded file. */
+  video_url?: string | null
   split: 'train' | 'val' | 'test' | string
   /** Gold clips must be listened to; the editor hides screening for them. */
   pot: PotName

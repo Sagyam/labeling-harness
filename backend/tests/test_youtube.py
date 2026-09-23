@@ -758,3 +758,42 @@ def test_pipeline_bot_detection_moves_job_to_backlog(
     assert job.stage == "backlog"
     assert "bot" in (job.error or "").lower()
     assert job.job_id in manager._backlog
+
+
+# --- linking a clip back to its video ---------------------------------------------------------
+
+
+def test_a_stored_youtube_source_becomes_a_canonical_link() -> None:
+    from app.services.youtube import video_url
+
+    stored = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert video_url(stored) == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert video_url("youtu.be/dQw4w9WgXcQ?t=40") == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [None, "", "file://episode.flac", "https://evil.example/watch?v=dQw4w9WgXcQ", "javascript:x"],
+)
+def test_anything_else_has_no_video_link(source) -> None:
+    """The link reaches an href, so only a URL rebuilt from a YouTube video id ever does."""
+    from app.services.youtube import video_url
+
+    assert video_url(source) is None
+
+
+@pytest.mark.db
+def test_a_segment_carries_its_video_link(client, imported_episode, db_session) -> None:
+    import sqlalchemy as sa
+
+    from app.models import Episode
+
+    episode = db_session.scalars(sa.select(Episode)).one()
+    task_id = client.get("/queue").json()[0]["task_id"]
+    episode.source_uri = "file://episode.flac"
+    db_session.flush()
+    assert client.get(f"/tasks/{task_id}").json()["segment"]["video_url"] is None
+    episode.source_uri = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    db_session.flush()
+    segment = client.get(f"/tasks/{task_id}").json()["segment"]
+    assert segment["video_url"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"

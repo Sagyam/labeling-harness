@@ -78,7 +78,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (1619 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (1626 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -123,7 +123,8 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   the subprocess sees (D23). Do not "improve" this into sanitizing the string: the rebuild is what
   keeps the harness from being a fetcher for arbitrary hosts and a leading `-` from becoming a
   flag. Its download occupies the upload's slot, not a sixth stage — the five stages and their
-  numbering are unchanged.
+  numbering are unchanged. The editors' "Watch at" link follows the same rule: `youtube.video_url`
+  rebuilds it from the id, so a stored string never reaches an `href`.
 - OpenRouter's Batch API is text-only. A `:batch` model slug is rejected outright on the
   synchronous endpoint, and a batch carrying audio is accepted and *then* terminally fails
   validation — so a `:batch` transcriber fails an episode late rather than at startup. No ASR
