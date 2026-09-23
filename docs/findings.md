@@ -24,6 +24,95 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## One person, two voice ids: how often the diarizer splits a speaker (2026-09-23)
+
+The owner heard two lanes of one clip that sounded like the same person. How often does that
+happen across the corpus? Probe code discarded; embeddings as in the next section (WeSpeaker ONNX,
+up to 20 stretches of each speaker alone per episode, 4 s max each).
+
+- **Reference distributions** (cosine of mean prints):
+
+  | Pair | Median | 5th–95th percentile |
+  |---|---:|---:|
+  | One speaker, half its stretches against the other half | 0.94 | 0.85–0.97 |
+  | One linked voice (D87) in two different episodes | 0.90 | 0.58–0.95 |
+  | Two voices never in the same episode | 0.11 | −0.04–0.34 |
+  | Two speakers of the same episode | 0.26 | −0.02–0.65 |
+
+  Two speakers of the same episode sit higher than two voices from different episodes: same room,
+  same microphone. So 0.5–0.65 inside one episode is ambiguous, not a split.
+- **Coverage.** 166 same-episode speaker pairs; 76 have prints for both (4+ stretches alone).
+  The rest fall back to pyannote's stored centroids. D87's "different speakers of one episode
+  never passed 0.59" held on the 44 episodes of 2026-09-15 and no longer does: 43 pairs pass 0.5.
+- **Long episodes (3+ min; 84 episodes, 140 speakers).** 10 pairs at 0.5 or more. One is clearly
+  a split (0.93, `पहिलाका_अन्तर्राष्ट्रिय_अर्गनाइजरहरू`, S1/S3, declared and diarized 4), one is
+  likely (0.69, `dayahang_rai_miruna_magar`, S1/S3). The other 8 are 0.50–0.65, including pairs
+  the owner declared as two people who talk over each other for minutes (दुर्गा प्रसाईं interview,
+  0.65, 211 s; `ep_447`, v002/v003, both recurring voices linked separately across many
+  episodes, 0.53). Those read as two people in one room.
+- **Short videos (under 3 min; 88 episodes, 152 speakers).** Almost all high pairs are here:
+  22 of the 27 pairs at 0.6 or more, 12 of the 13 at 0.8 or more, with 5–30 s of talk per
+  speaker. 21 of them declared 3 speakers, and a declared count is passed to pyannote as an exact
+  `num_speakers` (D79): a 60 s skit with one or two real voices is forced into three clusters.
+  Some are skits where one creator voices several characters, where "one person" and "one role"
+  genuinely differ.
+- **Across episodes.** No two separately linked voices reach 0.6 (the linker's threshold); 23
+  voice pairs sit at 0.5–0.6, candidates for missed links.
+- **How deep.** Of 197 voices, 47 appear in at least one same-episode pair at 0.5 or more (an
+  upper bound: the grey zone included). The strict count, 0.7 or more, is 22 pairs in 13
+  episodes, 21 of them short videos. Most duplicate ids are therefore short-video voices with
+  little talk time; in long-form speech, confirmed splits are one or two episodes. Only the
+  owner's ear can settle the 0.5–0.7 pairs.
+
+## Voiceprints on clean speech and in crosstalk (2026-09-23)
+
+Can a voiceprint say who is speaking, well enough to help attribute words in the multitrack
+editor (D98)? Probe code discarded; D99 is what was built on it.
+
+- **Model.** WeSpeaker's ResNet34-LM, the ungated ONNX build (`Wespeaker/wespeaker-voxceleb-
+  resnet34-LM`, CC-BY-4.0), fed an 80-bin Kaldi fbank computed in numpy. The fbank matches
+  `torchaudio.compliance.kaldi.fbank` to within 2e-4. It embeds into the same 256-d space as the
+  per-speaker centroids pyannote community-1 stored with every run: nothing else would explain
+  the next line.
+- **Clean speech: it works.** 190 single-speaker clips (one diarized voice, no detected overlap,
+  3 s or more) of 12 multi-speaker episodes, one window from the middle of each, scored against
+  the episode's speakers. The label is the diarizer's, so this measures agreement with it.
+
+  | Window | Against the stored centroids | Against prints from the voice's other clips |
+  |---|---:|---:|
+  | 0.5 s | 95.3% | 93.7% |
+  | 1.0 s | 98.9% | 97.9% |
+  | 2.0 s | 99.5% | 98.9% |
+
+  At 1 s, 97% of windows clear a margin of 0.1 over the next speaker, and 99.5% of those are
+  right. The stored centroids are as good a print as fresh ones, so every diarized speaker has a
+  usable print without a GPU.
+- **Crosstalk: it follows the louder voice.** The same windows mixed with another voice of the
+  same episode, at the level gaps real overlap has (D95: median |gap| 1.6 dB):
+
+  | Target level | 1 s window picks the target | Right when margin ≥ 0.1 |
+  |---|---:|---:|
+  | −6 dB | 15% | 15% |
+  | −3 dB | 27% | 23% |
+  | 0 dB | 52% | 52% |
+  | +3 dB | 70% | 72% |
+  | +6 dB | 81% | 86% |
+
+  The margin does not separate right from wrong: in a mix, the print is confident and follows
+  loudness. It cannot say who said a word inside crosstalk.
+- **On the 30 speakers-queue clips.** Of 1,174 words, 728 have one diarized voice and no detected
+  overlap; the print disagrees with the lane proposal on 11% of them, 53 words with a margin of
+  0.1 or more (1.8 per clip). On the 438 overlapped words it disagrees on 55%: a coin toss, as the
+  mixes predicted. Whether the 53 are diarizer errors is for the owner's saved lanes to say
+  (`scripts/voiceprint_report.py`).
+- **A voice alone is rarer than it looks.** Offering only whole clips with one diarized voice
+  (and under 2% crosstalk) left 55 of 197 voices with nothing to hear; a voice that talks only
+  between or over others never holds a clip. Offering each clip's longest stretch of the voice
+  alone, 1.5 s or longer, leaves 10.
+- **Cost.** 0.4 s of CPU per clip (median; 0.8 s worst) to embed its clean words, 26 MB model.
+
+---
+
 ## Newer separators do not change the verdict: TF-GridNet and TF-Locoformer by ear (2026-09-23)
 
 A follow-up to the MossFormer2 pilot below: do stronger architectures than MossFormer2 help on the
