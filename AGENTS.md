@@ -12,14 +12,15 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/            architecture, decisions, roadmap, findings, sociolinguistics
+docs/            architecture, decisions, roadmap, findings, sociolinguistics, custom-arch
 notebooks/       EDA, sociolinguistics and fine-tuning (04c, Indic-Transcribe; generated from notebooks/src/)
 ```
 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
 
 ASR work: what is next is in [docs/roadmap.md](docs/roadmap.md), what has been measured in
-[docs/findings.md](docs/findings.md).
+[docs/findings.md](docs/findings.md). Model-building designs parked until a tcpWER uplift are in
+[docs/custom-arch.md](docs/custom-arch.md).
 
 Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
 formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they
@@ -229,7 +230,7 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Documentation
 
-Seven documents, and no others: this file, `README.md`, and the five under `docs/`. When behaviour
+Eight documents, and no others: this file, `README.md`, and the six under `docs/`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
 its reversal cost. When a later entry overrides an old one, delete the old entry and add one line
