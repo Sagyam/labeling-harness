@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Lint and test before every commit. Bypass with `git commit --no-verify` only in emergencies.
+# Lint always; run the not-db suite only when the staged diff can affect it.
+# The full suite gates the push (see .githooks/pre-push). Bypass with `git commit --no-verify`
+# only in emergencies.
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -15,5 +17,13 @@ echo "pre-commit: ruff check"
 "$PY" -m ruff check .
 echo "pre-commit: ruff format --check"
 "$PY" -m ruff format --check .
-echo "pre-commit: pytest"
-(cd backend && ".venv/bin/python" -m pytest -q)
+
+# Paths the suite can see. notebooks/src is loaded directly by test_sweep.py and
+# test_crosstalk_mixer.py; everything else (docs, notebooks/*.ipynb, frontend, playground,
+# Makefile, dotfiles) cannot reach a test.
+if git diff --cached --name-only | grep -Eq '^(backend/|scripts/|config/|notebooks/src/|docker-compose\.yml$)'; then
+  echo "pre-commit: pytest -m 'not db'"
+  (cd backend && ".venv/bin/python" -m pytest -q -m "not db")
+else
+  echo "pre-commit: pytest skipped (staged diff touches no backend/, scripts/, config/, notebooks/src/ or docker-compose.yml)"
+fi

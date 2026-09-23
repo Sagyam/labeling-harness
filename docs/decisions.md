@@ -94,9 +94,10 @@ require re-importing every episode.
 contract, checked before any write, so a malformed manifest fails loudly with an empty database
 rather than half-importing. **Reversal:** none.
 
-## D12 — Plain git hook instead of the pre-commit framework
-`.githooks/pre-commit` runs ruff and pytest with the backend virtualenv. One less dependency and one
-less lockfile for a single-developer project. **Reversal:** trivial.
+## D12 — Plain git hooks instead of the pre-commit framework
+`.githooks/` holds the hooks, installed with `git config core.hooksPath .githooks` and run with the
+backend virtualenv. One less dependency and one less lockfile for a single-developer project. What
+each hook runs is D97. **Reversal:** trivial.
 
 ## D13 — Test isolation by transaction rollback, against a real Postgres
 The suite needs real partial unique indexes and real foreign keys — application-level checks would
@@ -2147,3 +2148,11 @@ Results are in findings.md.
 
 **Reversal:** set `SWEEP` to one point, which runs a plain single fine-tune. Delete `sweep.py`, its
 tests and the sweep cells to remove it entirely.
+
+## D97 — A commit runs lint and the not-db suite; the full suite gates the push
+`.githooks/pre-commit` always runs ruff, and runs `pytest -m "not db"` only when the staged diff
+touches `backend/`, `scripts/`, `config/`, `notebooks/src/` or `docker-compose.yml` — the paths the
+suite can see (`notebooks/src` is loaded directly by `test_sweep.py` and `test_crosstalk_mixer.py`).
+`.githooks/pre-push` always runs the full suite, `db` tests included. A commit is therefore not
+proof that the schema and API layers still hold; a push is. **Reversal:** trivial — folding the full
+suite back into pre-commit is a one-line change to one short script.

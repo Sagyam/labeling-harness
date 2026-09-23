@@ -65,7 +65,8 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
   transliteration, ingestion — gets a failing test before the implementation. The owner does not
   review line by line, so the suite is the only quality signal that exists.
 - **Atomic commits**, Conventional Commits format (`feat:`, `fix:`, `test:`, `refactor:`, `chore:`,
-  `docs:`). One logical change each; every commit leaves the suite green. Never mix a refactor with
+  `docs:`). One logical change each; every commit passes lint and the not-db suite, and every push
+  leaves the full suite green (D97). Never mix a refactor with
   a behaviour change.
 - **Do not report something as done when its tests fail.** Say what failed.
 - Type hints and docstrings on public functions. Boring technology wins.
@@ -76,7 +77,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (581 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (1512 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .

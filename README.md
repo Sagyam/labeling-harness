@@ -200,7 +200,7 @@ Object storage defaults to the local filesystem, so the harness is fully usable 
 
 ```bash
 cd backend
-.venv/bin/python -m pytest              # 581 tests
+.venv/bin/python -m pytest              # 1512 tests
 .venv/bin/python -m pytest -m "not db"  # skip the ones that need Postgres
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 cd ../frontend && npm run build         # tsc -b && vite build
@@ -210,8 +210,9 @@ Tests marked `db` run against `TEST_DATABASE_URL` (default: a `harness_test` dat
 localhost), which the suite creates and migrates itself, using the real Alembic migrations rather
 than `create_all`. Tests marked `minio` skip when MinIO is unreachable.
 
-Install the pre-commit hook (lint, format check, full suite) with
-`git config core.hooksPath .githooks`.
+Install the git hooks with `git config core.hooksPath .githooks`. Pre-commit runs lint and, when
+the staged diff touches `backend/`, `scripts/`, `config/`, `notebooks/src/` or `docker-compose.yml`,
+the not-db suite; pre-push always runs the full suite (D97).
 
 ## Status
 

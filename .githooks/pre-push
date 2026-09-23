@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Full suite before every push, db tests included. Commits only prove lint and the not-db
+# subset (see .githooks/pre-commit); a push is the green gate. Bypass with `git push --no-verify`
+# only in emergencies. Postgres must be up or the db suite skips itself.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+PY="backend/.venv/bin/python"
+if [ ! -x "$PY" ]; then
+  echo "pre-push: backend/.venv missing; run 'uv venv --python 3.13 && uv pip install -e \".[dev]\"' in backend/" >&2
+  exit 1
+fi
+
+echo "pre-push: pytest"
+(cd backend && ".venv/bin/python" -m pytest -q)
