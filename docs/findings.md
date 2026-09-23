@@ -24,6 +24,54 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Newer separators do not change the verdict: TF-GridNet and TF-Locoformer by ear (2026-09-23)
+
+A follow-up to the MossFormer2 pilot below: do stronger architectures than MossFormer2 help on the
+same clips? The clips were the 30 two-voice gold clips with the most measured overlap (28-49%),
+essentially round 1's set, with 19 from the same heated interview. Every model ran on the whole
+clip in one pass, with raw output: no mask sharpening, post-filter or diarization gate. The owner
+listened to the mix and every model's two tracks side by side, as a vibe check with no per-clip
+ratings.
+
+| model | checkpoint | notes |
+|---|---|---|
+| TF-GridNet | ESPnet WSJ0-2mix (Zenodo 7565926), CC-BY-4.0 | 8 kHz, clean anechoic training data |
+| TF-Locoformer | MERL WHAMR! (`merlresearch/tf-locoformer`), Apache-2.0 | 8 kHz, noisy reverberant training data |
+| MossFormer2_SS_16K | as in the pilot below, raw | reference |
+
+These were the only public blind two-speaker checkpoints for either architecture; both are 8 kHz,
+so their tracks were band-limited to 4 kHz. TF-MossFormer (arXiv 2607.21128) could not be tried:
+no code or weights have been released. PixIT (`pyannote/speech-separation-ami-1.0`, trained on
+real AMI meetings, with each source tied to a diarized speaker) was set up but not run: its gate
+was not accepted, and the verdict came first.
+
+**Owner's verdict: every clip unusable, for every model.** The owner heard a trade-off between
+separation and intelligibility. When a track's words are audible, the other voice bleeds into it.
+When the separation is clean, the words are broken and cannot be transcribed. This is the familiar
+trade-off between interference and artifacts: a mask aggressive enough to remove the other voice
+also removes parts of the target's own speech. On these clips, none of the three models found a
+point where both were acceptable.
+
+A no-listening number agreed with the ranking but not with the verdict. It pairs each track to a
+diarized voice and measures, in the stretches where only one voice speaks, how loud the worse
+track's other voice is relative to its own (lower is cleaner). On the 24 clips with at least
+0.2 s of solo speech per voice, the medians were:
+
+| | median | worse track above -6 dB | both tracks lean to one voice |
+|---|---|---|---|
+| TF-GridNet | -2.7 dB | 20/24 | 4 |
+| TF-Locoformer | -2.0 dB | 17/24 | 4 |
+| MossFormer2, raw | **-3.7 dB** | 17/24 | 5 |
+| the mix, unseparated | +1.6 dB | 24/24 | 24 |
+
+Every model separates something relative to the mix, and neither newer architecture beats
+MossFormer2. The number is only as good as the diarized turns it relies on.
+
+**What this settles.** An architecture that is better on WSJ0-2mix does not buy anything on real
+heavy crosstalk in this corpus. Audio separation is closed as the route to per-speaker references:
+roadmap A3 (attributing words in the mix, not separating the audio) is what is left. The tracks, the
+per-clip numbers and the experiment code were deleted afterwards; this entry is the record.
+
 ## Separation does not give per-speaker labels: MossFormer2 by ear (2026-09-22)
 
 Roadmap A1's first measurement, run as a listening pilot on gold clips with measured crosstalk.
