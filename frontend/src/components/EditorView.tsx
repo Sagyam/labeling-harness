@@ -33,6 +33,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, resolveUrl } from '@/services/api'
 import { karaokeWords, stripEdgePunctuation, wordVoices } from '@/lib/karaoke'
+import { SPEEDS, usePlaybackRate } from '@/lib/playback'
 import { cn } from '@/lib/utils'
 import type { Dispute, PeaksPayload, PotName, Task } from '@/types'
 
@@ -50,8 +51,6 @@ interface EditorViewProps {
   /** Put the clip in gold, or take it back out (D71). */
   onToggleGold: (segmentId: number, currentPot: PotName) => Promise<void>
 }
-
-const SPEEDS = ['0.75', '1', '1.25'] as const
 
 export function EditorView({
   task,
@@ -79,7 +78,7 @@ export function EditorView({
   const [isPlaying, setIsPlaying] = useState<boolean>(false)
   const [currentTime, setCurrentTime] = useState<number>(0)
   const [duration, setDuration] = useState<number>(segment.duration_seconds || 0)
-  const [playbackRate, setPlaybackRate] = useState<string>('1')
+  const [playbackRate, setPlaybackRate] = usePlaybackRate()
   const [isLooping, setIsLooping] = useState<boolean>(false)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [isPopupOpen, setIsPopupOpen] = useState<boolean>(false)
@@ -168,10 +167,13 @@ export function EditorView({
     }
   }, [isLooping])
 
-  // Playback speed sync
+  // A new source resets an element's rate to its default, so both are set, again per clip.
   useEffect(() => {
-    if (audioRef.current) audioRef.current.playbackRate = Number(playbackRate)
-  }, [playbackRate])
+    const audio = audioRef.current
+    if (!audio) return
+    audio.defaultPlaybackRate = Number(playbackRate)
+    audio.playbackRate = Number(playbackRate)
+  }, [playbackRate, task.id])
 
   const togglePlay = () => {
     const audio = audioRef.current
