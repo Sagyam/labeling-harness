@@ -24,6 +24,57 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Diarization cannot say who said a word (2026-09-24)
+
+Once the owner had used the multitrack editor (D98), they judged that word attribution was wrong
+too often to correct by hand. Before accepting that, two possible causes were checked:
+- the pilot clips were short videos full of crosstalk;
+- speaker counts were guessed.
+
+Each run below was compared with the stored one and then listened to. **None was stored.** Probe
+code and the listening page were discarded; D100 is what followed.
+
+- **A ceiling on the count (short videos).** Most duplicate voice ids came from short videos
+  declared as 3 speakers, which was passed as an exact `num_speakers` (previous entry). The 23
+  short videos that declare 2 or more were re-diarized with `max_speakers` set to the declared
+  count. A pair of old speakers counts as merged when at least 70% of each one's talk falls in the
+  same new speaker; similarity is the cosine of the old run's pyannote centroids.
+
+  | Outcome | Episodes | What the old run's own centroids say |
+  |---|---:|---|
+  | Same count, same partition | 4 | nothing to fix |
+  | Merged only near-identical voices | 7 | every merged pair 0.77–0.97 |
+  | Merged voices the centroids call different | 8 | a merged pair at -0.01–0.38, 5–24 s each |
+  | Merged at 0.46–0.62 | 4 | the ambiguous band for one room |
+
+  Given a ceiling, pyannote on 40–70 s of audio forms one large cluster plus a small one
+  (2–7 s). By ear (owner): right on clips with one or two speakers. With three or more, the
+  dominant speaker is tracked and everyone who backchannels or interrupts is lumped into one.
+- **A two-person interview, told 2, at most 2, or nothing** (episode 205: host and guest,
+  72.5 min, 86 gold clips, 3,233 words).
+  - *At most 2* returned the stored run exactly: all 1,542 turns identical.
+  - *Told nothing*, it found 10 speakers. Two are the same main voices (cos 1.00 and 0.99). The
+    other 8 are 4–15 s each, about 68 s in total, and resemble neither main voice (cos ≤ 0.26).
+    Between the two main voices, 225 words (7%) change speaker, in 36 of the 86 clips (131 one way,
+    94 the other). No gold word lands on a small cluster.
+- **The per-word join decides crosstalk words by rule, not by audio.** A word goes to the speaker
+  whose turns cover most of it (`speaker_lanes.dominant_speaker`). When both speakers' turns cover
+  the whole word, the tie goes to the speaker with more talk time in the episode.
+
+  | Episode 205 | Told 2 | Told nothing |
+  |---|---:|---:|
+  | Words inside crosstalk | 820 (25%) | 836 |
+  | Words decided by the tie | 537 | 538 |
+
+  Under "told 2", 536 of the 537 ties went to the same voice, so about 17% of the words in these
+  clips took their speaker from the tie rule. No speaker count changes this: the diarizer is right
+  that both people are talking, and a format with one speaker per word cannot say so.
+- **The owner's verdict, by ear, with every word coloured by its speaker.** Word-level
+  attribution is unusable. Turns are hit or miss: changes in pace, excitement and loudness read as
+  a change of speaker, and the host's exaggerated delivery may be the worst case. The same clips
+  had looked right as colour bars with a playhead. A bar shows only what the diarizer believes, and
+  a half-second error is invisible in it, but it becomes a whole word in the wrong colour.
+
 ## One person, two voice ids: how often the diarizer splits a speaker (2026-09-23)
 
 The owner heard two lanes of one clip that sounded like the same person. How often does that

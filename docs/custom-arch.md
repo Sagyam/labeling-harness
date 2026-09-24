@@ -4,9 +4,9 @@ Design notes for building models on top of the Flex fine-tune, written and parke
 2026-09-23. The active plan is [roadmap.md](roadmap.md); its sections B and D name two of the
 three ideas here as priorities. This file holds the working detail so the roadmap stays short.
 
-**Revisit trigger (owner).** Reopen this file when the overlap work shows a real tcpWER uplift
-on attributed gold (roadmap A's labels, scored per roadmap E). Until then the bottleneck is
-labels and evaluation, not models.
+**Revisit trigger (owner).** Reopen this file when overlap work resumes (on hold since D100). There
+is no attributed real gold (roadmap A stopped), so an uplift is first shown on synthetic mixes and
+then checked on real crosstalk as roadmap D says. Until then the bottleneck is evaluation, not models.
 
 ## Why nothing here trains from scratch
 
@@ -167,7 +167,8 @@ conditioning under local control.
      └── alone worth having: word timestamps, streaming, an ownable small model
 ```
 
-§1 runs in parallel with roadmap A (it is measured on single-stream WER). §2 zero-shot needs
-nothing that does not exist; its fine-tune waits on A's labels and C's data. §3 waits on the §2
+§1 is measured on single-stream WER, so it needs nothing from the stopped roadmap A. §2 zero-shot
+needs nothing that does not exist; its fine-tune waits on C's data and is selected on synthetic
+mixes (D100). §3 waits on the §2
 verdict. Every run is scored per roadmap E: folded and raw, S/D/I, per crosstalk bucket, paired
 bootstrap by episode, cost term included.

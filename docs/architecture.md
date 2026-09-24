@@ -249,6 +249,7 @@ there for labelled clips of a pot with two or more diarized speakers (or one, wi
 puts a clip saved by mistake back, starting from its saved lanes.
 Its tasks open in the multitrack editor, and their decisions go to the `speakers-v1` label
 version without touching the clip's pot, pipeline status or single-stream label.
+The queue was closed on 2026-09-24 (D100): its open tasks were skipped, and it is not to be refilled.
 
 ## Ingestion and Cloud ASR
 
@@ -418,6 +419,10 @@ with uncoloured words. The endpoint needs a Modal proxy-auth token
 which the client follows. `scripts/diarize_episode.py` runs the same call for episodes already
 imported; turns diarized outside the harness are not accepted (D86). Runs are append-only and
 checksum-keyed; the newest per episode is current.
+
+Turns are automatic and unverified (D100). They are a weak proxy for conversational turns: changes
+in pace, excitement and loudness read as a change of speaker. They are never a reference for who
+said a word, and voice ids are not a speaker count.
 
 Every stored run is then **linked into voices** (`app/services/voices.py`, D87): each speaker's
 embedding is matched to the centroids of the voices of every earlier run at cosine 0.6, the

@@ -17,96 +17,27 @@ This chapter needs two things:
 
 Depending on how strong the results are, it may become its own paper.
 
+**Status, 2026-09-24 (D100).** A stopped. Diarization cannot say who said a word, so gold stays
+single-stream: everything said, in time order, with overlap spans marked. The owner put the chapter's
+model work (D) on hold as out of scope for the code-switching paper. B and C stand as written.
+
 **Priority, set by the owner:**
-1. **A.** Per-speaker labelling as a multitrack editor.
+1. ~~**A.** Per-speaker labelling as a multitrack editor.~~ Stopped (D100).
 2. **B.** Distilling the Flex fine-tune.
 3. **C.** The augmentation pipeline.
 
-D (models for overlapped speech) is scored on A's labels, so it waits for A. E is how all of it
-is measured. Sections are lettered so they do not collide with the retired numbered items that code
+D (models for overlapped speech) is on hold. If it resumes, it is developed on synthetic mixes and
+checked on real crosstalk last, without per-speaker references (D100). E is how all of it is
+measured. Sections are lettered so they do not collide with the retired numbered items that code
 comments still cite.
 
-## A. Per-speaker labelling as a multitrack editor (priority 1)
+## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
-**The problem.** Gold labels in overlap are a single stream: the stronger voice, plus some of the
-weaker one, with no speaker attribution (D95). Every multi-talker model is scored per speaker
-(cpWER, tcpWER, ORC-WER). A model that correctly writes both voices is otherwise charged
-insertions, which is the D96 trap again. Relabelling per speaker is the fix, but labelling
-crosstalk means listening to two people at once. That is the owner's bottleneck, and the reason
-the current labels drop part of the weaker voice.
-
-**The idea (owner's proposal, 2026-09-23).** Attribute words the way a DAW arranges a song from
-tracks. The x axis is time and the y axis is speaker: each speaker is a lane, and each word is a
-block on a lane, spanning the time it was spoken. Played together, the lanes are the seed
-transcript, the "final mix".
-
-It rests on an observation from labelling: the pipeline is usually right about *what* was said
-and *when*. What is disputed is *who* said it, and that comes from the diarizer. So the annotator
-does two things, and only two:
-- **Move a word** to the lane of the person who said it. Every word starts on the lane of the
-  diarized turn it falls in (D78, D79), joined by time as the editor's speaker colours already
-  are, so most words need no move.
-- **Add a word the seed does not have**, usually the weaker voice's in overlap: type it, drop it on
-  a speaker's lane at the moment it was said, and drag its edges to give it a length. The
-  karaoke animation then shows whether the block lines up with what is heard.
-
-**Speakers are fixed.** Speaker identity is tracked globally (D78's episode-wide "Speaker 1, 2,
-...", and D87's voices across episodes), so the editor cannot create or delete a speaker. Its lanes
-are the episode's speakers; the annotator moves words between them and adds words to them.
-
-**Time resolution: a 10 ms grid.** Blocks snap to 10 ms. That is finer than anything downstream
-needs: the CTC aligner's frames are coarser, a listener cannot place a word boundary more
-precisely than a few tens of milliseconds, and tcpWER's collar is measured in seconds. Storage cost
-does not depend on the grid: a word is a start and an end whatever their precision, stored as the
-seconds-with-millisecond floats that word spans already use. So 10 ms is a choice about how the
-editor feels, not about storage.
-
-**What this gives.** Every word carries a speaker and a span, so each clip yields per-speaker
-streams with word timings: what cpWER and tcpWER need, and what D is scored on. The single-stream
-text stays derivable (every lane, in time order). The words moved per clip are also a measurement
-of their own: a word-level diarization error rate on Nepanglish conversation.
-
-**What needs settling before it is built** (a decision entry replacing D95's convention, and a
-migration with a working downgrade):
-- **When the diarizer is wrong about speakers, not words.** With speakers fixed, two kinds of
-  diarizer mistake cannot be fixed in this editor. A speaker it invented is only an empty lane,
-  which is harmless. Two people it merged into one speaker cannot be split, because splitting
-  means a new speaker. Such a clip needs a flag, and an episode-level fix outside this editor.
-- **Which lanes a clip shows.** The speakers diarized in the clip, plus a way to bring in another
-  of the episode's speakers when the diarizer missed that person entirely. This shows an existing
-  speaker; it does not create one.
-- **Candidates from the recognisers.** The three ASR routes sometimes hear a word in overlap that
-  fusion dropped. Showing those as unplaced blocks to drag onto a lane would recover weak-voice
-  words without typing. Only words the seed lacks would be offered, so nothing is scored twice.
-- **Both voices saying the same word** (a shared "हो" in crosstalk) is one word in the seed but
-  two in the truth. The editor needs a *copy to lane*, as a DAW duplicates a clip.
-- **Resizing seed words.** Seed timings rarely need touching, but they are least reliable in
-  overlap, where the aligner follows one stream through two voices. The same edge drag that sizes
-  a new word should work on any word.
-- **Storage.** Invariant 2 holds: an attributed label is a new `segment_labels` row, with a speaker
-  and a span per word next to the text, written with its event and audit rows in one transaction
-  (invariant 8). A separate label version keeps the existing single-stream labels current for
-  single-stream scoring. Attribution is always verified by ear, never screened (invariant 5). No
-  new status field (invariant 3). Hypotheses and diarization runs stay untouched; the correction
-  lives only in the label.
-- **Which clips.** Only clips with two or more diarized speakers or measured overlap need lanes:
-  about 250 of 750 gold clips. A single-speaker clip is one lane and no work, unless the diarizer
-  missed a second voice there, which the queue cannot surface.
-
-**Built, piloting (2026-09-23, D98).** The owner asked for the editor in the harness rather than
-a throwaway prototype, so the pilot runs there: the 30 gold clips with the most crosstalk (29–50%,
-of 288 that qualify) are in triage's `speakers` queue. The settling points above are answered in
-D98. Each save records words moved, words added and time per clip (`label_words.source` and
-`proposed_speaker`, and the client-reported `duration_ms`). Still open: how long a clip takes, how
-often the diarizer merges two voices, and whether the recogniser candidates recover weak-voice
-words or only add noise.
-
-**Voiceprints (2026-09-23, D99).** A voice page lets the owner hear and confirm a voice's stretches
-alone, and confirmed stretches become its print. Prints suggest a lane for words no second voice
-is heard over; inside crosstalk a print follows the louder voice (findings.md), so it suggests
-nothing there. `scripts/voiceprint_report.py` scores the suggestions against saved lanes. If
-clean-speech diarizer errors turn out to be what costs time, the next step is re-diarizing an
-episode with its confirmed prints as fixed clusters, on the Modal GPU.
+Built on 2026-09-23 (D98) with voiceprint suggestions (D99), and piloted on gold crosstalk. On
+2026-09-24 the owner listened to the diarizer's per-word attribution and ruled it unusable: turns
+are hit or miss, and in crosstalk the per-word join decides by rule, not by audio (findings.md,
+*Diarization cannot say who said a word*). The speakers queue is closed. The code and the five
+saved labels remain until a separate removal decision.
 
 ## B. Distil the Flex fine-tune into other architectures (priority 2)
 
@@ -160,10 +91,9 @@ speech or noise (D76).
    verified. That gives labels for both voices, as serialized output and target-speaker models
    need. The measured mixer already exists (`notebooks/src/xtalk.py`, D96).
 
-   The same mixes have a second use, as a **test bench for A**: who said what is known by
-   construction, so they can tell whether the multitrack editor, its pre-assignment or a metric
-   works at all before any ears are spent on real clips. They prove nothing about real overlap --
-   D96 showed synthetic crosstalk does not transfer.
+   The same mixes are where D would be developed and selected, since who said what is known by
+   construction (D100). They prove nothing about real overlap -- D96 showed synthetic crosstalk
+   does not transfer -- so a real-crosstalk check comes last.
 2. **Realistic conversation timing, overlap boosted.** Build conversations with a turn-taking
    model (hand-overs, interruptions, backchannels) instead of bursts. The candidate is
    [FastMSS](https://github.com/popcornell/FastMSS), open source, which takes utterances with word
@@ -189,10 +119,12 @@ speech or noise (D76).
    ([Conversations that Never Happened](https://arxiv.org/abs/2606.03957)). This needs a
    code-mixed Nepali TTS with many voices, which does not exist yet.
 
-## D. Models for overlapped speech (scored on A's labels)
+## D. Models for overlapped speech (on hold, D100)
 
-A's labels will not come from separation (a dead end, 2026-09-22/23), so per-speaker references for
-scoring D have to come from somewhere else first.
+There will be no per-speaker references for real crosstalk: separation was a dead end
+(2026-09-22/23), and so was attribution from diarization (2026-09-24). If D resumes, models are
+selected on C's synthetic mixes. They are then checked on real crosstalk in two ways: recognition
+against the single-stream gold, and attribution by grading the model's output by ear.
 
 1. **DiCoW v3.3 and SE-DiCoW** (Brno University of Technology;
    [model](https://huggingface.co/BUT-FIT/DiCoW_v3_3),

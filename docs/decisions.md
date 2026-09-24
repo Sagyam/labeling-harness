@@ -2158,6 +2158,7 @@ proof that the schema and API layers still hold; a push is. **Reversal:** trivia
 suite back into pre-commit is a one-line change to one short script.
 
 ## D98 — Per-speaker labels are words on fixed speaker lanes, stored as their own label version
+> **Stopped by D100** (2026-09-24): the speakers queue is closed. The code and the five saved labels remain.
 
 Roadmap A, as the owner designed it on 2026-09-23. A clip in the `speakers` queue opens in the
 multitrack editor: a lane for each of the episode's diarized speakers, a block for each word at
@@ -2212,6 +2213,7 @@ D95 is untouched: synthetic crosstalk in training still keeps the clip's own lab
 the queue script.
 
 ## D99 — Voices get a page, confirmed stretches become their print, and prints only suggest
+> **Dormant under D100**: suggestions were served only to the speakers queue, which is closed.
 
 The owner asked, from the multitrack editor: who is v125, and can clean clips of a voice fix the
 diarizer's mistakes about it? Measured first (findings.md, *Voiceprints on clean speech and in
@@ -2255,3 +2257,37 @@ a model that separates or follows a target voice (roadmap D).
 **Reversal:** cheap. `alembic downgrade d98a1c5e7f20` drops the confirmations and the stored
 suggestions; delete `voiceprint.py`, `voice_clips.py`, the voices router, `VoiceDialog.tsx` and the
 editor's suggestion code.
+
+## D100 — Speaker turns are automatic metadata, not a source of truth; per-speaker labelling stops
+
+On 2026-09-24 the owner listened to the diarizer's word attribution, with every word coloured by
+its speaker (findings.md, *Diarization cannot say who said a word*), and ruled that word-level
+attribution is unusable and speaker turns are hit or miss. The measurements agree:
+- A speaker count does not fix it. A ceiling merges real second voices as often as the exact
+  count split one, and on a two-person interview "told nothing" moves 7% of words between the
+  same two voices.
+- In that interview, 17% of words took their speaker from the join's tie rule, because both
+  turns covered the whole word.
+
+- **Gold is single-stream: everything said, in time order.** A clip's label is what was said,
+  whoever said it. Overlapped stretches are marked by the overlap detector's spans (D77), which
+  the export already carries, and not by speaker. Labels written before this, some keeping only
+  the stronger voice, are not re-audited.
+- **Speaker turns stay, described as what they are.** Ingest still diarizes (D79), and the
+  export still carries each clip's turns and linked voices (D78, D87). They are automatic and
+  unverified: a weak proxy for conversational turns, useful for colouring, for main-speaker
+  heuristics and as model conditioning. They are never a reference for who said a word, and the
+  dataset is not described as diarized. A speaker count in a report comes from the counts declared
+  at ingest, not from voice ids. Short videos were often declared as 3 by default, which a report
+  must say.
+- **The speakers queue is closed.** Its 257 open tasks were skipped on 2026-09-24 by
+  `d100-close-speakers-queue`, each with its event and audit row. The five saved `speakers-v1`
+  labels stay (labels are append-only), and so does the code of D98 and D99 until a separate
+  removal decision. Do not run `scripts/queue_speakers.py`.
+- **Overlap models are on hold.** The owner judged roadmap D out of scope for the code-switching
+  paper. If they resume, they are developed and selected on synthetic mixes, where attribution is
+  known by construction (roadmap C1). They are checked on real crosstalk last: recognition against
+  the single-stream gold, and attribution by grading a model's output by ear rather than labelling
+  references.
+
+**Reversal:** cheap. Re-queue clips with `scripts/queue_speakers.py`; nothing was deleted.

@@ -152,7 +152,9 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   pipeline segments before it transcribes, so a clip almost always holds one speaker. Do not turn
   the flag back on expecting speaker identity — `spk:0` in one hypothesis was never `spk:0` in
   another, and neither is `segments.speaker_id`. Speaker identity comes from a full-episode
-  diarization on a remote GPU, stored in `speaker_turns` (D78, D79) and joined by time. Rows
+  diarization on a remote GPU, stored in `speaker_turns` (D78, D79) and joined by time. Those
+  turns are a weak proxy, never a reference for who said a word (D100): the owner heard them fail,
+  and in crosstalk the per-word join decides by a tie rule, not by the audio. Rows
   ingested before D52 still carry labels; do not join on them.
 - Gemini runs on **Vertex AI**, not AI Studio, via `app/llm/vertex.py` (D39). Auth is one API key
   (`VERTEX_API_KEY`, restricted to `aiplatform.googleapis.com`) sent as an `x-goog-api-key`
