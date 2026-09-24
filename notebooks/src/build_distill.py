@@ -224,6 +224,15 @@ def _greedy(model):
     cfg = model.cfg.decoding
     with open_dict(cfg):
         cfg.strategy = "greedy_batch"
+        # CUDA graphs off: a graph captured before the batch probe hit illegal memory accesses
+        # after the probe's out-of-memory recoveries (A100, NeMo 3.0.0, 2026-09-24).
+        if "greedy" not in cfg:
+            cfg.greedy = {}
+        cfg.greedy.use_cuda_graph_decoder = False
+        # At most 3 tokens per encoder frame (NeMo's default is 10). The densest train label is
+        # 12.8 tokens/s, about one per Parakeet frame, so this binds only on an untrained head,
+        # whose thousands of tokens per clip took fold.py's alignment hours to score.
+        cfg.greedy.max_symbols = 3
     if hasattr(model, "cur_decoder"):
         model.change_decoding_strategy(decoding_cfg=cfg, decoder_type="rnnt", verbose=False)
     else:
@@ -328,6 +337,10 @@ def forward_loss(model, wav, lens, ys, ylens):
     bounds memory by computing it in sub-batches), plus the CTC head's on the hybrid."""
     enc, elens = encode(model, wav, lens, augment=model.training)
     dec, _, _ = model.decoder(targets=ys, target_length=ylens)
+    # The fused joint sets the reduction to None around each sub-batch and restores it only if
+    # nothing raises in between. A probe that runs out of memory there leaves it at None, and every
+    # later loss would come back per clip, so it is set again on every call.
+    model.loss.reduction = "sum"
     loss, _, _, _ = model.joint(encoder_outputs=enc, decoder_outputs=dec, encoder_lengths=elens,
                                 transcripts=ys, transcript_lengths=ylens, compute_wer=False)
     if getattr(model, "ctc_loss_weight", 0) > 0:
@@ -526,10 +539,18 @@ for name in STUDENTS:
         return ftkit.bucket_batches(splits["train"], budget_s=budget, max_items=256, pad_to_s=PAD_TO_S,
                                     shuffle=True, seed=epoch)
 
+    # Val before training is scored on every 12th val clip: with fresh heads it is gibberish, and
+    # only its timing matters. The projection's val passes are for that sample, so the full-val
+    # time is printed after it.
+    sample = splits["val"][::12]
     speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
-                              loss_fn=loss_fn, evaluate=evaluate, val_rows=splits["val"],
+                              loss_fn=loss_fn, evaluate=lambda m: evaluate(m, sample), val_rows=sample,
                               gold_rows=splits["gold"], epochs=EPOCHS, monitor=monitor)
+    full_val_min = speed["val_s"] * len(splits["val"]) / len(sample) / 60
+    print(f"a full val pass takes about {full_val_min:.1f} min, {EPOCHS} of them at most "
+          f"{EPOCHS * full_val_min / 60:.1f} h on top of training")
     (OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
+
     def save_best(model, out=OUT, name=name):
         (out / "best").mkdir(exist_ok=True)
         model.save_to(str(out / "best" / f"{name}.nemo"))
