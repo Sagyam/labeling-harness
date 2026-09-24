@@ -617,6 +617,372 @@ api.upload_file(path_or_fileobj=str(OUT_ROOT / f"summary-{NOTEBOOK}.json"),
 print("\nuploaded", f"https://huggingface.co/{OUT_REPO}/tree/main/{RUN_PREFIX}")
 """
 
+HF_INTRO = """
+# Distillation, step 0 — the students that write our text as it is
+
+The companion of `Distill.ipynb` (roadmap §B, step 0), for the two students whose tokenizers
+already cover Devanagari and Latin, so nothing is swapped: each is fine-tuned on the 30 h of
+verified train labels and scored exactly as the transducers are, against the same Flex reference.
+It needs its own runtime: `qwen-asr` pins transformers 4.57.6, and NeMo's kernel runs 5.x.
+
+**Students.**
+- **Qwen3-ASR-0.6B** (Alibaba, Apache-2.0): an audio encoder feeding a Qwen3 decoder, trained on 30
+  languages including Hindi, not Nepali. Its prompt names the language, and `language None` means
+  "no speech" to it, so the prompt is fixed at `language Nepali<asr_text>` and the loss is on the
+  transcript alone. Chosen over the 1.7B because it is Parakeet's size and smaller than Flex; the
+  1.7B is a one-line change if the 0.6B comes close.
+- **Whisper-large-v3-turbo** (OpenAI, MIT): it knows Nepali (`<|ne|>`) but loops on it zero-shot
+  (123% WER in the bake-off). 04a fine-tuned it to 14.62 on the 2026-09-12 gold; this re-runs it on
+  the current export. Every clip is padded to 30 s, which is its encoder's only input length.
+
+**Choices, fixed before any run.** Peak LR 2e-5 for Qwen (its official recipe) and 1e-5 for Whisper
+(04a), linear decay after 10% warmup, up to 10 epochs with early stopping on val WER (patience 2),
+~12 min of audio per optimizer step, summed token cross-entropy divided by the step's tokens.
+Decoding is greedy with Flex's loop retry: a clip whose output repeats a 3-word sequence 5+ times is
+decoded again, alone, with a repetition penalty, no repeated 6-token phrase and a length cap from
+its duration (the densest train label, in this model's tokens).
+
+**Smoke-tested on CPU (2026-09-24, transformers 4.57.6).** Zero-shot, Qwen already writes rough
+Nepanglish; 30 steps on four clips took its loss per token from 0.81 to 0.00, with the references
+reproduced exactly, `।` and English included. The processor left-pads whatever the tokenizer says,
+so the padding side is passed per call; with left padding the label mask had covered audio tokens.
+"""
+
+HF_CONFIG = r"""
+RUN_PREFIX = "distill-step0-2026-09-24"   # the same folder as Distill.ipynb's students
+NOTEBOOK = "hf"                            # names this notebook's summary file
+STUDENTS = ["qwen", "whisper"]
+QWEN_ID = "Qwen/Qwen3-ASR-0.6B"
+WHISPER_ID = "openai/whisper-large-v3-turbo"
+QWEN_ASR_VERSION = "0.0.6"                 # pins transformers 4.57.6; the version smoke-tested on CPU
+OUT_REPO = "Sagyam/nepanglish-asr-students"
+FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"
+FLEX_REFERENCE = "flex-xtalk-sweep-2026-09-22/flex-xtalk-sweep-2026-09-22-p00-s0"
+EPOCHS, PATIENCE, WARMUP = 10, 2, 0.1
+LR = {"qwen": 2e-5, "whisper": 1e-5}
+EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
+PAD_TO_S = 1.0
+PROBE_FRACTION = 0.9
+EVAL_BUDGET_S, EVAL_ITEMS = 1200.0, 96
+DEVICE = "cuda"
+DATA_LOCAL = None         # a local export in the HF layout instead of the download
+"""
+
+HF_STUDENTS_NOTE = """
+## The students: loading, loss and decoding
+
+Everything model-specific, one set of functions per student. `load_student` points `collate`,
+`loss_fn` and `transcribe` at the right one, so ftkit's loop and the scoring cells are shared.
+"""
+
+HF_STUDENTS = r'''
+import math
+import shutil
+import warnings
+
+import numpy as np
+import transformers
+from huggingface_hub import snapshot_download
+from qwen_asr import Qwen3ASRModel
+from transformers import WhisperForConditionalGeneration, WhisperProcessor
+
+transformers.logging.set_verbosity_error()
+warnings.filterwarnings("ignore", module="transformers")
+
+# The recogniser is told the language in its prompt. Nepali is not one of its 30, and
+# "language None" means "no speech" to it, so the prompt names Nepali and the loss is on the
+# transcript alone: the tag is a fixed prompt, not something the model has to learn to say.
+QWEN_LANGUAGE = "Nepali"
+ARCHITECTURE = {
+    "qwen": "Qwen3-ASR: audio encoder + Qwen3 decoder, 0.6B; byte-level BPE, no vocabulary change",
+    "whisper": "Whisper-large-v3-turbo: 32L encoder + 4L decoder, 0.8B; no vocabulary change",
+}
+BASE_MODEL = {"qwen": QWEN_ID, "whisper": WHISPER_ID}
+CARD_NOTE = "its own tokenizer"
+DECODER_NAME = "greedy+retry"
+
+
+def lr_card(name):
+    return LR[name]
+
+
+def floats(rows):
+    return [store.clip(r).astype(np.float32) / 32768.0 for r in rows]
+
+
+# --- Qwen3-ASR ---------------------------------------------------------------------------------
+
+
+def load_qwen():
+    global model, processor, PROMPT
+    wrapper = Qwen3ASRModel.from_pretrained(QWEN_ID, dtype=torch.float32, device_map=None)
+    model, processor = wrapper.model.to(DEVICE), wrapper.processor
+    # The shipped generation config sets a sampling temperature alongside greedy decoding, which
+    # transformers refuses to save; decoding here is always greedy.
+    for key in ("temperature", "top_p", "top_k"):
+        setattr(model.generation_config, key, None)
+    msgs = [{"role": "system", "content": ""}, {"role": "user", "content": [{"type": "audio", "audio": ""}]}]
+    PROMPT = (processor.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+              + f"language {QWEN_LANGUAGE}<asr_text>")
+    return model
+
+
+def _qwen_inputs(clips, texts, side):
+    # the processor ignores tokenizer.padding_side; it has to be passed per call
+    return processor(text=texts, audio=clips, return_tensors="pt", padding=True, padding_side=side)
+
+
+def qwen_collate(rows):
+    """Prompt + transcript + EOS, right-padded; labels only on the transcript and EOS."""
+    clips = floats(rows)
+    eos = processor.tokenizer.eos_token
+    full = _qwen_inputs(clips, [PROMPT + r["text"] + eos for r in rows], "right")
+    prefix = _qwen_inputs(clips, [PROMPT] * len(rows), "right")
+    labels = full["input_ids"].clone()
+    for i, n in enumerate(prefix["attention_mask"].sum(dim=1).tolist()):
+        labels[i, :n] = -100
+    labels[full["attention_mask"] == 0] = -100
+    return {**full, "labels": labels, "tokens": int((labels[:, 1:] != -100).sum()),
+            "lens": torch.tensor([len(c) for c in clips]), "seconds": sum(ftkit.duration(r) for r in rows),
+            "padded_seconds": len(rows) * max(len(c) for c in clips) / ftkit.SR}
+
+
+QWEN_KEYS = ("input_ids", "attention_mask", "input_features", "feature_attention_mask")
+
+
+def qwen_loss(model, b):
+    """Summed token cross-entropy: HF's mean over the label tokens times their count."""
+    kw = {k: b[k].to(DEVICE, non_blocking=True) for k in QWEN_KEYS}
+    out = model.thinker(**kw, labels=b["labels"].to(DEVICE, non_blocking=True))
+    return out.loss * b["tokens"], b["tokens"]
+
+
+def qwen_transcribe(rows, **gen):
+    inputs = _qwen_inputs(floats(rows), [PROMPT] * len(rows), "left").to(DEVICE)
+    with torch.no_grad(), torch.autocast(DEVICE, dtype=torch.bfloat16):
+        out = model.generate(**inputs, do_sample=False, num_beams=1, **{"max_new_tokens": MAX_NEW_TOKENS, **gen})
+    seqs = out.sequences if hasattr(out, "sequences") else out
+    return processor.batch_decode(seqs[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True,
+                                  clean_up_tokenization_spaces=False)
+
+
+def qwen_tokens(text):
+    return len(processor.tokenizer(text, add_special_tokens=False).input_ids)
+
+
+def save_qwen(model, dst):
+    model.save_pretrained(dst, state_dict={k: v.to(torch.bfloat16) for k, v in model.state_dict().items()})
+    processor.save_pretrained(dst)
+    base = Path(snapshot_download(QWEN_ID))  # the files qwen-asr needs to load a checkpoint
+    for f in base.iterdir():
+        if f.suffix in {".json", ".txt"} and not (dst / f.name).exists():
+            shutil.copy(f, dst / f.name)
+
+
+# --- Whisper -----------------------------------------------------------------------------------
+
+
+def load_whisper():
+    global model, processor, PREFIX, EOT
+    processor = WhisperProcessor.from_pretrained(WHISPER_ID)
+    model = WhisperForConditionalGeneration.from_pretrained(WHISPER_ID, torch_dtype=torch.float32).to(DEVICE)
+    model.generation_config.forced_decoder_ids = None
+    tok = processor.tokenizer
+    PREFIX = tok.convert_tokens_to_ids(["<|startoftranscript|>", "<|ne|>", "<|transcribe|>", "<|notimestamps|>"])
+    EOT = tok.eos_token_id
+    return model
+
+
+def whisper_collate(rows):
+    """Log-mel features, every clip padded to 30 s (the encoder takes nothing else), and the prefix
+    + transcript + end-of-text, with loss on the transcript and end-of-text only."""
+    clips = floats(rows)
+    feats = processor.feature_extractor(clips, sampling_rate=ftkit.SR, return_tensors="pt").input_features
+    ids = [PREFIX + processor.tokenizer(r["text"], add_special_tokens=False).input_ids + [EOT] for r in rows]
+    width = max(len(i) for i in ids) - 1
+    inp = torch.full((len(rows), width), EOT, dtype=torch.long)
+    lab = torch.full((len(rows), width), -100, dtype=torch.long)
+    for i, full in enumerate(ids):
+        inp[i, :len(full) - 1] = torch.tensor(full[:-1])
+        lab[i, len(PREFIX) - 1:len(full) - 1] = torch.tensor(full[len(PREFIX):])
+    return {"input_features": feats, "decoder_input_ids": inp, "labels": lab, "tokens": int((lab != -100).sum()),
+            "lens": torch.tensor([len(c) for c in clips]), "seconds": sum(ftkit.duration(r) for r in rows),
+            "padded_seconds": 30.0 * len(rows)}
+
+
+def whisper_loss(model, b):
+    logits = model(input_features=b["input_features"].to(DEVICE, non_blocking=True),
+                   decoder_input_ids=b["decoder_input_ids"].to(DEVICE, non_blocking=True)).logits
+    loss = torch.nn.functional.cross_entropy(logits.float().flatten(0, 1),
+                                             b["labels"].to(DEVICE, non_blocking=True).flatten(),
+                                             ignore_index=-100, reduction="sum")
+    return loss, b["tokens"]
+
+
+def whisper_transcribe(rows, **gen):
+    feats = processor.feature_extractor(floats(rows), sampling_rate=ftkit.SR, return_tensors="pt").input_features
+    with torch.no_grad(), torch.autocast(DEVICE, dtype=torch.bfloat16):
+        out = model.generate(input_features=feats.to(DEVICE), language="ne", task="transcribe",
+                             do_sample=False, num_beams=1, **{"max_new_tokens": MAX_NEW_TOKENS, **gen})
+    return processor.batch_decode(out, skip_special_tokens=True)
+
+
+def whisper_tokens(text):
+    return len(processor.tokenizer(text, add_special_tokens=False).input_ids)
+
+
+def save_whisper(model, dst):
+    model.save_pretrained(dst, state_dict={k: v.to(torch.bfloat16) for k, v in model.state_dict().items()})
+    processor.save_pretrained(dst)
+
+
+# --- dispatch and the loop retry ---------------------------------------------------------------
+
+KIT = {
+    "qwen": (load_qwen, qwen_collate, qwen_loss, qwen_transcribe, qwen_tokens, save_qwen),
+    "whisper": (load_whisper, whisper_collate, whisper_loss, whisper_transcribe, whisper_tokens, save_whisper),
+}
+RETRY = {"repetition_penalty": 1.2, "no_repeat_ngram_size": 6}
+# Output caps, measured on the labels (2026-09-22 export). Both tokenizers are byte-level and spend
+# several tokens per Devanagari character: gold runs to 452 Qwen tokens and 518 Whisper tokens.
+# Whisper's decoder stops at 448 positions, 4 of them the prefix, so 5 gold clips cannot be written
+# whole by it in one pass; that is the architecture, and it stays in the score.
+MAX_NEW = {"qwen": 600, "whisper": 444}
+
+
+def load_student(name):
+    """A fresh student on DEVICE; points collate, loss_fn, transcribe and save_to at its kit, and
+    measures its densest train label in its own tokens for the retry's length cap."""
+    global collate, loss_fn, transcribe, save_to, MAX_TOKENS_PER_S, MAX_NEW_TOKENS
+    load, collate, loss_fn, transcribe, count, save_to = KIT[name]
+    load()
+    MAX_NEW_TOKENS = MAX_NEW[name]
+    before = len(splits["train"])
+    splits["train"] = [r for r in splits["train"] if count(r["text"]) + 1 <= MAX_NEW_TOKENS]
+    print(f"{name}: dropped {before - len(splits['train'])} train clip(s) longer than {MAX_NEW_TOKENS} tokens")
+    MAX_TOKENS_PER_S = max(count(r["text"]) / ftkit.duration(r) for r in splits["train"])
+    print(f"{name}: {sum(p.numel() for p in model.parameters()) / 1e6:.0f}M parameters, densest train "
+          f"label {MAX_TOKENS_PER_S:.1f} tokens/s")
+    return model
+
+
+def retry_one(row):
+    cap = min(MAX_NEW_TOKENS, math.ceil(MAX_TOKENS_PER_S * ftkit.duration(row)) + 2)
+    return transcribe([row], max_new_tokens=cap, **RETRY)[0]
+
+
+def decoder():
+    return ftkit.RetryLoops(transcribe, retry_one)
+
+
+def optimizer_for(model, name):
+    return torch.optim.AdamW(model.parameters(), lr=LR[name], weight_decay=0.0, fused=DEVICE == "cuda")
+
+
+def probe_budget(model, optimizer, name):
+    """The largest micro-batch at the longest train clip carrying the longest transcript, with the
+    optimizer state allocated. Whisper pays for 30 s whatever a clip's length, so for it the
+    budget is a clip count, not seconds of audio."""
+    longest = max(splits["train"], key=ftkit.duration)
+    wordiest = max(splits["train"], key=lambda r: len(r["text"]))
+    worst = {**longest, "text": wordiest["text"]}
+
+    def probe_step(n):
+        b = collate([worst] * n)
+        with torch.autocast(DEVICE, dtype=torch.bfloat16):
+            loss, _ = loss_fn(model, b)
+        loss.backward()
+
+    model.train()
+    ftkit.init_optimizer_state(model, optimizer)
+    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+    if name == "whisper":
+        budget, items = float("inf"), max(1, int(n * PROBE_FRACTION))
+    else:
+        budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, 256
+    print(f"largest micro-batch at {ftkit.duration(longest):.0f} s: {n} clips -> "
+          f"{items} clips or {budget:.0f} s of audio per micro-batch")
+    return budget, items
+'''
+
+HF_RUN = r"""
+results = []
+for name in STUDENTS:
+    run = f"{RUN_PREFIX}-{name}"
+    if (row := uploaded_result(run)) is not None:
+        print(f"{run}: already in {OUT_REPO}, skipped")
+        results.append(row)
+        continue
+    OUT = OUT_ROOT / run
+    OUT.mkdir(parents=True, exist_ok=True)
+    print(f"\n=== {run}")
+    load_student(name)
+    optimizer = optimizer_for(model, name)
+    budget, items = probe_budget(model, optimizer, name)
+
+    def make_batches(epoch, budget=budget, items=items):
+        return ftkit.bucket_batches(splits["train"], budget_s=budget, max_items=items, pad_to_s=PAD_TO_S,
+                                    shuffle=True, seed=epoch)
+
+    # Val before training on every 12th val clip, as in Distill.ipynb; the full-val time follows
+    sample = splits["val"][::12]
+    speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
+                              loss_fn=loss_fn, evaluate=lambda m: evaluate(m, sample), val_rows=sample,
+                              gold_rows=splits["gold"], epochs=EPOCHS, monitor=monitor)
+    full_val_min = speed["val_s"] * len(splits["val"]) / len(sample) / 60
+    print(f"a full val pass takes about {full_val_min:.1f} min, {EPOCHS} of them at most "
+          f"{EPOCHS * full_val_min / 60:.1f} h on top of training")
+    (OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
+
+    def save_best(model, out=OUT):
+        (out / "best").mkdir(exist_ok=True)
+        save_to(model, out / "best")
+
+    cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=EPOCHS, lr=LR[name], warmup_frac=WARMUP,
+                            effective_s=EFFECTIVE_S, patience=PATIENCE)
+    result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
+                         loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
+                         monitor=monitor)
+    results.append(score_and_write(OUT, run, name, result["history"]))
+    api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT), path_in_repo=f"{RUN_PREFIX}/{run}",
+                      commit_message=f"{run}: step 0 fine-tune")
+    free_model()
+"""
+
+_NUMBA = """# The transducer losses run as numba CUDA kernels. NeMo's own cu12 extra would also pin a
+# different torch, so only the kernels' package is added, for this runtime's CUDA.
+CUDA_MAJOR = torch.version.cuda.split(".")[0]
+%pip install -q "numba-cuda[cu{CUDA_MAJOR}]"
+
+"""
+HF_SETUP = SETUP.replace(
+    '%pip install -q rapidfuzz "nemo_toolkit[asr]=={NEMO_VERSION}"',
+    '%pip install -q rapidfuzz "qwen-asr=={QWEN_ASR_VERSION}"',
+).replace(_NUMBA, "")
+assert "numba" not in HF_SETUP and "qwen-asr" in HF_SETUP
+
+hf_cells = [
+    md(HF_INTRO + GPU_NOTE),
+    md("## Config"),
+    code(HF_CONFIG),
+    md("## Setup"),
+    code(HF_SETUP),
+    code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
+    code("%%writefile /content/ft/sweep.py\n" + SWEEPKIT),
+    code("%%writefile /content/ft/distill.py\n" + DISTILLKIT),
+    code(DATA),
+    md(REFERENCE_NOTE),
+    code(REFERENCE),
+    md(HF_STUDENTS_NOTE),
+    code(HF_STUDENTS),
+    md(HELPERS_NOTE),
+    code(HELPERS),
+    md(RUN_NOTE),
+    code(HF_RUN),
+    md(REPORT_NOTE),
+    code(REPORT),
+]
+
 cells = [
     md(INTRO + GPU_NOTE),
     md("## Config"),
@@ -642,8 +1008,9 @@ cells = [
 ]
 
 if __name__ == "__main__":
-    path = OUT_DIR / "Distill.ipynb"
-    path.write_text(
-        json.dumps(notebook(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    print("wrote", path, len(cells), "cells")
+    for name, nb_cells in (("Distill.ipynb", cells), ("DistillHF.ipynb", hf_cells)):
+        path = OUT_DIR / name
+        path.write_text(
+            json.dumps(notebook(nb_cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        print("wrote", path, len(nb_cells), "cells")
