@@ -42,10 +42,11 @@ purpose (the owner's call): if F yields turns that can be trusted, it is the too
 
 ## B. Distil the Flex fine-tune into other architectures (priority 1)
 
-Flex is the only model that is good at Nepanglish, and it is closed in two ways: it decodes whole
-utterances, and it reports no word timestamps. Many stronger designs were never trained on Nepali:
-streaming transducers, models that report word timestamps, diarization-conditioned models like D1
-and D4. Teaching one of them Nepali from Flex would open all of those. B does not wait on A,
+Flex is the only model that is good at Nepanglish, and it decodes whole utterances. Many stronger
+designs were never trained on Nepali: streaming transducers, diarization-conditioned models like D1
+and D4. Teaching one of them Nepali from Flex would open those. Word timestamps are not the reason:
+the harness's CTC forced aligner (`app/services/forced_align.py`, MMS-300m, D32) already places any
+transcript's words on its clip, Flex's included, and it is what times the fused seed. B does not wait on A,
 because it is measured on single-speaker WER. Crosstalk is out of scope for B.
 
 **Goal.** A student whose single-speaker WER matches Flex's is the target. A student that had
@@ -73,14 +74,19 @@ Checked on 2026-09-24:
 | Student | Knows Nepali? | Writes our text as it is? | Notes |
 |---|---|---|---|
 | **Parakeet-TDT-0.6B-v2** (NVIDIA, CC-BY-4.0) | no | no: English only | FastConformer TDT trained on 120k h of English. Needs a new tokenizer and a reinitialised decoder ([Hindi recipe](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/discussions/45), which started from v2). Word timestamps from the transducer, no repeat loops, fast on CPU. A cache-aware streaming FastConformer takes the same recipe, and the multitalker variant (D4) uses the same encoder. v3 adds 24 European languages, none in a script we use, so it was not picked. |
-| **IndicConformer** (AI4Bharat, MIT) | yes | no: no Latin at all | The `ne` checkpoint ([repo](https://github.com/AI4Bharat/IndicConformerASR), 523 MB `.nemo`) is a multilingual hybrid CTC/RNN-T Conformer-L (17 layers, d_model 512, 4x subsampling) with an aggregate tokenizer: 22 BPE vocabularies of 256 tokens. None of the 5,632 tokens is Latin, and the Nepali vocabulary has no `।` and no digits. So it needs a new tokenizer too. What it adds is an encoder that has heard Nepali. The README says it loads only with AI4Bharat's NeMo fork (`nemo-v2`); stock NeMo is untested. |
-| **Whisper-large-v3-turbo** | weakly (123% zero-shot, loops) | yes: byte-level BPE | The only student that can write both scripts as it is. 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. |
+| **IndicConformer** (AI4Bharat, MIT) | yes | no: no Latin at all | The `ne` checkpoint ([repo](https://github.com/AI4Bharat/IndicConformerASR), 523 MB `.nemo`) is a multilingual hybrid CTC/RNN-T Conformer-L (17 layers, d_model 512, 4x subsampling) with an aggregate tokenizer: 22 BPE vocabularies of 256 tokens. None of the 5,632 tokens is Latin, and the Nepali vocabulary has no `।` and no digits. So it needs a new tokenizer too. What it adds is an encoder that has heard Nepali. The README says it loads only with AI4Bharat's NeMo fork (`nemo-v2`). It does not need to: the notebook builds a stock NeMo hybrid model from the checkpoint's config with stock heads and copies only the encoder, which trains (2026-09-24). |
+| **Whisper-large-v3-turbo** (OpenAI, MIT) | weakly (123% zero-shot, loops) | yes: byte-level BPE | 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. Its decoder stops at 448 positions, and Devanagari costs several tokens a character: 9 train labels do not fit, and 5 gold clips cannot be written whole in one pass. |
+| **Qwen3-ASR-0.6B** ([Alibaba](https://github.com/QwenLM/Qwen3-ASR), Apache-2.0) | no; Hindi among its 30 languages | yes: byte-level BPE | An audio encoder feeding a Qwen3 decoder, the 0.6B picked over the 1.7B for being Parakeet's size and smaller than Flex. Zero-shot it writes rough Nepanglish already. Streams through vLLM only; its forced aligner covers 11 languages, not Hindi or Nepali. Its prompt names the language, and `language None` means "no speech", so ours is fixed at `language Nepali`. `qwen-asr` pins transformers 4.57.6, so it runs in its own runtime. |
 
 **Pick.** Parakeet-v2 is the main bet, with IndicConformer next to it at step 0 as the safety net.
 Both need a new tokenizer, so they share one: a SentencePiece model trained on train-split labels
 only, which is allowed to write `।` and Devanagari digits. With the same tokenizer, step 0
 compares an English encoder with a Nepali one, not two vocabularies. Precedent for the English
-encoder: Flex is built on `canary-1b-v2`, which had no Nepali and was taught it later.
+encoder: Flex is built on `canary-1b-v2`, which had no Nepali and was taught it later. Qwen and
+Whisper keep their own tokenizers: step 0 for them is a plain fine-tune, and they make the
+comparison across architectures (transducer against encoder-decoder and decoder-only) the paper
+reports. `notebooks/Distill.ipynb` trains the transducers, `notebooks/DistillHF.ipynb` the other two,
+with the same scoring cells and the same Flex reference.
 
 **Is 30 h enough?** For IndicConformer, possibly: Flex's learning curve was flat (4.6 h scored
 about the same as 18.3 h), but Flex already knew Nepali. For Parakeet, probably not. That curve
