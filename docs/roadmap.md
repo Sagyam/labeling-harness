@@ -46,38 +46,97 @@ Flex is the only model that is good at Nepanglish, and it is closed in two ways:
 utterances, and it reports no word timestamps. Many stronger designs were never trained on Nepali:
 streaming transducers, models that report word timestamps, diarization-conditioned models like D1
 and D4. Teaching one of them Nepali from Flex would open all of those. B does not wait on A,
-because it is measured on single-speaker WER.
+because it is measured on single-speaker WER. Crosstalk is out of scope for B.
 
-- **Teacher.** The current Flex fine-tune, with its greedy+retry decoder.
-- **Students, in order of promise:**
-  - **Whisper-large-v3-turbo.** It already knows Nepali's script, and it is DiCoW's backbone: a
-    Nepali-strong Whisper feeds straight into D1.
-  - **Parakeet / FastConformer (TDT or CTC).** Streaming, and word timestamps from the alignment.
-    The English tokenizer has no Devanagari, so it gets a new SentencePiece tokenizer and a
-    reinitialised decoder
-    ([Hindi recipe](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/discussions/45)). The
-    multitalker variant (D4) is built on the same encoder.
-  - **AI4Bharat IndicConformer** ([repo](https://github.com/AI4Bharat/IndicConformerASR)). A NeMo
-    hybrid CTC/RNN-T model for India's 22 scheduled languages, Nepali among them. It starts closer
-    to our Nepali than either of the above. Check its checkpoint and licence first.
-- **Method.**
-  - **Pseudo-labels.** Decode unlabelled Nepanglish audio with the teacher and train the student
-    on the output, plus our verified labels
-    ([Distil-Whisper](https://arxiv.org/abs/2311.00430): 22k hours, WER-filtered).
-  - **Filtering.** Keep only pseudo-labels the teacher is sure of. With no reference to compute
-    WER against, use agreement between decoders or a
-    [label-free filter](https://arxiv.org/abs/2407.01257). Loops caught by the retry are dropped.
-  - **Distillation loss.** KL on the teacher's token distributions where tokenizers match,
-    sequence-level (pseudo-label) distillation where they do not.
-- **Open design questions.**
-  - **Where the unlabelled audio comes from.** Ingest runs three paid ASR routes per clip, and
-    episodes enter the harness only two ways (D86). A distillation corpus probably lives outside
-    the harness database, decoded by the teacher alone. That needs a decision entry.
-  - **How much audio.** The learning curve was flat on more of the same data (findings.md), but
-    that measured a fine-tune, not a student learning a language from scratch.
-- **Success bar.** The student comes within a stated margin of the teacher on gold and val, folded
-  and raw, split into S/D/I, per clip class. Only then are its extras (streaming, timestamps,
-  conditioning) worth their cost. Gold and val audio are never pseudo-labelled for training (D76).
+**Goal.** A student whose single-speaker WER matches Flex's is the target. A student that had
+never heard Nepali and still matches it would be the best outcome.
+
+### What distillation means here
+
+- **Fine-tuning** is a pretrained student plus human labels. 04a and 04c were both fine-tunes.
+- **Distillation** is a pretrained student plus labels written by a better model, the teacher
+  (the current Flex fine-tune, with its greedy+retry decoder).
+
+On the 30 h already labelled, distillation adds nothing: Flex's labels (about 6.5% WER) are worse
+than the verified ones. It pays off only on audio nobody has labelled, so Flex becomes a label
+factory and the student learns from far more audio than could be labelled by hand.
+
+**Soft distillation is skipped.** Matching the teacher's per-token probabilities needs a shared
+tokenizer and a shared decoding step, and no candidate shares either with Flex (AED against
+transducer or CTC, different vocabularies). Sequence-level pseudo-labels are used instead. They
+also did most of the work in [Distil-Whisper](https://arxiv.org/abs/2311.00430).
+
+### Students
+
+Checked on 2026-09-24:
+
+| Student | Knows Nepali? | Writes our text as it is? | Notes |
+|---|---|---|---|
+| **Parakeet-TDT-0.6B-v2** (NVIDIA, CC-BY-4.0) | no | no: English only | FastConformer TDT trained on 120k h of English. Needs a new tokenizer and a reinitialised decoder ([Hindi recipe](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2/discussions/45), which started from v2). Word timestamps from the transducer, no repeat loops, fast on CPU. A cache-aware streaming FastConformer takes the same recipe, and the multitalker variant (D4) uses the same encoder. v3 adds 24 European languages, none in a script we use, so it was not picked. |
+| **IndicConformer** (AI4Bharat, MIT) | yes | no: no Latin at all | The `ne` checkpoint ([repo](https://github.com/AI4Bharat/IndicConformerASR), 523 MB `.nemo`) is a multilingual hybrid CTC/RNN-T Conformer-L (17 layers, d_model 512, 4x subsampling) with an aggregate tokenizer: 22 BPE vocabularies of 256 tokens. None of the 5,632 tokens is Latin, and the Nepali vocabulary has no `।` and no digits. So it needs a new tokenizer too. What it adds is an encoder that has heard Nepali. The README says it loads only with AI4Bharat's NeMo fork (`nemo-v2`); stock NeMo is untested. |
+| **Whisper-large-v3-turbo** | weakly (123% zero-shot, loops) | yes: byte-level BPE | The only student that can write both scripts as it is. 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. |
+
+**Pick.** Parakeet-v2 is the main bet, with IndicConformer next to it at step 0 as the safety net.
+Both need a new tokenizer, so they share one: a SentencePiece model trained on train-split labels
+only, which is allowed to write `।` and Devanagari digits. With the same tokenizer, step 0
+compares an English encoder with a Nepali one, not two vocabularies. Precedent for the English
+encoder: Flex is built on `canary-1b-v2`, which had no Nepali and was taught it later.
+
+**Is 30 h enough?** For IndicConformer, possibly: Flex's learning curve was flat (4.6 h scored
+about the same as 18.3 h), but Flex already knew Nepali. For Parakeet, probably not. That curve
+says nothing about a model learning a new script and language, which usually takes hundreds of
+hours. This is an estimate from general experience, not a measurement: step 0 measures it, and
+step 4's curve says how much audio closes the gap.
+
+### Workflow
+
+0. **Plain fine-tune, no new data.** Fine-tune each student on the 30 h of verified labels. Score
+   gold and val, folded and raw, split into S/D/I. This is the baseline distillation must beat,
+   and it may end B early. Re-run Whisper-turbo on the current data too, since its 14.62 was
+   measured on the old gold.
+1. **Collect unlabelled audio.**
+   - Nepali podcasts and tech reviews from YouTube, in the corpus's genres.
+   - Downloaded outside the harness, since D86 allows only two ways in. The corpus lives outside
+     the database, which needs a decision entry.
+   - Cut into clips of 20 s or less with the same silero VAD.
+   - Collected by the owner as whole playlists, audio only, with yt-dlp's info JSON (video id,
+     channel, playlist) kept for the gold check and the provenance record. Prefer shows the corpus
+     lacks: more episodes of the same speakers stopped helping on the learning curve.
+   - **No channel or voice that appears in gold.** Gold is held out by speaker, and a scraped
+     episode of the same show would leak it. Gold and val audio are never pseudo-labelled (D76).
+     Gold holds Chill Pill clips, one Prime Television episode and 82 shorts/reels with no
+     recorded source (2026-09-24). Skip the first two channels. Screen every scraped episode
+     against gold's voices with the D99 voiceprints, on clean single-speaker stretches, where
+     they are reliable.
+   - First tranche: about 130 h of source for about 100 h of kept speech, collected while step 0
+     runs. More only once step 0 says the gap is worth closing.
+2. **Teacher decode.** Flex with the standard decoder (greedy and loop retry), keeping its
+   per-token log-probs.
+3. **Filter the labels, cheapest first.**
+   - Drop clips the loop retry fired on.
+   - Drop clips whose tokens per second fall outside the range seen in train.
+   - Drop the least confident 10–20% by mean log-prob.
+   - Add an agreement check with a second model, or a
+     [label-free filter](https://arxiv.org/abs/2407.01257), only if step 4 shows noisy labels hurt.
+   - Never send this audio through the paid routes.
+4. **Train the student** on the pseudo-labelled audio plus the 30 h, with the human labels
+   weighted up. Build a learning curve in hours of pseudo-labelled audio (100, then 300, then
+   1000 h) and stop when it flattens.
+
+**Success bar.** The student's gold and val WER falls within Flex's episode-bootstrap CI, per clip
+class, folded and raw, split into S/D/I. Only then are its extras (streaming, timestamps,
+conditioning) worth their cost.
+
+**Raw-WER caveat.** Flex's tokenizer cannot write `।` or Devanagari digits, so its pseudo-labels
+never hold them, while the human labels do. A student trained on both learns the two conventions
+at once. Folded WER hides this; raw WER does not.
+
+**Cost** (extrapolated from 04c, not measured). Teacher decode: Flex runs at a real-time factor of
+about 0.009 on an A100, so 300 h is about 3 GPU-hours. Student training: a few hours per run for a
+0.6B student on 300 h. The real cost is collecting the audio and checking it for gold overlap. A TPU is
+not worth it: the decode is already about 9 A100-hours per 1000 h, Flex's autoregressive decode
+with varying clip lengths and the loop retry recompiles constantly under XLA, the CPU (audio
+decoding, VAD) is the likelier bottleneck, and NeMo students do not train on TPU.
 
 ## C. Augmentation pipeline (priority 2)
 
