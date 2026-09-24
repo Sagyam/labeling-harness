@@ -2158,7 +2158,7 @@ proof that the schema and API layers still hold; a push is. **Reversal:** trivia
 suite back into pre-commit is a one-line change to one short script.
 
 ## D98 — Per-speaker labels are words on fixed speaker lanes, stored as their own label version
-> **Stopped by D100** (2026-09-24): the speakers queue is closed. The code and the five saved labels remain.
+> **Stopped by D100** (2026-09-24): the speakers queue is closed. The editor and the five saved labels are kept.
 
 Roadmap A, as the owner designed it on 2026-09-23. A clip in the `speakers` queue opens in the
 multitrack editor: a lane for each of the episode's diarized speakers, a block for each word at
@@ -2275,17 +2275,19 @@ attribution is unusable and speaker turns are hit or miss. The measurements agre
   the stronger voice, are not re-audited.
 - **Speaker turns stay, described as what they are.** Ingest still diarizes (D79), and the
   export still carries each clip's turns and linked voices (D78, D87). They are automatic and
-  unverified: a weak proxy for conversational turns, useful for colouring, for main-speaker
-  heuristics and as model conditioning. They are never a reference for who said a word, and the
-  dataset is not described as diarized. A speaker count in a report comes from the counts declared
+  cannot be trusted, neither for which speaker said a word nor for where a turn changes: changes
+  in pace, excitement and loudness read as a change of speaker. They colour the editors and
+  nothing more. They are never a reference, and the dataset is not described as diarized. A speaker count in a report comes from the counts declared
   at ingest, not from voice ids. Short videos were often declared as 3 by default, which a report
   must say.
 - **The speakers queue is closed.** Its 257 open tasks were skipped on 2026-09-24 by
   `d100-close-speakers-queue`, each with its event and audit row. The five saved `speakers-v1`
-  labels stay (labels are append-only), and so does the code of D98 and D99 until a separate
-  removal decision. Do not run `scripts/queue_speakers.py`.
+  labels stay (labels are append-only). The code of D98 and D99 is kept on purpose (the owner's
+  call): if roadmap F yields turns that can be trusted, the multitrack editor is what uses them.
+  Until then, do not run `scripts/queue_speakers.py`.
 - **Overlap models are on hold.** The owner judged roadmap D out of scope for the code-switching
-  paper. If they resume, they are developed and selected on synthetic mixes, where attribution is
+  paper, and put it, with the custom architectures, after an experiment with the diarizer itself
+  (roadmap F), since both are conditioned on diarization. If they resume, they are developed and selected on synthetic mixes, where attribution is
   known by construction (roadmap C1). They are checked on real crosstalk last: recognition against
   the single-stream gold, and attribution by grading a model's output by ear rather than labelling
   references.

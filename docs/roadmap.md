@@ -17,29 +17,30 @@ This chapter needs two things:
 
 Depending on how strong the results are, it may become its own paper.
 
-**Status, 2026-09-24 (D100).** A stopped. Diarization cannot say who said a word, so gold stays
-single-stream: everything said, in time order, with overlap spans marked. The owner put the chapter's
-model work (D) on hold as out of scope for the code-switching paper. B and C stand as written.
+**Status, 2026-09-24 (D100).** A stopped. The diarizer's turns cannot be trusted, neither which
+speaker said a word nor where a turn changes, so gold stays single-stream: everything said, in time
+order, with overlap spans marked. The owner put overlap models on hold as out of scope for the
+code-switching paper.
 
-**Priority, set by the owner:**
-1. ~~**A.** Per-speaker labelling as a multitrack editor.~~ Stopped (D100).
-2. **B.** Distilling the Flex fine-tune.
-3. **C.** The augmentation pipeline.
+**Order, set by the owner (2026-09-24):**
+1. **B.** Distil the Flex fine-tune.
+2. **C.** The augmentation pipeline.
+3. **F.** Fiddle with the diarizer, once B and C are mastered.
+4. **Only if F works:** the custom architectures ([custom-arch.md](custom-arch.md)) and the overlap
+   models of D. Both are conditioned on diarization, so both need a diarizer that can be trusted.
 
-D (models for overlapped speech) is on hold. If it resumes, it is developed on synthetic mixes and
-checked on real crosstalk last, without per-speaker references (D100). E is how all of it is
-measured. Sections are lettered so they do not collide with the retired numbered items that code
-comments still cite.
+E is how all of it is measured. Sections are lettered so they do not collide with the retired
+numbered items that code comments still cite, which is why F comes after E.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
 Built on 2026-09-23 (D98) with voiceprint suggestions (D99), and piloted on gold crosstalk. On
 2026-09-24 the owner listened to the diarizer's per-word attribution and ruled it unusable: turns
 are hit or miss, and in crosstalk the per-word join decides by rule, not by audio (findings.md,
-*Diarization cannot say who said a word*). The speakers queue is closed. The code and the five
-saved labels remain until a separate removal decision.
+*Diarization cannot say who said a word*). The speakers queue is closed. The editor is kept on
+purpose (the owner's call): if F yields turns that can be trusted, it is the tool that uses them.
 
-## B. Distil the Flex fine-tune into other architectures (priority 2)
+## B. Distil the Flex fine-tune into other architectures (priority 1)
 
 Flex is the only model that is good at Nepanglish, and it is closed in two ways: it decodes whole
 utterances, and it reports no word timestamps. Many stronger designs were never trained on Nepali:
@@ -78,7 +79,7 @@ because it is measured on single-speaker WER.
   and raw, split into S/D/I, per clip class. Only then are its extras (streaming, timestamps,
   conditioning) worth their cost. Gold and val audio are never pseudo-labelled for training (D76).
 
-## C. Augmentation pipeline (priority 3)
+## C. Augmentation pipeline (priority 2)
 
 What the sweep taught: augmentation pays only when the model has a way to use it, either
 conditioning that says whom to follow or an output format that writes both voices. The pipeline
@@ -119,7 +120,7 @@ speech or noise (D76).
    ([Conversations that Never Happened](https://arxiv.org/abs/2606.03957)). This needs a
    code-mixed Nepali TTS with many voices, which does not exist yet.
 
-## D. Models for overlapped speech (on hold, D100)
+## D. Models for overlapped speech (on hold, D100; only if F works)
 
 There will be no per-speaker references for real crosstalk: separation was a dead end
 (2026-09-22/23), and so was attribution from diarization (2026-09-24). If D resumes, models are
@@ -171,6 +172,30 @@ against the single-stream gold, and attribution by grading the model's output by
   on val is chosen on clean speech.
 - **A cost term** (latency, GPU, CPU inference, paid calls) in every decision rule. A small gain
   does not buy a large cost.
+
+## F. Fiddling with the diarizer (priority 3, after B and C)
+
+The owner wants to understand the diarizer before giving up on it. This is not a fix to build; it is
+one bounded test, done as its own experiment.
+
+- **How pyannote decides.** A segmentation model finds up to three local speakers in each 10 s
+  window. Each local speaker gets a voice embedding, and all of them are clustered across the
+  episode. Words never enter it: the harness joins them to turns by time. Clustering can only fix
+  mistakes made at the clustering step. It cannot fix a turn boundary the segmentation model put
+  in the wrong place, or a word said while both people talk.
+- **Over-cluster, then merge by ear.** Force more clusters than people (6 for a two-person
+  interview). If the host's excited delivery ends up as its own cluster, listening to a few samples
+  per cluster and merging them fixes it in minutes per episode instead of word by word. At the
+  default setting, the interview's 8 extra clusters were not pieces of the host (cosine ≤ 0.26 to
+  both main voices), so this is unproven.
+- **The exclusive track.** Pyannote also returns one speaker per moment, chosen from its own frame
+  scores, for joining to ASR word timestamps. The harness never stored it. On the interview's 537
+  words decided by the join's tie rule, it moved 282 to the other voice. That is either evidence
+  from the audio or noise; only listening can tell.
+- **The rule, fixed in advance.** On episode 205: one run with 6 clusters, 5 samples per cluster,
+  and the exclusive track's picks on the tie words, all judged by ear. If every cluster is one
+  person, cluster merging is viable and the multitrack editor comes back. If clusters mix people,
+  word attribution from diarization is closed for good.
 
 ## Retired items
 

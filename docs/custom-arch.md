@@ -4,9 +4,9 @@ Design notes for building models on top of the Flex fine-tune, written and parke
 2026-09-23. The active plan is [roadmap.md](roadmap.md); its sections B and D name two of the
 three ideas here as priorities. This file holds the working detail so the roadmap stays short.
 
-**Revisit trigger (owner).** Reopen this file when overlap work resumes (on hold since D100). There
-is no attributed real gold (roadmap A stopped), so an uplift is first shown on synthetic mixes and
-then checked on real crosstalk as roadmap D says. Until then the bottleneck is evaluation, not models.
+**Revisit trigger (owner).** Reopen this file only if roadmap F works, that is, only once the
+diarizer's turns can be trusted. These designs are conditioned on diarization. Roadmap order:
+distillation, augmentation, the diarizer experiment, then this file.
 
 ## Why nothing here trains from scratch
 
