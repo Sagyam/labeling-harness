@@ -437,6 +437,9 @@ class TrainConfig:
     weight_decay: float = 0.0
     clip_norm: float = 1.0
     patience: int = 3  # evaluations without a val-WER improvement before stopping
+    # WER points an evaluation must gain on the last counted one to reset `patience`. 0 counts
+    # any gain, so a crawl of 0.2 points an epoch never stops. The best weights are kept either way.
+    min_delta: float = 0.0
     seed: int = 0
     log_every: int = 10
     workers: int = 6
@@ -603,6 +606,7 @@ def train(
     base_lrs = [g["lr"] for g in optimizer.param_groups]
     params = [p for p in model.parameters() if p.requires_grad]
     history, best, best_state, bad, step = [], float("inf"), None, 0, 0
+    counted = float("inf")  # the val WER that last reset `bad`
     print(
         f"{cfg.name}: {total} optimizer steps over {cfg.epochs} epochs "
         f"(~{cfg.effective_s / 60:.0f} min of audio each), peak lr {cfg.lr:g}, {cfg.schedule}"
@@ -678,12 +682,17 @@ def train(
         )
         (out / "history.json").write_text(json.dumps(history, indent=1))
         if improved:
-            best, bad = val["wer"], 0
+            best = val["wer"]
             best_state = {k: v.detach().to("cpu", copy=True) for k, v in model.state_dict().items()}
+        if val["wer"] < counted - cfg.min_delta:  # at 0: the old rule, any strict gain
+            counted, bad = val["wer"], 0
         else:
             bad += 1
             if bad >= cfg.patience:
-                print(f"no val improvement in {cfg.patience} evaluations; stopping")
+                print(
+                    f"val WER gained less than {cfg.min_delta:g} points in {cfg.patience} "
+                    "evaluations; stopping"
+                )
                 break
     monitor.window()
     if best_state is not None:
