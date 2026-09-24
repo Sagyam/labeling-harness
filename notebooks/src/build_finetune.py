@@ -959,8 +959,9 @@ print(f"{size / 2**30:.2f} GiB -> https://huggingface.co/{OUT_REPO}/tree/main/{R
 ]
 
 
-for name, cells in [("Finetune.ipynb", flex)]:
-    (OUT_DIR / name).write_text(
-        json.dumps(notebook(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    print("wrote", OUT_DIR / name, len(cells), "cells")
+if __name__ == "__main__":  # build_distill.py imports the cell helpers above
+    for name, cells in [("Finetune.ipynb", flex)]:
+        (OUT_DIR / name).write_text(
+            json.dumps(notebook(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        print("wrote", OUT_DIR / name, len(cells), "cells")
