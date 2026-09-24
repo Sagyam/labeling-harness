@@ -60,6 +60,7 @@ skipped, so after a dropped session, run the notebook again with the same `RUN_P
 
 CONFIG = r"""
 RUN_PREFIX = "distill-step0-2026-09-24"   # OUT_REPO/<RUN_PREFIX>/<RUN_PREFIX>-<student>/
+NOTEBOOK = "nemo"                          # names this notebook's summary file
 STUDENTS = ["indicconformer", "parakeet"]  # in this order: the small one first
 PARAKEET_ID = "nvidia/parakeet-tdt-0.6b-v2"
 INDIC_URL = ("https://objectstore.e2enetworks.net/indicconformer/models/"
@@ -287,6 +288,48 @@ ARCHITECTURE = {
     "indicconformer": "Conformer-L hybrid RNN-T/CTC, 121M; Indic encoder, fresh 1,024-token heads",
 }
 BASE_MODEL = {"parakeet": PARAKEET_ID, "indicconformer": INDIC_URL}
+CARD_NOTE = f"shared {VOCAB_SIZE}-token tokenizer"
+DECODER_NAME = "greedy"
+
+
+def lr_card(name):
+    return {"encoder": LR_ENCODER, "heads": LR_HEADS}
+
+
+def decoder():
+    return transcribe
+
+
+ENCODER_PREFIXES = ("encoder.", "preprocessor.")
+
+
+def optimizer_for(model):
+    enc = [p for n, p in model.named_parameters() if n.startswith(ENCODER_PREFIXES) and p.requires_grad]
+    heads = [p for n, p in model.named_parameters() if not n.startswith(ENCODER_PREFIXES) and p.requires_grad]
+    return torch.optim.AdamW([{"params": enc, "lr": LR_ENCODER}, {"params": heads, "lr": LR_HEADS}],
+                             weight_decay=0.0, fused=DEVICE == "cuda")
+
+
+def probe_budget(model, optimizer):
+    longest = max(splits["train"], key=ftkit.duration)
+    max_len = ftkit.pad_len(round(ftkit.duration(longest) * ftkit.SR), PAD_TO_S)
+    max_u = max(len(r["ids"]) for r in splits["train"])
+
+    def probe_step(n):
+        wav = torch.randn(n, max_len, device=DEVICE) * 0.1
+        ys = torch.randint(1, VOCAB_SIZE, (n, max_u), device=DEVICE)
+        with torch.autocast(DEVICE, dtype=torch.bfloat16):
+            loss = forward_loss(model, wav, torch.full((n,), max_len, device=DEVICE), ys,
+                                torch.full((n,), max_u, device=DEVICE))
+        loss.backward()
+
+    model.train()
+    ftkit.init_optimizer_state(model, optimizer)
+    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+    budget = n * max_len / ftkit.SR * PROBE_FRACTION
+    print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_u} tokens: {n} clips -> "
+          f"budget {budget:.0f} s of padded audio per micro-batch")
+    return budget
 
 
 def load_student(name):
@@ -388,46 +431,17 @@ import gc
 
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo(OUT_REPO, repo_type="model", private=True, exist_ok=True)
-ENCODER_PREFIXES = ("encoder.", "preprocessor.")
-
-
-def optimizer_for(model):
-    enc = [p for n, p in model.named_parameters() if n.startswith(ENCODER_PREFIXES) and p.requires_grad]
-    heads = [p for n, p in model.named_parameters() if not n.startswith(ENCODER_PREFIXES) and p.requires_grad]
-    return torch.optim.AdamW([{"params": enc, "lr": LR_ENCODER}, {"params": heads, "lr": LR_HEADS}],
-                             weight_decay=0.0, fused=DEVICE == "cuda")
-
-
-def probe_budget(model, optimizer):
-    longest = max(splits["train"], key=ftkit.duration)
-    max_len = ftkit.pad_len(round(ftkit.duration(longest) * ftkit.SR), PAD_TO_S)
-    max_u = max(len(r["ids"]) for r in splits["train"])
-
-    def probe_step(n):
-        wav = torch.randn(n, max_len, device=DEVICE) * 0.1
-        ys = torch.randint(1, VOCAB_SIZE, (n, max_u), device=DEVICE)
-        with torch.autocast(DEVICE, dtype=torch.bfloat16):
-            loss = forward_loss(model, wav, torch.full((n,), max_len, device=DEVICE), ys,
-                                torch.full((n,), max_u, device=DEVICE))
-        loss.backward()
-
-    model.train()
-    ftkit.init_optimizer_state(model, optimizer)
-    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
-    budget = n * max_len / ftkit.SR * PROBE_FRACTION
-    print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_u} tokens: {n} clips -> "
-          f"budget {budget:.0f} s of padded audio per micro-batch")
-    return budget
-
-
 def decode(rows):
-    return ftkit.transcribe_rows(rows, transcribe, budget_s=EVAL_BUDGET_S, max_items=EVAL_ITEMS,
-                                 pad_to_s=PAD_TO_S)
+    # `decoder()` is the student cell's: greedy for a transducer, greedy + loop retry for the others
+    d = decoder()
+    texts, compute = ftkit.transcribe_rows(rows, d, budget_s=EVAL_BUDGET_S, max_items=EVAL_ITEMS,
+                                           pad_to_s=PAD_TO_S)
+    return texts, compute, getattr(d, "log", [])
 
 
 def evaluate(model, rows=None):
     rows = rows or splits["val"]
-    texts, _ = decode(rows)
+    texts, _, _ = decode(rows)
     return score([r["text"] for r in rows], texts)
 
 
@@ -449,9 +463,10 @@ def score_and_write(out, run, name, history):
     for split in ("gold", "val"):
         rows = splits[split]
         refs = [r["text"] for r in rows]
-        texts, compute = decode(rows)
+        texts, compute, log = decode(rows)
         m = score(refs, texts)
         m["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in rows)
+        m["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in log]
         m["by_class"] = distill.by_class(rows, refs, texts, score)
         m["vs_flex"] = paired(rows, refs, flex[split], texts, REPORT_KEYS)
         results[split] = m
@@ -463,14 +478,14 @@ def score_and_write(out, run, name, history):
         "name": f"{name} FT (distil step 0)",
         "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "description": f"{RUN_PREFIX}: {name} fine-tuned on the verified train labels only, "
-                       f"shared {VOCAB_SIZE}-token tokenizer (roadmap §B step 0)",
+                       f"{CARD_NOTE} (roadmap §B step 0)",
         "architecture": ARCHITECTURE[name],
         "base_model": BASE_MODEL[name],
-        "decoder": "greedy",
+        "decoder": DECODER_NAME,
         "run_name": run,
         "epochs": EPOCHS,
         "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
-        "lr": {"encoder": LR_ENCODER, "heads": LR_HEADS},
+        "lr": lr_card(name),
         "val_wer": val["wer"],
         "gold_wer": gold["wer"],
         "val_sid": {k: val[k] for k in ("sub", "del", "ins")},
@@ -595,8 +610,9 @@ summary = {"run_prefix": RUN_PREFIX, "flex_reference": FLEX_REFERENCE,
            "flex": {k: {x: v[x] for x in ("wer", "raw_wer", "cer", "sub", "del", "ins", "clips")}
                     for k, v in flex_scores.items()},
            "students": results}
-(OUT_ROOT / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
-api.upload_file(path_or_fileobj=str(OUT_ROOT / "summary.json"), path_in_repo=f"{RUN_PREFIX}/summary.json",
+(OUT_ROOT / f"summary-{NOTEBOOK}.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
+api.upload_file(path_or_fileobj=str(OUT_ROOT / f"summary-{NOTEBOOK}.json"),
+                path_in_repo=f"{RUN_PREFIX}/summary-{NOTEBOOK}.json",
                 repo_id=OUT_REPO, commit_message=f"{RUN_PREFIX}: summary")
 print("\nuploaded", f"https://huggingface.co/{OUT_REPO}/tree/main/{RUN_PREFIX}")
 """
