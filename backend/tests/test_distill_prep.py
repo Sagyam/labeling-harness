@@ -6,10 +6,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 
 from app.services.distill_corpus import SourceInput
-from app.services.distill_prep import prepare_source
+from app.services.distill_prep import build_manifest, prepare_source, screen_folder
 from app.services.silero_vad import SileroVAD
 from tests.ingest_support import make_test_audio
 
@@ -87,3 +88,55 @@ def test_an_interrupted_source_is_redone_from_scratch(tmp_path: Path) -> None:
     assert not partial.exists()
     clips = sorted((tmp_path / "distill" / "sources" / f"yt-{VIDEO}" / "clips").iterdir())
     assert "stale.flac" not in [c.name for c in clips]
+
+
+# --- the voiceprint screen and the corpus manifest ----------------------------------------------
+
+
+class _Embedder:
+    """Every window sounds like ``vector``: stands in for the voiceprint model."""
+
+    def __init__(self, vector):
+        self.vector = np.asarray(vector, dtype=float)
+        self.calls = 0
+
+    def embed(self, chunks):
+        self.calls += len(chunks)
+        return [self.vector for _ in chunks]
+
+
+GOLD = {"v001": np.array([1.0, 0.0])}
+SCREEN = {"threshold": 0.6, "window_seconds": 2.0, "min_seconds": 10.0}
+
+
+def _prepared(tmp_path: Path) -> Path:
+    _prepare(tmp_path, _input(tmp_path))
+    return tmp_path / "distill" / "sources" / f"yt-{VIDEO}"
+
+
+def test_a_source_that_sounds_like_gold_is_quarantined_and_says_why(tmp_path: Path) -> None:
+    folder = _prepared(tmp_path)
+    embedder = _Embedder([1.0, 0.0])
+    result = screen_folder(folder, GOLD, embedder, **SCREEN)
+    assert result.verdict == "quarantine" and result.voice == "v001"
+    assert embedder.calls >= 5  # 2 s windows over about 45 s of clips
+    saved = json.loads((folder / "screen.json").read_text(encoding="utf-8"))
+    assert saved["verdict"] == "quarantine" and saved["threshold"] == 0.6 and saved["windows"]
+
+
+def test_a_source_that_sounds_like_no_gold_voice_is_cleared(tmp_path: Path) -> None:
+    folder = _prepared(tmp_path)
+    assert screen_folder(folder, GOLD, _Embedder([0.0, 1.0]), **SCREEN).verdict == "clear"
+
+
+def test_the_manifest_holds_only_cleared_sources(tmp_path: Path) -> None:
+    folder = _prepared(tmp_path)
+    root = tmp_path / "distill"
+    assert build_manifest(root).clips == 0  # not screened yet: nothing enters the corpus
+    screen_folder(folder, GOLD, _Embedder([1.0, 0.0]), **SCREEN)
+    report = build_manifest(root)
+    assert report.clips == 0 and report.quarantined == [f"yt-{VIDEO}"]
+    screen_folder(folder, GOLD, _Embedder([0.0, 1.0]), **SCREEN)
+    report = build_manifest(root)
+    rows = (root / "clips.jsonl").read_text(encoding="utf-8").splitlines()
+    assert report.clips == len(rows) > 0 and report.quarantined == []

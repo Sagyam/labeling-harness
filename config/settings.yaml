@@ -156,6 +156,6 @@ distill:
   blocked_channels:
     - Chill Pill
     - Prime Television
-  screen_threshold: null     # measured on the corpus's own clips before the screen may run (D101)
+  screen_threshold: 0.6      # measured 2026-09-25 (findings.md): 92.9% of a gold voice's windows pass, 0.02% of others'
   screen_window_seconds: 2.0
   screen_min_seconds: 10.0   # of windows close to one gold voice, to quarantine a source

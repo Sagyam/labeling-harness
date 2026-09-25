@@ -24,6 +24,40 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## The gold-voice screen's threshold, measured (2026-09-25)
+
+D101 screens unlabelled audio for distillation against gold's voices: each source's clips are cut
+into 2 s windows, embedded with the voiceprint model (D99) and compared with the centroid of every
+voice diarized in an episode that holds a gold clip. Nothing is diarized, so a window may hold two
+voices. The threshold was measured on the corpus's own clips before the screen was allowed to run.
+The measuring code was discarded.
+
+- **Gold's voices:** 141, from the 109 episodes holding a gold clip, all diarized.
+- **Positives:** 3,000 windows from gold voices' solo stretches in gold clips, against their own
+  centroid: median 0.747, p10 0.623, p5 0.570.
+- **Negatives:** 6,000 windows from 33 voices never heard in gold (train clips), against the
+  closest gold voice: median 0.375, p99 0.514, p99.9 0.566, max 0.608.
+
+| Threshold | Own windows passing | Other voices' windows passing | False windows per clean hour |
+|---:|---:|---:|---:|
+| 0.50 | 98.0% | 1.92% | 34.5 |
+| 0.55 | 96.4% | 0.27% | 4.8 |
+| **0.60** | **92.9%** | **0.02%** | **0.3** |
+| 0.65 | 85.8% | 0.00% | 0.0 |
+
+- **Chosen: 0.60 with 10 s to quarantine** (`distill.screen_threshold`,
+  `distill.screen_min_seconds`). A clean hour gives about 0.3 false windows (0.6 s); a gold voice
+  heard for 10 s passes about 93% of its windows. It equals D87's linking threshold, but it was
+  measured here on 2 s windows, not assumed from whole-speaker centroids.
+- **What it misses.** Two small gold voices (v102 and v047, 4–5 windows each) sit below their own
+  centroid (median 0.32 and 0.47), so a new recording of them would pass. A gold voice heard for
+  under 10 s in a new source is not quarantined.
+- **End to end, through both scripts:** a gold reel (episode 171, 63 s) fed in as an anonymous
+  file was quarantined as v136 for 40 s (closest windows 0.77–0.80); a 6.6 min tech review whose
+  voices are all outside gold was cleared.
+
+---
+
 ## Distillation step 0: four students on the verified labels alone (2026-09-25)
 
 Roadmap §B, step 0: each student fine-tuned on the 30 h of verified train labels, nothing else,

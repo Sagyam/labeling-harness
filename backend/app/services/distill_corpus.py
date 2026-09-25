@@ -70,8 +70,9 @@ def read_source(audio: Path, info: Mapping[str, Any] | None, *, audio_sha256: st
     raw_id = str(info.get("id") or "")
     video_id = raw_id if VIDEO_ID_RE.match(raw_id) else None
     duration = info.get("duration")
+    hex_digest = audio_sha256.rsplit(":", 1)[-1]  # app.utils.hashing prefixes "sha256:"
     return Source(
-        source_id=f"yt-{video_id}" if video_id else f"file-{audio_sha256[:12]}",
+        source_id=f"yt-{video_id}" if video_id else f"file-{hex_digest[:12]}",
         video_id=video_id,
         channel=info.get("channel") or info.get("uploader"),
         channel_id=info.get("channel_id") or info.get("uploader_id"),
@@ -207,3 +208,23 @@ def screen_source(
     if not close[voice]:
         return ScreenResult("clear", None, 0.0)
     return ScreenResult("quarantine" if seconds >= min_seconds else "clear", voice, seconds, best)
+
+
+def gold_voice_centroids(
+    runs: Sequence[tuple[Mapping[str, str] | None, Mapping[str, Sequence[float]] | None]],
+) -> dict[str, np.ndarray]:
+    """One unit centroid per voice heard in gold's episodes: the mean of its runs' centroids.
+
+    Args:
+        runs: Per diarization run of an episode holding a gold clip, its ``voices_jsonb`` (label to
+            voice id) and ``embeddings_jsonb`` (label to the diarizer's embedding). A speaker with
+            no voice or no embedding gives nothing.
+    """
+    sums: dict[str, np.ndarray] = {}
+    for voices, embeddings in runs:
+        for label, voice in (voices or {}).items():
+            vector = np.asarray((embeddings or {}).get(label) or [], dtype=float)
+            norm = float(np.linalg.norm(vector)) if vector.size else 0.0
+            if voice and norm > 0:
+                sums[voice] = sums.get(voice, 0) + vector / norm
+    return {v: s / np.linalg.norm(s) for v, s in sums.items() if np.linalg.norm(s) > 0}

@@ -12,21 +12,25 @@ import datetime as dt
 import json
 import shutil
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+import numpy as np
 import soundfile as sf
 
 from app.services.distill_corpus import (
     ClipSpan,
+    ScreenResult,
     Source,
     SourceInput,
     clip_rows,
     read_source,
     refusal,
+    screen_source,
     source_dir,
+    window_starts,
 )
 from app.services.ingest.audio import normalize_audio
 from app.services.silero_vad import (
@@ -133,3 +137,98 @@ def prepare_source(
     return PrepareResult(
         "prepared", source, len(rows), speech, seconds_taken=time.perf_counter() - started
     )
+
+
+# --- the voiceprint screen and the corpus manifest ----------------------------------------------
+
+
+class Embedder(Protocol):
+    """What the screen needs of the voiceprint model (``voiceprint.VoiceEmbedder``)."""
+
+    def embed(self, chunks: Sequence[np.ndarray]) -> list[np.ndarray | None]: ...
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def screen_folder(
+    folder: Path,
+    gold: Mapping[str, np.ndarray],
+    embedder: Embedder,
+    *,
+    threshold: float,
+    window_seconds: float,
+    min_seconds: float,
+    batch: int = 256,
+) -> ScreenResult:
+    """Screen one prepared source against gold's voices and write its ``screen.json``.
+
+    Every clip is cut into non-overlapping windows of ``window_seconds`` and embedded; nothing is
+    diarized, so a window can hold more than one voice, which the threshold was measured with
+    (D101, findings.md).
+    """
+    keys: list[tuple[str, float]] = []
+    chunks: list[np.ndarray] = []
+    for row in _read_jsonl(folder / "clips.jsonl"):
+        audio, sample_rate = sf.read(
+            str(folder / "clips" / f"{row['segment_id']}.flac"), dtype="float32"
+        )
+        width = round(window_seconds * sample_rate)
+        for start in window_starts(len(audio) / sample_rate, window_seconds):
+            i = round(start * sample_rate)
+            keys.append((row["segment_id"], start))
+            chunks.append(audio[i : i + width])
+    vectors: list[np.ndarray | None] = []
+    for i in range(0, len(chunks), batch):
+        vectors += embedder.embed(chunks[i : i + batch])
+    windows = [(k[0], k[1], v) for k, v in zip(keys, vectors, strict=True)]
+    result = screen_source(
+        windows, gold, threshold=threshold, window_seconds=window_seconds, min_seconds=min_seconds
+    )
+    record = {
+        **asdict(result),
+        "threshold": threshold,
+        "window_seconds": window_seconds,
+        "min_seconds": min_seconds,
+        "windows_screened": len(windows),
+        "gold_voices": len(gold),
+        "screened_at": _now(),
+    }
+    (folder / "screen.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
+    return result
+
+
+@dataclass
+class ManifestReport:
+    """What ``build_manifest`` wrote: cleared clips and hours, and the sources held back."""
+
+    clips: int = 0
+    hours: float = 0.0
+    quarantined: list[str] = field(default_factory=list)
+    unscreened: list[str] = field(default_factory=list)
+
+
+def build_manifest(root: Path) -> ManifestReport:
+    """Write ``root/clips.jsonl`` from every source the screen cleared, and only those.
+
+    A source not yet screened, or quarantined, stays out of the corpus (D101).
+    """
+    report = ManifestReport()
+    rows: list[dict[str, Any]] = []
+    for folder in sorted(p for p in (root / "sources").glob("*") if p.is_dir()):
+        if folder.name.endswith(".partial"):
+            continue
+        screen = folder / "screen.json"
+        if not screen.is_file():
+            report.unscreened.append(folder.name)
+            continue
+        if json.loads(screen.read_text(encoding="utf-8"))["verdict"] != "clear":
+            report.quarantined.append(folder.name)
+            continue
+        rows += _read_jsonl(folder / "clips.jsonl")
+    root.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(root / "clips.jsonl", rows)
+    report.clips = len(rows)
+    report.hours = round(sum(r["duration"] for r in rows) / 3600, 3)
+    return report

@@ -59,6 +59,12 @@ def test_read_source_without_a_usable_video_id_is_named_by_its_audio():
         assert s.video_id is None
 
 
+def test_a_prefixed_digest_names_the_source_by_its_hex_alone():
+    # app.utils.hashing writes "sha256:<hex>"; a colon has no place in a folder name
+    s = dc.read_source(Path("x.mp3"), None, audio_sha256="sha256:0123456789ab" + "0" * 52)
+    assert s.source_id == "file-0123456789ab"
+
+
 def test_read_source_falls_back_to_uploader_and_playlist():
     info = {"id": "dQw4w9WgXcQ", "uploader": "Uploader", "playlist": "Pl"}
     s = dc.read_source(Path("x.mp3"), info, audio_sha256="a" * 64)
@@ -164,3 +170,24 @@ def test_clip_rows_name_each_clip_under_its_source():
             "channel": "Some Podcast",
         }
     ]
+
+
+# --- gold's voices ------------------------------------------------------------------------------
+
+
+def test_gold_voice_centroids_average_a_voice_across_runs_and_skip_unlinked_speakers():
+    runs = [
+        (
+            {"SPEAKER_00": "v001", "SPEAKER_01": "v002"},
+            {"SPEAKER_00": [1, 0, 0], "SPEAKER_01": [0, 2, 0]},
+        ),
+        ({"SPEAKER_00": "v001"}, {"SPEAKER_00": [0, 0, 3], "SPEAKER_07": [5, 5, 5]}),
+    ]
+    got = dc.gold_voice_centroids(runs)
+    assert set(got) == {"v001", "v002"}
+    np.testing.assert_allclose(got["v001"], _unit(1, 0, 1))
+    np.testing.assert_allclose(got["v002"], _unit(0, 1, 0))
+
+
+def test_a_speaker_without_an_embedding_gives_no_centroid():
+    assert dc.gold_voice_centroids([({"SPEAKER_00": "v001"}, None)]) == {}
