@@ -57,3 +57,70 @@ def by_class(
         if groups:
             out[key] = {v: summarize([clips[i] for i in idx]) for v, idx in sorted(groups.items())}
     return out
+
+
+def filter_pseudo(
+    rows: Sequence[dict],
+    *,
+    tokens_per_s: tuple[float, float],
+    drop_fraction: float,
+) -> tuple[list[dict], dict[str, Any]]:
+    """Roadmap §B step 3: keep the teacher's labels worth training on, cheapest rule first.
+
+    Each row carries ``segment_id``, ``text``, ``n_tokens`` (teacher tokens), ``duration`` (s),
+    ``mean_logprob`` and ``looped`` (the greedy output loops, ``ftkit.is_loop``). Dropped, in
+    order: a clip whose output loops; an empty transcript; a rate outside ``tokens_per_s`` (the
+    range train's labels span, in the teacher's tokens); then the least confident
+    ``drop_fraction`` of what is left, by mean log-prob. Returns the kept rows, in input order,
+    and a report of what each rule dropped.
+    """
+    if not 0.0 <= drop_fraction < 1.0:
+        raise ValueError(f"drop_fraction must be in [0, 1), not {drop_fraction}")
+    lo, hi = tokens_per_s
+    dropped = {"loop": 0, "empty": 0, "rate": 0, "confidence": 0}
+    left = []
+    for r in rows:
+        if r["looped"]:
+            dropped["loop"] += 1
+        elif not r["text"].strip():
+            dropped["empty"] += 1
+        elif not lo <= r["n_tokens"] / r["duration"] <= hi:
+            dropped["rate"] += 1
+        else:
+            left.append(r)
+    cut = None
+    n_drop = int(len(left) * drop_fraction)
+    if n_drop:
+        least = sorted(left, key=lambda r: r["mean_logprob"])[:n_drop]
+        cut = max(r["mean_logprob"] for r in least)
+        gone = {r["segment_id"] for r in least}
+        left = [r for r in left if r["segment_id"] not in gone]
+        dropped["confidence"] = n_drop
+    report = {
+        "total": len(rows),
+        "kept": len(left),
+        "kept_hours": round(sum(r["duration"] for r in left) / 3600, 3),
+        "dropped": dropped,
+        "logprob_cut": cut,
+        "tokens_per_s": [lo, hi],
+        "drop_fraction": drop_fraction,
+    }
+    return left, report
+
+
+def latin_share(text: str) -> float:
+    """The share of a transcript's words written in Latin script: a code-mixing proxy that needs
+    only the text, for pseudo-labels, which have no CMI class."""
+    words = [w for w in text.split() if any(c.isalpha() for c in w)]
+    if not words:
+        return 0.0
+    return sum(any("a" <= c.lower() <= "z" for c in w) for w in words) / len(words)
+
+
+def mixing_bucket(share: float) -> str:
+    """``latin_share`` in the corpus's CMI buckets (D87): 0, <15, 15-30, 30+ percent."""
+    if share == 0:
+        return "0"
+    if share < 0.15:
+        return "<15"
+    return "15-30" if share < 0.30 else "30+"

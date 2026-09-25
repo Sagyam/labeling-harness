@@ -98,3 +98,59 @@ def test_by_class_never_realigns_a_clip():
     seen = []
     distill.by_class(rows, ["ca", "cb", "cc"], lambda clips: seen.extend(clips))
     assert sorted(seen) == sorted(["ca", "cb", "cc"] * 3)
+
+
+# --- step 3: filtering the teacher's labels ------------------------------------------------------
+
+
+def _pseudo(sid, *, text="कुरा गर्नुभयो", tokens=10, duration=5.0, logprob=-0.1, looped=False):
+    return {
+        "segment_id": sid,
+        "text": text,
+        "n_tokens": tokens,
+        "duration": duration,
+        "mean_logprob": logprob,
+        "looped": looped,
+    }
+
+
+def test_filter_drops_looped_empty_and_out_of_rate_clips_before_confidence():
+    rows = [
+        _pseudo("loop", looped=True),
+        _pseudo("empty", text="  ", tokens=0),
+        _pseudo("fast", tokens=100, duration=5.0),  # 20 tokens/s
+        _pseudo("slow", tokens=1, duration=10.0),  # 0.1 tokens/s
+        _pseudo("ok", tokens=10, duration=5.0),
+    ]
+    kept, report = distill.filter_pseudo(rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.0)
+    assert [r["segment_id"] for r in kept] == ["ok"]
+    assert report["dropped"] == {"loop": 1, "empty": 1, "rate": 2, "confidence": 0}
+
+
+def test_filter_drops_the_least_confident_fraction_of_what_is_left():
+    rows = [_pseudo(f"c{i}", logprob=-i / 10) for i in range(10)]  # c9 is the least confident
+    kept, report = distill.filter_pseudo(rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.2)
+    assert {r["segment_id"] for r in kept} == {f"c{i}" for i in range(8)}
+    assert report["dropped"]["confidence"] == 2
+    assert report["logprob_cut"] == -0.8
+
+
+def test_filter_reports_what_it_kept_in_clips_and_hours():
+    rows = [_pseudo(f"c{i}", duration=3600.0, tokens=7200) for i in range(3)]
+    _, report = distill.filter_pseudo(rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.0)
+    assert (report["kept"], report["kept_hours"], report["total"]) == (3, 3.0, 3)
+
+
+def test_filter_refuses_a_fraction_outside_zero_to_one():
+    with pytest.raises(ValueError):
+        distill.filter_pseudo([], tokens_per_s=(0.5, 13.0), drop_fraction=1.0)
+
+
+def test_latin_share_counts_words_written_in_latin_script():
+    assert distill.latin_share("म phone किन्छु, camera राम्रो") == 0.4
+    assert distill.latin_share("सबै नेपाली") == 0.0
+    assert distill.latin_share("") == 0.0
+
+
+def test_mixing_bucket_matches_the_corpus_cmi_classes():
+    assert [distill.mixing_bucket(x) for x in (0.0, 0.1, 0.2, 0.5)] == ["0", "<15", "15-30", "30+"]
