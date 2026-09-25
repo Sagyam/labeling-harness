@@ -128,14 +128,18 @@ def source_dir(source_id: str) -> str:
 
 
 def clip_rows(source: Source, clips: Sequence[ClipSpan]) -> list[dict[str, Any]]:
-    """The corpus manifest's rows for one source's clips, paths relative to the corpus root."""
+    """The corpus manifest's rows for one source's clips, paths relative to the corpus root.
+
+    Times are named as in the labelled export (``start_time``, ``end_time``), so the notebooks'
+    ``ftkit.duration`` reads both corpora alike.
+    """
     return [
         {
             "segment_id": c.segment_id,
             "source_id": source.source_id,
             "path": f"{source_dir(source.source_id)}/clips/{c.segment_id}.flac",
-            "start": c.start,
-            "end": c.end,
+            "start_time": c.start,
+            "end_time": c.end,
             "duration": round(c.end - c.start, 3),
             "checksum": c.checksum,
             "channel": source.channel,
