@@ -56,7 +56,8 @@ never heard Nepali and still matches it would be the best outcome.
 
 - **Fine-tuning** is a pretrained student plus human labels. 04a and 04c were both fine-tunes.
 - **Distillation** is a pretrained student plus labels written by a better model, the teacher
-  (the current Flex fine-tune, with its greedy+retry decoder).
+  (the Flex fine-tune p00-s0, decoding greedily; a clip whose output loops is dropped, not
+  retried, in step 3).
 
 On the 30 h already labelled, distillation adds nothing: Flex's labels (about 6.5% WER) are worse
 than the verified ones. It pays off only on audio nobody has labelled, so Flex becomes a label
@@ -78,7 +79,9 @@ Checked on 2026-09-24:
 | **Whisper-large-v3-turbo** (OpenAI, MIT) | weakly (123% zero-shot, loops) | yes: byte-level BPE | 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. Its decoder stops at 448 positions, and Devanagari costs several tokens a character: 9 train labels do not fit, and 5 gold clips cannot be written whole in one pass. |
 | **Qwen3-ASR-0.6B** ([Alibaba](https://github.com/QwenLM/Qwen3-ASR), Apache-2.0) | no; Hindi among its 30 languages | yes: byte-level BPE | An audio encoder feeding a Qwen3 decoder, the 0.6B picked over the 1.7B for being Parakeet's size and smaller than Flex. Zero-shot it writes rough Nepanglish already. Streams through vLLM only; its forced aligner covers 11 languages, not Hindi or Nepali. Its prompt names the language, and `language None` means "no speech", so ours is fixed at `language Nepali`. `qwen-asr` pins transformers 4.57.6, so it runs in its own runtime. |
 
-**Pick.** Parakeet-v2 is the main bet, with IndicConformer next to it at step 0 as the safety net.
+**Pick, before step 0.** Parakeet-v2 was the main bet, with IndicConformer next to it as the
+safety net. Step 0 overturned it (findings.md, 2026-09-25): Whisper-turbo came closest to Flex and
+is the student carried forward; Parakeet's English encoder did not generalise on 30 h.
 Both need a new tokenizer, so they share one: a SentencePiece model trained on train-split labels
 only, which is allowed to write `।` and Devanagari digits. With the same tokenizer, step 0
 compares an English encoder with a Nepali one, not two vocabularies. Precedent for the English
@@ -122,10 +125,10 @@ step 4's curve says how much audio closes the gap.
      they are reliable.
    - First tranche: about 130 h of source for about 100 h of kept speech, collected while step 0
      runs. More only once step 0 says the gap is worth closing.
-2. **Teacher decode.** Flex with the standard decoder (greedy and loop retry), keeping its
-   per-token log-probs.
+2. **Teacher decode** (`notebooks/Teacher.ipynb`). Flex p00-s0, greedy, keeping each clip's mean
+   log-prob. No loop retry: step 3 drops a looping clip anyway, so a retry would be wasted GPU.
 3. **Filter the labels, cheapest first.**
-   - Drop clips the loop retry fired on.
+   - Drop clips whose output loops.
    - Drop clips whose tokens per second fall outside the range seen in train.
    - Drop the least confident 10–20% by mean log-prob.
    - Add an agreement check with a second model, or a
