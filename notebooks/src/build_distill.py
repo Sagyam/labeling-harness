@@ -431,6 +431,7 @@ Flex (student minus Flex, in WER points, 95% CI over episodes) overall and per c
 HELPERS = r"""
 import datetime as dt
 import gc
+import traceback
 
 api = HfApi(token=os.environ["HF_TOKEN"])
 api.create_repo(OUT_REPO, repo_type="model", private=True, exist_ok=True)
@@ -523,27 +524,49 @@ def free_model():
     torch.cuda.empty_cache()
 
 
+def upload(out, run, message, **kwargs):
+    api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
+                      commit_message=f"{run}: {message}", **kwargs)
+
+
+# Train, score and upload one student, unless OUT_REPO already has its result. A failure frees
+# the GPU before it is raised: the traceback is printed as text, so no frame keeps the model or its
+# optimizer state alive, and the next student's cell can run.
+def train_student(name):
+    run = f"{RUN_PREFIX}-{name}"
+    if uploaded_result(run) is not None:
+        print(f"{run}: already in {OUT_REPO}, skipped")
+        return
+    failure = None
+    try:
+        train_and_score(name, run)
+    except Exception:
+        failure = traceback.format_exc()
+    finally:
+        free_model()
+    if failure:
+        print(failure)
+        raise RuntimeError(f"{run} failed (traceback above); the GPU is freed for the next student")
+
+
 monitor = ftkit.GpuMonitor().start()
 """
 
 RUN_NOTE = """
 ## Train, score and upload each student
 
-Per student: fresh weights, the batch probe, the speed check (it projects the run and gives val
-WER before training), training with early stopping on val, then gold and val decoded with the best
-weights and scored. The folder, weights included, goes to `OUT_REPO` as soon as it finishes. **Read
-the speed check's line before walking away**: low GPU utilisation or a projection of many hours
-means a setting needs changing.
+Each student has its own cell below, so a crash takes down one student, not the rest. Per student:
+fresh weights, the batch probe, the speed check (it projects the run and gives val WER before
+training), training with early stopping on val, then gold and val decoded with the best weights and
+scored. **The best weights go to `OUT_REPO` as soon as training ends**, before scoring; the scores
+follow when scoring finishes. A student whose result is already there is skipped, so after a
+kernel restart, re-run the cells above and then every student cell. **Read the speed check's line
+before walking away**: low GPU utilisation or a projection of many hours means a setting needs
+changing.
 """
 
 RUN = r"""
-results = []
-for name in STUDENTS:
-    run = f"{RUN_PREFIX}-{name}"
-    if (row := uploaded_result(run)) is not None:
-        print(f"{run}: already in {OUT_REPO}, skipped")
-        results.append(row)
-        continue
+def train_and_score(name, run):
     OUT = OUT_ROOT / run
     OUT.mkdir(parents=True, exist_ok=True)
     print(f"\n=== {run}")
@@ -578,10 +601,9 @@ for name in STUDENTS:
     result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
                          loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
                          monitor=monitor)
-    results.append(score_and_write(OUT, run, name, result["history"]))
-    api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT), path_in_repo=f"{RUN_PREFIX}/{run}",
-                      commit_message=f"{run}: step 0 fine-tune")
-    free_model()
+    upload(OUT, run, "best weights (step 0, before scoring)")
+    score_and_write(OUT, run, name, result["history"])
+    upload(OUT, run, "step 0 scores", ignore_patterns=["best/*"])
 """
 
 REPORT_NOTE = """
@@ -594,6 +616,14 @@ nothing here was chosen on it.
 """
 
 REPORT = r"""
+results = []
+for name in STUDENTS:
+    if (row := uploaded_result(f"{RUN_PREFIX}-{name}")) is None:
+        print(f"{name}: no result in {OUT_REPO}, left out of the report")
+    else:
+        results.append(row)
+
+
 def line(m):
     return f"{m['wer']:6.2f} ({ftkit.sid(m)})"
 
@@ -911,13 +941,7 @@ def probe_budget(model, optimizer, name):
 '''
 
 HF_RUN = r"""
-results = []
-for name in STUDENTS:
-    run = f"{RUN_PREFIX}-{name}"
-    if (row := uploaded_result(run)) is not None:
-        print(f"{run}: already in {OUT_REPO}, skipped")
-        results.append(row)
-        continue
+def train_and_score(name, run):
     OUT = OUT_ROOT / run
     OUT.mkdir(parents=True, exist_ok=True)
     print(f"\n=== {run}")
@@ -948,10 +972,9 @@ for name in STUDENTS:
     result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
                          loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
                          monitor=monitor)
-    results.append(score_and_write(OUT, run, name, result["history"]))
-    api.upload_folder(repo_id=OUT_REPO, folder_path=str(OUT), path_in_repo=f"{RUN_PREFIX}/{run}",
-                      commit_message=f"{run}: step 0 fine-tune")
-    free_model()
+    upload(OUT, run, "best weights (step 0, before scoring)")
+    score_and_write(OUT, run, name, result["history"])
+    upload(OUT, run, "step 0 scores", ignore_patterns=["best/*"])
 """
 
 _NUMBA = """# The transducer losses run as numba CUDA kernels. NeMo's own cu12 extra would also pin a
@@ -965,6 +988,15 @@ HF_SETUP = SETUP.replace(
     '%pip install -q rapidfuzz "qwen-asr=={QWEN_ASR_VERSION}"',
 ).replace(_NUMBA, "")
 assert "numba" not in HF_SETUP and "qwen-asr" in HF_SETUP
+
+
+def student_cells(names, config):
+    out = []
+    for name in names:
+        assert f'"{name}"' in config, name
+        out += [md(f"### {name}"), code(f'train_student("{name}")')]
+    return out
+
 
 hf_cells = [
     md(HF_INTRO + GPU_NOTE),
@@ -984,6 +1016,7 @@ hf_cells = [
     code(HELPERS),
     md(RUN_NOTE),
     code(HF_RUN),
+    *student_cells(["qwen", "whisper"], HF_CONFIG),
     md(REPORT_NOTE),
     code(REPORT),
 ]
@@ -1008,6 +1041,7 @@ cells = [
     code(HELPERS),
     md(RUN_NOTE),
     code(RUN),
+    *student_cells(["indicconformer", "parakeet"], CONFIG),
     md(REPORT_NOTE),
     code(REPORT),
 ]
