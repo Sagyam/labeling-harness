@@ -41,11 +41,13 @@ gold and val transcripts are read from its repo and rescored here with the same 
 paired with each student clip by clip, with episodes resampled (`sweep.paired_bootstrap`).
 
 **Choices, fixed before any run.** Peak LR 1e-4 for the encoder and 3e-4 for the fresh heads
-(the overfit check on four clips converged at 3e-4), linear decay after 10% warmup, up to 10
-epochs, stopping once val WER has gained less than 0.5 points over 2 epochs, ~12 min of audio per
-optimizer step, NeMo's own SpecAugment. The first run (2026-09-25) had 20 epochs and stopped only
-without any gain; IndicConformer crawled on by about 0.2 points an epoch past epoch 10, each epoch
-with a 15-minute val pass, and was stopped by hand at about epoch 12. The loss is NeMo's transducer loss through the fused joint (plus the CTC head's
+(the overfit check on four clips converged at 3e-4), linear decay after 10% warmup, up to 20
+epochs each, stopping once val WER has gained less than 0.2 points over 3 epochs, ~12 min of audio
+per optimizer step, NeMo's own SpecAugment. The first run (2026-09-25, 20 epochs, patience 3)
+lost its IndicConformer: it sat near 62% val WER from epoch 3 (mostly deletions) and crawled by
+about 0.2 points an epoch, and when it was stopped by hand at about epoch 12 its weights went with
+the kernel. A hand stop (Colab's stop button) now ends training like early stopping does: the best
+weights so far are uploaded and scored. The loss is NeMo's transducer loss through the fused joint (plus the CTC head's
 at weight 0.3 on the hybrid), summed over clips and divided by the step's tokens. Greedy batch
 decoding; a transducer has no loop retry to add.
 
@@ -72,8 +74,11 @@ VOCAB_SIZE = 1024
 OUT_REPO = "Sagyam/nepanglish-asr-students"   # private HF model repo, created if missing
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"
 FLEX_REFERENCE = "flex-xtalk-sweep-2026-09-22/flex-xtalk-sweep-2026-09-22-p00-s0"
-EPOCHS, PATIENCE, WARMUP = 10, 2, 0.1
-MIN_DELTA = 0.5           # val WER points 2 epochs must gain between them, or training stops
+# Per student: the most epochs, which is also the length of the linear LR decay. Both students
+# start from fresh heads, and Parakeet from an encoder that never heard Nepali.
+EPOCHS = {"indicconformer": 20, "parakeet": 20}
+PATIENCE, WARMUP = 3, 0.1
+MIN_DELTA = 0.2           # val WER points 3 epochs must gain between them, or training stops
 LR_ENCODER, LR_HEADS = 1e-4, 3e-4
 EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
 PAD_TO_S = 1.0
@@ -487,7 +492,7 @@ def score_and_write(out, run, name, history):
         "base_model": BASE_MODEL[name],
         "decoder": DECODER_NAME,
         "run_name": run,
-        "epochs": EPOCHS,
+        "epochs": EPOCHS[name],
         "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
         "lr": lr_card(name),
         "val_wer": val["wer"],
@@ -537,13 +542,15 @@ def train_student(name):
     if uploaded_result(run) is not None:
         print(f"{run}: already in {OUT_REPO}, skipped")
         return
-    failure = None
+    failure, stopped = None, False
     try:
         train_and_score(name, run)
-    except Exception:
-        failure = traceback.format_exc()
+    except BaseException as e:
+        failure, stopped = traceback.format_exc(), isinstance(e, KeyboardInterrupt)
     finally:
         free_model()
+    if stopped:
+        raise KeyboardInterrupt(f"{run} stopped by hand outside training; the GPU is freed")
     if failure:
         print(failure)
         raise RuntimeError(f"{run} failed (traceback above); the GPU is freed for the next student")
@@ -586,17 +593,17 @@ def train_and_score(name, run):
     sample = splits["val"][::12]
     speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
                               loss_fn=loss_fn, evaluate=lambda m: evaluate(m, sample), val_rows=sample,
-                              gold_rows=splits["gold"], epochs=EPOCHS, monitor=monitor)
+                              gold_rows=splits["gold"], epochs=EPOCHS[name], monitor=monitor)
     full_val_min = speed["val_s"] * len(splits["val"]) / len(sample) / 60
-    print(f"a full val pass takes about {full_val_min:.1f} min, {EPOCHS} of them at most "
-          f"{EPOCHS * full_val_min / 60:.1f} h on top of training")
+    print(f"a full val pass takes about {full_val_min:.1f} min, {EPOCHS[name]} of them at most "
+          f"{EPOCHS[name] * full_val_min / 60:.1f} h on top of training")
     (OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
 
     def save_best(model, out=OUT, name=name):
         (out / "best").mkdir(exist_ok=True)
         model.save_to(str(out / "best" / f"{name}.nemo"))
 
-    cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=EPOCHS, lr=LR_HEADS, warmup_frac=WARMUP,
+    cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=EPOCHS[name], lr=LR_HEADS, warmup_frac=WARMUP,
                             effective_s=EFFECTIVE_S, patience=PATIENCE, min_delta=MIN_DELTA)
     result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
                          loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
@@ -669,8 +676,9 @@ It needs its own runtime: `qwen-asr` pins transformers 4.57.6, and NeMo's kernel
   the current export. Every clip is padded to 30 s, which is its encoder's only input length.
 
 **Choices, fixed before any run.** Peak LR 2e-5 for Qwen (its official recipe) and 1e-5 for Whisper
-(04a), linear decay after 10% warmup, up to 10 epochs, stopping once val WER has gained less than 0.5
-points over 2 epochs,
+(04a), linear decay after 10% warmup, up to 8 epochs (Whisper-turbo was still improving at 04a's 5),
+stopping once val WER has gained less than 0.2 points over 3 epochs, a hand stop keeping the best
+weights so far,
 ~12 min of audio per optimizer step, summed token cross-entropy divided by the step's tokens.
 Decoding is greedy with Flex's loop retry: a clip whose output repeats a 3-word sequence 5+ times is
 decoded again, alone, with a repetition penalty, no repeated 6-token phrase and a length cap from
@@ -692,8 +700,11 @@ QWEN_ASR_VERSION = "0.0.6"                 # pins transformers 4.57.6; the versi
 OUT_REPO = "Sagyam/nepanglish-asr-students"
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"
 FLEX_REFERENCE = "flex-xtalk-sweep-2026-09-22/flex-xtalk-sweep-2026-09-22-p00-s0"
-EPOCHS, PATIENCE, WARMUP = 10, 2, 0.1
-MIN_DELTA = 0.5           # val WER points 2 epochs must gain between them, or training stops
+# Per student: the most epochs, which is also the length of the linear LR decay. Whisper-turbo
+# was still improving at 04a's 5; both keep their pretrained heads.
+EPOCHS = {"qwen": 8, "whisper": 8}
+PATIENCE, WARMUP = 3, 0.1
+MIN_DELTA = 0.2           # val WER points 3 epochs must gain between them, or training stops
 LR = {"qwen": 2e-5, "whisper": 1e-5}
 EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
 PAD_TO_S = 1.0
@@ -957,17 +968,17 @@ def train_and_score(name, run):
     sample = splits["val"][::12]
     speed = ftkit.speed_check(model, rows=splits["train"], batches=make_batches(0), collate=collate,
                               loss_fn=loss_fn, evaluate=lambda m: evaluate(m, sample), val_rows=sample,
-                              gold_rows=splits["gold"], epochs=EPOCHS, monitor=monitor)
+                              gold_rows=splits["gold"], epochs=EPOCHS[name], monitor=monitor)
     full_val_min = speed["val_s"] * len(splits["val"]) / len(sample) / 60
-    print(f"a full val pass takes about {full_val_min:.1f} min, {EPOCHS} of them at most "
-          f"{EPOCHS * full_val_min / 60:.1f} h on top of training")
+    print(f"a full val pass takes about {full_val_min:.1f} min, {EPOCHS[name]} of them at most "
+          f"{EPOCHS[name] * full_val_min / 60:.1f} h on top of training")
     (OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
 
     def save_best(model, out=OUT):
         (out / "best").mkdir(exist_ok=True)
         save_to(model, out / "best")
 
-    cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=EPOCHS, lr=LR[name], warmup_frac=WARMUP,
+    cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=EPOCHS[name], lr=LR[name], warmup_frac=WARMUP,
                             effective_s=EFFECTIVE_S, patience=PATIENCE, min_delta=MIN_DELTA)
     result = ftkit.train(model, cfg=cfg, rows=splits["train"], make_batches=make_batches, collate=collate,
                          loss_fn=loss_fn, evaluate=evaluate, save_best=save_best, optimizer=optimizer,
