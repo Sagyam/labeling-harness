@@ -823,10 +823,24 @@ QWEN_KEYS = ("input_ids", "attention_mask", "input_features", "feature_attention
 
 
 def qwen_loss(model, b):
-    """Summed token cross-entropy: HF's mean over the label tokens times their count."""
+    """Summed token cross-entropy over the transcript, with logits only where there are labels.
+
+    The thinker has no `logits_to_keep`: it runs its 152k-word head over every position, audio
+    and prompt included, and HF's loss then upcasts all of it to fp32 (the 2026-09-25 OOM). Here
+    the head is swapped for an identity during the forward, so it returns hidden states, and the
+    real head runs on the labelled positions alone; the causal shift is HF's (position t predicts
+    label t+1)."""
     kw = {k: b[k].to(DEVICE, non_blocking=True) for k in QWEN_KEYS}
-    out = model.thinker(**kw, labels=b["labels"].to(DEVICE, non_blocking=True))
-    return out.loss * b["tokens"], b["tokens"]
+    thinker = model.thinker
+    head, thinker.lm_head = thinker.lm_head, torch.nn.Identity()
+    try:
+        hidden = thinker(**kw).logits
+    finally:
+        thinker.lm_head = head
+    labels = b["labels"].to(DEVICE, non_blocking=True)[:, 1:]
+    keep = labels != -100
+    logits = head(hidden[:, :-1][keep]).float()
+    return torch.nn.functional.cross_entropy(logits, labels[keep], reduction="sum"), b["tokens"]
 
 
 def qwen_transcribe(rows, **gen):
@@ -954,24 +968,37 @@ def optimizer_for(model, name):
 def probe_budget(model, optimizer, name):
     """The largest micro-batch at the longest train clip carrying the longest transcript, with the
     optimizer state allocated. Whisper pays for 30 s whatever a clip's length, so for it the
-    budget is a clip count, not seconds of audio."""
+    budget is a clip count, not seconds of audio. For Qwen the clip count is probed as well (see
+    below)."""
+    params = [p for p in model.parameters() if p.requires_grad]
+
+    def probe_at(clip):
+        def step(n):
+            b = collate([clip] * n)
+            with torch.autocast(DEVICE, dtype=torch.bfloat16):
+                loss, _ = loss_fn(model, b)
+            loss.backward()
+
+        return ftkit.probe_max_items(step, 1, 256, params)
+
     longest = max(splits["train"], key=ftkit.duration)
     wordiest = max(splits["train"], key=lambda r: len(r["text"]))
-    worst = {**longest, "text": wordiest["text"]}
-
-    def probe_step(n):
-        b = collate([worst] * n)
-        with torch.autocast(DEVICE, dtype=torch.bfloat16):
-            loss, _ = loss_fn(model, b)
-        loss.backward()
-
     model.train()
     ftkit.init_optimizer_state(model, optimizer)
-    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+    n = probe_at({**longest, "text": wordiest["text"]})
     if name == "whisper":
         budget, items = float("inf"), max(1, int(n * PROBE_FRACTION))
     else:
-        budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, 256
+        budget = n * ftkit.duration(longest) * PROBE_FRACTION
+        # A budget of seconds packs more sequence positions from short clips than from long ones:
+        # each brings its own prompt and a transcript. So the clip count is probed too, at the
+        # wordiest of the shortest tenth of train clips (Qwen ran out of memory on 2026-09-25
+        # with only the long probe).
+        by_length = sorted(splits["train"], key=ftkit.duration)
+        short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["text"]))
+        n_short = probe_at(short)
+        items = max(1, int(n_short * PROBE_FRACTION))
+        print(f"largest micro-batch at {ftkit.duration(short):.1f} s: {n_short} clips")
     print(f"largest micro-batch at {ftkit.duration(longest):.0f} s: {n} clips -> "
           f"{items} clips or {budget:.0f} s of audio per micro-batch")
     return budget, items
