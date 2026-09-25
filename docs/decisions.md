@@ -2293,3 +2293,42 @@ attribution is unusable and speaker turns are hit or miss. The measurements agre
   references.
 
 **Reversal:** cheap. Re-queue clips with `scripts/queue_speakers.py`; nothing was deleted.
+
+## D101 — Unlabelled audio for distillation is a second corpus of files, cut like ingest, screened against gold, never in the database
+
+Roadmap §B step 1 needs unlabelled Nepali audio for Flex to pseudo-label (step 0, findings
+2026-09-25: every student's gap to Flex is widest on pure Nepali). D86 lets an episode into the
+harness only through the web ingest, and that ingest transcribes every clip three times on paid
+routes and diarizes on Modal. Neither is wanted for audio no one will label, so this audio does
+not become episodes at all.
+
+- **Files, not rows.** The owner collects whole playlists as MP3 (or any audio ffmpeg reads),
+  each with yt-dlp's info JSON beside it under the same name. `scripts/prepare_distill_audio.py`
+  turns them into `data/distill/` (gitignored): one folder per source with `source.json` (video
+  id, channel, playlist, title, duration: provenance) and its clips, and one `clips.jsonl` for the
+  corpus. It is uploaded as a private HF dataset, `Sagyam/nepanglish-distill`, for Colab. Nothing
+  is written to Postgres, no queue task exists, and no paid route or Modal call is made: the only
+  model is Flex, as the teacher, on Colab.
+- **Cut exactly like ingest.** Stage 1's loudness normalisation to 16 kHz mono FLAC, the same
+  Silero VAD thresholds and the same 2–20 s slicing (`normalize_audio`, `SileroVAD`,
+  `segment_audio_to_slices`, `extract_clips`). A student then trains on clips shaped like the
+  labelled ones, and a clip is one lossy generation from the download, not two.
+- **Kept away from gold and val (D76), in three layers.**
+  - *A known recording.* A source whose YouTube id is already an episode in the harness is
+    refused: it is labelled audio, and may be gold or val.
+  - *A known channel.* Sources from channels listed in `distill.blocked_channels` (the shows gold
+    was drawn from) are refused.
+  - *A known voice.* Gold holds 82 shorts with no recorded source, so channels cannot cover it.
+    Every source's clips are embedded in 2 s windows with the voiceprint model (D99), whose space
+    is the diarizer's, and compared with the centroid of every voice diarized in an episode that
+    holds a gold clip. A source with at least `distill.screen_min_seconds` of windows at or above
+    `distill.screen_threshold` to one gold voice is quarantined: listed with the voice, the
+    seconds and its best windows for the owner to hear, and left out of the corpus until cleared.
+    The threshold is measured before it is used, on the corpus's own clips (a gold voice's own
+    windows against its centroid, and other voices' windows against it), and the measurement goes
+    in findings.md. D87's 0.6 was set on whole-speaker centroids and is not assumed to hold for
+    2 s windows.
+- **Val is never pseudo-labelled either.** Val is episodes in the harness, so the first layer
+  covers it.
+
+**Reversal:** cheap. Delete `data/distill/` and the HF dataset; nothing else refers to them.
