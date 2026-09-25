@@ -164,6 +164,7 @@ backend/.venv/bin/python scripts/import_models.py    [data/models/asr/flex-ft]  
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
 backend/.venv/bin/python scripts/prepare_distill_audio.py [--incoming ~/Downloads/shows]   # D101
 backend/.venv/bin/python scripts/screen_distill_audio.py  [--rescreen]                      # D101
+uv run scripts/upload_distill_corpus.py [--dry-run]    # its own pinned huggingface_hub, not the venv
 ```
 
 `prepare_distill_audio.py` cuts downloaded audio (MP3 or anything ffmpeg reads, each with yt-dlp's
@@ -171,7 +172,9 @@ backend/.venv/bin/python scripts/screen_distill_audio.py  [--rescreen]          
 ingest cuts an episode. It writes files only, never rows, and refuses a recording already in the
 harness or from a channel gold was drawn from (D101). `screen_distill_audio.py` then compares every source with gold's
 voices (voiceprints, D99), quarantines a source that sounds like one for 10 s or more, and writes
-`data/distill/clips.jsonl` from the cleared sources only.
+`data/distill/clips.jsonl` from the cleared sources only. `upload_distill_corpus.py` sends that manifest and the cleared
+sources, named one by one, to the private HF dataset `distill.hf_repo` for `Teacher.ipynb`, and
+refuses while any source is unscreened.
 
 `export_dataset.py` writes four kinds — `training`, `gold`, `analytics`, `error_mining` — each with
 a `manifest.json` recording label version, policy version, filters, row counts, the verified/screened
