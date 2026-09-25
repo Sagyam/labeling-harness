@@ -33,17 +33,18 @@ def reference_texts(rows: Sequence[dict], by_id: Mapping[str, str]) -> list[str]
 
 def by_class(
     rows: Sequence[dict],
-    refs: Sequence[str],
-    hyps: Sequence[str],
-    score: Callable[[Sequence[str], Sequence[str]], Any],
+    clips: Sequence[Any],
+    summarize: Callable[[list[Any]], Any],
     keys: Sequence[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """`score` per value of each clip class (D87), as {key: {value: score}}.
+    """`summarize` per value of each clip class (D87), as {key: {value: summary}}.
 
-    `keys` defaults to every class key any row carries. A clip without a key (or with no classes)
-    is left out of that key's groups, not counted under a made-up value."""
-    if not (len(rows) == len(refs) == len(hyps)):
-        raise ValueError("rows, refs and hyps must describe the same clips")
+    `clips` holds one per-clip count per row (`score.per_clip`), aligned once by the caller: a
+    group's score is its clips' counts added up, so no clip is aligned again per key. `keys`
+    defaults to every class key any row carries. A clip without a key (or with no classes) is left
+    out of that key's groups, not counted under a made-up value."""
+    if len(rows) != len(clips):
+        raise ValueError("rows and clips must describe the same clips")
     if keys is None:
         keys = sorted({k for r in rows for k in (r.get("classes") or {})})
     out: dict[str, dict[str, Any]] = {}
@@ -54,8 +55,5 @@ def by_class(
             if value is not None:
                 groups.setdefault(str(value), []).append(i)
         if groups:
-            out[key] = {
-                v: score([refs[i] for i in idx], [hyps[i] for i in idx])
-                for v, idx in sorted(groups.items())
-            }
+            out[key] = {v: summarize([clips[i] for i in idx]) for v, idx in sorted(groups.items())}
     return out

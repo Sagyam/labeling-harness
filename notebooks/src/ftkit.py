@@ -229,50 +229,55 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
     def chars(text: str) -> str:
         return " ".join(t if dev.search(t) else t.lower() for t in fold_tokens(text))
 
-    def score(refs: Sequence[str], hyps: Sequence[str]) -> dict:
-        words = werr = rwords = rerr = nchars = cerr = loops = subs = dels = ins = 0
-        for ref, hyp in zip(refs, hyps, strict=True):
-            words += len(fold_tokens(ref))
-            folded = word_errors(ref, hyp)
-            werr += folded.errors
-            subs, dels = subs + folded.substitutions, dels + folded.deletions
-            ins += folded.insertions
-            raw = word_errors(ref, hyp, folded=False)
-            rerr, rwords = rerr + raw.errors, rwords + raw.ref_words
-            nchars += len(chars(ref))
-            cerr += Levenshtein.distance(chars(ref), chars(hyp))
-            loops += is_loop(hyp)
-        assert subs + dels + ins == werr, "S + D + I must add up to the folded errors"
-        return {
-            "wer": 100 * werr / max(words, 1),
-            "raw_wer": 100 * rerr / max(rwords, 1),
-            "cer": 100 * cerr / max(nchars, 1),
-            # folded, per 100 reference words. In crosstalk a label keeps what was audible, which is
-            # not always both voices, so a model that writes the other one can be charged insertions
-            "sub": 100 * subs / max(words, 1),
-            "del": 100 * dels / max(words, 1),
-            "ins": 100 * ins / max(words, 1),
-            "loops": loops,
-            "clips": len(refs),
-        }
-
     def per_clip(refs: Sequence[str], hyps: Sequence[str]) -> list[dict]:
-        """Folded counts per clip, for paired comparisons: errors = sub + del + ins."""
+        """Every count a score needs, per clip, from one alignment each: `summarize` adds any
+        subset of them up, so scoring per class or pairing against another system aligns
+        nothing again. errors = sub + del + ins (folded)."""
         out = []
         for ref, hyp in zip(refs, hyps, strict=True):
-            a = word_errors(ref, hyp)
+            folded = word_errors(ref, hyp)
+            raw = word_errors(ref, hyp, folded=False)
+            ref_chars, hyp_chars = chars(ref), chars(hyp)
             out.append(
                 {
                     "words": len(fold_tokens(ref)),
-                    "errors": a.errors,
-                    "sub": a.substitutions,
-                    "del": a.deletions,
-                    "ins": a.insertions,
+                    "errors": folded.errors,
+                    "sub": folded.substitutions,
+                    "del": folded.deletions,
+                    "ins": folded.insertions,
+                    "raw_words": raw.ref_words,
+                    "raw_errors": raw.errors,
+                    "chars": len(ref_chars),
+                    "char_errors": Levenshtein.distance(ref_chars, hyp_chars),
+                    "loop": int(is_loop(hyp)),
                 }
             )
         return out
 
+    def summarize(clips: Sequence[dict]) -> dict:
+        """The score of a set of clips from their `per_clip` counts."""
+        t = {k: sum(c[k] for c in clips) for k in clips[0]} if clips else Counter()
+        words = max(t["words"], 1)
+        folded = t["sub"] + t["del"] + t["ins"]
+        assert folded == t["errors"], "S + D + I must add up to the folded errors"
+        return {
+            "wer": 100 * t["errors"] / words,
+            "raw_wer": 100 * t["raw_errors"] / max(t["raw_words"], 1),
+            "cer": 100 * t["char_errors"] / max(t["chars"], 1),
+            # folded, per 100 reference words. In crosstalk a label keeps what was audible, which is
+            # not always both voices, so a model that writes the other one can be charged insertions
+            "sub": 100 * t["sub"] / words,
+            "del": 100 * t["del"] / words,
+            "ins": 100 * t["ins"] / words,
+            "loops": t["loop"],
+            "clips": len(clips),
+        }
+
+    def score(refs: Sequence[str], hyps: Sequence[str]) -> dict:
+        return summarize(per_clip(refs, hyps))
+
     score.per_clip = per_clip
+    score.summarize = summarize
     return score
 
 

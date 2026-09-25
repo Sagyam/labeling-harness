@@ -190,11 +190,12 @@ def read_hyps(path):
     return {j["segment_id"]: j["text"] for j in map(json.loads, Path(path).open(encoding="utf-8"))}
 
 
-flex = {}
+flex, flex_clips = {}, {}  # Flex's per-clip counts are aligned once, here, and paired with each student
 for name in ("val", "gold"):
     path = hf_hub_download(FLEX_REPO, f"{FLEX_REFERENCE}/harness/{name}.jsonl", token=os.environ["HF_TOKEN"])
     flex[name] = distill.reference_texts(splits[name], read_hyps(path))
-flex_scores = {name: score([r["text"] for r in splits[name]], flex[name]) for name in flex}
+    flex_clips[name] = score.per_clip([r["text"] for r in splits[name]], flex[name])
+flex_scores = {name: score.summarize(clips) for name, clips in flex_clips.items()}
 for name, m in flex_scores.items():
     print(f"Flex {name}: WER {m['wer']:.2f} ({ftkit.sid(m)}), raw {m['raw_wer']:.2f}, CER {m['cer']:.2f}")
 """
@@ -454,9 +455,10 @@ def evaluate(model, rows=None):
     return score([r["text"] for r in rows], texts)
 
 
-def paired(rows, refs, a, b, keys):
-    # WER(b) - WER(a) in points [95% CI, episodes resampled], overall and per class value
-    ca, cb, eps = score.per_clip(refs, a), score.per_clip(refs, b), [r["episode_id"] for r in rows]
+def paired(rows, ca, cb, keys):
+    # WER(b) - WER(a) in points [95% CI, episodes resampled], overall and per class value, from
+    # per-clip counts already aligned (score.per_clip)
+    eps = [r["episode_id"] for r in rows]
     out = {"all": sweep.paired_bootstrap(ca, cb, eps)}
     for key in keys:
         for value in sorted({str((r.get("classes") or {}).get(key)) for r in rows} - {"None"}):
@@ -473,11 +475,12 @@ def score_and_write(out, run, name, history):
         rows = splits[split]
         refs = [r["text"] for r in rows]
         texts, compute, log = decode(rows)
-        m = score(refs, texts)
+        clips = score.per_clip(refs, texts)  # each clip aligned once; every score below adds these up
+        m = score.summarize(clips)
         m["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in rows)
         m["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in log]
-        m["by_class"] = distill.by_class(rows, refs, texts, score)
-        m["vs_flex"] = paired(rows, refs, flex[split], texts, REPORT_KEYS)
+        m["by_class"] = distill.by_class(rows, clips, score.summarize)
+        m["vs_flex"] = paired(rows, flex_clips[split], clips, REPORT_KEYS)
         results[split] = m
         ftkit.write_hyps(out / "harness" / f"{split}.jsonl", rows, texts, compute)
         (out / f"{split}_metrics.json").write_text(json.dumps(m, indent=1, ensure_ascii=False))

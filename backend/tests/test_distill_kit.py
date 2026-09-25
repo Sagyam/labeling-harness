@@ -58,32 +58,43 @@ def test_reference_texts_name_the_missing_clips():
 
 
 # --- scores per clip class -----------------------------------------------------------------------
+#
+# by_class groups per-clip counts, aligned once by the caller, and hands each group to `summarize`:
+# re-aligning every clip once per class key was the notebook's slowest step.
 
 
-def _count(refs, hyps):
-    return {"clips": len(refs), "hyps": list(hyps)}
+def _summarize(clips):
+    return {"clips": len(clips), "items": list(clips)}
 
 
-def test_by_class_scores_each_value_of_each_key():
+def test_by_class_summarizes_each_value_of_each_key():
     rows = [_row("a", overlap="none", snr="high"), _row("b", overlap=">15%", snr="high")]
-    out = distill.by_class(rows, ["ra", "rb"], ["ha", "hb"], _count, keys=("overlap", "snr"))
-    assert out["overlap"]["none"] == {"clips": 1, "hyps": ["ha"]}
-    assert out["overlap"][">15%"] == {"clips": 1, "hyps": ["hb"]}
-    assert out["snr"]["high"] == {"clips": 2, "hyps": ["ha", "hb"]}
+    out = distill.by_class(rows, ["ca", "cb"], _summarize, keys=("overlap", "snr"))
+    assert out["overlap"]["none"] == {"clips": 1, "items": ["ca"]}
+    assert out["overlap"][">15%"] == {"clips": 1, "items": ["cb"]}
+    assert out["snr"]["high"] == {"clips": 2, "items": ["ca", "cb"]}
 
 
 def test_by_class_skips_clips_without_the_key():
     rows = [_row("a", overlap="none"), {"segment_id": "b", "classes": None}]
-    out = distill.by_class(rows, ["ra", "rb"], ["ha", "hb"], _count, keys=("overlap",))
-    assert out == {"overlap": {"none": {"clips": 1, "hyps": ["ha"]}}}
+    out = distill.by_class(rows, ["ca", "cb"], _summarize, keys=("overlap",))
+    assert out == {"overlap": {"none": {"clips": 1, "items": ["ca"]}}}
 
 
 def test_by_class_defaults_to_every_key_present():
     rows = [_row("a", overlap="none"), _row("b", gender="female")]
-    out = distill.by_class(rows, ["ra", "rb"], ["ha", "hb"], _count)
+    out = distill.by_class(rows, ["ca", "cb"], _summarize)
     assert set(out) == {"overlap", "gender"}
 
 
-def test_by_class_needs_one_hypothesis_per_row():
+def test_by_class_needs_one_count_per_row():
     with pytest.raises(ValueError):
-        distill.by_class([_row("a", overlap="none")], ["ra"], [], _count)
+        distill.by_class([_row("a", overlap="none")], [], _summarize)
+
+
+def test_by_class_never_realigns_a_clip():
+    # each clip's counts reach `summarize` as given, once per key it carries, never recomputed
+    rows = [_row(s, overlap="none", snr="high", cmi="low") for s in "abc"]
+    seen = []
+    distill.by_class(rows, ["ca", "cb", "cc"], lambda clips: seen.extend(clips))
+    assert sorted(seen) == sorted(["ca", "cb", "cc"] * 3)
