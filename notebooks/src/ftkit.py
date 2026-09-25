@@ -28,7 +28,8 @@ import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -477,6 +478,16 @@ def group_steps(rows, batches, effective_s: float) -> list[list[list[int]]]:
     return steps
 
 
+@contextmanager
+def timed(label: str) -> Iterator[None]:
+    """Print `label...` before a step and `label: done in N s` after it, so a step that stalls
+    shows which one it is instead of leaving a cell silent."""
+    print(f"{label}...", flush=True)
+    t0 = time.perf_counter()
+    yield
+    print(f"{label}: done in {time.perf_counter() - t0:.0f} s", flush=True)
+
+
 def sid(m: dict) -> str:
     """A score's error split, per 100 reference words: S + D + I is its folded WER. Read all three
     on crosstalk: the labels drop the other voice, so hearing it costs insertions."""
@@ -720,10 +731,11 @@ def train(
         stopped_by_hand = True
         print(f"stopped by hand; keeping the best weights (val WER {best:.2f})", flush=True)
     monitor.window()
-    if best_state is not None:
-        model.load_state_dict(best_state)
-    model.eval()
-    save_best(model)
+    with timed("saving the best weights"):
+        if best_state is not None:
+            model.load_state_dict(best_state)
+        model.eval()
+        save_best(model)
     (out / "config.json").write_text(json.dumps(asdict(cfg), indent=1))
     return {
         "best_val_wer": best,

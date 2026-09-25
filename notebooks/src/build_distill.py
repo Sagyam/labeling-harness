@@ -474,13 +474,15 @@ def score_and_write(out, run, name, history):
     for split in ("gold", "val"):
         rows = splits[split]
         refs = [r["text"] for r in rows]
-        texts, compute, log = decode(rows)
-        clips = score.per_clip(refs, texts)  # each clip aligned once; every score below adds these up
-        m = score.summarize(clips)
-        m["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in rows)
-        m["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in log]
-        m["by_class"] = distill.by_class(rows, clips, score.summarize)
-        m["vs_flex"] = paired(rows, flex_clips[split], clips, REPORT_KEYS)
+        with ftkit.timed(f"{split}: decoding {len(rows)} clips"):
+            texts, compute, log = decode(rows)
+        with ftkit.timed(f"{split}: scoring, per clip class and against Flex"):
+            clips = score.per_clip(refs, texts)  # each clip aligned once; every score below adds these up
+            m = score.summarize(clips)
+            m["rtf"] = sum(compute) / sum(ftkit.duration(r) for r in rows)
+            m["retried"] = [{"segment_id": s, "first": f, "retry": t} for s, f, t in log]
+            m["by_class"] = distill.by_class(rows, clips, score.summarize)
+            m["vs_flex"] = paired(rows, flex_clips[split], clips, REPORT_KEYS)
         results[split] = m
         ftkit.write_hyps(out / "harness" / f"{split}.jsonl", rows, texts, compute)
         (out / f"{split}_metrics.json").write_text(json.dumps(m, indent=1, ensure_ascii=False))
@@ -533,8 +535,9 @@ def free_model():
 
 
 def upload(out, run, message, **kwargs):
-    api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
-                      commit_message=f"{run}: {message}", **kwargs)
+    with ftkit.timed(f"uploading {message} to {OUT_REPO}"):
+        api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
+                          commit_message=f"{run}: {message}", **kwargs)
 
 
 # Train, score and upload one student, unless OUT_REPO already has its result. A failure frees
