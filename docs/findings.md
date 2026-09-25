@@ -24,6 +24,66 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Distillation step 0: four students on the verified labels alone (2026-09-25)
+
+Roadmap §B, step 0: each student fine-tuned on the 30 h of verified train labels, nothing else,
+and scored on this export's val and gold against Flex p00-s0 (the 2026-09-22 run on the same
+export), folded (fold-v3), paired clip by clip with episodes resampled. Weights, transcripts and
+per-class metrics are in the private HF repo `Sagyam/nepanglish-asr-students` under
+`distill-step0-2026-09-24/`; `Distill.ipynb` (NeMo) and `DistillHF.ipynb` (transformers) at
+ce63dcd.
+
+| Student | Best epoch | Val WER (S / D / I) | Gold WER (S / D / I) | Gold minus Flex [95% CI] | Gold RTF (A100) |
+|---|---:|---|---|---|---:|
+| Flex p00-s0 | — | 7.19 (4.83 / 1.52 / 0.84) | 11.56 (7.65 / 2.50 / 1.41) | — | — |
+| **Whisper-large-v3-turbo** | 6 of 8 | **11.64** (8.68 / 1.78 / 1.17) | **19.77** (14.82 / 3.10 / 1.86) | **+8.21 [+6.46, +9.98]** | 0.0050 |
+| Qwen3-ASR-0.6B | 8 of 8 | 12.85 (9.48 / 1.78 / 1.59) | 22.66 (16.78 / 3.41 / 2.47) | +11.10 [+9.41, +13.10] | 0.0323 |
+| IndicConformer (encoder only) | 17 of 20 | 17.04 (11.01 / 5.45 / 0.58) | 22.28 (13.57 / 8.03 / 0.68) | +10.72 [+9.99, +11.57] | 0.0019 |
+| Parakeet-TDT-0.6B-v2 | 17 of 19 | 22.77 (16.74 / 4.77 / 1.26) | 35.58 (26.11 / 8.05 / 1.41) | +24.01 [+21.66, +26.37] | 0.0009 |
+
+- **No student meets the success bar.** Every gold interval lies well above zero, overall and in
+  every clip class. Whisper is closest and is the student to carry forward.
+- **The gap is Nepali, not Nepanglish.** Every student's gap to Flex grows as the share of
+  English falls. Whisper on gold: CMI 30+ +3.75 [+2.35, +5.05], 15–30 +6.97, under 15 +9.87,
+  CMI 0 +15.15 [+9.37, +18.30]; Qwen and Parakeet show the same shape. IndicConformer, whose
+  encoder has heard Nepali, is flat at about +10 in every class. More audio for a student has to
+  be Nepali speech.
+- **Val flatters every student; gold does not.** Val shares shows and voices with train. Val to
+  gold: Whisper +8, Qwen +10, IndicConformer +5, Parakeet +13. The pretrained decoders memorise
+  the train set within a few epochs (training loss 0.02 for Whisper, 0.002 for Qwen) while val
+  keeps improving, so early stopping on val cannot catch overfitting to voices. Only gold can.
+- **The pretrained decoders learn in one epoch what the fresh heads need ten for.** After epoch 1:
+  Whisper 18.12, Qwen 18.31 val. The transducers with fresh 1,024-token heads spent 2–3 epochs at
+  about 100% (blank) before learning to write.
+- **Parakeet's English encoder does not generalise on 30 h.** It learns the corpus's voices (22.8
+  val) but loses 13 points on held-out ones, and is worst on pure Nepali (+33.41 on CMI 0).
+- **Speed.** Whisper keeps the A100 at 96–100% despite 55–60% padding waste (every clip is padded
+  to 30 s). Qwen trains at the same ×realtime but leaves the GPU about 57% idle. A `torch.profiler`
+  trace of one step: 1.08 s wall, 0.47 s of GPU work, 19,286 kernel launches, 235 `.item()` host
+  syncs and about 3,800 autocast weight casts per step. The cause is `qwen-asr`'s audio encoder,
+  not the collate: collate is 0.09 s against 0.88 s of GPU per micro-batch, with 6 workers on 12
+  cores. Decoding Qwen in bf16 instead of fp32 under autocast is 1.5× faster at the same WER
+  (12.11 vs 12.08 on 96 val clips). Qwen decodes about 6× slower than Whisper.
+- **The speed check overstates val passes.** It decodes with the untrained model, whose output
+  runs to the token cap, and projected 17 min per Whisper val pass. The trained model decoded all
+  1,198 val clips in 67 s.
+- **Two bugs found on the way, both fixed before the scores above:**
+  - *Parakeet trained with the wrong loss* (23c7f2e). NeMo 3.0.0's BPE `change_vocabulary`
+    rebuilds the loss as plain RNN-T, whose blank is the joint's last output (1029, the duration-4
+    logit on a TDT joint). The TDT decoder's blank is 1024. The first run learned "blank" as "skip
+    4 frames" and scored 74% WER with 40 points of deletions, on its own train clips too. The loss
+    is now rebuilt from `cfg.loss` and the two blanks are asserted equal.
+  - *Qwen ran out of memory* (ce63dcd). The thinker runs its 152k-word head over every position,
+    audio and prompt included, and HF's loss upcasts it all to fp32, while a batch budget in
+    seconds probed at the longest clip packs far more positions from short clips. The loss now
+    computes logits at labelled positions only (bit-identical loss, forward peak 7.81 → 5.04 GiB on
+    4 clips), and the probe also measures the clip count on the shortest clips.
+- **IndicConformer's 62% plateau of the first run (2026-09-25) did not recur** with the same
+  optimizer and schedule: it reached 48% at epoch 4 and 17% at the end. Only the fresh heads'
+  random initialisation differed.
+
+---
+
 ## Diarization cannot say who said a word (2026-09-24)
 
 Once the owner had used the multitrack editor (D98), they judged that word attribution was wrong

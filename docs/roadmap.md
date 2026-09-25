@@ -99,7 +99,10 @@ step 4's curve says how much audio closes the gap.
 0. **Plain fine-tune, no new data.** Fine-tune each student on the 30 h of verified labels. Score
    gold and val, folded and raw, split into S/D/I. This is the baseline distillation must beat,
    and it may end B early. Re-run Whisper-turbo on the current data too, since its 14.62 was
-   measured on the old gold.
+   measured on the old gold. **Done 2026-09-25** ([findings](findings.md)): no student meets
+   the bar. Whisper-turbo is closest (gold 19.77 against Flex's 11.56, +8.21 [+6.46, +9.98]), and
+   every student's gap is largest on pure Nepali, so step 1's audio must be Nepali speech from
+   new voices.
 1. **Collect unlabelled audio.**
    - Nepali podcasts and tech reviews from YouTube, in the corpus's genres.
    - Downloaded outside the harness, since D86 allows only two ways in. The corpus lives outside
