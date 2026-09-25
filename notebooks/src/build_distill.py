@@ -215,6 +215,7 @@ import urllib.request
 from omegaconf import OmegaConf, open_dict
 
 from nemo.collections.asr.losses.ctc import CTCLoss
+from nemo.collections.asr.losses.rnnt import RNNTLoss
 from nemo.collections.asr.models import ASRModel, EncDecHybridRNNTCTCBPEModel
 from nemo.utils import logging as nemo_logging
 
@@ -249,11 +250,30 @@ def _greedy(model):
         model.change_decoding_strategy(decoding_cfg=cfg, verbose=False)
 
 
+def _tdt_loss(model):
+    """The loss the model's own constructor builds, from its `cfg.loss`.
+
+    NeMo 3.0.0's BPE `change_vocabulary` rebuilds the loss as `RNNTLoss(num_classes=...)` with no
+    loss name, which is plain RNN-T with its blank on the joint's *last* output. On a TDT joint
+    that output is the longest duration, so the 2026-09-25 run learned "blank" as "skip 4 frames",
+    and the TDT decoder, whose blank is before the durations, dropped ~40% of the words."""
+    loss_name, loss_kwargs = model.extract_rnnt_loss_cfg(model.cfg.get("loss", None))
+    num_classes = model.joint.num_classes_with_blank - 1
+    if loss_name == "tdt":
+        num_classes -= model.joint.num_extra_outputs
+    model.loss = RNNTLoss(num_classes=num_classes, loss_name=loss_name, loss_kwargs=loss_kwargs)
+    if model.joint.fuse_loss_wer:
+        model.joint.set_loss(model.loss)
+    assert model.loss._blank == model.tokenizer.vocab_size, "the loss's blank must be the decoder's"
+
+
 def load_parakeet():
     """Parakeet-TDT v2 with our tokenizer: `change_vocabulary` keeps the preprocessor and the
-    encoder, and builds a fresh prediction network and joint for the new vocabulary."""
+    encoder, and builds a fresh prediction network and joint for the new vocabulary. Its loss is
+    then rebuilt, because the one `change_vocabulary` leaves is not TDT (see `_tdt_loss`)."""
     model = ASRModel.from_pretrained(PARAKEET_ID, map_location="cpu")
     model.change_vocabulary(new_tokenizer_dir=str(TOK_DIR), new_tokenizer_type="bpe")
+    _tdt_loss(model)
     return model
 
 
