@@ -17,8 +17,8 @@ INTRO = """
 # Distillation, steps 2-3 — the teacher labels the unlabelled corpus
 
 Roadmap §B. Flex, the teacher, transcribes every clip of the unlabelled corpus that
-`scripts/prepare_distill_audio.py` cut and `scripts/screen_distill_audio.py` cleared (D101), and
-its labels are filtered before any student trains on them. Never the paid routes: Flex on this
+`PreDistill.ipynb` cut into `DATASET_REPO/distill/` (D101), and its labels are filtered before any
+student trains on them. Never the paid routes: Flex on this
 GPU is the only model.
 
 **Teacher.** Flex p00-s0, the 2026-09-22 run on the current export: the model the step-0
@@ -32,16 +32,17 @@ tokens; then the least confident `DROP_FRACTION` of what is left, by mean log-pr
 splits what was kept and the teacher's confidence by the share of English words, because every
 step-0 student fell furthest behind Flex on pure Nepali.
 
-**Small blast radius.** Labels go to `CORPUS_REPO/<LABELS>/shards/` every `SHARD_CLIPS` clips, and
+**Small blast radius.** Labels go to `DATASET_REPO/<LABELS>/shards/` every `SHARD_CLIPS` clips, and
 a rerun skips every clip already in a shard, so a lost runtime costs at most one shard. `LIMIT`
 decodes only the first clips, for a smoke run before the whole corpus.
 """
 
 CONFIG = r"""
-CORPUS_REPO = "Sagyam/nepanglish-distill"   # private HF dataset (scripts/upload_distill_corpus.py)
+DATASET_REPO = "Sagyam/nepanglish-asr"     # PreDistill.ipynb wrote the corpus to its distill/
+PREFIX = "distill"
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"
 TEACHER = "flex-xtalk-sweep-2026-09-22/flex-xtalk-sweep-2026-09-22-p00-s0"
-LABELS = "pseudo/flex-p00-s0"               # CORPUS_REPO/<LABELS>/: shards, labels.jsonl, report.json
+LABELS = f"{PREFIX}/pseudo/flex-p00-s0"      # DATASET_REPO/<LABELS>/: shards, labels.jsonl, report.json
 LANG, MODE = "ne", "mixed"
 LIMIT = None               # decode only the first N clips (a smoke run); None for the whole corpus
 SHARD_CLIPS = 2000         # clips per uploaded shard: a lost runtime loses at most one
@@ -80,11 +81,10 @@ OUT = FT / "out" / LABELS
 !nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 """
 
-DATA = r'''
+DATA = r"""
 sys.path.insert(0, str(FT))
 import warnings
 
-import soundfile as sf
 import torch
 import transformers
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
@@ -99,22 +99,14 @@ TOKEN = os.environ["HF_TOKEN"]
 api = HfApi(token=TOKEN)
 
 with ftkit.timed("downloading the corpus"):
-    CORPUS = Path(snapshot_download(CORPUS_REPO, repo_type="dataset", token=TOKEN,
-                                    allow_patterns=["clips.jsonl", "sources/*/clips/*"]))
-clips = [json.loads(line) for line in (CORPUS / "clips.jsonl").read_text("utf-8").splitlines() if line]
+    CORPUS = Path(snapshot_download(DATASET_REPO, repo_type="dataset", token=TOKEN,
+                                    allow_patterns=[f"{PREFIX}/clips.jsonl", f"{PREFIX}/episodes/*"]))
+clips = [json.loads(line) for line in (CORPUS / PREFIX / "clips.jsonl").read_text("utf-8").splitlines() if line]
 if LIMIT:
     clips = clips[:LIMIT]
-
-
-class ClipFiles:
-    """The corpus's clips, one FLAC each (D101), read on demand: 16 kHz mono float32."""
-
-    def clip_f32(self, row):
-        audio, _ = sf.read(str(CORPUS / row["path"]), dtype="float32")
-        return audio
-
-
-store = ClipFiles()
+with ftkit.timed("reading the recordings into RAM"):
+    store = ftkit.AudioStore(CORPUS, [c["episode_id"] for c in clips], folder=f"{PREFIX}/episodes")
+print(f"audio in RAM: {store.gib:.1f} GiB")
 with ftkit.timed("downloading the teacher"):
     TEACHER_DIR = Path(snapshot_download(FLEX_REPO, allow_patterns=[f"{TEACHER}/best/*"], token=TOKEN)) / TEACHER / "best"
 sys.path.insert(0, str(TEACHER_DIR))
@@ -128,7 +120,7 @@ PROMPT = tk.encode_prompt(LANG, itn=itn, romanized=romanized)
 EOS, PAD = tk.eos_id, tk.pad_id
 print(f"{len(clips)} clips, {sum(ftkit.duration(c) for c in clips) / 3600:.1f} h, from "
       f"{len({c['source_id'] for c in clips})} sources | teacher {TEACHER}")
-'''
+"""
 
 RATE_NOTE = """
 ## The rate train's labels span, in the teacher's tokens
@@ -171,7 +163,7 @@ def transcribe_scored(rows):
     audio = [store.clip_f32(r) for r in rows]
     wav = torch.zeros(len(rows), ftkit.pad_len(max(len(a) for a in audio), PAD_TO_S))
     for i, a in enumerate(audio):
-        wav[i, :len(a)] = torch.from_numpy(a)
+        wav[i, :len(a)] = a
     lens = torch.tensor([len(a) for a in audio], device="cuda")
     feats, flens = featurize(wav.cuda(), lens)  # fp32: it disables autocast itself
     mask = (torch.arange(feats.size(2), device="cuda")[None, :] < flens[:, None]).long()
@@ -195,12 +187,12 @@ def transcribe_scored(rows):
 
 def shard_names():
     prefix = f"{LABELS}/shards/"
-    return sorted(f for f in api.list_repo_files(CORPUS_REPO, repo_type="dataset") if f.startswith(prefix))
+    return sorted(f for f in api.list_repo_files(DATASET_REPO, repo_type="dataset") if f.startswith(prefix))
 
 
 done = set()
 for name in shard_names():
-    for line in Path(hf_hub_download(CORPUS_REPO, name, repo_type="dataset", token=TOKEN)).read_text("utf-8").splitlines():
+    for line in Path(hf_hub_download(DATASET_REPO, name, repo_type="dataset", token=TOKEN)).read_text("utf-8").splitlines():
         done.add(json.loads(line)["segment_id"])
 todo = [c for c in clips if c["segment_id"] not in done]
 print(f"{len(done)} clips already labelled, {len(todo)} to decode "
@@ -223,7 +215,7 @@ for k in range(0, len(todo), SHARD_CLIPS):
     local.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), "utf-8")
     with ftkit.timed(f"shard {number}: uploading"):
         api.upload_file(path_or_fileobj=str(local), path_in_repo=f"{LABELS}/shards/{local.name}",
-                        repo_id=CORPUS_REPO, repo_type="dataset",
+                        repo_id=DATASET_REPO, repo_type="dataset",
                         commit_message=f"{LABELS}: shard {number} ({len(rows)} clips)")
 '''
 
@@ -238,7 +230,7 @@ confident the teacher was, split by the share of English words (the corpus's CMI
 FILTER = r"""
 rows = []
 for name in shard_names():
-    path = Path(hf_hub_download(CORPUS_REPO, name, repo_type="dataset", token=TOKEN))
+    path = Path(hf_hub_download(DATASET_REPO, name, repo_type="dataset", token=TOKEN))
     rows += [json.loads(line) for line in path.read_text("utf-8").splitlines()]
 kept, report = distill.filter_pseudo(rows, tokens_per_s=RATE_RANGE, drop_fraction=DROP_FRACTION)
 kept_ids = {r["segment_id"] for r in kept}
@@ -259,7 +251,7 @@ print(json.dumps(report, indent=1))
 (OUT / "report.json").write_text(json.dumps(report, indent=1), "utf-8")
 with ftkit.timed("uploading the filtered labels and the report"):
     for f in ("labels.jsonl", "report.json"):
-        api.upload_file(path_or_fileobj=str(OUT / f), path_in_repo=f"{LABELS}/{f}", repo_id=CORPUS_REPO,
+        api.upload_file(path_or_fileobj=str(OUT / f), path_in_repo=f"{LABELS}/{f}", repo_id=DATASET_REPO,
                         repo_type="dataset", commit_message=f"{LABELS}: step 3, {report['kept']} clips kept")
 """
 
