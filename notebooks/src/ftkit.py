@@ -592,7 +592,8 @@ def train(
     monitor: GpuMonitor,
 ) -> dict:
     """Train with bf16 autocast and gradient accumulation; evaluate on val after every epoch;
-    keep the best weights (by val WER) in CPU memory and hand them to `save_best`.
+    keep the best weights (by val WER) in CPU memory and hand them to `save_best`. A hand stop
+    (KeyboardInterrupt) after the first evaluation ends training the same way.
 
     `loss_fn` returns a *summed* loss and the number of units it sums over (clips for CTC, tokens
     for cross-entropy); gradients are divided by the step's total units, so accumulated
@@ -611,93 +612,117 @@ def train(
         f"{cfg.name}: {total} optimizer steps over {cfg.epochs} epochs "
         f"(~{cfg.effective_s / 60:.0f} min of audio each), peak lr {cfg.lr:g}, {cfg.schedule}"
     )
-    for epoch in range(cfg.epochs):
-        model.train()
-        flat = [b for s in plan[epoch] for b in s]
-        sizes = [len(s) for s in plan[epoch]]
-        it = iter(loader(rows, flat, collate, cfg.workers))
-        t_log, audio_log, padded_log, loss_log, units_log = time.perf_counter(), 0.0, 0.0, 0.0, 0
-        monitor.window()
-        for n_micro in sizes:
-            for g, lr0 in zip(optimizer.param_groups, base_lrs, strict=True):
-                g["lr"] = lr0 * lr_factor(step, total, cfg)
-            step_units = 0
-            for _ in range(n_micro):
-                batch = next(it)
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    loss, units = loss_fn(model, batch)
-                loss.backward()
-                step_units += units
-                loss_log += loss.detach()  # stays on the GPU: no host sync per micro-batch
-                units_log += units
-                audio_log += batch["seconds"]
-                padded_log += batch["padded_seconds"]
-            torch._foreach_div_([p.grad for p in params if p.grad is not None], max(step_units, 1))
-            gnorm = torch.nn.utils.clip_grad_norm_(params, cfg.clip_norm)
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
-            step += 1
-            if step % cfg.log_every == 0:
-                torch.cuda.synchronize()
-                dt = time.perf_counter() - t_log
-                gpu = monitor.window()
-                rec = {
-                    "step": step,
-                    "epoch": epoch + 1,
-                    "lr": optimizer.param_groups[0]["lr"],
-                    "loss": float(loss_log) / max(units_log, 1),
-                    "grad_norm": float(gnorm),
-                    "audio_x_realtime": audio_log / dt,
-                    "padding_waste": 1 - audio_log / max(padded_log, 1e-9),
-                    "peak_alloc_gib": torch.cuda.max_memory_allocated() / 2**30,
-                    **gpu,
+    stopped_by_hand = False
+    try:
+        for epoch in range(cfg.epochs):
+            model.train()
+            flat = [b for s in plan[epoch] for b in s]
+            sizes = [len(s) for s in plan[epoch]]
+            it = iter(loader(rows, flat, collate, cfg.workers))
+            t_log, audio_log, padded_log, loss_log, units_log = (
+                time.perf_counter(),
+                0.0,
+                0.0,
+                0.0,
+                0,
+            )
+            monitor.window()
+            for n_micro in sizes:
+                for g, lr0 in zip(optimizer.param_groups, base_lrs, strict=True):
+                    g["lr"] = lr0 * lr_factor(step, total, cfg)
+                step_units = 0
+                for _ in range(n_micro):
+                    batch = next(it)
+                    with torch.autocast("cuda", dtype=torch.bfloat16):
+                        loss, units = loss_fn(model, batch)
+                    loss.backward()
+                    step_units += units
+                    loss_log += loss.detach()  # stays on the GPU: no host sync per micro-batch
+                    units_log += units
+                    audio_log += batch["seconds"]
+                    padded_log += batch["padded_seconds"]
+                torch._foreach_div_(
+                    [p.grad for p in params if p.grad is not None], max(step_units, 1)
+                )
+                gnorm = torch.nn.utils.clip_grad_norm_(params, cfg.clip_norm)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                step += 1
+                if step % cfg.log_every == 0:
+                    torch.cuda.synchronize()
+                    dt = time.perf_counter() - t_log
+                    gpu = monitor.window()
+                    rec = {
+                        "step": step,
+                        "epoch": epoch + 1,
+                        "lr": optimizer.param_groups[0]["lr"],
+                        "loss": float(loss_log) / max(units_log, 1),
+                        "grad_norm": float(gnorm),
+                        "audio_x_realtime": audio_log / dt,
+                        "padding_waste": 1 - audio_log / max(padded_log, 1e-9),
+                        "peak_alloc_gib": torch.cuda.max_memory_allocated() / 2**30,
+                        **gpu,
+                    }
+                    history.append(rec)
+                    print(
+                        f"step {step:5d}/{total} ep {epoch + 1} lr {rec['lr']:.2e} "
+                        f"loss {rec['loss']:.4f} | {rec['audio_x_realtime']:6.0f}x realtime, "
+                        f"pad waste {rec['padding_waste']:.0%}, "
+                        f"GPU {rec['gpu_util']:.0f}% util, {rec['gpu_mem_gib']:.1f} GiB",
+                        flush=True,
+                    )
+                    t_log, audio_log, padded_log, loss_log, units_log = (
+                        time.perf_counter(),
+                        0.0,
+                        0.0,
+                        0.0,
+                        0,
+                    )
+            model.eval()
+            with torch.no_grad():
+                val = evaluate(model)
+            history.append(
+                {"epoch": epoch + 1, "step": step, **{f"val_{k}": v for k, v in val.items()}}
+            )
+            improved = val["wer"] < best
+            print(
+                f"== epoch {epoch + 1}: val WER {val['wer']:.2f} ({sid(val)})  "
+                f"CER {val['cer']:.2f}  raw WER {val['raw_wer']:.2f}  "
+                f"loops {val['loops']}{retry_note(val)}" + ("  (best)" if improved else ""),
+                flush=True,
+            )
+            (out / "history.json").write_text(json.dumps(history, indent=1))
+            if improved:
+                best_state = {
+                    k: v.detach().to("cpu", copy=True) for k, v in model.state_dict().items()
                 }
-                history.append(rec)
-                print(
-                    f"step {step:5d}/{total} ep {epoch + 1} lr {rec['lr']:.2e} "
-                    f"loss {rec['loss']:.4f} | {rec['audio_x_realtime']:6.0f}x realtime, "
-                    f"pad waste {rec['padding_waste']:.0%}, "
-                    f"GPU {rec['gpu_util']:.0f}% util, {rec['gpu_mem_gib']:.1f} GiB",
-                    flush=True,
-                )
-                t_log, audio_log, padded_log, loss_log, units_log = (
-                    time.perf_counter(),
-                    0.0,
-                    0.0,
-                    0.0,
-                    0,
-                )
-        model.eval()
-        with torch.no_grad():
-            val = evaluate(model)
-        history.append(
-            {"epoch": epoch + 1, "step": step, **{f"val_{k}": v for k, v in val.items()}}
-        )
-        improved = val["wer"] < best
-        print(
-            f"== epoch {epoch + 1}: val WER {val['wer']:.2f} ({sid(val)})  CER {val['cer']:.2f}  "
-            f"raw WER {val['raw_wer']:.2f}  loops {val['loops']}{retry_note(val)}"
-            + ("  (best)" if improved else ""),
-            flush=True,
-        )
-        (out / "history.json").write_text(json.dumps(history, indent=1))
-        if improved:
-            best = val["wer"]
-            best_state = {k: v.detach().to("cpu", copy=True) for k, v in model.state_dict().items()}
-        if val["wer"] < counted - cfg.min_delta:  # at 0: the old rule, any strict gain
-            counted, bad = val["wer"], 0
-        else:
-            bad += 1
-            if bad >= cfg.patience:
-                print(
-                    f"val WER gained less than {cfg.min_delta:g} points in {cfg.patience} "
-                    "evaluations; stopping"
-                )
-                break
+                best = val["wer"]
+            if val["wer"] < counted - cfg.min_delta:  # at 0: the old rule, any strict gain
+                counted, bad = val["wer"], 0
+            else:
+                bad += 1
+                if bad >= cfg.patience:
+                    print(
+                        f"val WER gained less than {cfg.min_delta:g} points in {cfg.patience} "
+                        "evaluations; stopping"
+                    )
+                    break
+    except KeyboardInterrupt:
+        # Colab's stop button: end training here and keep the best weights so far, so they are
+        # saved and scored like a finished run's. Before any evaluation there are none to keep.
+        if best_state is None:
+            raise
+        stopped_by_hand = True
+        print(f"stopped by hand; keeping the best weights (val WER {best:.2f})", flush=True)
     monitor.window()
     if best_state is not None:
         model.load_state_dict(best_state)
     model.eval()
     save_best(model)
     (out / "config.json").write_text(json.dumps(asdict(cfg), indent=1))
-    return {"best_val_wer": best, "steps": step, "history": history}
+    return {
+        "best_val_wer": best,
+        "steps": step,
+        "history": history,
+        "stopped_by_hand": stopped_by_hand,
+    }
