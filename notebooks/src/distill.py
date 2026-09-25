@@ -6,6 +6,8 @@ scores are paired against are tested from backend/tests. Keep it importable on P
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -124,3 +126,54 @@ def mixing_bucket(share: float) -> str:
     if share < 0.15:
         return "<15"
     return "15-30" if share < 0.30 else "30+"
+
+
+# --- PreDistill: the owner's zip of recordings (D101) ------------------------------------------
+
+_NUMBER = re.compile(r"_\d+$")
+
+
+def _path_safe(text: str) -> str:
+    """Letters and digits of any script, combining marks (Devanagari's vowel signs, which regex's
+    word class misses), ``.``, ``-`` and ``_`` kept; every other run of characters becomes one
+    ``_``."""
+    kept = "".join(
+        c if c.isalnum() or c in "._-" or unicodedata.category(c).startswith("M") else "\0"
+        for c in text
+    )
+    return re.sub("\0+", "_", kept).strip("_")
+
+
+def source_from_filename(name: str) -> tuple[str, str]:
+    """A recording named ``<channel_name>_<NN>.mp3`` as ``(source_id, channel)``.
+
+    The source id is the file's stem with every run of characters unsafe in a path turned into
+    one ``_`` (letters of any script, digits, ``.``, ``-`` and ``_`` are kept); the channel is the
+    id less its trailing ``_<number>``.
+    """
+    stem = name.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    source_id = _path_safe(stem)
+    return source_id, _NUMBER.sub("", source_id) or source_id
+
+
+def channel_blocked(channel: str, blocked: Sequence[str]) -> bool:
+    """Whether a channel's name contains a blocked name, ignoring case and ``_`` against spaces."""
+    name = channel.replace("_", " ").casefold()
+    return any(b.strip().casefold() in name for b in blocked if b.strip())
+
+
+def slice_rows(source_id: str, channel: str, slices: Sequence[tuple[float, float]]) -> list[dict]:
+    """The manifest rows of one recording's VAD slices, named and timed as the labelled export's
+    rows are, so ``ftkit.AudioStore`` cuts them from the whole recording."""
+    return [
+        {
+            "segment_id": f"{source_id}_{i:05d}",
+            "episode_id": source_id,
+            "source_id": source_id,
+            "channel": channel,
+            "start_time": round(start, 3),
+            "end_time": round(end, 3),
+            "duration": round(end - start, 3),
+        }
+        for i, (start, end) in enumerate(slices)
+    ]

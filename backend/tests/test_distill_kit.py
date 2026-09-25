@@ -154,3 +154,53 @@ def test_latin_share_counts_words_written_in_latin_script():
 
 def test_mixing_bucket_matches_the_corpus_cmi_classes():
     assert [distill.mixing_bucket(x) for x in (0.0, 0.1, 0.2, 0.5)] == ["0", "<15", "15-30", "30+"]
+
+
+# --- PreDistill: sources from the owner's zip (D101) ---------------------------------------------
+
+
+def test_a_source_is_named_by_its_file_and_its_channel_by_the_name_before_the_number():
+    assert distill.source_from_filename("Nepali_Podcast_07.mp3") == (
+        "Nepali_Podcast_07",
+        "Nepali_Podcast",
+    )
+    assert distill.source_from_filename("sub/dir/talk-show_12.MP3") == ("talk-show_12", "talk-show")
+    assert distill.source_from_filename("nonumber.mp3") == ("nonumber", "nonumber")
+
+
+def test_a_source_id_keeps_only_characters_safe_in_a_path():
+    # a run of unsafe characters becomes one "_"; Devanagari is kept
+    assert distill.source_from_filename("My Show: ep 1_03.mp3") == (
+        "My_Show_ep_1_03",
+        "My_Show_ep_1",
+    )
+    assert distill.source_from_filename("नेपाली कुरा_02.mp3") == ("नेपाली_कुरा_02", "नेपाली_कुरा")
+
+
+def test_a_channel_is_blocked_when_its_name_contains_a_blocked_name():
+    assert distill.channel_blocked("The_Chill_Pill_Show", ["chill pill"])
+    assert not distill.channel_blocked("Nepali_Podcast", ["chill pill", "prime television"])
+
+
+def test_slice_rows_name_each_clip_under_its_recording():
+    rows = distill.slice_rows("pod_01", "pod", [(0.5, 12.25), (13.0, 20.0)])
+    assert rows == [
+        {
+            "segment_id": "pod_01_00000",
+            "episode_id": "pod_01",
+            "source_id": "pod_01",
+            "channel": "pod",
+            "start_time": 0.5,
+            "end_time": 12.25,
+            "duration": 11.75,
+        },
+        {
+            "segment_id": "pod_01_00001",
+            "episode_id": "pod_01",
+            "source_id": "pod_01",
+            "channel": "pod",
+            "start_time": 13.0,
+            "end_time": 20.0,
+            "duration": 7.0,
+        },
+    ]

@@ -93,12 +93,15 @@ def duration(row: dict) -> float:
 
 
 class AudioStore:
-    """Every episode decoded once into RAM as int16; a clip is a slice of it (a view, no copy)."""
+    """Every episode decoded once into RAM as int16; a clip is a slice of it (a view, no copy).
 
-    def __init__(self, data: Path, episode_ids: Sequence[str]):
+    ``folder`` is where the whole recordings are, under ``data``: the labelled export's
+    ``training/episodes`` by default, or the distillation corpus's ``distill/episodes`` (D101)."""
+
+    def __init__(self, data: Path, episode_ids: Sequence[str], folder: str = "training/episodes"):
         self.audio: dict[str, np.ndarray] = {}
         for ep in sorted(set(episode_ids)):
-            audio, sr = sf.read(data / "training" / "episodes" / f"{ep}.flac", dtype="int16")
+            audio, sr = sf.read(data / folder / f"{ep}.flac", dtype="int16")
             assert sr == SR and audio.ndim == 1, (ep, sr, audio.shape)
             self.audio[ep] = audio
 
