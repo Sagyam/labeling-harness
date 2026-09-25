@@ -145,17 +145,3 @@ diarization:
   timeout_seconds: 300
   auth_token: ""        # HARNESS_DIARIZATION__AUTH_TOKEN -- Modal proxy token, "<wk-id>.<ws-secret>"
   model: pyannote/speaker-diarization-community-1
-
-# The unlabelled corpus for distillation (D101): files under `root`, never rows in Postgres.
-distill:
-  root: ./data/distill
-  incoming: ./data/distill/incoming   # drop MP3s (or any audio) and yt-dlp's .info.json here
-  hf_repo: Sagyam/nepanglish-distill  # private HF dataset, for Colab
-  # Shows gold was drawn from. A name blocks every channel whose name contains it; an id must
-  # match whole. Gold's 82 shorts have no recorded source: the voiceprint screen covers them.
-  blocked_channels:
-    - Chill Pill
-    - Prime Television
-  screen_threshold: 0.6      # measured 2026-09-25 (findings.md): 92.9% of a gold voice's windows pass, 0.02% of others'
-  screen_window_seconds: 2.0
-  screen_min_seconds: 10.0   # of windows close to one gold voice, to quarantine a source

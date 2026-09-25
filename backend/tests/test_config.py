@@ -295,11 +295,3 @@ def test_the_models_root_defaults_to_an_absolute_path_under_the_repo() -> None:
     root = load_settings().models.root
     assert root.is_absolute()
     assert root == REPO_ROOT / "data" / "models" / "asr"
-
-
-def test_distill_blocks_gold_shows_and_screens_only_once_measured() -> None:
-    # D101: gold's shows are refused by channel, and the voiceprint screen's threshold is a
-    # measured number or nothing, never a guess.
-    distill = load_settings().distill
-    assert {"Chill Pill", "Prime Television"} <= set(distill.blocked_channels)
-    assert distill.screen_threshold is None or 0.0 < distill.screen_threshold < 1.0

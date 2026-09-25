@@ -431,27 +431,6 @@ class DiarizationSettings(BaseModel):
     model: str = "pyannote/speaker-diarization-community-1"
 
 
-class DistillSettings(BaseModel):
-    """The unlabelled corpus for distillation (D101): files, never rows."""
-
-    model_config = _STRICT
-
-    #: The corpus: one folder per source, and ``clips.jsonl``.
-    root: str = "./data/distill"
-    #: Where the owner drops audio and yt-dlp's info JSON.
-    incoming: str = "./data/distill/incoming"
-    #: The private HF dataset the corpus is uploaded to, for Colab.
-    hf_repo: str = "Sagyam/nepanglish-distill"
-    #: Channel names (contained, case-insensitive) or ids (whole) gold was drawn from.
-    blocked_channels: list[str] = Field(default_factory=list)
-    #: Cosine to a gold voice's centroid at which a 2 s window sounds like it. None until
-    #: measured on the corpus's own clips (D101); the screen refuses to run without it.
-    screen_threshold: float | None = Field(default=None, ge=-1.0, le=1.0)
-    screen_window_seconds: float = Field(default=2.0, gt=0.0)
-    #: Seconds of close windows, for one gold voice, that quarantine a source.
-    screen_min_seconds: float = Field(default=10.0, gt=0.0)
-
-
 class Settings(BaseSettings):
     """Root settings object, assembled from YAML then overlaid with environment variables."""
 
@@ -488,7 +467,6 @@ class Settings(BaseSettings):
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     fusion: FusionSettings = Field(default_factory=FusionSettings)
     diarization: DiarizationSettings = Field(default_factory=DiarizationSettings)
-    distill: DistillSettings = Field(default_factory=DistillSettings)
 
 
 class LlmRoute(BaseModel):

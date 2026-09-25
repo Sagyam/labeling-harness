@@ -55,6 +55,8 @@ The measuring code was discarded.
 - **End to end, through both scripts:** a gold reel (episode 171, 63 s) fed in as an anonymous
   file was quarantined as v136 for 40 s (closest windows 0.77–0.80); a 6.6 min tech review whose
   voices are all outside gold was cleared.
+- **The screen was deleted the same day** with the local path (D101, amended): the owner's first
+  tranche comes from channels known to be new. The numbers above are what to reuse if it returns.
 
 ---
 

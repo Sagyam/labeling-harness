@@ -2339,9 +2339,12 @@ not become episodes at all.
   `distill/clips.jsonl`), the layout `ftkit.AudioStore` reads, in that repo; the exports' downloads
   never fetch `distill/`. `Teacher.ipynb` reads this layout. The owner vouches that these channels
   are new, so this path has no voiceprint screen and no known-recording check (there are no video
-  ids); gold's shows are still refused by file name. The local scripts above remain for audio
-  screened on this machine, but write per-clip files to `distill.hf_repo`, which `Teacher.ipynb`
-  does not read.
+  ids); gold's shows are still refused by file name.
+- **Amended 2026-09-25: the local path is deleted** at the owner's request, with its voiceprint
+  screen and the `distill:` settings (`scripts/prepare_distill_audio.py`,
+  `scripts/screen_distill_audio.py`, `scripts/upload_distill_corpus.py`,
+  `app/services/distill_corpus.py`, `app/services/distill_prep.py`). The Colab path is the only
+  one. The bullets above describe what the local path did; the screen's calibration stays in
+  findings.md. To screen a channel against gold again, restore them from git (commit 024c8e7).
 
-**Reversal:** cheap. Delete `data/distill/`, the HF dataset and `distill/` in the dataset repo;
-nothing else refers to them.
+**Reversal:** cheap. Delete `distill/` in the dataset repo; nothing else refers to it.
