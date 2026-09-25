@@ -162,7 +162,13 @@ backend/.venv/bin/python scripts/backfill_overlap.py [--episode show-a_ep012] [-
 backend/.venv/bin/python scripts/diarize_episode.py  show-a_ep012 [--num-speakers 2]   # on the Modal GPU
 backend/.venv/bin/python scripts/import_models.py    [data/models/asr/flex-ft]   # fine-tuned models (D83)
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
+backend/.venv/bin/python scripts/prepare_distill_audio.py [--incoming ~/Downloads/shows]   # D101
 ```
+
+`prepare_distill_audio.py` cuts downloaded audio (MP3 or anything ffmpeg reads, each with yt-dlp's
+`.info.json` beside it) into the unlabelled distillation corpus under `data/distill/`, exactly as
+ingest cuts an episode. It writes files only, never rows, and refuses a recording already in the
+harness or from a channel gold was drawn from (D101).
 
 `export_dataset.py` writes four kinds — `training`, `gold`, `analytics`, `error_mining` — each with
 a `manifest.json` recording label version, policy version, filters, row counts, the verified/screened

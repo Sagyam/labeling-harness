@@ -101,6 +101,11 @@ class SileroVAD:
             logger.warning("silero_vad_load_failed", error=str(exc))
             self._session = None
 
+    @property
+    def available(self) -> bool:
+        """Whether the Silero model loaded; without it, turns come from the energy fallback."""
+        return self._session is not None
+
     def detect_turns(
         self,
         audio: np.ndarray,
