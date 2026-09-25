@@ -135,7 +135,18 @@ step 4's curve says how much audio closes the gap.
    - Never send this audio through the paid routes.
 4. **Train the student** on the pseudo-labelled audio plus the 30 h, with the human labels
    weighted up. Build a learning curve in hours of pseudo-labelled audio (100, then 300, then
-   1000 h) and stop when it flattens.
+   1000 h) and stop when it flattens. Settled on 2026-09-25, before any of it was built:
+   - **The student is Whisper-large-v3-turbo**, step 0's closest (DistillHF.ipynb's recipe).
+   - **Cap each channel's share** (about 5 h by default, sampled evenly across the channel's
+     recordings, not its first hours). The first tranche holds 22 h of one political commentator:
+     step 0 showed the students' gap is new voices, and the 2026-09-13 curve that more of the same
+     voices stops helping. The cap is a training setting, so it can be raised without downloading
+     anything.
+   - **Resume from HF per epoch.** At 100 h and more a run takes many hours, which a lost runtime
+     or power cut must not cost again (deferred at step 0, when runs took about an hour).
+   - **Order of the first run:** `PreDistill.ipynb`, then `Teacher.ipynb` with `LIMIT` of about 500
+     (its log-prob masking and `output_scores` memory have never run on a GPU), then the whole
+     corpus, then step 4.
 
 **Success bar.** The student's gold and val WER falls within Flex's episode-bootstrap CI, per clip
 class, folded and raw, split into S/D/I. Only then are its extras (streaming, timestamps,
