@@ -26,6 +26,8 @@ backend/app/services/models/mms_fa.onnx
 backend/app/services/models/mms_fa_vocab.json
 # Overlap detector (6 MB): fetched on first use from a pinned public revision, like the aligner.
 backend/app/services/models/pyannote_segmentation_3.onnx
+# Voiceprint model (D99): 26 MB, downloads itself pinned when missing.
+backend/app/services/models/wespeaker_resnet34_lm.onnx
 
 # Same artefact when HARNESS_ALIGNER_MODEL_DIR points at the mounted volume (the container does).
 data/models/
