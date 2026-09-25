@@ -109,10 +109,9 @@ step 4's curve says how much audio closes the gap.
 1. **Collect unlabelled audio.**
    - Nepali podcasts and tech reviews from YouTube, in the corpus's genres.
    - Downloaded outside the harness, since D86 allows only two ways in. The corpus is files, never
-     rows (D101): `scripts/prepare_distill_audio.py` cuts it like ingest,
-     `scripts/screen_distill_audio.py` quarantines sources that sound like a gold voice, and
-     `scripts/upload_distill_corpus.py` sends the cleared ones to a private HF dataset for
-     `notebooks/Teacher.ipynb` (steps 2-3).
+     rows (D101). The owner uploads `distill.zip` to the dataset repo, and
+     `notebooks/PreDistill.ipynb` cuts it in Colab with ingest's own code into `distill/`, which
+     `notebooks/Teacher.ipynb` labels (steps 2-3). First tranche: about 100 h (2026-09-25).
    - Cut into clips of 20 s or less with the same silero VAD.
    - Collected by the owner as whole playlists, audio only, with yt-dlp's info JSON (video id,
      channel, playlist) kept for the gold check and the provenance record. Prefer shows the corpus

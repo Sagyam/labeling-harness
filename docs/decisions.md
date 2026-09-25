@@ -2331,4 +2331,17 @@ not become episodes at all.
 - **Val is never pseudo-labelled either.** Val is episodes in the harness, so the first layer
   covers it.
 
-**Reversal:** cheap. Delete `data/distill/` and the HF dataset; nothing else refers to them.
+- **Amended 2026-09-25: cut in Colab from the owner's zip.** The owner uploads `distill.zip`
+  (`<channel_name>_<NN>.mp3`, no info JSON) to the root of `Sagyam/nepanglish-asr`, and
+  `notebooks/PreDistill.ipynb` cuts it there with ingest's own `normalize_audio` and Silero VAD,
+  fetched from GitHub at a pinned commit and checked by sha256. It stores each recording whole
+  (`distill/episodes/<id>.flac`) with its clip times (`distill/sources/<id>.json`,
+  `distill/clips.jsonl`), the layout `ftkit.AudioStore` reads, in that repo; the exports' downloads
+  never fetch `distill/`. `Teacher.ipynb` reads this layout. The owner vouches that these channels
+  are new, so this path has no voiceprint screen and no known-recording check (there are no video
+  ids); gold's shows are still refused by file name. The local scripts above remain for audio
+  screened on this machine, but write per-clip files to `distill.hf_repo`, which `Teacher.ipynb`
+  does not read.
+
+**Reversal:** cheap. Delete `data/distill/`, the HF dataset and `distill/` in the dataset repo;
+nothing else refers to them.
