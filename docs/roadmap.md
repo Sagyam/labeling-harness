@@ -188,6 +188,18 @@ conditioning that says whom to follow or an output format that writes both voice
 below is built to feed D, not single-stream Flex. Gold and val audio are never a source of mixed-in
 speech or noise (D76).
 
+**Built 2026-09-26: `notebooks/src/augment.py`**, one switch per stage, all off until a notebook
+raises its `p`: SpecAugment, speed, reverb (synthetic or a bank), channel (microphone response),
+noise (a `NoiseBank`), gain, codec (MP3, Opus, AAC, mu-law through ffmpeg) and crosstalk. Crosstalk
+is D96's mixer (`xtalk.py`) made configurable through `CrosstalkConfig`: window length, level gap
+and share as ranges instead of the measured bursts, and whole verified train clips as the second
+voice (`donor="clip"`), named in the result so a label for both voices can be built. The second
+voice can also get its own room and microphone before it is mixed (`donor_reverb`,
+`donor_channel`), because in real crosstalk it reaches the target's microphone from further away.
+The corpus's overlap is near-symmetric, though (both voices within 3 dB), so always processing the
+donor would teach "ignore the wetter voice"; keep those below p = 1 unless that is the experiment.
+The defaults reproduce D96 exactly. Nothing is wired into a notebook yet.
+
 1. **Two-voice mixes from whole verified clips.** This lifts D95's blocker. The only text D95 had
    for a donor burst was an unverified recogniser's. If the second voice is a whole verified train
    clip, or a word-aligned stretch of one (`app/services/forced_align.py`), both transcripts are
