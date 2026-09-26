@@ -237,3 +237,154 @@ def test_mixer_is_reproducible_for_a_seed():
     a, _ = mixer(rows[0], episode[: 10 * SR], np.random.default_rng(8))
     b, _ = mixer(rows[0], episode[: 10 * SR], np.random.default_rng(8))
     np.testing.assert_array_equal(a, b)
+
+
+# --- configurable crosstalk (roadmap C, 2026-09-26) -----------------------------------------------
+
+
+def _two_voice_episode():
+    episode = np.concatenate([_tone(20.0, 3000), _tone(20.0, 2000, 500.0)])
+    rows = [
+        _row("a", "ep", 0.0, 20.0, [_turn(0, 20, "v1")]),
+        _row("b", "ep", 20.0, 40.0, [_turn(0, 20, "v2")]),
+    ]
+    return episode, rows, lambda ep, s, e: episode[round(s * SR) : round(e * SR)]
+
+
+def test_default_config_is_the_measured_d96_mixer():
+    cfg = xtalk.CrosstalkConfig()
+    assert (cfg.seconds, cfg.gap_db, cfg.share, cfg.donor) == (None, None, None, "stretch")
+    assert (cfg.max_share, cfg.overshoot, cfg.clean_only) == (
+        xtalk.MAX_SHARE,
+        xtalk.OVERSHOOT,
+        True,
+    )
+
+
+def test_config_rejects_nonsense():
+    for bad in (
+        {"seconds": (5.0, 2.0)},
+        {"seconds": (0.0, 2.0)},
+        {"gap_db": (3.0, -3.0)},
+        {"share": (0.5, 0.2)},
+        {"max_share": 1.5},
+        {"donor": "tts"},
+        {"p": 1.5},
+    ):
+        with pytest.raises(ValueError):
+            xtalk.CrosstalkConfig(**bad)
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_long_windows_at_a_chosen_level_stay_in_their_ranges(seed):
+    _, rows, fetch = _two_voice_episode()
+    cfg = xtalk.CrosstalkConfig(
+        p=1.0,
+        seconds=(3.0, 6.0),
+        gap_db=(-6.0, -3.0),
+        share=(0.3, 0.5),
+        max_share=0.8,
+        overshoot=None,
+    )
+    mixer = xtalk.Mixer(xtalk.DonorPool(rows), fetch, config=cfg)
+    _, info = mixer(rows[0], fetch("ep", 0.0, 20.0), np.random.default_rng(seed))
+    assert info is not None and info["windows"]
+    for w in info["windows"]:
+        assert 3.0 <= w["seconds"] <= 6.0
+        assert -6.0 <= w["gap_db"] <= -3.0
+    assert info["share"] <= 0.8 + 1e-9
+
+
+def test_p_argument_overrides_the_config():
+    _, rows, fetch = _two_voice_episode()
+    mixer = xtalk.Mixer(xtalk.DonorPool(rows), fetch, p=0.0, config=xtalk.CrosstalkConfig(p=1.0))
+    clip = fetch("ep", 0.0, 20.0)
+    same, none = mixer(rows[0], clip, np.random.default_rng(1))
+    assert none is None and same is clip
+
+
+def test_clip_pool_refuses_anything_but_train():
+    with pytest.raises(ValueError):
+        xtalk.ClipDonorPool(
+            [_row("g", "ep", 0.0, 4.0, [_turn(0, 4, "v1")], split="test", pot="gold")]
+        )
+
+
+def test_clip_pool_picks_whole_clips_in_range_by_another_voice_same_episode_first():
+    rows = [
+        _row("a", "ep1", 0.0, 10.0, [_turn(0, 10, "v1")]),
+        _row("b", "ep1", 10.0, 14.0, [_turn(0, 4, "v2")]),
+        _row("c", "ep1", 20.0, 29.0, [_turn(0, 9, "v2")]),  # too long for the range
+        _row("d", "ep1", 30.0, 34.0, [_turn(0, 4, "v1")]),  # the target's own voice
+        _row("e", "ep2", 0.0, 4.0, [_turn(0, 4, "v3")]),
+    ]
+    pool = xtalk.ClipDonorPool(rows)
+    rng = np.random.default_rng(2)
+    for _ in range(30):
+        d = pool.pick(rng, rows[0], (3.0, 5.0))
+        assert (d.segment_id, d.start, d.end, d.same_episode) == ("b", 10.0, 14.0, True)
+    assert pool.pick(rng, rows[0], (20.0, 30.0)) is None
+
+
+def test_clip_pool_never_uses_the_same_episode_for_an_undiarized_target():
+    rows = [
+        _row("a", "ep1", 0.0, 10.0, None),
+        _row("b", "ep1", 10.0, 14.0, None),
+        _row("e", "ep2", 0.0, 4.0, None),
+    ]
+    pool = xtalk.ClipDonorPool(rows)
+    rng = np.random.default_rng(3)
+    for _ in range(30):
+        assert pool.pick(rng, rows[0], (1.0, 5.0)).segment_id == "e"
+
+
+def test_clip_donors_are_laid_whole_and_named_for_their_labels():
+    episode = np.concatenate([_tone(12.0, 3000), _tone(4.0, 2000, 500.0)])
+    rows = [
+        _row("a", "ep", 0.0, 12.0, [_turn(0, 12, "v1")]),
+        _row("b", "ep", 12.0, 16.0, [_turn(0, 4, "v2")]),
+    ]
+    fetch = lambda ep, s, e: episode[round(s * SR) : round(e * SR)]  # noqa: E731
+    cfg = xtalk.CrosstalkConfig(
+        p=1.0, donor="clip", seconds=(2.0, 5.0), share=(0.3, 0.4), max_share=0.9, overshoot=None
+    )
+    mixer = xtalk.Mixer(xtalk.ClipDonorPool(rows), fetch, config=cfg)
+    out, info = mixer(rows[0], episode[: 12 * SR], np.random.default_rng(4))
+    assert info is not None and len(info["windows"]) == 1
+    w = info["windows"][0]
+    assert w["donor_segment_id"] == "b" and w["seconds"] == pytest.approx(4.0)
+    assert 0.0 <= w["offset"] <= 8.0 + 1e-9
+    assert len(out) == 12 * SR
+
+
+def test_clean_only_off_mixes_an_undiarized_clip_from_another_episode():
+    episode = np.concatenate([_tone(10.0, 3000), _tone(10.0, 2000, 500.0)])
+    rows = [
+        _row("a", "ep1", 0.0, 10.0, None, overlap=None),
+        _row("b", "ep2", 10.0, 20.0, [_turn(0, 10, "v2")]),
+    ]
+    rows[0]["overlap_spans"] = None
+    fetch = lambda ep, s, e: episode[round(s * SR) : round(e * SR)]  # noqa: E731
+    on = xtalk.Mixer(xtalk.DonorPool(rows[1:]), fetch, config=xtalk.CrosstalkConfig(p=1.0))
+    assert on(rows[0], episode[: 10 * SR], np.random.default_rng(5))[1] is None
+    off = xtalk.Mixer(
+        xtalk.DonorPool(rows[1:]), fetch, config=xtalk.CrosstalkConfig(p=1.0, clean_only=False)
+    )
+    _, info = off(rows[0], episode[: 10 * SR], np.random.default_rng(5))
+    assert info is not None and info["same_episode"] == 0
+
+
+def test_donor_fx_processes_each_second_voice_before_the_level_is_set():
+    _, rows, fetch = _two_voice_episode()
+    seen = []
+
+    def fx(audio, rng):
+        seen.append(len(audio))
+        return np.zeros_like(audio), {"muted": True}
+
+    cfg = xtalk.CrosstalkConfig(p=1.0, seconds=(2.0, 3.0), share=(0.2, 0.3), overshoot=None)
+    mixer = xtalk.Mixer(xtalk.DonorPool(rows), fetch, config=cfg, donor_fx=fx)
+    clip = fetch("ep", 0.0, 20.0)
+    out, info = mixer(rows[0], clip, np.random.default_rng(6))
+    assert seen and all(w["fx"] == {"muted": True} for w in info["windows"])
+    np.testing.assert_array_equal(out, clip)  # a silent donor adds nothing

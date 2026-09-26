@@ -19,12 +19,20 @@ overlapped share with most of the weight on 5-15% and 15-40% (`SHARES`).
 
 Donor audio is only ever solo speech from train clips (`DonorPool` refuses anything else), so no
 val or gold audio is mixed into training (D76). Pure numpy; importable without torch.
+
+Everything above is the default, and it is what the D96 sweep trained Flex on. `CrosstalkConfig`
+overrides it for models built to handle overlap (roadmap C and D, 2026-09-26): windows of a chosen
+length, at a chosen level gap, and optionally whole verified train clips as the second voice
+(`ClipDonorPool`), whose transcripts a serialized-output or target-speaker label needs. A
+`donor_fx` hook lets `augment.py` pass the second voice through a room and a microphone of its own
+before it is mixed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Literal
 
 import numpy as np
 
@@ -169,17 +177,23 @@ class DonorPool:
         return len(self.start)
 
     def pick(
-        self, rng: np.random.Generator, episode: str, exclude: set[str], seconds: float
+        self,
+        rng: np.random.Generator,
+        episode: str,
+        exclude: set[str],
+        seconds: float,
+        other_episode: bool = False,
     ) -> Donor | None:
         """A stretch of at least `seconds` by a voice not in `exclude`: from `episode` when it
         has one, else from any other train episode. Longer stretches are likelier, so every
-        second of solo speech is about equally likely to be used."""
+        second of solo speech is about equally likely to be used. `other_episode` rules the
+        target's own episode out, for a target whose voices are unknown."""
         ok = self.end - self.start >= seconds
         banned = [self._voice_idx[v] for v in exclude if v in self._voice_idx]
         if banned:
             ok &= ~np.isin(self.voice, banned)
         here = self.ep == self._ep_idx.get(episode, -1)
-        same = bool((ok & here).any())
+        same = not other_episode and bool((ok & here).any())
         ok &= here if same else ~here
         idx = np.flatnonzero(ok)
         if not len(idx):
@@ -194,21 +208,26 @@ class DonorPool:
 
 
 def plan_windows(
-    rng: np.random.Generator, clip_s: float, share: float
+    rng: np.random.Generator,
+    clip_s: float,
+    share: float,
+    draw: Callable[[np.random.Generator], float] = sample_window_s,
+    max_share: float = MAX_SHARE,
+    overshoot: float | None = OVERSHOOT,
 ) -> list[tuple[float, float]]:
-    """(offset, duration) windows in a clip, each drawn from the measured durations, apart from
-    one another, until `share` of the clip is covered. A window that would pass OVERSHOOT x
-    `share` (or MAX_SHARE) is redrawn; after 64 draws the clip keeps what it has, which may be
-    nothing."""
+    """(offset, duration) windows in a clip, each drawn from `draw` (the measured durations by
+    default), apart from one another, until `share` of the clip is covered. A window that would
+    pass `overshoot` x `share` (or `max_share`; `max_share` alone when `overshoot` is None) is
+    redrawn; after 64 draws the clip keeps what it has, which may be nothing."""
     goal = share * clip_s
-    cap = min(MAX_SHARE, OVERSHOOT * share) * clip_s
+    cap = (max_share if overshoot is None else min(max_share, overshoot * share)) * clip_s
     wins: list[tuple[float, float]] = []
     total = 0.0
     for _ in range(64):
         if total >= goal:
             break
-        d = sample_window_s(rng)
-        if total + d > cap:
+        d = draw(rng)
+        if total + d > cap or d > clip_s:
             continue
         s = float(rng.uniform(0.0, clip_s - d))
         if any(s < s2 + d2 + SPACING_S and s2 < s + d + SPACING_S for s2, d2 in wins):
@@ -241,46 +260,184 @@ def mix(target: np.ndarray, pieces: Sequence[tuple[int, np.ndarray, float]]) -> 
     return np.round(out).astype(np.int16)
 
 
+@dataclass(frozen=True)
+class ClipDonor:
+    segment_id: str
+    episode: str
+    start: float  # episode-absolute: the whole clip, so its verified text is the donor's label
+    end: float
+    same_episode: bool
+
+
+class ClipDonorPool:
+    """Whole verified train clips as the second voice (roadmap C item 1). A window is the donor's
+    whole clip, so what the second voice said is known: `Mixer` names the donor in its info, which
+    is what a serialized-output or target-speaker label is built from."""
+
+    def __init__(self, rows: Sequence[dict]):
+        for r in rows:
+            if r.get("split") != "train" or r.get("pot") != "train":
+                raise ValueError(f"{r['segment_id']}: donors come from train clips only (D76)")
+        self.rows = list(rows)
+        self.duration = np.array([r["end_time"] - r["start_time"] for r in self.rows])
+        self.episode = np.array([r["episode_id"] for r in self.rows])
+        self.voices = [clip_voices(r) for r in self.rows]
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def pick(
+        self,
+        rng: np.random.Generator,
+        target: dict,
+        seconds: tuple[float, float],
+        used: frozenset[str] = frozenset(),
+    ) -> ClipDonor | None:
+        """A clip lasting `seconds` (lo, hi) by voices none of which is the target's, and not in
+        `used`: from the target's episode when one qualifies, else from another train episode.
+        Same-episode clips need both sides diarized; otherwise the same person could be talking
+        over themself."""
+        lo, hi = seconds
+        mine = clip_voices(target)
+        skip = used | {target["segment_id"]}
+        ok = (self.duration >= lo) & (self.duration <= hi)
+        ok &= np.array(
+            [
+                r["segment_id"] not in skip and not (v & mine)
+                for r, v in zip(self.rows, self.voices, strict=True)
+            ],
+            dtype=bool,
+        )
+        here = self.episode == target["episode_id"]
+        known = np.array([bool(v) and bool(mine) for v in self.voices], dtype=bool)
+        same = bool((ok & here & known).any())
+        ok &= (here & known) if same else ~here
+        idx = np.flatnonzero(ok)
+        if not len(idx):
+            return None
+        r = self.rows[idx[rng.integers(len(idx))]]
+        return ClipDonor(r["segment_id"], r["episode_id"], r["start_time"], r["end_time"], same)
+
+
+@dataclass(frozen=True)
+class CrosstalkConfig:
+    """How the second voice is laid over a clip. Every None is the measured distribution the D96
+    sweep used; set a field to override it.
+
+    - `p`: chance a candidate clip is mixed at all.
+    - `seconds`: (lo, hi) length of each window, uniform. With `donor="clip"` it is the range of
+      donor clip lengths, since a whole clip is laid down.
+    - `gap_db`: (lo, hi) second voice's level minus the speaker's, uniform; positive is louder.
+    - `share`: (lo, hi) share of the clip to overlap, uniform.
+    - `max_share`: no clip is overlapped more than this.
+    - `overshoot`: a window that would take the clip past `overshoot` x the drawn share is
+      redrawn; None lets `max_share` alone cap it, which long windows need.
+    - `donor`: "stretch" (solo speech cut from train clips; label unchanged) or "clip" (whole
+      verified train clips, named in the info).
+    - `clean_only`: mix only clips measured free of crosstalk and diarized. Off, any clip is a
+      candidate, and one without speaker turns takes its donor from another episode.
+    """
+
+    p: float = 0.0
+    seconds: tuple[float, float] | None = None
+    gap_db: tuple[float, float] | None = None
+    share: tuple[float, float] | None = None
+    max_share: float = MAX_SHARE
+    overshoot: float | None = OVERSHOOT
+    donor: Literal["stretch", "clip"] = "stretch"
+    clean_only: bool = True
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.p <= 1.0:
+            raise ValueError(f"p must be in [0, 1], got {self.p}")
+        if self.seconds is not None and not 0.0 < self.seconds[0] <= self.seconds[1]:
+            raise ValueError(f"seconds must be 0 < lo <= hi, got {self.seconds}")
+        if self.gap_db is not None and not self.gap_db[0] <= self.gap_db[1]:
+            raise ValueError(f"gap_db must be lo <= hi, got {self.gap_db}")
+        if self.share is not None and not 0.0 < self.share[0] <= self.share[1] <= 1.0:
+            raise ValueError(f"share must be 0 < lo <= hi <= 1, got {self.share}")
+        if not 0.0 < self.max_share <= 1.0:
+            raise ValueError(f"max_share must be in (0, 1], got {self.max_share}")
+        if self.donor not in ("stretch", "clip"):
+            raise ValueError(f"donor must be 'stretch' or 'clip', got {self.donor!r}")
+
+    def draw_seconds(self, rng: np.random.Generator) -> float:
+        if self.seconds is None:
+            return sample_window_s(rng)
+        return float(rng.uniform(*self.seconds))
+
+    def draw_gap_db(self, rng: np.random.Generator) -> float:
+        if self.gap_db is None:
+            return sample_gap_db(rng)
+        return float(rng.uniform(*self.gap_db))
+
+    def draw_share(self, rng: np.random.Generator) -> float:
+        if self.share is None:
+            return sample_share(rng)
+        return float(rng.uniform(*self.share))
+
+
+#: Processes a second voice before it is mixed (a room and a microphone of its own, from
+#: augment.py): (int16 audio, rng) -> (int16 audio, what was done).
+DonorFx = Callable[[np.ndarray, np.random.Generator], tuple[np.ndarray, dict]]
+
+
 class Mixer:
     """Crosstalk for one training clip, called from `collate`.
 
-    Only clips measured clean (`overlap_spans == []`) and diarized are candidates, each with
-    probability `p`: a clip with real crosstalk keeps it as it is, and one never measured is not
-    assumed clean. Returns the (possibly new) int16 audio and what was done, or None."""
+    By default only clips measured clean (`overlap_spans == []`) and diarized are candidates, each
+    with probability `p`: a clip with real crosstalk keeps it as it is, and one never measured is
+    not assumed clean. Returns the (possibly new) int16 audio and what was done, or None.
+    `p`, when given, overrides `config.p`."""
 
     def __init__(
         self,
-        pool: DonorPool,
+        pool: DonorPool | ClipDonorPool,
         fetch: Callable[[str, float, float], np.ndarray],
-        p: float,
+        p: float | None = None,
+        config: CrosstalkConfig | None = None,
+        donor_fx: DonorFx | None = None,
     ):
-        self.pool, self.fetch, self.p = pool, fetch, p
+        config = config or CrosstalkConfig()
+        self.config = config if p is None else replace(config, p=p)
+        want = ClipDonorPool if self.config.donor == "clip" else DonorPool
+        if not isinstance(pool, want):
+            raise TypeError(f"donor={self.config.donor!r} needs a {want.__name__}")
+        self.pool, self.fetch, self.donor_fx = pool, fetch, donor_fx
+
+    @property
+    def p(self) -> float:
+        return self.config.p
 
     def __call__(
         self, row: dict, clip: np.ndarray, rng: np.random.Generator
     ) -> tuple[np.ndarray, dict | None]:
-        if row.get("overlap_spans") != [] or not row.get("speaker_turns"):
+        cfg = self.config
+        if cfg.clean_only and (row.get("overlap_spans") != [] or not row.get("speaker_turns")):
             return clip, None
-        if rng.random() >= self.p:
+        if rng.random() >= cfg.p:
             return clip, None
         clip_s = len(clip) / SR
-        exclude = clip_voices(row)
+        share = cfg.draw_share(rng)
+        if cfg.donor == "clip":
+            planned = self._plan_clips(rng, row, clip_s, share)
+        else:
+            planned = self._plan_stretches(rng, row, clip_s, share)
         pieces, windows = [], []
-        for offset, seconds in plan_windows(rng, clip_s, sample_share(rng)):
-            donor = self.pool.pick(rng, row["episode_id"], exclude, seconds)
-            if donor is None:
-                continue
-            gap = sample_gap_db(rng)
+        for offset, seconds, donor in planned:
             audio = self.fetch(donor.episode, donor.start, donor.start + seconds)
-            pieces.append((round(offset * SR), audio, gap))
-            windows.append(
-                {
-                    "offset": offset,
-                    "seconds": seconds,
-                    "gap_db": gap,
-                    "same_episode": donor.same_episode,
-                }
-            )
+            window = {
+                "offset": offset,
+                "seconds": seconds,
+                "gap_db": cfg.draw_gap_db(rng),
+                "same_episode": donor.same_episode,
+            }
+            if isinstance(donor, ClipDonor):
+                window["donor_segment_id"] = donor.segment_id
+            if self.donor_fx is not None:
+                audio, window["fx"] = self.donor_fx(audio, rng)
+            pieces.append((round(offset * SR), audio, window["gap_db"]))
+            windows.append(window)
         if not pieces:
             return clip, None
         info = {
@@ -290,3 +447,41 @@ class Mixer:
             "same_episode": sum(w["same_episode"] for w in windows),
         }
         return mix(clip, pieces), info
+
+    def _plan_stretches(self, rng, row, clip_s, share):
+        cfg = self.config
+        exclude = clip_voices(row)
+        out = []
+        wins = plan_windows(rng, clip_s, share, cfg.draw_seconds, cfg.max_share, cfg.overshoot)
+        for offset, seconds in wins:
+            donor = self.pool.pick(
+                rng, row["episode_id"], exclude, seconds, other_episode=not exclude
+            )
+            if donor is not None:
+                out.append((offset, seconds, donor))
+        return out
+
+    def _plan_clips(self, rng, row, clip_s, share):
+        """Whole donor clips placed like `plan_windows`' windows: apart, inside the clip, up to
+        `share` of it and never past the cap."""
+        cfg = self.config
+        cap_share = (
+            cfg.max_share if cfg.overshoot is None else min(cfg.max_share, cfg.overshoot * share)
+        )
+        goal, cap = share * clip_s, cap_share * clip_s
+        lo, hi = cfg.seconds or (MIN_WINDOW_S, clip_s)
+        out, total = [], 0.0
+        for _ in range(64):
+            if total >= goal or min(hi, cap - total, clip_s) < lo:
+                break
+            used = frozenset(d.segment_id for _, _, d in out)
+            donor = self.pool.pick(rng, row, (lo, min(hi, cap - total, clip_s)), used)
+            if donor is None:
+                break
+            d = donor.end - donor.start
+            s = float(rng.uniform(0.0, clip_s - d))
+            if any(s < s2 + d2 + SPACING_S and s2 < s + d + SPACING_S for s2, d2, _ in out):
+                continue
+            out.append((s, d, donor))
+            total += d
+        return out
