@@ -159,7 +159,12 @@ step 4's curve says how much audio closes the gap.
      hard 5 h cap would have kept about 40 of the tranche's ~90 usable hours, on evidence that
      does not transfer: the 2026-09-13 curve that more of the same voices stops helping measured
      Flex, and Whisper-turbo is 8 points short of it. Adopted without a capped-against-weighted
-     comparison, at the owner's word. The exponent is a training setting.
+     comparison, at the owner's word. The exponent is a training setting. On the cut tranche (2026-09-26,
+     102 h of speech) it gives What_s_With 21% of draws for 34% of the hours, Sudheer Sharma 18%
+     for 24%, and the five movies 19% for 6%. That misweights both ways, since What_s_With's round
+     tables bring new guests every episode and Sudheer Sharma is the only solo channel. The owner
+     kept it for the first run: if the students disappoint, oversampled data is cut or more is
+     added then.
    - **Resume from HF per epoch.** At 100 h and more a run takes many hours, which a lost runtime
      or power cut must not cost again (deferred at step 0, when runs took about an hour).
    - **Order of the first run:** `PreDistill.ipynb`, then `Teacher.ipynb` with `LIMIT` of about 500
