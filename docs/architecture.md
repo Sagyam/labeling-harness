@@ -516,7 +516,8 @@ The `training` kind also carries `label_words`: the words of its `text` with cli
 spans, and `label_words_source` saying where they came from (2026-09-26). A label accepted
 unchanged is its seed's text, so it takes the seed's aligned words (`seed`); any other, an edited
 one, is realigned on its own clip by the MMS aligner (`realigned`). The words are split and
-normalised exactly as `text` is, and a span is never guessed: when the words do not spell the
+normalised exactly as `text` is (a rule that writes two scripts, `कम्पनीले` to `companyले`,
+gives two words sharing one span), and a span is never guessed: when the words do not spell the
 text, both fields are null. `scripts/export_dataset.py` loads the aligner only for this, and
 `--no-realign` (or the API, which never loads it) leaves those rows null; the manifest counts
 `seed`, `realigned` and `missing`. They let a crosstalk mix write both voices' words in time order

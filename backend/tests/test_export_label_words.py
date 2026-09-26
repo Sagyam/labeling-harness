@@ -47,5 +47,15 @@ def test_export_words_follow_the_exported_text_danda_and_rules_included():
     ]
 
 
+def test_a_rule_that_writes_two_scripts_shares_the_span_between_them():
+    """norm-v3 rewrites कम्पनीले as companyले, which the text splits into two words; both keep
+    the spoken word's span rather than an invented boundary between them."""
+    rules = Ruleset(version="t", tokens={"कम्पनीले": "companyले"})
+    assert export_words([("कम्पनीले", 1.0, 1.6)], "companyले", rules) == [
+        {"word": "company", "start": 1.0, "end": 1.6},
+        {"word": "ले", "start": 1.0, "end": 1.6},
+    ]
+
+
 def test_export_words_refuse_spans_that_do_not_spell_the_text():
     assert export_words([("मलाई", 0.0, 0.4)], "मलाई best", NONE) is None

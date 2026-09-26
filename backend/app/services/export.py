@@ -213,12 +213,14 @@ def seed_spans(final_text: str | None, seed: Any) -> list[Span] | None:
 
 def export_words(spans: Sequence[Span], text: str | None, ruleset: Ruleset) -> list[dict] | None:
     """`spans` rewritten as the words of the exported `text`: each token split as the text is
-    (so a trailing danda falls away) and put through the same ruleset. None unless the result
-    spells `text` exactly -- a span is never guessed."""
+    (so a trailing danda falls away) and put through the same ruleset. A rule that writes two
+    scripts (कम्पनीले -> companyले) yields two words sharing the spoken word's span. None unless
+    the result spells `text` exactly -- a span is never guessed."""
     words = [
-        {"word": ruleset.tokens.get(piece, piece), "start": start, "end": end}
+        {"word": word, "start": start, "end": end}
         for token, start, end in spans
         for piece in TEXT_TOKEN_RE.findall(token)
+        for word in TEXT_TOKEN_RE.findall(ruleset.tokens.get(piece, piece))
     ]
     if [w["word"] for w in words] != TEXT_TOKEN_RE.findall(text or ""):
         return None
