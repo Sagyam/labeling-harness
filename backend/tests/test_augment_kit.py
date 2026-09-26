@@ -276,3 +276,51 @@ def test_config_from_dict_names_every_stage_and_refuses_typos():
         augment.AugmentConfig.from_dict({"sped": {"p": 1.0}})
     with pytest.raises(TypeError):
         augment.AugmentConfig.from_dict({"speed": {"probability": 1.0}})
+
+
+def test_an_everything_crosstalk_label_comes_back_as_the_clips_text():
+    episode = np.concatenate([_tone(10.0, 3000), _tone(3.0, 2000, 500.0)])
+
+    def row(sid, start, end, text, words, voice):
+        return {
+            **_row(sid),
+            "start_time": start,
+            "end_time": end,
+            "overlap_spans": [],
+            "text": text,
+            "speaker_turns": [{"start": 0, "end": end - start, "voice": voice, "speaker": "S"}],
+            "label_words": [{"word": w, "start": s, "end": e} for w, s, e in words],
+        }
+
+    target = row("a", 0.0, 10.0, "एक दुई।", [("एक", 0.5, 1.0), ("दुई", 8.0, 8.5)], "v1")
+    donor = row("b", 10.0, 13.0, "yes", [("yes", 0.2, 0.6)], "v2")
+    cfg = augment.AugmentConfig.from_dict(
+        {
+            "crosstalk": {
+                "p": 1.0,
+                "donor": "clip",
+                "label": "everything",
+                "seconds": [2, 5],
+                "share": [0.2, 0.4],
+                "max_share": 0.9,
+                "overshoot": None,
+            },
+            "gain": {"p": 1.0},
+        }
+    )
+    aug = augment.Augmenter(
+        cfg,
+        donors=xtalk.ClipDonorPool([target, donor]),
+        fetch=lambda ep, s, e: episode[round(s * SR) : round(e * SR)],
+    )
+    _, info = aug(target, episode[: 10 * SR], np.random.default_rng(12))
+    yes_at = info["stages"][0]["windows"][0]["offset"] + 0.2
+    words = sorted([(0.5, 0, "एक"), (8.0, 0, "दुई।"), (yes_at, 1, "yes")])
+    assert info["text"] == " ".join(w for *_, w in words)
+    assert "text" not in info["stages"][0]
+
+
+def test_without_everything_crosstalk_there_is_no_new_text():
+    aug = augment.Augmenter(augment.AugmentConfig(gain=augment.GainConfig(p=1.0)))
+    _, info = aug(_row(), _tone(1.0, 4000), np.random.default_rng(13))
+    assert "text" not in info

@@ -26,10 +26,17 @@ length, at a chosen level gap, and optionally whole verified train clips as the 
 (`ClipDonorPool`), whose transcripts a serialized-output or target-speaker label needs. A
 `donor_fx` hook lets `augment.py` pass the second voice through a room and a microphone of its own
 before it is mixed.
+
+What the label says is `CrosstalkConfig.label`. "target" keeps the clip's own text: the model is
+taught to write its speaker and nothing of the other voice, which is what a target-speaker model
+wants and what the references did before D100. Gold now writes everything said, whoever said it
+(D100), so a single-stream model is trained with "everything": the target's and the donor clip's
+words merged in time order from the export's `label_words`, returned as `info["text"]`.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -71,6 +78,9 @@ MIN_WINDOW_S = 0.05
 SPACING_S = 0.05  # between two windows in one clip
 FADE_S = 0.01  # raised-cosine edges, so a burst never starts with a click
 _FRAME, _HOP = 400, 160  # 25 ms / 10 ms, as the level measurement in findings.md
+#: How the export splits `text` into `label_words`: app/services/normalize.py's WORD_TOKEN_RE,
+#: copied because this module runs without the backend (a test keeps the two equal).
+TEXT_TOKEN_RE = re.compile(r"[A-Za-z0-9']+|[ऀ-ॣ०-ॿ]+")
 
 
 def sample_window_s(rng: np.random.Generator) -> float:
@@ -260,6 +270,36 @@ def mix(target: np.ndarray, pieces: Sequence[tuple[int, np.ndarray, float]]) -> 
     return np.round(out).astype(np.int16)
 
 
+def _units(row: dict) -> list[tuple[float, str]] | None:
+    """(start, word as written) for each word of `row["text"]`, punctuation kept with the word
+    before it, timed by `row["label_words"]`. None when the words do not spell the text."""
+    text, words = row.get("text") or "", row.get("label_words")
+    tokens = list(TEXT_TOKEN_RE.finditer(text))
+    if not words or [m.group(0) for m in tokens] != [w["word"] for w in words]:
+        return None
+    cuts = [0] + [m.start() for m in tokens[1:]] + [len(text)]
+    return [
+        (float(w["start"]), text[a:b].strip())
+        for w, a, b in zip(words, cuts[:-1], cuts[1:], strict=True)
+    ]
+
+
+def merge_labels(target: dict, donors: Sequence[tuple[float, dict]]) -> str | None:
+    """Everything said, in time order (D100): the target's words and each donor clip's, shifted by
+    its offset in the target, interleaved by start time. A word keeps its punctuation; at the same
+    start the target's word comes first. None when any side lacks words that spell its text."""
+    mine = _units(target)
+    if mine is None:
+        return None
+    timed = [(start, 0, i, w) for i, (start, w) in enumerate(mine)]
+    for n, (offset, donor) in enumerate(donors, 1):
+        theirs = _units(donor)
+        if theirs is None:
+            return None
+        timed += [(offset + start, n, i, w) for i, (start, w) in enumerate(theirs)]
+    return " ".join(w for *_, w in sorted(timed))
+
+
 @dataclass(frozen=True)
 class ClipDonor:
     segment_id: str
@@ -279,6 +319,8 @@ class ClipDonorPool:
             if r.get("split") != "train" or r.get("pot") != "train":
                 raise ValueError(f"{r['segment_id']}: donors come from train clips only (D76)")
         self.rows = list(rows)
+        self.by_id = {r["segment_id"]: r for r in self.rows}
+        self.worded = np.array([_units(r) is not None for r in self.rows], dtype=bool)
         self.duration = np.array([r["end_time"] - r["start_time"] for r in self.rows])
         self.episode = np.array([r["episode_id"] for r in self.rows])
         self.voices = [clip_voices(r) for r in self.rows]
@@ -292,15 +334,18 @@ class ClipDonorPool:
         target: dict,
         seconds: tuple[float, float],
         used: frozenset[str] = frozenset(),
+        worded: bool = False,
     ) -> ClipDonor | None:
         """A clip lasting `seconds` (lo, hi) by voices none of which is the target's, and not in
         `used`: from the target's episode when one qualifies, else from another train episode.
         Same-episode clips need both sides diarized; otherwise the same person could be talking
-        over themself."""
+        over themself. `worded` keeps only clips whose `label_words` spell their text."""
         lo, hi = seconds
         mine = clip_voices(target)
         skip = used | {target["segment_id"]}
         ok = (self.duration >= lo) & (self.duration <= hi)
+        if worded:
+            ok &= self.worded
         ok &= np.array(
             [
                 r["segment_id"] not in skip and not (v & mine)
@@ -336,6 +381,9 @@ class CrosstalkConfig:
       verified train clips, named in the info).
     - `clean_only`: mix only clips measured free of crosstalk and diarized. Off, any clip is a
       candidate, and one without speaker turns takes its donor from another episode.
+    - `label`: "target" keeps the clip's text (the other voice goes unwritten); "everything" writes
+      both voices' words in time order into `info["text"]`, as gold is labelled (D100). It needs
+      `donor="clip"`, and target and donors with `label_words`.
     """
 
     p: float = 0.0
@@ -346,6 +394,7 @@ class CrosstalkConfig:
     overshoot: float | None = OVERSHOOT
     donor: Literal["stretch", "clip"] = "stretch"
     clean_only: bool = True
+    label: Literal["target", "everything"] = "target"
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.p <= 1.0:
@@ -360,6 +409,10 @@ class CrosstalkConfig:
             raise ValueError(f"max_share must be in (0, 1], got {self.max_share}")
         if self.donor not in ("stretch", "clip"):
             raise ValueError(f"donor must be 'stretch' or 'clip', got {self.donor!r}")
+        if self.label not in ("target", "everything"):
+            raise ValueError(f"label must be 'target' or 'everything', got {self.label!r}")
+        if self.label == "everything" and self.donor != "clip":
+            raise ValueError("label='everything' needs donor='clip': a cut stretch has no text")
 
     def draw_seconds(self, rng: np.random.Generator) -> float:
         if self.seconds is None:
@@ -415,6 +468,8 @@ class Mixer:
         cfg = self.config
         if cfg.clean_only and (row.get("overlap_spans") != [] or not row.get("speaker_turns")):
             return clip, None
+        if cfg.label == "everything" and _units(row) is None:
+            return clip, None
         if rng.random() >= cfg.p:
             return clip, None
         clip_s = len(clip) / SR
@@ -446,6 +501,11 @@ class Mixer:
             "share": sum(w["seconds"] for w in windows) / clip_s,
             "same_episode": sum(w["same_episode"] for w in windows),
         }
+        if cfg.label == "everything":
+            info["text"] = merge_labels(
+                row,
+                [(w["offset"], self.pool.by_id[w["donor_segment_id"]]) for w in windows],
+            )
         return mix(clip, pieces), info
 
     def _plan_stretches(self, rng, row, clip_s, share):
@@ -475,7 +535,9 @@ class Mixer:
             if total >= goal or min(hi, cap - total, clip_s) < lo:
                 break
             used = frozenset(d.segment_id for _, _, d in out)
-            donor = self.pool.pick(rng, row, (lo, min(hi, cap - total, clip_s)), used)
+            donor = self.pool.pick(
+                rng, row, (lo, min(hi, cap - total, clip_s)), used, cfg.label == "everything"
+            )
             if donor is None:
                 break
             d = donor.end - donor.start

@@ -388,3 +388,126 @@ def test_donor_fx_processes_each_second_voice_before_the_level_is_set():
     out, info = mixer(rows[0], clip, np.random.default_rng(6))
     assert seen and all(w["fx"] == {"muted": True} for w in info["windows"])
     np.testing.assert_array_equal(out, clip)  # a silent donor adds nothing
+
+
+# --- "everything said" labels (D100, 2026-09-26) --------------------------------------------------
+
+
+def _worded(sid, episode, start, end, text, words, voice):
+    row = _row(sid, episode, start, end, [_turn(0, end - start, voice)])
+    row["text"] = text
+    row["label_words"] = [{"word": w, "start": s, "end": e} for w, s, e in words]
+    return row
+
+
+def test_everything_needs_whole_clip_donors():
+    with pytest.raises(ValueError):
+        xtalk.CrosstalkConfig(label="everything")  # a cut stretch has no transcript
+    with pytest.raises(ValueError):
+        xtalk.CrosstalkConfig(label="both", donor="clip")
+    assert xtalk.CrosstalkConfig(label="everything", donor="clip").label == "everything"
+
+
+def test_text_token_pattern_is_the_exports():
+    from app.services.normalize import WORD_TOKEN_RE
+
+    assert xtalk.TEXT_TOKEN_RE.pattern == WORD_TOKEN_RE.pattern
+
+
+def test_merge_interleaves_by_start_time_and_keeps_punctuation():
+    target = {
+        "text": "मलाई best लाग्यो। Turkish cuisine,",
+        "label_words": [
+            {"word": "मलाई", "start": 0.0, "end": 0.4},
+            {"word": "best", "start": 0.5, "end": 0.8},
+            {"word": "लाग्यो", "start": 0.9, "end": 1.3},
+            {"word": "Turkish", "start": 2.0, "end": 2.4},
+            {"word": "cuisine", "start": 2.5, "end": 3.0},
+        ],
+    }
+    donor = {
+        "text": "हो, OK!",
+        "label_words": [
+            {"word": "हो", "start": 0.0, "end": 0.3},
+            {"word": "OK", "start": 0.4, "end": 0.7},
+        ],
+    }
+    assert xtalk.merge_labels(target, [(0.45, donor)]) == (
+        "मलाई हो, best OK! लाग्यो। Turkish cuisine,"
+    )
+
+
+def test_merge_refuses_words_that_do_not_spell_the_text():
+    bad = {"text": "मलाई best", "label_words": [{"word": "मलाई", "start": 0.0, "end": 0.4}]}
+    ok = {"text": "हो", "label_words": [{"word": "हो", "start": 0.0, "end": 0.3}]}
+    assert xtalk.merge_labels(bad, [(0.0, ok)]) is None
+    assert xtalk.merge_labels(ok, [(0.0, bad)]) is None
+    assert xtalk.merge_labels({"text": "हो", "label_words": None}, [(0.0, ok)]) is None
+
+
+def _everything_mixer(rows, episode, **cfg):
+    fetch = lambda ep, s, e: episode[round(s * SR) : round(e * SR)]  # noqa: E731
+    config = xtalk.CrosstalkConfig(
+        p=1.0,
+        donor="clip",
+        label="everything",
+        seconds=(2.0, 5.0),
+        share=(0.2, 0.4),
+        max_share=0.9,
+        overshoot=None,
+        **cfg,
+    )
+    return xtalk.Mixer(xtalk.ClipDonorPool(rows), fetch, config=config)
+
+
+def test_everything_label_holds_both_voices_in_time_order():
+    episode = np.concatenate([_tone(10.0, 3000), _tone(3.0, 2000, 500.0)])
+    target = _worded(
+        "a",
+        "ep",
+        0.0,
+        10.0,
+        "एक दुई तीन चार।",
+        [("एक", 0.5, 1.0), ("दुई", 3.0, 3.5), ("तीन", 6.0, 6.5), ("चार", 9.0, 9.5)],
+        "v1",
+    )
+    donor = _worded("b", "ep", 10.0, 13.0, "yes no", [("yes", 0.2, 0.6), ("no", 2.0, 2.4)], "v2")
+    mixer = _everything_mixer([target, donor], episode)
+    _, info = mixer(target, episode[: 10 * SR], np.random.default_rng(1))
+    assert info is not None and info["windows"][0]["donor_segment_id"] == "b"
+    offset = info["windows"][0]["offset"]
+    timed = sorted(
+        [(s, w) for w, s in (("एक", 0.5), ("दुई", 3.0), ("तीन", 6.0), ("चार।", 9.0))]
+        + [(offset + 0.2, "yes"), (offset + 2.0, "no")],
+        key=lambda t: t[0],
+    )
+    assert info["text"] == " ".join(w for _, w in timed)
+
+
+def test_everything_skips_a_target_without_words_and_donors_without_words():
+    episode = np.concatenate([_tone(10.0, 3000), _tone(3.0, 2000, 500.0)])
+    target = _worded("a", "ep", 0.0, 10.0, "एक", [("एक", 0.5, 1.0)], "v1")
+    wordless = {**_worded("b", "ep", 10.0, 13.0, "yes", [], "v2"), "label_words": None}
+    mixer = _everything_mixer([target, wordless], episode)
+    clip = episode[: 10 * SR]
+    same, none = mixer(target, clip, np.random.default_rng(2))
+    assert none is None and same is clip  # the only donor has no words
+
+    donor = _worded("c", "ep", 10.0, 13.0, "yes", [("yes", 0.2, 0.6)], "v2")
+    mixer = _everything_mixer([{**target, "label_words": None}, donor], episode)
+    same, none = mixer({**target, "label_words": None}, clip, np.random.default_rng(3))
+    assert none is None and same is clip
+
+
+def test_target_label_mode_never_rewrites_the_text():
+    episode = np.concatenate([_tone(10.0, 3000), _tone(3.0, 2000, 500.0)])
+    target = _worded("a", "ep", 0.0, 10.0, "एक", [("एक", 0.5, 1.0)], "v1")
+    donor = _worded("b", "ep", 10.0, 13.0, "yes", [("yes", 0.2, 0.6)], "v2")
+    fetch = lambda ep, s, e: episode[round(s * SR) : round(e * SR)]  # noqa: E731
+    cfg = xtalk.CrosstalkConfig(
+        p=1.0, donor="clip", seconds=(2.0, 5.0), share=(0.2, 0.4), max_share=0.9, overshoot=None
+    )
+    _, info = xtalk.Mixer(xtalk.ClipDonorPool([target, donor]), fetch, config=cfg)(
+        target, episode[: 10 * SR], np.random.default_rng(4)
+    )
+    assert info is not None and "text" not in info

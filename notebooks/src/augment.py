@@ -25,7 +25,10 @@ one clip at a time in the DataLoader workers:
 
 `spec_augment` is separate: it masks a feature matrix after the model's own front end.
 
-The label never changes: every stage keeps the words the clip's speaker said. A clip from val or
+The label changes only under crosstalk with `label="everything"`: the clip then holds two voices,
+and `info["text"]` is both voices' words in time order, as gold is written (D100); the collate
+function must train on it instead of the row's text. Every other stage keeps the words that were
+said. A clip from val or
 gold is refused outright -- augmenting what is scored is always a bug. Noise and impulse responses
 come from outside the corpus, and crosstalk donors from train clips only (D76). Pure numpy plus an
 ffmpeg subprocess for the codec; importable without torch.
@@ -417,7 +420,8 @@ def codec_round_trip(audio: np.ndarray, name: str, kbps: int = 32) -> np.ndarray
 
 class Augmenter:
     """The waveform chain for one training clip: `aug(row, clip, rng) -> (audio, info)`, where
-    `info["stages"]` lists what was done, in order. Resources a stage needs are passed here:
+    `info["stages"]` lists what was done, in order, and `info["text"]`, when present, is the label
+    to train on in place of the row's. Resources a stage needs are passed here:
     `noise` (a `NoiseBank`), `rirs` (impulse responses, for `source="bank"`), and `donors` plus
     `fetch(episode, start, end)` for crosstalk."""
 
@@ -450,11 +454,16 @@ class Augmenter:
         if row.get("split") in ("val", "test") or row.get("pot") == "gold":
             raise ValueError(f"{row.get('segment_id')}: val and gold audio are never augmented")
         cfg, audio, stages = self.config, clip, []
+        text = None
         if self.mixer is not None:
             audio, info = self.mixer(row, audio, rng)
             if info:
+                text = info.get("text")
                 stages.append(
-                    {"stage": "crosstalk", **{k: v for k, v in info.items() if k != "segment_id"}}
+                    {
+                        "stage": "crosstalk",
+                        **{k: v for k, v in info.items() if k not in ("segment_id", "text")},
+                    }
                 )
         if cfg.speed.p and rng.random() < cfg.speed.p:
             factor = float(cfg.speed.factors[rng.integers(len(cfg.speed.factors))])
@@ -476,7 +485,10 @@ class Augmenter:
             kbps = int(cfg.codec.kbps[rng.integers(len(cfg.codec.kbps))])
             audio = codec_round_trip(audio, name, kbps)
             stages.append({"stage": "codec", "codec": name, "kbps": kbps})
-        return audio, {"segment_id": row.get("segment_id"), "stages": stages}
+        out = {"segment_id": row.get("segment_id"), "stages": stages}
+        if text is not None:
+            out["text"] = text
+        return audio, out
 
     def spec(self, feats: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         return spec_augment(feats, rng, self.config.spec)[0]

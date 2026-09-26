@@ -205,6 +205,15 @@ The corpus's overlap is near-symmetric, though (both voices within 3 dB), so alw
 donor would teach "ignore the wetter voice"; keep those below p = 1 unless that is the experiment.
 The defaults reproduce D96 exactly. Nothing is wired into a notebook yet.
 
+**What the label says** (`CrosstalkConfig.label`, 2026-09-26). D96 kept the clip's own text, which
+teaches a model to leave the other voice out; since D100, gold writes everything said, so a
+single-stream model trained that way is charged a deletion for every word it was taught to drop.
+`label="everything"` merges the target's and each donor clip's words in time order, punctuation
+kept, into `info["text"]`, which the collate function trains on. The spans are the training
+export's `label_words` (the seed's aligned words, or a realignment for an edited label), so it needs
+whole-clip donors and skips any clip without them. `label="target"` stays for target-speaker models
+(D), which are told whom to follow.
+
 1. **Two-voice mixes from whole verified clips.** This lifts D95's blocker. The only text D95 had
    for a donor burst was an unverified recogniser's. If the second voice is a whole verified train
    clip, or a word-aligned stretch of one (`app/services/forced_align.py`), both transcripts are
