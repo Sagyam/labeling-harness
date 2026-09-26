@@ -30,9 +30,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 import subprocess
+import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Session, selectinload
@@ -47,7 +49,10 @@ from app.models import (
     Segment,
     SegmentLabel,
 )
+from app.services.alignment import WORD_TOKEN_RE as SPAN_TOKEN_RE
+from app.services.alignment import WordSpan
 from app.services.clip_classes import ClipFacts, classify, load_clip_facts
+from app.services.normalize import WORD_TOKEN_RE as TEXT_TOKEN_RE
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 from app.services.pots import effective_split, effective_split_sql
 from app.services.stats import latest_labels_subquery
@@ -79,6 +84,9 @@ class ExportKind:
     dispositions: tuple[str, ...]
     include_words: bool = False
     include_hypotheses: bool = False
+    #: Each row carries the words of its label text with clip-relative spans (2026-09-26), so a
+    #: crosstalk mix can write both voices' words in time order (roadmap C).
+    include_label_words: bool = False
     #: A model is trained on this kind, so no row may be a gold clip or share audio with one (D76).
     clear_of_gold: bool = False
 
@@ -89,6 +97,7 @@ EXPORT_KINDS: dict[str, ExportKind] = {
         splits=("train", "val"),
         dispositions=("accepted_unchanged", "edited"),
         clear_of_gold=True,
+        include_label_words=True,
     ),
     "gold": ExportKind(
         name="gold",
@@ -174,6 +183,69 @@ def _hypothesis_payload(hypothesis: AsrHypothesis, *, include_words: bool) -> di
             for word in hypothesis.words
         ]
     return payload
+
+
+class Aligner(Protocol):
+    """What the export needs of `forced_align.ForcedAligner` to realign an edited label."""
+
+    @property
+    def available(self) -> bool: ...
+
+    def align(self, audio_path: Path | str, tokens: list[str]) -> list[WordSpan] | None: ...
+
+
+#: (token as the aligner split it, start, end), clip-relative seconds.
+Span = tuple[str, float, float]
+
+
+def seed_spans(final_text: str | None, seed: Any) -> list[Span] | None:
+    """The seed hypothesis's word spans, when the label is the seed's text token for token and
+    every word has a span. A label accepted unchanged is the seed, so its aligned words are the
+    label's; an edited one differs somewhere and gets none."""
+    tokens = SPAN_TOKEN_RE.findall(final_text or "")
+    words = list(seed.words) if seed is not None else []
+    if not tokens or [w.word_raw for w in words] != tokens:
+        return None
+    if any(w.start_time is None or w.end_time is None for w in words):
+        return None
+    return [(w.word_raw, w.start_time, w.end_time) for w in words]
+
+
+def export_words(spans: Sequence[Span], text: str | None, ruleset: Ruleset) -> list[dict] | None:
+    """`spans` rewritten as the words of the exported `text`: each token split as the text is
+    (so a trailing danda falls away) and put through the same ruleset. None unless the result
+    spells `text` exactly -- a span is never guessed."""
+    words = [
+        {"word": ruleset.tokens.get(piece, piece), "start": start, "end": end}
+        for token, start, end in spans
+        for piece in TEXT_TOKEN_RE.findall(token)
+    ]
+    if [w["word"] for w in words] != TEXT_TOKEN_RE.findall(text or ""):
+        return None
+    return words
+
+
+def _realign(
+    segment: Segment, final_text: str | None, aligner: Aligner, storage: ObjectStorage
+) -> list[Span] | None:
+    """Align `final_text` on the segment's own clip. None when the aligner cannot place every
+    token."""
+    tokens = SPAN_TOKEN_RE.findall(final_text or "")
+    if not tokens:
+        return None
+    with tempfile.NamedTemporaryFile(suffix=".flac") as clip:
+        try:
+            clip.write(storage.get_bytes(segment.clip_object_key))
+            clip.flush()
+        except Exception as exc:
+            logger.warning(
+                "label_realign_clip_missing", segment=segment.external_id, error=str(exc)
+            )
+            return None
+        spans = aligner.align(clip.name, tokens)
+    if not spans or len(spans) != len(tokens):
+        return None
+    return [(t, round(s.start, 3), round(s.end, 3)) for t, s in zip(tokens, spans, strict=True)]
 
 
 def _speaker_turns(facts: ClipFacts) -> list[dict[str, Any]] | None:
@@ -340,6 +412,7 @@ def export_dataset(
     episode: str | None = None,
     settings: Settings | None = None,
     storage: ObjectStorage | None = None,
+    aligner: Aligner | None = None,
 ) -> ExportResult:
     """Write one export kind to disk.
 
@@ -352,6 +425,9 @@ def export_dataset(
         settings: Configuration override.
         storage: Object store to copy episode audio out of. Omitted means no audio is written --
             the metadata export is still complete and correct, it just cannot be diarized.
+        aligner: Realigns a label that is not its seed's text (an edited one), on its own clip
+            from ``storage``, for kinds that carry label words. Omitted, such a row's
+            ``label_words`` is null and the manifest counts it as missing.
 
     Returns:
         Where the files landed and how many rows they hold.
@@ -383,6 +459,8 @@ def export_dataset(
     episode_audio: dict[str, str] = {}
     #: Train-side rows left out because a gold clip holds part of their audio (D76).
     gold_overlap: list[str] = []
+    #: Where each row's label words came from, for kinds that carry them.
+    label_word_counts = {"seed": 0, "realigned": 0, "missing": 0}
 
     if version is not None:
         current = latest_labels_subquery()
@@ -454,19 +532,33 @@ def export_dataset(
 
         facts = load_clip_facts(session, [segment for segment, _ in rows])
 
+        can_realign = aligner is not None and storage is not None and aligner.available
         for segment, label in rows:
-            records.append(
-                _record(
-                    segment,
-                    label,
-                    version,
-                    definition,
-                    seed_systems.get(label.seed_hypothesis_id),
-                    ruleset,
-                    spanning_episode_ids,
-                    facts[segment.id],
-                )
+            record = _record(
+                segment,
+                label,
+                version,
+                definition,
+                seed_systems.get(label.seed_hypothesis_id),
+                ruleset,
+                spanning_episode_ids,
+                facts[segment.id],
             )
+            if definition.include_label_words:
+                seed = next(
+                    (h for h in segment.hypotheses if h.id == label.seed_hypothesis_id), None
+                )
+                spans, source = seed_spans(label.final_text, seed), "seed"
+                if spans is None and can_realign:
+                    spans, source = (
+                        _realign(segment, label.final_text, aligner, storage),
+                        "realigned",
+                    )
+                words = export_words(spans, record["text"], ruleset) if spans else None
+                record["label_words"] = words
+                record["label_words_source"] = source if words is not None else None
+                label_word_counts[record["label_words_source"] or "missing"] += 1
+            records.append(record)
             if segment.import_run_id:
                 import_run_ids.add(segment.import_run_id)
             if segment.episode.audio_object_key:
@@ -548,6 +640,8 @@ def export_dataset(
     }
     if definition.clear_of_gold:
         manifest["excluded_for_gold_overlap"] = gold_overlap
+    if definition.include_label_words:
+        manifest["label_words"] = label_word_counts
     manifest_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",

@@ -512,6 +512,16 @@ Every row of every kind carries the clip's per-clip covariates next to its text:
   model run is split by, so a result can be split or a training set weighted without the
   database. An unmeasured axis says so in its bucket.
 
+The `training` kind also carries `label_words`: the words of its `text` with clip-relative
+spans, and `label_words_source` saying where they came from (2026-09-26). A label accepted
+unchanged is its seed's text, so it takes the seed's aligned words (`seed`); any other, an edited
+one, is realigned on its own clip by the MMS aligner (`realigned`). The words are split and
+normalised exactly as `text` is, and a span is never guessed: when the words do not spell the
+text, both fields are null. `scripts/export_dataset.py` loads the aligner only for this, and
+`--no-realign` (or the API, which never loads it) leaves those rows null; the manifest counts
+`seed`, `realigned` and `missing`. They let a crosstalk mix write both voices' words in time order
+(roadmap C).
+
 The `analytics` and `error_mining` kinds also carry what the classes were computed from:
 `vad_spans` (D55) and `speaker_turns`, the newest diarization run's turns cut to the clip, each
 with its linked voice (D78, D87); null when never measured or never diarized.

@@ -114,14 +114,21 @@ def test_voiceprint_report_script_runs_on_an_empty_corpus(
     assert "saved with a suggestion" in capsys.readouterr().out
 
 
-def test_export_script_writes_the_requested_kind(cli, tmp_path: Path) -> None:
+@pytest.fixture
+def no_aligner_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The export script builds an aligner for edited labels; the suite never fetches its 317 MB
+    model, and without it those rows simply carry no label words."""
+    monkeypatch.setenv("HARNESS_ALIGNER_NO_DOWNLOAD", "1")
+
+
+def test_export_script_writes_the_requested_kind(cli, tmp_path: Path, no_aligner_fetch) -> None:
     script = load("export_dataset")
     assert script.main(["--kind", "training", "--output-root", str(tmp_path)]) == 0
     assert (tmp_path / "training" / "training.jsonl").is_file()
     assert (tmp_path / "training" / "manifest.json").is_file()
 
 
-def test_export_script_can_write_every_kind(cli, tmp_path: Path) -> None:
+def test_export_script_can_write_every_kind(cli, tmp_path: Path, no_aligner_fetch) -> None:
     assert load("export_dataset").main(["--kind", "all", "--output-root", str(tmp_path)]) == 0
     for kind in ("training", "gold", "analytics", "error_mining"):
         assert (tmp_path / kind / f"{kind}.jsonl").is_file()

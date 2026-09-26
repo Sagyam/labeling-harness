@@ -167,7 +167,9 @@ backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for develo
 `export_dataset.py` writes four kinds — `training`, `gold`, `analytics`, `error_mining` — each with
 a `manifest.json` recording label version, policy version, filters, row counts, the verified/screened
 mix per split, per-file checksums, timestamp, git commit and the contributing import runs. The same inputs produce byte-identical
-output. For `analytics`, `timestamp_verification_report.json` is generated automatically.
+output. For `analytics`, `timestamp_verification_report.json` is generated automatically. A
+`training` row carries its label's timed words; edited labels are realigned on their clips, which
+loads the forced aligner (`--no-realign` skips it).
 
 ## Configuration
 

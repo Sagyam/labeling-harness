@@ -4,6 +4,11 @@
 python scripts/export_dataset.py --kind training
 python scripts/export_dataset.py --kind gold --label-version v1
 python scripts/export_dataset.py --kind all --output-root ./exports/2026-09-01
+
+A training row carries its label's words with spans. A label accepted unchanged takes its seed's
+aligned words; any other (an edited one) is realigned on its own clip with the MMS aligner, which
+is loaded (and fetched on first use, ~317 MB) only when a kind needs it. `--no-realign` skips that,
+leaving those rows' `label_words` null.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from pathlib import Path
 from _bootstrap import bootstrap
 from app.db.session import session_scope
 from app.services.export import EXPORT_KINDS, ExportError, export_dataset
+from app.services.forced_align import ForcedAligner
 from app.storage import build_storage
 
 
@@ -25,12 +31,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label-version", help="defaults to the configured label version")
     parser.add_argument("--episode", help="restrict to one episode (external id)")
     parser.add_argument("--output-root", type=Path, help="defaults to the configured export root")
+    parser.add_argument(
+        "--no-realign",
+        action="store_true",
+        help="do not realign labels that differ from their seed; their label_words stay null",
+    )
     args = parser.parse_args(argv)
 
     settings = bootstrap()
     storage = build_storage(settings)
 
     kinds = sorted(EXPORT_KINDS) if args.kind == "all" else [args.kind]
+    wants_words = any(EXPORT_KINDS[kind].include_label_words for kind in kinds)
+    aligner = ForcedAligner() if wants_words and not args.no_realign else None
     try:
         with session_scope() as session:
             for kind in kinds:
@@ -42,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
                     episode=args.episode,
                     settings=settings,
                     storage=storage,
+                    aligner=aligner,
                 )
                 print(result.render())
     except ExportError as exc:

@@ -612,3 +612,83 @@ def test_analytics_carries_vad_spans_and_the_clip_speaker_turns(
     train_row = read_jsonl(training.data_path)[0]
     assert "speaker_turns" not in train_row
     assert "vad_spans" not in train_row
+
+
+# --- label word timings (2026-09-26) -------------------------------------------------------
+
+
+class _FakeAligner:
+    """Stands in for the MMS aligner: one 0.2 s span per token, and a record of what it read."""
+
+    available = True
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[bytes, list[str]]] = []
+
+    def align(self, audio_path, tokens):
+        from app.services.alignment import WordSpan
+
+        self.calls.append((Path(audio_path).read_bytes()[:4], list(tokens)))
+        return [WordSpan(t, 0.2 * i, 0.2 * i + 0.2) for i, t in enumerate(tokens)]
+
+
+def _text_tokens(text: str) -> list[str]:
+    from app.services.normalize import WORD_TOKEN_RE
+
+    return WORD_TOKEN_RE.findall(text)
+
+
+def test_training_rows_carry_the_seed_words_of_an_unchanged_label(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    result = export_dataset(db_session, kind="training", output_root=tmp_path / "out")
+    unchanged = [
+        r for r in read_jsonl(result.data_path) if r["disposition"] == "accepted_unchanged"
+    ]
+    assert unchanged
+    for record in unchanged:
+        assert record["label_words_source"] == "seed"
+        assert [w["word"] for w in record["label_words"]] == _text_tokens(record["text"])
+        assert all(w["end"] >= w["start"] for w in record["label_words"])
+
+
+def test_an_edited_label_has_no_words_without_an_aligner(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    result = export_dataset(
+        db_session, kind="training", output_root=tmp_path / "out", storage=storage
+    )
+    edited = [r for r in read_jsonl(result.data_path) if r["disposition"] == "edited"]
+    assert edited
+    assert all(r["label_words"] is None and r["label_words_source"] is None for r in edited)
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["label_words"]["missing"] == len(edited)
+
+
+def test_an_edited_label_is_realigned_on_its_own_clip(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    aligner = _FakeAligner()
+    result = export_dataset(
+        db_session,
+        kind="training",
+        output_root=tmp_path / "out",
+        storage=storage,
+        aligner=aligner,
+    )
+    records = read_jsonl(result.data_path)
+    edited = [r for r in records if r["disposition"] == "edited"]
+    assert edited and len(aligner.calls) == len(edited)
+    assert all(head == b"fLaC" for head, _ in aligner.calls)
+    for record in edited:
+        assert record["label_words_source"] == "realigned"
+        assert [w["word"] for w in record["label_words"]] == _text_tokens(record["text"])
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["label_words"] == {
+        "seed": sum(r["label_words_source"] == "seed" for r in records),
+        "realigned": len(edited),
+        "missing": 0,
+    }
