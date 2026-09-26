@@ -78,10 +78,13 @@ Checked on 2026-09-24:
 | **IndicConformer** (AI4Bharat, MIT) | yes | no: no Latin at all | The `ne` checkpoint ([repo](https://github.com/AI4Bharat/IndicConformerASR), 523 MB `.nemo`) is a multilingual hybrid CTC/RNN-T Conformer-L (17 layers, d_model 512, 4x subsampling) with an aggregate tokenizer: 22 BPE vocabularies of 256 tokens. None of the 5,632 tokens is Latin, and the Nepali vocabulary has no `।` and no digits. So it needs a new tokenizer too. What it adds is an encoder that has heard Nepali. The README says it loads only with AI4Bharat's NeMo fork (`nemo-v2`). It does not need to: the notebook builds a stock NeMo hybrid model from the checkpoint's config with stock heads and copies only the encoder, which trains (2026-09-24). |
 | **Whisper-large-v3-turbo** (OpenAI, MIT) | weakly (123% zero-shot, loops) | yes: byte-level BPE | 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. Its decoder stops at 448 positions, and Devanagari costs several tokens a character: 9 train labels do not fit, and 5 gold clips cannot be written whole in one pass. |
 | **Qwen3-ASR-0.6B** ([Alibaba](https://github.com/QwenLM/Qwen3-ASR), Apache-2.0) | no; Hindi among its 30 languages | yes: byte-level BPE | An audio encoder feeding a Qwen3 decoder, the 0.6B picked over the 1.7B for being Parakeet's size and smaller than Flex. Zero-shot it writes rough Nepanglish already. Streams through vLLM only; its forced aligner covers 11 languages, not Hindi or Nepali. Its prompt names the language, and `language None` means "no speech", so ours is fixed at `language Nepali`. `qwen-asr` pins transformers 4.57.6, so it runs in its own runtime. |
+| **Omnilingual CTC** (Meta; 300M or 1B) | yes: 1,600+ languages | to check | Added for step 4 (2026-09-26), not in step 0. A self-supervised wav2vec 2.0 encoder with a CTC head: the one family the other students leave out, and the one least able to use the context a code-switch needs, since CTC predicts each token independently. The 1B reached ~16.6% on val in the 2026-09-14 bake-off before it was stopped at epoch 6, under a different protocol. |
+| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. Built from `Distill.ipynb`'s stock NeMo path without the encoder copy. |
 
 **Pick, before step 0.** Parakeet-v2 was the main bet, with IndicConformer next to it as the
-safety net. Step 0 overturned it (findings.md, 2026-09-25): Whisper-turbo came closest to Flex and
-is the student carried forward; Parakeet's English encoder did not generalise on 30 h.
+safety net. Step 0 overturned it (findings.md, 2026-09-25): Whisper-turbo came closest to Flex, and
+Parakeet's English encoder did not generalise on 30 h. Step 4 carries every student forward
+anyway, since the paper wants the curves, not a winner.
 Both need a new tokenizer, so they share one: a SentencePiece model trained on train-split labels
 only, which is allowed to write `।` and Devanagari digits. With the same tokenizer, step 0
 compares an English encoder with a Nepali one, not two vocabularies. Precedent for the English
@@ -135,8 +138,21 @@ step 4's curve says how much audio closes the gap.
    - Never send this audio through the paid routes.
 4. **Train the student** on the pseudo-labelled audio plus the 30 h, with the human labels
    weighted up. Build a learning curve in hours of pseudo-labelled audio (100, then 300, then
-   1000 h) and stop when it flattens. Settled on 2026-09-25, before any of it was built:
-   - **The student is Whisper-large-v3-turbo**, step 0's closest (DistillHF.ipynb's recipe).
+   1000 h) and stop when it flattens. Settled on 2026-09-25 and revised 2026-09-26, before any of
+   it was built:
+   - **Every student, for the paper** (owner, 2026-09-26): step 0's four plus Omnilingual CTC and
+     the small Conformer from scratch. The findings are the point, not a deployable model; Flex
+     already is one. Parakeet stays because it pairs with IndicConformer: same tokenizer, heads and
+     recipe, and only the encoder differs (English against Nepali), so its curve says whether the
+     13 points the English encoder cost at 30 h shrink with pseudo-labels.
+   - **Fresh base weights, equal opportunity.** Every student starts from its pretrained
+     checkpoint (random weights for the Conformer), never from step 0's fine-tune, and trains on
+     the same mixture of pseudo-labels and the 30 h. Step 0's runs are the 0 h point of the curve;
+     resuming from them would train the later points twice and mix the pseudo-labels' gain with the
+     extra training, and would end each model on the teacher's errors rather than the verified
+     labels. Nothing of the 30 h is lost: those clips are in the mixture.
+   - **Run the 100 h point for every student first**, and go further only for students whose
+     curves are still rising. Six students at ~145 h each is several A100-days.
    - **Weight channels by the square root of their hours; cap none** (owner, 2026-09-26). Every
      clip stays in the pool, and a channel is drawn in proportion to √hours rather than hours, so
      the first tranche's 22 h political commentator weighs about 2× a 5 h channel, not 4.4×. A
