@@ -25,12 +25,14 @@ code-switching paper.
 **Order, set by the owner (2026-09-24):**
 1. **B.** Distil the Flex fine-tune.
 2. **C.** The augmentation pipeline.
-3. **F.** Fiddle with the diarizer, once B and C are mastered.
-4. **Only if F works:** the custom architectures ([custom-arch.md](custom-arch.md)) and the overlap
+3. **G.** A text-only language model at decode time, and the low-risk fold rules (added
+   2026-09-27, after C at the owner's request).
+4. **F.** Fiddle with the diarizer, once B and C are mastered.
+5. **Only if F works:** the custom architectures ([custom-arch.md](custom-arch.md)) and the overlap
    models of D. Both are conditioned on diarization, so both need a diarizer that can be trusted.
 
 E is how all of it is measured. Sections are lettered so they do not collide with the retired
-numbered items that code comments still cite, which is why F comes after E.
+numbered items that code comments still cite, which is why F and G come after E.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
@@ -301,7 +303,7 @@ against the single-stream gold, and attribution by grading the model's output by
 - **A cost term** (latency, GPU, CPU inference, paid calls) in every decision rule. A small gain
   does not buy a large cost.
 
-## F. Fiddling with the diarizer (priority 3, after B and C)
+## F. Fiddling with the diarizer (priority 4, after B, C and G)
 
 The owner wants to understand the diarizer before giving up on it. This is not a fix to build; it is
 one bounded test, done as its own experiment.
@@ -324,6 +326,73 @@ one bounded test, done as its own experiment.
   and the exclusive track's picks on the tie words, all judged by ear. If every cluster is one
   person, cluster merging is viable and the multitrack editor comes back. If clusters mix people,
   word attribution from diarization is closed for good.
+
+## G. Vocabulary at decode time, and the low-risk fold rules (priority 3, after C)
+
+Both come from the 2026-09-27 benchmark error anatomy (findings.md, *Public Nepali benchmarks, the
+error anatomy, and weight blending*). The owner parked them for later.
+
+### G1. Shallow fusion with a text-only language model
+
+**Why.** Words our train labels never contain are the largest cause of error on the public sets:
+3.23 of the fine-tuned model's 11.20 points, plus 1.09 for words seen 1–9 times. Blending recovers
+the vocabulary fine-tuning erased; a text model adds vocabulary neither model ever had. Nepali text
+(news, Wikipedia, books) is plentiful; Nepali speech is not.
+
+**How.** A small model trained on text alone scores each candidate next piece while Flex decodes,
+and the two scores are added: `Flex + λ · text model + a per-word bonus`. Nothing inside Flex
+changes. It needs beam search (4–8 hypotheses), because greedy decoding leaves the text model
+nothing to re-rank.
+
+**Steps.**
+1. **Build the text.** Nepali news and Wikipedia plus our own train labels, so the colloquial
+   register and our spelling are represented. Remove every benchmark reference (FLEURS comes from
+   Wikipedia; Common Voice, SLR54 and IndicVoices from public text) and every gold and val
+   reference, checked by 8-gram overlap as on 2026-09-27. Without this the benchmark scores are
+   contaminated.
+2. **Cheapest test first: n-best rescoring.** Beam search writes its 8 best transcripts, and a word
+   n-gram model (KenLM) re-ranks the finished ones. It needs no change to the decoding loop.
+3. **Then full shallow fusion**, if rescoring shows a gain: the text model votes at every step, on
+   Flex's own word-pieces.
+4. **Tune λ and the word bonus on val**; report on gold and the five public sets, folded and plain,
+   with S/D/I and the unseen-word error rate.
+
+**Cost term.** Beam search was rejected on 2026-09-13 (−0.41 gold for about 4× decode time). The
+decision has to weigh the fused gain against that slowdown, on the GPU and on the CPU playground.
+
+**If it pays, bake it in** rather than ship two models: let the fused Flex be the distillation
+teacher (B), so its labels carry the vocabulary into the student, or fine-tune Flex on sentences a
+Nepali TTS reads aloud. Either way the deployed model stays one file with a greedy decoder.
+
+**Risks.** Formal text pulls toward formal spelling (`गर्दछ`, English in Devanagari) and away from
+our labelling convention: keep λ modest and our labels in the text. Scoring Flex's word-pieces from
+a word-level model is the fiddly part.
+
+### G2. Low-risk fold rules
+
+**Why.** On the public sets about 0.65 of the fine-tuned model's 1.18 points of number errors are
+the same number written another way (0.46 on our gold on 2026-09-27). It changes the measurement,
+not the model. The owner's call: the long tail of number formats is not worth chasing for that, so
+only the finite, low-risk rules are in scope, done when little else is left to optimise.
+
+**In scope** (finite, and cannot join two different words):
+- maths symbols and their words: `+`/`plus`, `=`/`equals`/`equal to`, `×`/`into`/`times`
+  (0.20 on average, 0.93 on nepali_cs);
+- Nepali ordinals: `-औँ`/`-औं` (`तेह्रौँ` = `13 औं` = `13th`), `प्रथम` = `पहिलो` = `1st`;
+- spelling variants of number words the table lacks (`छप्पन`/`छपन्न`, `उनानब्बे`/`उनान्नब्बे`),
+  found by listing the corpus and benchmark vocabulary against `_NUMBER_WORDS`;
+- English number words written in Devanagari (`वान`, `टु`, `फोर्टी`, `हन्ड्रेड`, `थाउजन्ड`);
+- fractions `डेढ`, `साढे`, `सवा`, `पौने`.
+
+**Needs the owner's call first:** count words with a classifier (`2` = `दुईटा`, `1` = `एउटा`).
+The speaker said the classifier and the reference dropped it.
+
+**Out of scope:** Hindi forms (`सौ` for `सय`, `बारह`), which are real errors; Devanagari spelling
+pairs (ण/न, श/ष/स, व/ब), which can join different words and would each need the vocabulary check
+the colloquial table had.
+
+**How.** A new fold version, tests first, a decision entry, and every table re-reported beside the
+plain WER, for every system alike.
 
 ## Retired items
 
