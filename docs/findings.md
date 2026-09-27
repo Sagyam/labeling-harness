@@ -24,6 +24,165 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Public Nepali benchmarks, the error anatomy, and weight blending (2026-09-27)
+
+The 2026-09-17 model (the deployed one; the 2026-09-22 sweep kept no weights, so p00-s0 could not
+be used) against base Indic-Transcribe-Flex on five public Nepali sets, same decoder as gold
+(greedy, mixed mode, loop retry), bf16, one A100. Folded (fold-v3), 95% intervals by resampling
+speakers (FLEURS: sentences; nepali_cs: videos). Per-clip transcripts, summaries and the blend
+results are in `Sagyam/nepanglish-asr-flex-ft` under `public-benchmarks-2026-09-27/`; the notebook
+was not kept.
+
+| Set | Clips | Hours | What it is |
+|---|---:|---:|---|
+| FLEURS `ne_np` test | 726 | 2.28 | read Wikipedia sentences; reference = `raw_transcription` |
+| OpenSLR 54 (`iamTangsang/OpenSLR54-Nepali-ASR` test) | 13,609 | 12.29 | crowd-sourced read speech; SLR54 has no official test split |
+| Common Voice 22 `ne-NP` test | 287 | 0.36 | crowd-sourced read speech, 35 speakers |
+| IndicVoices `nepali` valid | 2,829 | 4.74 | read, extempore and conversation |
+| `saileshbro/nepali-cs-asr` test (v2) | 1,765 | 4.82 | Nepali–English code-switched lectures, 2 channels |
+
+**No leakage.** No 8-gram of any benchmark reference appears in our train/val labels; one
+IndicVoices sentence of 2,417 is covered by 5-grams.
+
+| Set | Fine-tuned | Base | FT − base [95% CI] | Plain WER, FT / base |
+|---|---|---|---|---|
+| FLEURS | 11.99 (8.78 / 1.44 / 1.77) | 11.10 (8.36 / 1.34 / 1.40) | +0.90 [+0.38, +1.49] | 28.77 / 29.83 |
+| SLR54 | 9.26 (7.63 / 0.56 / 1.07) | 8.17 (6.75 / 0.40 / 1.02) | +1.09 [+0.83, +1.37] | 23.49 / 27.55 |
+| Common Voice | 9.66 (8.26 / 0.87 / 0.52) | 8.78 (7.33 / 0.70 / 0.76) | +0.87 [−0.41, +2.13] | 27.63 / 27.98 |
+| IndicVoices | 13.38 (9.05 / 2.50 / 1.83) | 12.70 (8.26 / 2.56 / 1.87) | +0.69 [+0.13, +1.24] | 31.49 / 29.85 |
+| nepali_cs | 11.70 (7.22 / 1.30 / 3.18) | 10.98 (6.92 / 1.78 / 2.28) | +0.72 [−0.61, +2.02] | 21.53 / 15.95 |
+
+Plain WER is NFC, punctuation stripped, Latin lowercased and nothing else, the normalisation
+published Nepali results use. It is about twice the folded number on every set.
+
+- **Fine-tuning cost about a point on public read speech**, against the −5.7 it bought on our
+  gold. Unfolded, it wins on three sets (FLEURS, SLR54, Common Voice): our number convention
+  matches theirs.
+- **Both models are about twice as good as the published fine-tuned Nepali models.** The six
+  checkpoints of `sumanpaudel1997/nepali-asr-benchmark` were rescored with fold.py on the
+  sentences they share with ours. Best on FLEURS (619 matched): MMS-1B, folded 24.21, plain 33.07.
+  Best on Common Voice (287 matched): Whisper-turbo, folded 23.91, plain 38.57. Those models
+  trained on SLR54, so these two sets are out of domain for them as for us.
+- **IndicVoices by scenario, FT / base:**
+  - read 18.41 / 27.44;
+  - extempore 9.93 / 9.54;
+  - conversation 17.82 / 15.15.
+- **nepali_cs by clip language, FT / base:**
+  - code-switched 11.32 / 10.56;
+  - English only 14.71 / 15.80;
+  - Nepali only 10.65 / 8.02.
+
+### Where the errors are: hearing, not writing convention
+
+Every folded error was labelled from fold.py's alignment steps. **Convention** means the word was
+heard and written differently. **Hearing** means a wrong word. Per 100 reference words, fine-tuned
+minus base:
+
+| | FLEURS | SLR54 | Common Voice | IndicVoices | nepali_cs |
+|---|---|---|---|---|---|
+| Convention | −0.01 | −0.21 | −0.64 | −0.94 | +0.42 |
+| Hearing | **+0.88** | **+1.30** | **+1.51** | **+1.61** | +0.29 |
+
+**Convention.** Convention nets to zero or favours the fine-tuned model:
+- Numbers help it by 0.4–1.0 points.
+- Spelling variants fold.py does not fold (ण/न as in `घन्टा`/`घण्टा`, श/स, nasal marks) are
+  about even.
+- nepali_cs is the exception. Its references mix `+` and `plus`. The model always writes the word,
+  and fold.py drops `+` as punctuation, so each `plus` counts as an insertion.
+
+**Hearing.** The hearing gap is about half near-misses or wrong endings and half entirely
+different words. Two causes explain it.
+
+**1. The vocabulary narrowed.** The per-word substitution-plus-deletion rate, split by how often
+the word occurs in our train labels:
+
+| Set | Never in train labels, FT / base | 100+ times, FT / base | Share of the gap on unseen and 1–9× words |
+|---|---|---|---|
+| FLEURS | 19.24 / 17.29 | 4.02 / 4.52 | all of it |
+| SLR54 | 15.67 / 13.02 | 3.09 / 3.24 | ~100% |
+| IndicVoices | 22.99 / 21.02 | 7.01 / 6.93 | ~70% |
+
+On common words the fine-tuned model ties or beats base. It misses names and formal words:
+`गाविसको→गाभिसक्यो`, `सर्लाही→सरलाई`, `मेन्डोजाले→जाँदा`. This is the topic gap of the clean-gold
+error mining, seen from the other side.
+
+**2. It hallucinates on unclear clips (nepali_cs).**
+- **Outputs at least twice as long as the reference (plus 4 words):** 16 clips, against base's 11.
+  They cost 0.55 points, against 0.33.
+- **One-word loops:** 11, against base's 4. An example is `piece, piece, piece, mic, mic, mic, mic`
+  for the reference `hint देको`. `ftkit.is_loop`, which looks for a 3-word phrase repeated five
+  times, does not see them.
+- On nepali_cs the fine-tuned model makes fewer substitutions and deletions than base. Its whole
+  gap is insertions.
+
+**Ranked, all errors.** Each error assigned to one cause; fine-tuned model, mean over the five sets,
+points of folded WER (total 11.20; base 10.34):
+1. word never in our train labels, misheard: 3.23 (base 2.72);
+2. numbers: 1.18 (1.50);
+3. rare word, seen 1–9 times: 1.09 (0.99);
+4. common word heard as another word: 0.95 (0.77);
+5. spelling variant not folded: 0.86 (0.87);
+6. extra content word: 0.79 (0.74);
+7. common word, wrong ending or near-miss: 0.74 (0.67);
+8. content word dropped: 0.68 (0.67);
+9. clip edge: 0.53 (0.42);
+10. particle swapped (`कि/के`, `त/नि`): 0.48 (0.43);
+11. extra particle: 0.23;
+12. maths words, filler spelling, reference markup: 0.15;
+13. particle dropped: 0.15;
+14. hallucinated or looping clip: 0.13 (0.55 on nepali_cs).
+
+Vocabulary (1 + 3) is 39% of all errors and the largest share of the gap to base. Convention
+(2 + 5 + 12) is about 20%.
+
+Caveats on the anatomy:
+- The buckets come from rules, not from listening.
+- Some "hearing" errors on SLR54 are its crowd-sourced references (`सुविधा रहको छ`). They hit
+  both models.
+- "Unseen in train" uses the 2026-09-26 export's vocabulary, slightly larger than the one this
+  model trained on, which would understate the effect.
+
+### Weight blending recovers the loss (WiSE-FT)
+
+Every weight was set to `(1 − a) · base + a · fine-tuned`, the same `a` for all 1,892 tensors that
+fine-tuning changed. Non-float buffers were taken from the fine-tuned model. The recipe was checked
+at `a = 0`: it reproduced base's Common Voice transcripts, 287 of 287 identical. The grid was fixed
+in advance at 0.25 / 0.5 / 0.75. So was the rule: **choose on val, taking the blend closest to base
+whose val WER is within 0.3 points of the fine-tuned model's.** Gold and the public sets were
+reported, never used to choose.
+
+| Model | Val | Gold (750) | FLEURS | SLR54 | CV | IndicVoices | nepali_cs | Public mean |
+|---|---|---|---|---|---|---|---|---|
+| base (a = 0) | 9.41 | 13.56 | 11.10 | 8.17 | 8.78 | 12.70 | 10.98 | 10.34 |
+| a = 0.25 | 7.89 | 12.01 | 11.14 | 8.33 | 9.02 | 12.63 | 10.63 | 10.35 |
+| **a = 0.5 (chosen)** | **7.32** | **11.57** | **11.10** | **8.24** | **8.96** | **12.78** | **10.70** | **10.35** |
+| a = 0.75 | 7.04 | 11.26 | 11.48 | 8.22 | 9.71 | 12.92 | 11.19 | 10.70 |
+| fine-tuned (a = 1) | 7.28 | 11.89 | 11.99 | 9.26 | 9.66 | 13.38 | 11.70 | 11.20 |
+
+- **a = 0.5 keeps our domain and recovers the public sets.**
+  - Against the fine-tuned model: val +0.05 [−0.22, +0.30], gold −0.32 [−1.10, +0.30].
+  - Against base: every public interval contains zero. On nepali_cs it is the lowest of the three:
+    −1.00 [−1.57, −0.62] against the fine-tuned model, −0.28 [−1.37, +0.58] against base.
+- **a = 0.75 beats the fine-tuned model on its own ground:** val −0.23 [−0.41, −0.06], gold
+  −0.63 [−1.41, −0.07]. It recovers about half of the public loss. The fine-tune overshot, and
+  averaging back smooths it.
+- **Nothing was deployed.** A blend is rebuilt in seconds from the two models on HF, so no weights
+  were written. Deploying one means writing its weights as a run, building its int8 CPU export and
+  importing it. The owner parked this as possible paper material.
+
+**Speed** (A100 40 GB, decode only):
+- bf16 weights gave the same WER as fp32 weights under bf16 autocast: 13.44 vs 13.41 on 600
+  IndicVoices clips, 589 texts identical. At 2.2× the speed, 217× against 97× realtime.
+- Batch size depends on clip length:
+  - Short clips (≤ 9 s) run best at 256 per batch: 459× realtime, against 244× at 64.
+  - Longer clips run best at 96 per batch with a 1,200 s budget: 217×, against 184× at 256 /
+    4,800 s. One clip that runs to the token ceiling holds its whole batch there.
+- A per-batch ceiling of 20 tokens/s of the longest clip keeps such a clip from holding the batch
+  to 300 steps.
+- SLR54's 12.3 h decoded in 47–53 s (840–970× realtime).
+
+---
+
 ## The gold-voice screen's threshold, measured (2026-09-25)
 
 D101 screens unlabelled audio for distillation against gold's voices: each source's clips are cut
