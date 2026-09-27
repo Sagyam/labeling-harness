@@ -551,6 +551,40 @@ export interface EpisodeSummary {
   segment_count: number
   labeled_count: number
   pending_count: number
+  /** A recording format from the closed list (D102); null when untagged. */
+  genre: string | null
+  topic: string | null
+}
+
+/** One recording format and the test that puts an episode in it (D102). */
+export interface GenreOption {
+  value: string
+  label: string
+  description: string
+}
+
+/** Every closed list the metadata editor and the ingest form pick from. */
+export interface EpisodeVocabulary {
+  genres: GenreOption[]
+  topics: string[]
+  genders: string[]
+  age_brackets: string[]
+  max_speakers: number
+}
+
+/** One declared speaker; a blank field is null. */
+export interface SpeakerRow {
+  role: string | null
+  gender: string | null
+  age_bracket: string | null
+}
+
+/** An episode's editable metadata. `topic_source` says who set the topic: llm, manual or none. */
+export interface EpisodeMetadata {
+  genre: string | null
+  topic: string | null
+  topic_source?: string | null
+  speakers: SpeakerRow[]
 }
 
 export interface EpisodeSegmentSummary {

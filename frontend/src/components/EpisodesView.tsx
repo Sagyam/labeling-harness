@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   RiDeleteBin6Line,
   RiEditLine,
@@ -8,6 +8,7 @@ import {
   RiInboxLine,
   RiMicLine,
   RiPauseFill,
+  RiPriceTag3Line,
   RiPlayFill,
   RiRefreshLine,
   RiSearchLine,
@@ -16,6 +17,8 @@ import {
 import { toast } from 'sonner'
 
 import { Chip } from '@/components/Chip'
+import { humanize } from '@/components/analytics/primitives'
+import { EpisodeMetadataDialog } from '@/components/metadata/EpisodeMetadataDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -37,7 +40,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { api, resolveUrl } from '@/services/api'
-import type { EpisodeSegmentSummary, EpisodeSummary } from '@/types'
+import type { EpisodeMetadata, EpisodeSegmentSummary, EpisodeSummary } from '@/types'
 
 interface EpisodesViewProps {
   onOpenEditor: (taskId: number) => void
@@ -76,6 +79,17 @@ export function EpisodesView({
   const [segmentsLoading, setSegmentsLoading] = useState(false)
   const [segmentSearch, setSegmentSearch] = useState('')
   const [segmentStatusFilter, setSegmentStatusFilter] = useState<string>('all')
+
+  // Metadata editor (D102)
+  const [editingEpisode, setEditingEpisode] = useState<EpisodeSummary | null>(null)
+  const closeEditor = useCallback(() => setEditingEpisode(null), [])
+  const applySavedMetadata = useCallback((episodeId: number, metadata: EpisodeMetadata) => {
+    setEpisodes((current) =>
+      current.map((ep) =>
+        ep.id === episodeId ? { ...ep, genre: metadata.genre, topic: metadata.topic } : ep,
+      ),
+    )
+  }, [])
 
   // Deletion state
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
@@ -156,7 +170,8 @@ export function EpisodesView({
         episodeSearch.trim() === '' ||
         ep.external_id.toLowerCase().includes(episodeSearch.toLowerCase()) ||
         (ep.title && ep.title.toLowerCase().includes(episodeSearch.toLowerCase())) ||
-        (ep.show_id && ep.show_id.toLowerCase().includes(episodeSearch.toLowerCase()))
+        (ep.show_id && ep.show_id.toLowerCase().includes(episodeSearch.toLowerCase())) ||
+        (ep.genre && ep.genre.toLowerCase().includes(episodeSearch.toLowerCase()))
 
       const matchesSplit =
         splitFilter === 'all' ||
@@ -390,6 +405,9 @@ export function EpisodesView({
                             {ep.gold_count} gold
                           </span>
                         )}
+                        <span className="rounded border px-1.5 py-0.2 font-mono text-[9px] uppercase text-muted-foreground">
+                          {ep.genre ? humanize(ep.genre) : 'no genre'}
+                        </span>
                       </div>
                     </div>
 
@@ -463,6 +481,14 @@ export function EpisodesView({
 
                   <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
                     <span>Show: {selectedEpisode.show_id || 'default'}</span>
+                    <span>
+                      Genre:{' '}
+                      <strong>{selectedEpisode.genre ? humanize(selectedEpisode.genre) : 'untagged'}</strong>
+                    </span>
+                    <span>
+                      Topic:{' '}
+                      <strong>{selectedEpisode.topic ? humanize(selectedEpisode.topic) : 'untagged'}</strong>
+                    </span>
                     {selectedEpisode.duration_seconds && (
                       <span>
                         Duration:{' '}
@@ -489,6 +515,15 @@ export function EpisodesView({
                   >
                     <RiInboxLine className="size-4" />
                     Triage Episode
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setEditingEpisode(selectedEpisode)}
+                  >
+                    <RiPriceTag3Line className="size-4" />
+                    Edit metadata
                   </Button>
                   <Button
                     variant="destructive"
@@ -696,6 +731,12 @@ export function EpisodesView({
           </div>
         )}
       </div>
+
+      <EpisodeMetadataDialog
+        episode={editingEpisode}
+        onClose={closeEditor}
+        onSaved={applySavedMetadata}
+      />
 
       {/* Delete Confirmation Alert Dialog */}
       <AlertDialog

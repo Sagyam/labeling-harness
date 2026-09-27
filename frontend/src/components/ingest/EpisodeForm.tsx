@@ -1,8 +1,6 @@
 import {
-  RiAddLine,
   RiArrowDownSLine,
   RiArrowRightSLine,
-  RiDeleteBin6Line,
   RiErrorWarningLine,
   RiFileMusicLine,
   RiListCheck2,
@@ -23,16 +21,15 @@ import { cn } from '@/lib/utils'
 import { api } from '@/services/api'
 import type { YouTubeProbe } from '@/types'
 import {
-  AGE_BRACKET_OPTIONS,
   ALLOWED_EXTENSIONS,
   DEFAULT_SHOW_ID,
-  GENDER_OPTIONS,
-  MAX_SPEAKERS,
   PROBE_DEBOUNCE_MS,
-  type SpeakerDraft,
   type SourceTab,
-  emptySpeaker,
 } from '@/components/ingest/constants'
+import { GenreTopicFields } from '@/components/metadata/GenreTopicFields'
+import { SpeakerRows } from '@/components/metadata/SpeakerRows'
+import { type SpeakerDraft, emptySpeaker } from '@/components/metadata/speakers'
+import { useEpisodeVocabulary } from '@/components/metadata/useEpisodeVocabulary'
 import { formatDuration, slugify } from '@/components/ingest/format'
 
 interface EpisodeFormProps {
@@ -70,23 +67,12 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
   const titleIsAnnotatorsRef = useRef<boolean>(false)
   const showIdIsAnnotatorsRef = useRef<boolean>(false)
 
-  const addSpeaker = () =>
-    setSpeakers((current) =>
-      current.length >= MAX_SPEAKERS ? current : [...current, emptySpeaker()],
-    )
-
-  const removeSpeaker = (index: number) =>
-    setSpeakers((current) =>
-      current.length <= 1 ? current : current.filter((_, i) => i !== index),
-    )
-
-  const updateSpeaker = (index: number, patch: Partial<SpeakerDraft>) =>
-    setSpeakers((current) => current.map((s, i) => (i === index ? { ...s, ...patch } : s)))
+  const vocabulary = useEpisodeVocabulary()
 
   const buildSpeakersJson = () => {
     const payload: Record<string, any> = {}
     speakers.forEach((speaker, index) => {
-      const fields: Record<string, string> = { role: index === 0 ? 'host' : 'guest' }
+      const fields: Record<string, string> = { role: speaker.role }
       if (speaker.gender) fields.gender = speaker.gender
       if (speaker.ageBracket) fields.age_bracket = speaker.ageBracket
       if (speaker.gender || speaker.ageBracket) payload[`spk${index}`] = fields
@@ -454,95 +440,24 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
 
       {showSociolinguistics && (
         <div className="mt-3 flex flex-col gap-3.5 border-t pt-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field>
-              <FieldLabel htmlFor="genre">Genre / Category</FieldLabel>
-              <Input
-                id="genre"
-                placeholder="e.g. podcast_interview, tech_review"
-                value={genre}
-                onChange={(e) => setGenre(e.target.value)}
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="topic">Topic / Domain</FieldLabel>
-              <Input
-                id="topic"
-                placeholder="Left blank: classified from the transcript"
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-              />
-            </Field>
-          </div>
+          <GenreTopicFields
+            idPrefix="ingest"
+            vocabulary={vocabulary}
+            genre={genre}
+            topic={topic}
+            onGenreChange={setGenre}
+            onTopicChange={setTopic}
+            topicBlankLabel="Classify from the transcript"
+          />
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-foreground">
-                Speakers ({speakers.length} of {MAX_SPEAKERS})
-                <span className="ml-1.5 font-normal text-muted-foreground">
-                  · the diarizer looks for exactly {speakers.length}{' '}
-                  {speakers.length === 1 ? 'voice' : 'voices'}, blank rows included
-                </span>
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                disabled={speakers.length >= MAX_SPEAKERS}
-                onClick={addSpeaker}
-              >
-                <RiAddLine className="size-3.5" />
-                Add speaker
-              </Button>
-            </div>
-
-            {speakers.map((speaker, index) => (
-              <div key={index} className="rounded border bg-muted/20 p-2.5">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-foreground">
-                    Speaker {index} ({index === 0 ? 'Host' : 'Guest'})
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    className="text-muted-foreground hover:text-destructive"
-                    disabled={speakers.length <= 1}
-                    onClick={() => removeSpeaker(index)}
-                    aria-label={`Remove speaker ${index}`}
-                  >
-                    <RiDeleteBin6Line className="size-3.5" />
-                  </Button>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <select
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    value={speaker.gender}
-                    onChange={(e) => updateSpeaker(index, { gender: e.target.value })}
-                  >
-                    <option value="">Gender (optional)</option>
-                    {GENDER_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    value={speaker.ageBracket}
-                    onChange={(e) => updateSpeaker(index, { ageBracket: e.target.value })}
-                  >
-                    <option value="">Age bracket (optional)</option>
-                    {AGE_BRACKET_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            ))}
-          </div>
+          <SpeakerRows
+            speakers={speakers}
+            onChange={setSpeakers}
+            minRows={1}
+            hint={`the diarizer looks for exactly ${speakers.length} ${
+              speakers.length === 1 ? 'voice' : 'voices'
+            }, blank rows included`}
+          />
         </div>
       )}
     </div>

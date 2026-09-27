@@ -621,7 +621,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Dispute panel | `components/DisputePopover.tsx` | What the other systems heard at a disputed moment; plays it, and swaps the word in one click |
 | Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
-| Episodes | `components/EpisodeManagerModal.tsx` | Browse episodes and segments, delete either |
+| Episodes | `components/EpisodesView.tsx`, `components/metadata/` | Browse episodes and segments, delete either, edit an episode's genre, topic and speakers (D102) |
 | Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the clips worst first with audio and the folded diff (D83) |
 | Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One cross-filter over the clip table from `/stats/inventory` (D91): a card per category in four rows (people, content, speech, acoustics), a goal switch (ASR / paper), a measure switch (labels / pots / voices), any-by-any cross-tab, the voices table with each voice's episode strip, per-category advice, and the records check |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |

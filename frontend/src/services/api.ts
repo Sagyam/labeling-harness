@@ -22,6 +22,8 @@ import {
   IngestScramResult,
   EpisodeSummary,
   EpisodeSegmentSummary,
+  EpisodeMetadata,
+  EpisodeVocabulary,
   YouTubeProbe,
   YouTubeIngestIn,
   CorpusInventory,
@@ -352,6 +354,19 @@ export const api = {
   listEpisodeSegments: (episodeId: string | number): Promise<EpisodeSegmentSummary[]> => {
     return request<EpisodeSegmentSummary[]>(`/episodes/${episodeId}/segments`)
   },
+
+  /** The closed genre, topic, gender and age lists (D102). */
+  getEpisodeVocabulary: (): Promise<EpisodeVocabulary> => request('/episodes/vocabulary'),
+
+  getEpisodeMetadata: (episodeId: string | number): Promise<EpisodeMetadata> =>
+    request(`/episodes/${episodeId}/metadata`),
+
+  /** Replace genre, topic and speakers; 422 when a value is off its closed list. */
+  updateEpisodeMetadata: (
+    episodeId: string | number,
+    body: EpisodeMetadata,
+  ): Promise<EpisodeMetadata> =>
+    request(`/episodes/${episodeId}/metadata`, { method: 'PUT', body: JSON.stringify(body) }),
 
   deleteEpisode: (
     episodeId: string | number

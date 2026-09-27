@@ -29,26 +29,6 @@ export const SCRAM_ARM_TIMEOUT_MS = 8000
 /** The show id a form starts on, before a probe offers the channel name instead. */
 export const DEFAULT_SHOW_ID = 'nepanglish'
 
-/** How many speakers one episode may declare; the backend's MAX_SPEAKERS and the manifest schema agree (D79). */
-export const MAX_SPEAKERS = 8
-
-export type SpeakerDraft = { gender: string; ageBracket: string }
-
-export const emptySpeaker = (): SpeakerDraft => ({ gender: '', ageBracket: '' })
-
-export const GENDER_OPTIONS = [
-  { value: 'male', label: 'Male' },
-  { value: 'female', label: 'Female' },
-]
-
-export const AGE_BRACKET_OPTIONS = [
-  { value: 'under_20', label: 'Under 20' },
-  { value: '20_39', label: '20-39' },
-  { value: '40_59', label: '40-59' },
-  { value: '60_79', label: '60-79' },
-  { value: '80_plus', label: '80+' },
-]
-
 export const ACTIVE_JOB_KEY = 'harness.ingest.activeJobId'
 
 export const LOG_LEVEL_CLASS: Record<string, string> = {
