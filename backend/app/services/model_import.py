@@ -344,13 +344,14 @@ class ReclassifyReport:
 def reclassify_runs(
     session: Session, *, actor: str, run_ids: list[int] | None = None
 ) -> ReclassifyReport:
-    """Re-read every clip's classes and rebuild each run's class breakdowns (D87).
+    """Re-read every clip's classes and genre and rebuild each run's breakdowns (D87, D102).
 
     A clip's classes change when something new is measured about it -- a backfill, a voice
-    link, a new diarization run -- while its scores do not. So the run keeps every stored count
-    and headline number, and only ``classes_jsonb``, ``by_class`` and ``by_word_class`` are
-    replaced. Word classes are re-aligned from the stored texts, and only under the fold rules
-    the run was scored with: under other rules they would not match its counts.
+    link, a new diarization run -- while its scores do not; its genre changes when its episode is
+    edited. So the run keeps every stored count and headline number, and only ``classes_jsonb``,
+    ``by_genre``, ``by_class`` and ``by_word_class`` are replaced. Word classes are re-aligned
+    from the stored texts, and only under the fold rules the run was scored with: under other
+    rules they would not match its counts.
 
     Args:
         session: Open session; the caller commits.
@@ -392,7 +393,7 @@ def reclassify_runs(
         summary = summarize(scored)
         metrics = {k: v for k, v in run.metrics_jsonb.items() if k != "by_overlap"}  # superseded
         run.metrics_jsonb = metrics | {
-            key: summary[key] for key in ("by_class", "by_word_class") if key in summary
+            key: summary[key] for key in ("by_genre", "by_class", "by_word_class") if key in summary
         }
         session.add(
             AuditLog(

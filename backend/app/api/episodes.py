@@ -10,11 +10,28 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_config, get_object_storage, get_session, require_auth
-from app.api.schemas import EpisodeSegmentSummary, EpisodeSummary
+from app.api.schemas import (
+    EpisodeMetadataIn,
+    EpisodeMetadataOut,
+    EpisodeSegmentSummary,
+    EpisodeSummary,
+    EpisodeVocabularyOut,
+    GenreOut,
+    SpeakerRow,
+)
 from app.api.serializers import audio_url, peaks_url
 from app.config import Settings
+from app.llm.topic import TOPIC_LABELS
 from app.models import AnnotationTask, AuditLog, Episode, Segment
 from app.models.enums import ACTIVE_TASK_STATUSES
+from app.services.episode_meta import (
+    AGE_BRACKETS,
+    GENRES,
+    MetadataEditError,
+    speaker_rows,
+    update_episode_metadata,
+)
+from app.services.speaker_meta import ALLOWED_VALUES, MAX_SPEAKERS
 from app.storage import ObjectStorage, delete_objects
 from app.storage.local import LocalFilesystemStorage
 
@@ -94,9 +111,68 @@ def list_episodes(session: Session = Depends(get_session)) -> list[EpisodeSummar
                 segment_count=stats.total_segments if stats else 0,
                 labeled_count=stats.labeled_segments if stats else 0,
                 pending_count=stats.pending_segments if stats else 0,
+                genre=(ep.metadata_jsonb or {}).get("genre"),
+                topic=(ep.metadata_jsonb or {}).get("topic"),
             )
         )
     return results
+
+
+@router.get("/episodes/vocabulary", response_model=EpisodeVocabularyOut)
+def episode_vocabulary() -> EpisodeVocabularyOut:
+    """Every closed list the metadata editor and the ingest form pick from (D102)."""
+    return EpisodeVocabularyOut(
+        genres=[GenreOut(value=g.value, label=g.label, description=g.description) for g in GENRES],
+        topics=list(TOPIC_LABELS),
+        genders=sorted(ALLOWED_VALUES["gender"]),
+        age_brackets=list(AGE_BRACKETS),
+        max_speakers=MAX_SPEAKERS,
+    )
+
+
+def _metadata_out(metadata: dict[str, Any] | None) -> EpisodeMetadataOut:
+    metadata = metadata or {}
+    return EpisodeMetadataOut(
+        genre=metadata.get("genre"),
+        topic=metadata.get("topic"),
+        topic_source=metadata.get("topic_source"),
+        speakers=[SpeakerRow(**row) for row in speaker_rows(metadata)],
+    )
+
+
+@router.get("/episodes/{episode_id}/metadata", response_model=EpisodeMetadataOut)
+def get_episode_metadata(
+    episode_id: str, session: Session = Depends(get_session)
+) -> EpisodeMetadataOut:
+    """An episode's genre, topic and declared speakers, as the editor shows them."""
+    return _metadata_out(_find_episode(session, episode_id).metadata_jsonb)
+
+
+@router.put("/episodes/{episode_id}/metadata", response_model=EpisodeMetadataOut)
+def put_episode_metadata(
+    episode_id: str,
+    body: EpisodeMetadataIn,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_config),
+) -> EpisodeMetadataOut:
+    """Replace an episode's genre, topic and declared speakers; audited when anything changed.
+
+    It does not re-diarize: a changed speaker count reaches the next diarization run, not the
+    turns already stored.
+    """
+    episode = _find_episode(session, episode_id)
+    try:
+        metadata = update_episode_metadata(
+            session,
+            episode,
+            genre=body.genre,
+            topic=body.topic,
+            speakers=[row.model_dump() for row in body.speakers],
+            actor=settings.labels.default_annotator,
+        )
+    except MetadataEditError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _metadata_out(metadata)
 
 
 @router.get("/episodes/{episode_id}/segments", response_model=list[EpisodeSegmentSummary])

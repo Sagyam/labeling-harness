@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from app.llm.topic import TOPIC_LABELS
+from app.services.episode_meta import GENRE_LABELS
 from app.services.inventory.constants import (
     ATTRIBUTION_SHARE,
     CATEGORIES,
@@ -18,6 +19,10 @@ from app.services.inventory.constants import (
 )
 from app.services.inventory.facts import ClipRow, EpisodeRow, _round
 from app.services.inventory.resolve import Resolution, VoiceIdentity
+
+#: Categories whose values come from a closed list; a value off it is dirt, not a stratum (D57,
+#: D102).
+_CLOSED_VOCABULARIES: dict[str, tuple[str, ...]] = {"topic": TOPIC_LABELS, "genre": GENRE_LABELS}
 
 
 def speaking_rate_bucket(words_per_second: float | None) -> str:
@@ -205,10 +210,8 @@ def build_category(
             if measured_hours and bucket not in unknown
             else 0.0
         )
-        entry.off_vocabulary = category.key == "topic" and bucket not in (
-            *TOPIC_LABELS,
-            "untagged",
-        )
+        closed = _CLOSED_VOCABULARIES.get(category.key)
+        entry.off_vocabulary = closed is not None and bucket not in (*closed, "untagged")
         for name in ("hours", "verified_hours", "screened_hours", "gold_hours", "val_hours",
                      "train_hours"):  # fmt: skip
             setattr(entry, name, _round(getattr(entry, name)))

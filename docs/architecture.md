@@ -563,7 +563,10 @@ the same inputs and filters produce byte-identical output.
 | `POST /ingest/clear-past` | Prune finished history jobs from the manager |
 | `GET /ingest/{id}` | Job stage, progress, active segment count, error state |
 | `GET /ingest/{id}/events` | SSE stream of the job's log lines |
-| `GET /episodes` | Episode list with per-episode segment counts and progress |
+| `GET /episodes` | Episode list with per-episode segment counts, progress, genre and topic |
+| `GET /episodes/vocabulary` | The closed genre (with each one's test), topic, gender and age-bracket lists (D102) |
+| `GET /episodes/{id}/metadata` | An episode's genre, topic, topic source and declared speaker rows |
+| `PUT /episodes/{id}/metadata` | Replace genre, topic and speaker rows; 422 off the closed lists; audited (D102) |
 | `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |
 | `DELETE /episodes/{id}` | Delete an episode, its child rows and its clips and peaks |
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |

@@ -247,3 +247,23 @@ def test_reclassifying_a_run_rebuilds_its_classes_and_keeps_its_scores(
     }
     assert all(c.classes_jsonb["speakers"] == "1" for c in run.clips)
     assert run.metrics_jsonb["by_word_class"] == before["by_word_class"]
+
+
+def test_reclassifying_a_run_picks_up_an_edited_genre(
+    db_session: Session, tmp_path: Path, model_corpus: dict[str, str]
+) -> None:
+    gold = _gold_ids(db_session)
+    rows = [{"segment_id": sid, "text": model_corpus[sid]} for sid in gold]
+    import_model_dir(
+        db_session, write_model(tmp_path / "models", "flex-ft", gold=rows), actor="test"
+    )
+    run = db_session.scalars(sa.select(ModelEvalRun)).one()
+    assert list(run.metrics_jsonb["by_genre"]) == ["podcast"]
+
+    for clip in run.clips:
+        episode = clip.segment.episode
+        episode.metadata_jsonb = (episode.metadata_jsonb or {}) | {"genre": "advert"}
+    db_session.flush()
+    reclassify_runs(db_session, actor="test")
+
+    assert list(run.metrics_jsonb["by_genre"]) == ["advert"]

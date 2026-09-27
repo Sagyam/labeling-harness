@@ -254,3 +254,104 @@ def test_bulk_delete_is_all_or_nothing_on_an_unknown_id(
 
 def test_bulk_delete_requires_at_least_one_segment(client: TestClient) -> None:
     assert client.post("/segments/bulk-delete", json={"segment_ids": []}).status_code == 422
+
+
+# --- metadata editor (D102) ------------------------------------------------------------------
+
+
+def _episode(db_session: Session, external_id: str) -> Episode:
+    return db_session.scalars(sa.select(Episode).where(Episode.external_id == external_id)).one()
+
+
+def test_the_vocabulary_lists_every_genre_with_its_test_and_every_topic(
+    client: TestClient,
+) -> None:
+    vocabulary = client.get("/episodes/vocabulary").json()
+
+    genres = {g["value"]: g for g in vocabulary["genres"]}
+    assert {"advert", "explainer", "commentary"} <= set(genres)
+    assert all(g["label"] and g["description"] for g in genres.values())
+    assert "technology" in vocabulary["topics"]
+    assert vocabulary["genders"] == ["female", "male"]
+    assert vocabulary["age_brackets"][0] == "under_20"
+    assert vocabulary["max_speakers"] == 8
+
+
+def test_an_episode_metadata_edit_is_stored_listed_and_audited(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    episode = _episode(db_session, imported_episode)
+    episode.metadata_jsonb = {"genre": "podcast", "topic": "technology", "topic_source": "llm"}
+    db_session.flush()
+
+    response = client.put(
+        f"/episodes/{episode.id}/metadata",
+        json={
+            "genre": "explainer",
+            "topic": "education_career",
+            "speakers": [{"role": "host", "gender": "female", "age_bracket": "20_39"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "genre": "explainer",
+        "topic": "education_career",
+        "topic_source": "manual",
+        "speakers": [{"role": "host", "gender": "female", "age_bracket": "20_39"}],
+    }
+    db_session.refresh(episode)
+    assert episode.metadata_jsonb["speaker_count"] == 1
+    assert client.get(f"/episodes/{episode.id}/metadata").json() == response.json()
+    listed = next(e for e in client.get("/episodes").json() if e["id"] == episode.id)
+    assert (listed["genre"], listed["topic"]) == ("explainer", "education_career")
+
+    entry = db_session.scalars(
+        sa.select(AuditLog).where(AuditLog.action == "update_metadata")
+    ).one()
+    assert (entry.entity_type, entry.entity_id) == ("episodes", str(episode.id))
+    assert entry.old_values_jsonb["genre"] == "podcast"
+    assert entry.new_values_jsonb["genre"] == "explainer"
+    assert entry.old_values_jsonb["speakers"] is None
+    assert "source" not in entry.new_values_jsonb
+
+
+def test_an_edit_that_changes_nothing_writes_no_audit_row(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    episode = _episode(db_session, imported_episode)
+    episode.metadata_jsonb = {"genre": "vlog"}
+    db_session.flush()
+
+    body = {"genre": "vlog", "topic": None, "speakers": []}
+    assert client.put(f"/episodes/{episode.id}/metadata", json=body).status_code == 200
+
+    assert (
+        db_session.scalar(
+            sa.select(sa.func.count())
+            .select_from(AuditLog)
+            .where(AuditLog.action == "update_metadata")
+        )
+        == 0
+    )
+
+
+def test_an_off_list_genre_is_refused_and_nothing_is_written(
+    client: TestClient, db_session: Session, imported_episode: str
+) -> None:
+    episode = _episode(db_session, imported_episode)
+    before = dict(episode.metadata_jsonb or {})
+
+    response = client.put(
+        f"/episodes/{episode.id}/metadata", json={"genre": "reels", "topic": None, "speakers": []}
+    )
+
+    assert response.status_code == 422
+    assert "genre" in response.json()["detail"]
+    db_session.refresh(episode)
+    assert (episode.metadata_jsonb or {}) == before
+
+
+def test_editing_an_unknown_episode_is_a_404(client: TestClient) -> None:
+    body = {"genre": None, "topic": None, "speakers": []}
+    assert client.put("/episodes/no_such_episode/metadata", json=body).status_code == 404

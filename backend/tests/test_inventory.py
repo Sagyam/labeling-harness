@@ -408,6 +408,13 @@ def test_an_off_taxonomy_topic_is_flagged_as_dirt_and_sits_before_untagged() -> 
     assert categories["topic"].stats("technology").off_vocabulary is False
 
 
+def test_an_off_list_genre_is_flagged_as_dirt_like_an_off_list_topic() -> None:
+    episodes = [episode("a", genre="reels"), episode("b", genre="advert")]
+    _, categories, *_ = cut(episodes, [clip("a"), clip("b")])
+    assert categories["genre"].stats("reels").off_vocabulary is True
+    assert categories["genre"].stats("advert").off_vocabulary is False
+
+
 def test_the_clip_table_round_trips_to_the_category_totals() -> None:
     """The page re-cuts the table client-side; its sums must be the server's sums."""
     episodes = [episode("ep1", voices=("v1",)), episode("ep2", show_id="show-b")]

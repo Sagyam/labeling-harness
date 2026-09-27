@@ -354,6 +354,48 @@ class EpisodeSummary(BaseModel):
     segment_count: int = 0
     labeled_count: int = 0
     pending_count: int = 0
+    genre: str | None = None
+    topic: str | None = None
+
+
+class SpeakerRow(BaseModel):
+    """One declared speaker in the metadata editor; blank fields are ``None`` (D102)."""
+
+    role: str | None = None
+    gender: str | None = None
+    age_bracket: str | None = None
+
+
+class EpisodeMetadataIn(BaseModel):
+    """The whole editable state of an episode's metadata; ``None`` clears a field."""
+
+    genre: str | None = None
+    topic: str | None = None
+    speakers: list[SpeakerRow] = Field(default_factory=list)
+
+
+class EpisodeMetadataOut(EpisodeMetadataIn):
+    """What the editor shows, plus where the topic came from (``llm``, ``manual`` or none)."""
+
+    topic_source: str | None = None
+
+
+class GenreOut(BaseModel):
+    """One recording format and the test that puts an episode in it."""
+
+    value: str
+    label: str
+    description: str
+
+
+class EpisodeVocabularyOut(BaseModel):
+    """Every closed list the metadata editor and the ingest form pick from."""
+
+    genres: list[GenreOut]
+    topics: list[str]
+    genders: list[str]
+    age_brackets: list[str]
+    max_speakers: int
 
 
 class EpisodeSegmentSummary(BaseModel):

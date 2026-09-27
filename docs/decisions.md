@@ -2348,3 +2348,42 @@ not become episodes at all.
   findings.md. To screen a channel against gold again, restore them from git (commit 024c8e7).
 
 **Reversal:** cheap. Delete `distill/` in the dataset repo; nothing else refers to it.
+
+## D102 — Genre is a closed list of recording formats, and episode metadata is editable after ingest
+
+Genre was a free-text box, and on 2026-09-27 it held ten values across 191 episodes. Crossed with
+the topic (D57), they split cleanly in two. Six named a subject: `tech_review`, `cooking`,
+`finance`, `education`, `sports`, `news`. Their topic was the same label 100% of the time, so they
+said nothing new. Four named a format: `podcast` (12 different topics), `reels` (15),
+`talk_show`, `interview`. Those were independent of topic. So the two fields are two axes.
+**Genre is how the recording was made**: who talks to whom, scripted or not, in what room. That
+drives crosstalk, register and noise. **Topic is what it is about**, which drives vocabulary and
+English share.
+
+- **Sixteen formats, each with a test** (`app/services/episode_meta.py`, shown as the picker's
+  hint): podcast (unscripted conversation), interview (prepared questions; scripted, which is
+  what separates it from podcast), talk_show, street_interview, news, commentary (one host,
+  unscripted, on a live subject), explainer (one person, scripted, a how-to), lecture, review,
+  vlog, advert, sketch, standup, streaming, speech, audiobook. Several are empty on purpose:
+  they are formats the owner means to collect.
+- **`reels` is gone.** It described length and platform, not a format. The 105 reels held
+  podcast clips, adverts, vlogs and explainers side by side. The owner checked a relabelling
+  proposed from the verified text of every clip against the audio: advert 28, podcast 23,
+  vlog 21, explainer 18, interview 5, news 5, lecture 2, review, commentary and talk_show 1 each.
+  The rest mapped by value: `tech_review` → review; `cooking` → vlog; `finance`, `education`,
+  `sports` → commentary. Every one went through the editor, so each has an `audit_logs` row.
+- **Closed at both doors.** The ingest form and the editor pick from `GET /episodes/vocabulary`.
+  A genre or topic off its list is a 422 at ingest (before anything is written) and at
+  `PUT /episodes/{id}/metadata`. The inventory reports an off-list genre as dirt, as it does an
+  off-list topic.
+- **The editor** replaces genre, topic and the declared speaker rows (role, gender, age bracket,
+  D56/D58) in one audited write. It writes nothing when nothing changed. Speakers are stored in
+  the ingest form's shape (`speaker_count` rows, `spk<i>` for the rows with a gender or an age),
+  so every reader sees one format. A topic set by hand is `topic_source: manual`; D57's rule that
+  a human topic wins over the classifier is unchanged. The editor does not re-diarize, so a
+  changed speaker count reaches the next diarization run, not the turns already stored.
+  `reclassify_runs` now rebuilds `by_genre` along with the class breakdowns, so model runs follow
+  an edited genre.
+
+**Reversal:** cheap for the list (edit `GENRES`), and each relabel is reversible from its audit
+row. Reopening free text would bring back the typos and synonyms this entry exists to stop.

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_config, get_object_storage, get_session_factory, require_auth
 from app.config import Settings
+from app.services.episode_meta import MetadataEditError, check_genre, check_topic
 from app.services.ingest import manager
 from app.services.speaker_meta import MAX_SPEAKERS, strip_speaker_pii
 from app.services.youtube import (
@@ -89,15 +90,22 @@ def _episode_metadata(
     because a row whose demographics were left blank is not sent there but is still a person the
     diarizer must find (D79).
 
+    Genre and topic must be on their closed lists (D57, D102): anything else is a 422, raised
+    before the caller has written anything to disk.
+
     The speaker block is run through the allowlist here as well as at the importer. The importer
     is the guarantee; this is so a name pasted into `speakers_json` by a hand-rolled client is
     dropped before it is written to the job's `episode.json` on disk (D56).
     """
+    try:
+        checked_genre, checked_topic = check_genre(genre.strip()), check_topic(topic.strip())
+    except MetadataEditError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     metadata: dict[str, Any] = {}
-    if genre.strip():
-        metadata["genre"] = genre.strip()
-    if topic.strip():
-        metadata["topic"] = topic.strip()
+    if checked_genre:
+        metadata["genre"] = checked_genre
+    if checked_topic:
+        metadata["topic"] = checked_topic
     if speakers_json.strip():
         # A malformed speaker block loses the metadata, never the ingest.
         with contextlib.suppress(Exception):
@@ -228,10 +236,10 @@ async def start_youtube_ingestion(
     # the work root and a prefix of every object key.
     final_episode_id = _slugify(body.episode_id) if body.episode_id.strip() else _slugify(title)
 
+    metadata = _episode_metadata(body.genre, body.topic, body.speakers_json, body.speaker_count)
+
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
-
-    metadata = _episode_metadata(body.genre, body.topic, body.speakers_json, body.speaker_count)
 
     job = manager.create_job(
         episode_id=final_episode_id,
@@ -295,6 +303,8 @@ async def start_ingestion(
     # "../.." would otherwise write -- and later delete -- outside the tree entirely.
     final_episode_id = _slugify(episode_id) if episode_id.strip() else _slugify(episode_title)
 
+    metadata = _episode_metadata(genre, topic, speakers_json, speaker_count)
+
     # Prepare temporary directory. run_pipeline removes it when the job finishes.
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -302,8 +312,6 @@ async def start_ingestion(
     dest_audio_path = work_dir / f"source_audio{ext}"
     with open(dest_audio_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-
-    metadata = _episode_metadata(genre, topic, speakers_json, speaker_count)
 
     job = manager.create_job(
         episode_id=final_episode_id,

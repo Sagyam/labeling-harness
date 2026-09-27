@@ -104,3 +104,27 @@ def test_api_ingest_sse_events_stream(client: TestClient, tmp_path: Path) -> Non
         lines = [line for line in response.iter_lines() if line.strip()]
         assert any("data: " in line for line in lines)
         assert any("Starting job" in line for line in lines)
+
+
+@pytest.mark.parametrize(("field", "value"), [("genre", "reels"), ("topic", "cooking")])
+def test_an_upload_with_an_off_list_genre_or_topic_is_refused_before_anything_is_written(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    wav_path = make_test_audio(tmp_path / "upload.wav", duration_seconds=3.0)
+    submitted: list[object] = []
+    monkeypatch.setattr(manager, "submit", lambda job, *a, **k: submitted.append(job) or 0)
+
+    with open(wav_path, "rb") as f:
+        response = client.post(
+            "/ingest",
+            data={"episode_title": "Off list", "episode_id": "api_off_list", field: value},
+            files={"file": ("upload.wav", f, "audio/wav")},
+        )
+
+    assert response.status_code == 422
+    assert field in response.json()["detail"]
+    assert submitted == []

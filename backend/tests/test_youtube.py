@@ -650,7 +650,7 @@ def test_a_speaker_name_posted_to_the_endpoint_never_reaches_the_job(
         "/ingest/youtube",
         json={
             "url": f"https://youtu.be/{VIDEO_ID}",
-            "topic": "tech_gadgets",
+            "topic": "technology",
             "speakers_json": json.dumps(
                 {"spk0": {"name": "Sushant", "role": "host", "origin": "Kathmandu"}}
             ),
@@ -660,7 +660,7 @@ def test_a_speaker_name_posted_to_the_endpoint_never_reaches_the_job(
     assert response.status_code == 202
     job = manager.get_job(response.json()["job_id"])
     assert job is not None
-    assert job.metadata == {"topic": "tech_gadgets", "speakers": {"spk0": {"role": "host"}}}
+    assert job.metadata == {"topic": "technology", "speakers": {"spk0": {"role": "host"}}}
 
 
 @pytest.mark.db

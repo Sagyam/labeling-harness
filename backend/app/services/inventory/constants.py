@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from app.llm.topic import TOPIC_LABELS
 from app.services.clip_classes import AXIS_BY_NAME
+from app.services.episode_meta import GENRE_LABELS
 from app.services.speaker_meta import ALLOWED_VALUES
 
 #: Which of the corpus's two purposes a category serves. A recommendation inherits the goal of
@@ -120,8 +121,8 @@ CATEGORIES: tuple[Category, ...] = (
     ),
     Category(
         "genre", "Genre", "content", (ASR, PAPER), "voices",
-        (), ("untagged",),
-        "Podcast, tech review, reel: the register of the recording, typed at ingest.",
+        (*GENRE_LABELS, "untagged"), ("untagged",),
+        "Closed list of recording formats: who talks to whom, scripted or not (D102).",
     ),
     Category(
         "show", "Show", "content", (ASR, PAPER), "voices",
