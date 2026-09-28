@@ -263,7 +263,9 @@ against the single-stream gold, and attribution by grading the model's output by
    [training code](https://github.com/BUTSpeechFIT/TS-ASR-Whisper)).
    - **How it works.** Whisper-large-v3-turbo (0.9B) conditioned on diarization masks (silence,
      target, other, overlap) at every encoder layer. SE-DiCoW also enrols the target's clearest
-     stretch, which roughly halves tcpWER against DiCoW.
+     stretch. That halves tcpWER against the original DiCoW, but against DiCoW v3.3 it gains
+     little on real meetings (NOTSOFAR-1 26.6 to 26.1, AMI SDM 18.6 to 18.5 with a real
+     diarizer); its large gains are on 3-speaker synthetic mixes (Libri3Mix clean 38.6 to 35.6).
    - **Why it fits.** The conditioning it needs already exists: the Modal pyannote turns
      (D78/D79), joined by time. Its English-only fine-tuning keeps whatever languages Whisper
      had, and for our Nepali that is almost nothing: Whisper-turbo scored 123% WER on gold

@@ -102,7 +102,8 @@ publishing student weights.
 Whisper-large-v3-turbo conditioned on a per-frame diarization mask -- silence, target, other,
 overlap -- injected at every encoder layer. Given audio plus a diarization, it writes the target
 speaker's words through overlap. [SE-DiCoW](https://arxiv.org/html/2601.19194v1) adds enrolment
-of the target's clearest stretch and roughly halves tcpWER. Its English-only fine-tuning keeps
+of the target's clearest stretch. That halves tcpWER against the original DiCoW, but against
+v3.3 it gains little on real meetings (NOTSOFAR-1 26.6 to 26.1 tcpWER with a real diarizer). Its English-only fine-tuning keeps
 only the languages Whisper already had, and Whisper-turbo scored 123% WER on our gold
 zero-shot. Weights CC-BY-4.0, code Apache-2.0, training code public
 ([BUTSpeechFIT/TS-ASR-Whisper](https://github.com/BUTSpeechFIT/TS-ASR-Whisper)).
