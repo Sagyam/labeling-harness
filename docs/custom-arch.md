@@ -102,8 +102,9 @@ publishing student weights.
 Whisper-large-v3-turbo conditioned on a per-frame diarization mask -- silence, target, other,
 overlap -- injected at every encoder layer. Given audio plus a diarization, it writes the target
 speaker's words through overlap. [SE-DiCoW](https://arxiv.org/html/2601.19194v1) adds enrolment
-of the target's clearest stretch and roughly halves tcpWER. It stays multilingual after
-English-only fine-tuning. Weights CC-BY-4.0, code Apache-2.0, training code public
+of the target's clearest stretch and roughly halves tcpWER. Its English-only fine-tuning keeps
+only the languages Whisper already had, and Whisper-turbo scored 123% WER on our gold
+zero-shot. Weights CC-BY-4.0, code Apache-2.0, training code public
 ([BUTSpeechFIT/TS-ASR-Whisper](https://github.com/BUTSpeechFIT/TS-ASR-Whisper)).
 
 **The conditioning already exists.** `speaker_turns` from the Modal pyannote run (D78, D79),
@@ -115,8 +116,12 @@ SE-DiCoW, enrolment audio is the diarized solo turns.
 known exactly, both transcripts verified) plus real overlapped clips under their existing
 main-voice labels with masks from the diarizer.
 
-**Order.** Zero-shot first -- days, not weeks: download, mask pipeline, decode, score. That
-number is the baseline every later result is paired against. Then fine-tune.
+**Order (owner, 2026-09-28).** No zero-shot run: DiCoW is Whisper-turbo underneath, and
+Whisper-turbo scored 123% WER on gold zero-shot, so a zero-shot DiCoW measures missing Nepali,
+not conditioning. DiCoW waits for §1's Whisper student. Fine-tune first on single-speaker
+clips with all-target masks, to check that Nepali survives the conditioning layers, then on
+C's mixes. The single-speaker WER of the Whisper student is the baseline later results are
+paired against.
 
 **The risk, and why §1 comes first.** Whisper-turbo is weak on our Nepali: 14.62 against Flex's
 11.44 folded WER on the 2026-09-12 gold. Fine-tuning DiCoW from vanilla Whisper-turbo asks one
@@ -170,8 +175,7 @@ conditioning under local control.
      └── alone worth having: word timestamps, streaming, an ownable small model
 ```
 
-§1 is measured on single-stream WER, so it needs nothing from the stopped roadmap A. §2 zero-shot
-needs nothing that does not exist; its fine-tune waits on C's data and is selected on synthetic
-mixes (D100). §3 waits on the §2
+§1 is measured on single-stream WER, so it needs nothing from the stopped roadmap A. §2 waits on
+the §1 Whisper student and C's data, and is selected on synthetic mixes (D100). §3 waits on the §2
 verdict. Every run is scored per roadmap E: folded and raw, S/D/I, per crosstalk bucket, paired
 bootstrap by episode, cost term included.

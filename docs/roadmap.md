@@ -265,14 +265,19 @@ against the single-stream gold, and attribution by grading the model's output by
      target, other, overlap) at every encoder layer. SE-DiCoW also enrols the target's clearest
      stretch, which roughly halves tcpWER against DiCoW.
    - **Why it fits.** The conditioning it needs already exists: the Modal pyannote turns
-     (D78/D79), joined by time. It stays multilingual after English-only fine-tuning.
+     (D78/D79), joined by time. Its English-only fine-tuning keeps whatever languages Whisper
+     had, and for our Nepali that is almost nothing: Whisper-turbo scored 123% WER on gold
+     zero-shot, with 271 looping clips.
    - **Licence.** Weights CC-BY-4.0, code Apache-2.0.
    - **Risk.** Whisper is weaker on our Nepali than Flex (fine-tunes on the 2026-09-12 gold: 14.62
      against 11.44). B is what would close that gap.
    - **Enrolment.** Take it from a voice checked by the who pass in F. Never take it from a cluster
      heard mixing two people; that was 10 of 128 in the 2026-09-28 pilot. A recurring voice can be
      enrolled from another of its episodes.
-   - **Order.** Zero-shot first, then fine-tune on C's data.
+   - **Order (owner, 2026-09-28).** No zero-shot run: it would measure Whisper's missing
+     Nepali, not the conditioning. DiCoW waits for B's Nepali-strong Whisper student. Its
+     conditioning is then fine-tuned onto that student: single-speaker clips with all-target
+     masks first, as a check that Nepali survives, then C's mixes.
 2. **SOT-DiCoW** ([paper](https://arxiv.org/abs/2510.03723)). A DiCoW encoder with one shared
    decoder that writes speaker-tagged text. On heavy synthetic overlap it beats DiCoW (17.2 against
    32.1 cpWER on 3-speaker mixtures); on real meetings it loses. A follow-up to D1, not a first
