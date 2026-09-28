@@ -269,6 +269,9 @@ against the single-stream gold, and attribution by grading the model's output by
    - **Licence.** Weights CC-BY-4.0, code Apache-2.0.
    - **Risk.** Whisper is weaker on our Nepali than Flex (fine-tunes on the 2026-09-12 gold: 14.62
      against 11.44). B is what would close that gap.
+   - **Enrolment.** Take it from a voice checked by the who pass in F. Never take it from a cluster
+     heard mixing two people; that was 10 of 128 in the 2026-09-28 pilot. A recurring voice can be
+     enrolled from another of its episodes.
    - **Order.** Zero-shot first, then fine-tune on C's data.
 2. **SOT-DiCoW** ([paper](https://arxiv.org/abs/2510.03723)). A DiCoW encoder with one shared
    decoder that writes speaker-tagged text. On heavy synthetic overlap it beats DiCoW (17.2 against
@@ -296,6 +299,13 @@ against the single-stream gold, and attribution by grading the model's output by
 
 - **Per-speaker WER.** cpWER, tcpWER and ORC-WER (e.g. [MeetEval](https://github.com/fgnt/meeteval)),
   each speaker's stream folded by `app/services/fold.py`, split into S/D/I.
+- **Where per-speaker WER is valid.** Every per-speaker metric needs a reference that says which
+  words each speaker said, and ORC-WER still needs overlapping speech split into each speaker's
+  utterances. C's synthetic mixes have that exactly. Real gold does not (D100), and knowing who
+  each cluster is (F, 2026-09-28) does not supply it. On real gold:
+  - recognition is scored by merging a model's streams in time order against the single-stream
+    reference;
+  - attribution is scored by ear on a fixed sample.
 - **Buckets.** Every number by crosstalk bucket, with the clean bucket as the no-harm check.
 - **Pairing.** Paired against a baseline and resampled by episode (`sweep.paired_bootstrap`).
 - **A selection split that holds crosstalk.** Val has 4 clips over 15% overlap, so a winner chosen
@@ -326,6 +336,33 @@ one bounded test, done as its own experiment.
   and the exclusive track's picks on the tie words, all judged by ear. If every cluster is one
   person, cluster merging is viable and the multitrack editor comes back. If clusters mix people,
   word attribution from diarization is closed for good.
+- **Who is who: answered 2026-09-28, corpus-wide** (findings.md, *Same voice or not*). This
+  answers the clustering half of F differently from the plan above. Blind listening to 95 cluster
+  pairs showed that voiceprint similarity decides most same-person calls:
+  - at 0.72 or more, 91% were one person;
+  - below 0.55, 90% were two people;
+  - 52 of 456 corpus pairs fall between the two (132 if the band starts at 0.49), 12–30 minutes of
+    listening once, then a minute or two per new episode.
+
+  10 of 128 clusters mix two people; no merge fixes those. The episode 205 test above (over-cluster,
+  exclusive track) was not run.
+- **Parked idea: voice identity from similarity plus a short listening pass.** Nothing is built.
+  1. Link or merge automatically above the upper cut-off, and keep clusters apart below the lower
+     one.
+  2. Queue the pairs in between for the owner's ear, with the same page and 13 s per pair.
+  3. Mark clusters heard as mixing two people. They are never used as a voice's audio.
+  4. Replace the linker's single 0.6 cut-off (D87). It is wrong on 7 of 44 cross-episode pairs and
+     never merges within an episode.
+
+  **What it would fix:** voice counts (sociolinguistics), the gold/train voice overlap, reel voice
+  dedup, and two inputs of D1: SE-DiCoW's enrolment audio and the target/other masks. A speaker
+  split into two clusters marks the target's own voice as "other".
+
+  **What it would not fix:** which words each person said. Turn boundaries and crosstalk are the
+  *when* problem D100 closed. Sized 2026-09-28, it is about 20,000 events in the clips (12.5k
+  speaker switches, 7.8k overlap spans), so it is only viable as an algorithm checked by a fixed
+  exam of ~150–200 events, never by labelling. Per-speaker references for real gold, and with them
+  cpWER/tcpWER/ORC-WER on real gold, still do not exist (E).
 
 ## G. Vocabulary at decode time, and the low-risk fold rules (priority 3, after C)
 

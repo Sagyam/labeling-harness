@@ -123,9 +123,12 @@ number is the baseline every later result is paired against. Then fine-tune.
 run to learn "follow the mask" and "Nepali" together. Fine-tuning from the distilled
 Nepali-strong Whisper student (§1) isolates conditioning as the only new skill.
 
-**Scoring.** cpWER, tcpWER, ORC-WER via [MeetEval](https://github.com/fgnt/meeteval) on the
-attributed gold, per crosstalk bucket, clean bucket as the no-harm check, paired bootstrap by
-episode, a cost term in the decision rule (roadmap E).
+**Scoring.** cpWER, tcpWER, ORC-WER via [MeetEval](https://github.com/fgnt/meeteval) on C's
+synthetic mixes, whose per-speaker references are exact. Real gold has no per-speaker references
+(D100). There, the streams merged in time order are scored against the single-stream gold, and
+attribution is graded by ear on a fixed sample. Per crosstalk bucket, clean bucket as the no-harm
+check, paired bootstrap by episode, a cost term in the decision rule (roadmap E). Enrolment and
+masks come from voices checked by the who pass (roadmap F, 2026-09-28).
 
 ## 3. Method transplant: multitalker speaker kernels into Flex's encoder (roadmap D4)
 
@@ -160,7 +163,7 @@ conditioning under local control.
 ## How they interlock
 
 ```text
-§1 distillation ── Whisper student ──► §2 DiCoW fine-tune ──► tcpWER on attributed gold
+§1 distillation ── Whisper student ──► §2 DiCoW fine-tune ──► tcpWER on synthetic mixes
      │                                      ▲
      └── Parakeet/conformer student ──► §3 transplant
      │
