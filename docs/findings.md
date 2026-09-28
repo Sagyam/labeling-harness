@@ -24,6 +24,46 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Same voice or not: similarity decides most pairs, the ear settles a narrow band (2026-09-28)
+
+Can voiceprints settle *who* a diarizer cluster is (a split speaker inside an episode, one voice
+across episodes) with little listening? This test decides whether that is worth building; the
+*when* question (turn boundaries, crosstalk) is separate and was not tested. Pilot code discarded;
+the answer key and verdicts are in `data/pilots/who-2026-09-28/` (gitignored).
+
+- **Design.** 95 pairs of diarizer clusters from the stored pyannote centroids (WeSpeaker space),
+  judged blind by the owner. Each side played up to three stretches of that cluster alone, 4 s
+  max each. The pairs were drawn by similarity band from the corpus's 456 candidate pairs (167
+  within an episode, 289 best matches across episodes; 20 clusters have no centroid): all 22
+  within-episode pairs at 0.7 or more, 12 at 0.5–0.7, 6 below 0.3; across episodes 15 at 0.75 or
+  more, 25 at 0.5–0.75, 10 below 0.5; plus 5 repeats. The pass rule was fixed before listening.
+- **The ear passed its gate.** 12% can't-tell (limit 20%), 4 of 5 repeats consistent (the fifth:
+  can't-tell, then same). 13 s per pair, 27 minutes in all.
+- **Verdict: pass.** Decided pairs at 0.72 or more are the same person 91% of the time (31 of
+  34); below 0.55 they are different 90% of the time (28 of 31). 52 of the 456 corpus pairs sit
+  between the two, about 12 minutes of listening at the pilot's pace. Widening the band down to
+  0.49 catches the three same-person pairs at 0.50–0.51 and makes it 132 pairs, about 30 minutes.
+  Either way the human input is bounded by the number of voices, not by hours or words.
+- **Outside the band, about one call in ten is wrong.** Above 0.72:
+  - v167/v169 in `पहिलाका_अन्तर्राष्ट्रिय_अर्गनाइजरहरू` at 0.94 are two people, although the
+    2026-09-23 entry read them as a clear split;
+  - a 0.91 pair where both sides mix two voices;
+  - a 0.75 pair with 7 s of talk on one side.
+
+  Below 0.55, three pairs at 0.50–0.51 are one person. Similar-sounding people exist, so a high
+  cosine is evidence, not identity.
+- **10 of 128 clusters mix two people** (heard, not inferred). Mostly short clusters (3–20 s of
+  talk), three with 1–2 minutes. Merging cannot fix these; they are segmentation errors.
+- **The current linker** (a single 0.6 cut-off, D87) is wrong on 7 of the 44 decided cross-episode
+  pairs: 4 false links, 3 missed. It never merges within an episode, and the owner heard 24
+  within-episode pairs as one person. Those are split speakers counted as separate voices, so
+  voice counts built on voice ids (sociolinguistics, gold/train voice overlap) run high.
+- **Short videos vs long-form:** not settled. Only 17 pairs came from two long episodes, with one
+  wrong-side call, against 5 of 73 for pairs involving a short. Mixed clusters are commoner in
+  shorts (13 of 73 pairs against 2 of 17).
+
+---
+
 ## Public Nepali benchmarks, the error anatomy, and weight blending (2026-09-27)
 
 The 2026-09-17 model (the deployed one; the 2026-09-22 sweep kept no weights, so p00-s0 could not
@@ -350,9 +390,9 @@ up to 20 stretches of each speaker alone per episode, 4 s max each).
 - **Coverage.** 166 same-episode speaker pairs; 76 have prints for both (4+ stretches alone).
   The rest fall back to pyannote's stored centroids. D87's "different speakers of one episode
   never passed 0.59" held on the 44 episodes of 2026-09-15 and no longer does: 43 pairs pass 0.5.
-- **Long episodes (3+ min; 84 episodes, 140 speakers).** 10 pairs at 0.5 or more. One is clearly
-  a split (0.93, `पहिलाका_अन्तर्राष्ट्रिय_अर्गनाइजरहरू`, S1/S3, declared and diarized 4), one is
-  likely (0.69, `dayahang_rai_miruna_magar`, S1/S3). The other 8 are 0.50–0.65, including pairs
+- **Long episodes (3+ min; 84 episodes, 140 speakers).** 10 pairs at 0.5 or more. One looked like
+  a clear split (0.93, `पहिलाका_अन्तर्राष्ट्रिय_अर्गनाइजरहरू`, S1/S3, declared and diarized 4) but
+  the owner heard two people (2026-09-28), one is likely (0.69, `dayahang_rai_miruna_magar`, S1/S3). The other 8 are 0.50–0.65, including pairs
   the owner declared as two people who talk over each other for minutes (दुर्गा प्रसाईं interview,
   0.65, 211 s; `ep_447`, v002/v003, both recurring voices linked separately across many
   episodes, 0.53). Those read as two people in one room.
