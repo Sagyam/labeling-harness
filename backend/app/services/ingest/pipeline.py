@@ -58,7 +58,7 @@ from app.utils.hashing import sha256_file
 from app.utils.logging import get_logger
 from app.utils.rate_limit import provider_gate
 
-from .audio import normalize_audio
+from .audio import normalize_audio, source_duration
 from .checkpoint import Checkpoint, audio_key, request_key
 from .fusion import _classify_episode_topic, _run_fusion_stage
 from .job import DiscardedSegment, IngestJob, LockedSession
@@ -226,6 +226,33 @@ def _fetch_source_audio(job: IngestJob, settings: Settings) -> bool:
         },
     )
     return True
+
+
+def _clip_seconds(job: IngestJob) -> float | None:
+    """How much of the source the form asked to keep, or None to keep all of it (D103)."""
+    clip = job.metadata.get("clip")
+    seconds = clip.get("max_seconds") if isinstance(clip, dict) else None
+    return float(seconds) if isinstance(seconds, int | float) and seconds > 0 else None
+
+
+def _record_clip(job: IngestJob, max_seconds: float, *, kept_seconds: float) -> None:
+    """Note on the episode what a clipped recording was cut from, or drop a clip that cut nothing.
+
+    ``clip`` in an episode's metadata means the episode is the opening of a longer source, so a
+    source no longer than the clip leaves no mark. A source whose length cannot be read keeps the
+    mark, with the length unknown: the cut may have happened.
+    """
+    source_seconds = source_duration(job.audio_path) if job.audio_path else None
+    if source_seconds is not None and source_seconds <= max_seconds:
+        job.metadata.pop("clip", None)
+        job.log(f"Source is {source_seconds / 60:.1f} min, within the clip; kept whole")
+        return
+    job.metadata["clip"] = {
+        "max_seconds": job.metadata["clip"]["max_seconds"],
+        "source_duration_seconds": source_seconds,
+    }
+    of = f" of {source_seconds / 60:.1f}" if source_seconds is not None else ""
+    job.log(f"Clipped to the first {kept_seconds / 60:.1f}{of} min (D103)")
 
 
 def _route_dump(routes: Any, route_name: str) -> dict[str, Any] | None:
@@ -421,9 +448,12 @@ def _run_stages(
     try:
         job.set_progress("normalizing", 5.0)
         job.log("Stage 1/6: Normalizing audio (FFmpeg loudnorm, 16 kHz mono FLAC)...")
-        duration = normalize_audio(job.audio_path, norm_flac)
+        max_seconds = _clip_seconds(job)
+        duration = normalize_audio(job.audio_path, norm_flac, max_seconds=max_seconds)
         source_checksum = sha256_file(job.audio_path)
         job.log(f"Audio normalized: {duration:.1f}s ({duration / 60:.1f} min)")
+        if max_seconds is not None:
+            _record_clip(job, max_seconds, kept_seconds=duration)
         job.set_progress("normalizing", 20.0)
     except Exception as exc:
         job.fail(f"Stage 1 Audio Normalization failed: {exc}")

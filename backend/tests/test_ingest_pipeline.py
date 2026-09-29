@@ -22,6 +22,7 @@ from app.services.ingest import (
     normalize_audio,
     run_pipeline,
 )
+from app.services.ingest.audio import source_duration
 from tests.ingest_support import _drain, _pipeline_job, make_test_audio
 
 pytestmark = pytest.mark.db
@@ -42,6 +43,62 @@ def test_normalize_audio_converts_to_16khz_mono_flac(tmp_path: Path) -> None:
     assert info.samplerate == 16000
     assert info.channels == 1
     assert info.format == "FLAC"
+
+
+def test_normalize_audio_keeps_only_the_first_max_seconds(tmp_path: Path) -> None:
+    """The clip is cut before loudness is measured, so the kept part is what gets normalised."""
+    src_wav = make_test_audio(tmp_path / "raw.wav", duration_seconds=6.0)
+    out_flac = tmp_path / "norm.flac"
+
+    duration = normalize_audio(src_wav, out_flac, max_seconds=2.0)
+
+    assert duration == pytest.approx(2.0, abs=0.05)
+    assert sf.info(str(out_flac)).duration == pytest.approx(2.0, abs=0.05)
+
+
+def test_the_source_duration_is_read_without_decoding_to_the_end(tmp_path: Path) -> None:
+    src_wav = make_test_audio(tmp_path / "raw.wav", duration_seconds=6.0)
+    garbage = tmp_path / "garbage.m4a"
+    garbage.write_bytes(b"not audio")
+
+    assert source_duration(src_wav) == pytest.approx(6.0, abs=0.05)
+    assert source_duration(garbage) is None
+
+
+def test_a_clipped_episode_is_imported_as_its_first_minutes_and_says_so(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    """D103: the episode is the kept part, and its metadata records what it was cut from."""
+    job = _pipeline_job(tmp_path, "clipped", seconds=45.0)
+    job.metadata = {"genre": "audiobook", "clip": {"max_seconds": 25}}
+
+    run_pipeline(job, lambda: db_session, object_storage, settings)
+
+    assert job.error is None, job.error
+    ep = db_session.scalar(sa.select(Episode).where(Episode.external_id == job.episode_id))
+    assert ep is not None
+    assert ep.duration_seconds == pytest.approx(25.0, abs=0.1)
+    clip = ep.metadata_jsonb["clip"]
+    assert clip["max_seconds"] == 25
+    assert clip["source_duration_seconds"] == pytest.approx(45.0, abs=0.1)
+    segments = db_session.scalars(sa.select(Segment).where(Segment.episode_id == ep.id)).all()
+    assert max(s.end_time for s in segments) <= 25.0 + 0.01
+    assert any("first 0.4 of 0.8 min" in entry.message for entry in job.logs)
+
+
+def test_a_clip_longer_than_the_source_leaves_the_episode_whole_and_unmarked(
+    db_session: Session, object_storage, settings, tmp_path: Path
+) -> None:
+    job = _pipeline_job(tmp_path, "unclipped", seconds=45.0)
+    job.metadata = {"clip": {"max_seconds": 1200}}
+
+    run_pipeline(job, lambda: db_session, object_storage, settings)
+
+    assert job.error is None, job.error
+    ep = db_session.scalar(sa.select(Episode).where(Episode.external_id == job.episode_id))
+    assert ep is not None
+    assert ep.duration_seconds == pytest.approx(45.0, abs=0.1)
+    assert "clip" not in (ep.metadata_jsonb or {})
 
 
 def test_normalization_discards_content_above_nyquist_instead_of_folding_it(

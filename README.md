@@ -49,10 +49,12 @@ fills the title and slug in from the video. Six stages run in the background —
 transcribe, fuse, analyse, build queue — and stream their logs into the panel as they go. When it
 finishes, `Start Annotating` drops you straight into the queue.
 
-A URL is looked up before anything is downloaded, so a private, live or over-long video is refused
-while you are still typing rather than after you commit to it. The four-hour ceiling is a spend
-guard — `ingest.youtube.max_duration_seconds` in `config/settings.yaml` — because cost is linear in
-source duration. Ingesting a video is on you as far as its licensing goes; the harness does not
+A URL is looked up before anything is downloaded, so a private or live video is refused while you
+are still typing rather than after you commit to it. The four-hour ceiling is a spend guard —
+`ingest.youtube.max_duration_seconds` in `config/settings.yaml` — because cost is linear in the
+duration transcribed. For a long recording such as an audiobook, tick **Keep only the opening** and
+only its first N minutes are transcribed; N is prefilled by genre (20, or 45 for news) and a
+clipped video only has to fit the ceiling once clipped. Ingesting a video is on you as far as its licensing goes; the harness does not
 check.
 
 Transcription calls cost money. Three models transcribe every clip — ElevenLabs Scribe v2,

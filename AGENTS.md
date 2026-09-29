@@ -116,8 +116,9 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   configured, so a clip costs three calls -- plus one fusion request per ~30 minutes of audio,
   which is billed mostly as thinking tokens. Use a short audio file, or `dry_run: true` in
   `config/llm_routes.yaml`, when exercising the pipeline; a dry run skips fusion entirely. The same arithmetic is why
-  `ingest.youtube.max_duration_seconds` exists — cost is linear in source duration, so a YouTube
-  URL is a bigger footgun than a file the annotator had to download first.
+  `ingest.youtube.max_duration_seconds` exists — cost is linear in the duration transcribed, so a
+  YouTube URL is a bigger footgun than a file the annotator had to download first. A clipped
+  ingest (D103) is judged by its clip, and cut at stage 1: the whole file is still downloaded.
 - A YouTube URL never reaches `yt-dlp` as typed. `app/services/youtube.py` parses out the
   eleven-character video id and rebuilds a canonical `watch?v=<id>` from it, which is the only form
   the subprocess sees (D23). Do not "improve" this into sanitizing the string: the rebuild is what

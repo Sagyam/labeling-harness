@@ -295,3 +295,32 @@ def test_the_models_root_defaults_to_an_absolute_path_under_the_repo() -> None:
     root = load_settings().models.root
     assert root.is_absolute()
     assert root == REPO_ROOT / "data" / "models" / "asr"
+
+
+def test_every_genre_given_its_own_clip_length_is_a_real_genre() -> None:
+    """A misspelt genre under ``ingest.clip`` would silently fall back to the default (D103)."""
+    from app.services.episode_meta import GENRE_LABELS
+
+    clip = load_settings().ingest.clip
+    assert set(clip.minutes_by_genre) <= set(GENRE_LABELS)
+    assert clip.minutes_by_genre["audiobook"] == 20
+    assert clip.minutes_by_genre["news"] == 45
+
+
+def test_a_genre_without_its_own_clip_length_gets_the_default() -> None:
+    from app.config import ClipSettings
+
+    clip = ClipSettings(default_minutes=20, minutes_by_genre={"news": 45})
+    assert clip.minutes_for("news") == 45
+    assert clip.minutes_for("podcast") == 20
+    assert clip.minutes_for(None) == 20
+    assert clip.minutes_for("") == 20
+
+
+def test_a_clip_length_must_be_at_least_a_minute() -> None:
+    from app.config import ClipSettings
+
+    with pytest.raises(ValidationError):
+        ClipSettings(default_minutes=0)
+    with pytest.raises(ValidationError):
+        ClipSettings(minutes_by_genre={"news": 0})

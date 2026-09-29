@@ -380,11 +380,20 @@ upload does** -- it is how the source file arrives, not a seventh stage -- so it
 - **The video is inspected before any bytes move.** `POST /ingest/youtube` looks the video up
   first, so a private, live or over-long video is a 422 on that request instead of a job that
   fails a minute later. `ingest.youtube.max_duration_seconds` (4 h by default) is a spend guard,
-  not a technical limit: every `asr*` route transcribes every clip, so cost is linear in source
-  duration.
+  not a technical limit: every `asr*` route transcribes every clip, so cost is linear in the
+  duration transcribed. A clipped video is judged by its clip (below).
+
+**Clipping (D103).** Either form may send `clip_minutes`, opt-in: stage 1 then keeps only the
+recording's first that many minutes, FFmpeg reading no further, and the episode is imported as
+that part with `metadata_jsonb.clip = {max_seconds, source_duration_seconds}`. A source no longer
+than the clip is kept whole and unmarked. The form prefills the length from `ingest.clip` in
+`settings.yaml` by genre, served by `GET /episodes/vocabulary`. The whole file is still
+downloaded: yt-dlp's partial download ran at about 1.9x realtime.
 
 `POST /ingest/youtube/probe` runs the same lookup on its own, downloading nothing and creating no
-job, so the browser can prefill the title and slug and show what it is about to ingest. The
+job, so the browser can prefill the title and slug and show what it is about to ingest. It
+reports an over-long video with `max_duration_seconds` instead of refusing it, since a clip can
+bring it under the limit. The
 downloaded file keeps whichever container YouTube served -- stage 1 re-encodes it anyway, so
 nothing transcodes twice -- and the canonical URL is stored as the episode's `source_uri`.
 
@@ -556,7 +565,7 @@ the same inputs and filters produce byte-identical output.
 | `POST /ingest` | Upload an episode's audio with its own metadata; queues the job, returns its id and queue position |
 | `GET /ingest` | Inspect queue status: running job, upcoming queue, bot backlog, and past jobs |
 | `POST /ingest/youtube` | Ingest from a YouTube URL with its own metadata; the server fetches the audio itself |
-| `POST /ingest/youtube/probe` | Read a video's metadata; downloads nothing and creates no job |
+| `POST /ingest/youtube/probe` | Read a video's metadata and the length limit; downloads nothing and creates no job |
 | `POST /ingest/{id}/retry` | Requeue a failed, aborted, or backlogged ingestion job |
 | `POST /ingest/retry-all` | Batch retry all jobs matching a status filter (e.g. `backlog`, `failed`) |
 | `DELETE /ingest/{id}` | Cancel a queued/running job or remove a finished/backlog job |
@@ -564,7 +573,7 @@ the same inputs and filters produce byte-identical output.
 | `GET /ingest/{id}` | Job stage, progress, active segment count, error state |
 | `GET /ingest/{id}/events` | SSE stream of the job's log lines |
 | `GET /episodes` | Episode list with per-episode segment counts, progress, genre and topic |
-| `GET /episodes/vocabulary` | The closed genre (with each one's test), topic, gender and age-bracket lists (D102) |
+| `GET /episodes/vocabulary` | The closed genre (with each one's test), topic, gender and age-bracket lists (D102), and the suggested clip length per genre (D103) |
 | `GET /episodes/{id}/metadata` | An episode's genre, topic, topic source and declared speaker rows |
 | `PUT /episodes/{id}/metadata` | Replace genre, topic and speaker rows; 422 off the closed lists; audited (D102) |
 | `GET /episodes/{id}/segments` | Segments of one episode with flags, transcripts and audio URLs |

@@ -2387,3 +2387,36 @@ English share.
 
 **Reversal:** cheap for the list (edit `GENRES`), and each relabel is reversible from its audit
 row. Reopening free text would bring back the typos and synonyms this entry exists to stop.
+
+## D103 — A long recording can be clipped to its first N minutes, opt-in, with a suggestion per genre
+
+Audiobooks and long streams run to ten hours, and the corpus gains little from most of that. On
+the live database (2026-09-29, 17 episodes of 60 minutes or more): every speaker with at least
+60 s of speech had spoken within the first 5 minutes, and the learning curve already showed more
+hours of the same voices do not move WER (4.6 h ≈ 18.3 h). New vocabulary does keep coming — about
+5 new-to-corpus words per 100 tokens at minute 5, still 4.75 at minutes 60–120 — but a new video
+brings the same new words plus new voices. Rotating-cast formats are the exception: one 53-minute
+news bulletin had new voices at 23, 31 and 37 minutes.
+
+- **Opt-in, on the ingest form.** A "keep only the opening" box, off by default, with a length in
+  minutes. Ticked, it prefills `ingest.clip.minutes_by_genre` for the chosen genre, else
+  `ingest.clip.default_minutes` (20); the annotator can change it. Nothing is cut unless the form
+  sends `clip_minutes`. The suggestions: 20 for fixed-cast formats and audiobooks; 45 for news,
+  and for street interviews, streams and speeches by analogy (unmeasured).
+- **Cut at stage 1, not at download.** The whole file is downloaded and FFmpeg reads only the
+  first N minutes (`-t` as an input option, on both loudnorm passes, so loudness is measured on
+  what is kept). yt-dlp's `--download-sections` was measured and rejected: it streams through
+  FFmpeg at about 1.9x realtime (20 minutes of audio in about 10 minutes), where a plain
+  download fetched 144 minutes in 6 s. One path serves uploads and URLs alike.
+- **The spend guard judges what is transcribed.** `ingest.youtube.max_duration_seconds` is
+  compared against `min(duration, clip)`. So a ten-hour audiobook is refused whole and accepted
+  clipped. The probe no longer refuses an over-long video; it returns the limit, and the form
+  says to tick the box. `POST /ingest/youtube` still refuses anything over it.
+- **The episode says it was cut.** It is imported as the kept part (`duration_seconds` is the
+  clip), and `metadata_jsonb.clip` holds `max_seconds` and the source's `source_duration_seconds`
+  (ffprobe; null if unreadable). A source no shorter than the clip leaves no mark, so `clip`
+  present means the episode is the opening of something longer. Timestamps start at 0 in both,
+  so "Watch at" links still land where they should.
+
+**Reversal:** cheap. Remove the form field and the `clip_minutes` parameters; clipped episodes
+stay as they are and still say so.

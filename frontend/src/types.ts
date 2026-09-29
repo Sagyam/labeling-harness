@@ -525,6 +525,8 @@ export interface YouTubeProbe {
   upload_date: string | null
   is_live: boolean
   suggested_episode_id: string
+  /** The spend guard: a longer video is ingestible only clipped to this or less (D103). */
+  max_duration_seconds: number
 }
 
 export interface YouTubeIngestIn {
@@ -537,6 +539,8 @@ export interface YouTubeIngestIn {
   speakers_json?: string
   /** Speaker rows on the form, blank ones included; 0 lets the diarizer count (D79). */
   speaker_count?: number
+  /** Opt-in: keep only the first this many minutes (D103). Absent keeps the whole video. */
+  clip_minutes?: number
 }
 
 export interface EpisodeSummary {
@@ -570,6 +574,10 @@ export interface EpisodeVocabulary {
   genders: string[]
   age_brackets: string[]
   max_speakers: number
+  /** What the ingest form's clip box prefills, per genre (D103). */
+  clip_minutes: Record<string, number>
+  /** The prefill for a blank genre. */
+  clip_default_minutes: number
 }
 
 /** One declared speaker; a blank field is null. */

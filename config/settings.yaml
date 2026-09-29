@@ -126,6 +126,18 @@ ingest:
       cooldown_seconds: 600
       max_cooldown_seconds: 3600
       rate_limit_retries: 0
+  # D103: the ingest form's opt-in "keep only the first N minutes". These only prefill the box
+  # when it is ticked; nothing is cut unless the form asks. Fixed-cast formats have every voice by
+  # minute ~5 and depth per voice stops paying at ~20 clips, so 20 min. Rotating-cast formats keep
+  # adding voices: one 53-min news bulletin had new ones at 23, 31 and 37 min.
+  clip:
+    default_minutes: 20
+    minutes_by_genre:
+      audiobook: 20               # one narrator; past ~5 min it is vocabulary, not voices
+      news: 45
+      street_interview: 45        # rotating cast, unmeasured: treated like news
+      streaming: 45               # guests come and go, unmeasured: treated like news
+      speech: 45                  # several speakers at one event, unmeasured: treated like news
 
 # Transcript fusion (D72): a reasoning model reconciles the three recognisers into the seed.
 # The route itself -- model, thinking budget, timeout -- is `fuse_transcript` in llm_routes.yaml.

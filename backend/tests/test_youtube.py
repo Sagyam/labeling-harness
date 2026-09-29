@@ -241,6 +241,24 @@ def test_an_unknown_duration_is_not_treated_as_an_over_long_one(settings) -> Non
     check_duration(VideoInfo(video_id=VIDEO_ID, url="u", title="t"), settings=settings)
 
 
+def test_a_clip_is_what_the_spend_guard_measures(settings) -> None:
+    """A ten-hour audiobook clipped to 20 minutes costs 20 minutes of inference (D103)."""
+    limit = settings.ingest.youtube.max_duration_seconds
+    info = VideoInfo(video_id=VIDEO_ID, url="u", title="t", duration_seconds=10 * 3600)
+
+    check_duration(info, settings=settings, clip_seconds=20 * 60)
+    with pytest.raises(VideoTooLong, match="clip"):
+        check_duration(info, settings=settings, clip_seconds=limit + 60)
+
+
+def test_an_over_long_video_is_told_it_can_be_clipped(settings) -> None:
+    limit = settings.ingest.youtube.max_duration_seconds
+    info = VideoInfo(video_id=VIDEO_ID, url="u", title="t", duration_seconds=limit + 1)
+
+    with pytest.raises(VideoTooLong, match="clip"):
+        check_duration(info, settings=settings)
+
+
 # --- Downloading --------------------------------------------------------------------------
 
 
@@ -797,3 +815,86 @@ def test_a_segment_carries_its_video_link(client, imported_episode, db_session) 
     db_session.flush()
     segment = client.get(f"/tasks/{task_id}").json()["segment"]
     assert segment["video_url"] == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+
+@pytest.mark.db
+def test_the_probe_reports_an_over_long_video_with_the_limit_instead_of_refusing_it(
+    client: TestClient, probed, settings
+) -> None:
+    """A clip makes it ingestible, so the form needs the video card and the limit (D103)."""
+    probed(video(duration_seconds=10 * 3600))
+
+    response = client.post("/ingest/youtube/probe", json={"url": f"https://youtu.be/{VIDEO_ID}"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["duration_seconds"] == 10 * 3600
+    assert body["max_duration_seconds"] == settings.ingest.youtube.max_duration_seconds
+
+
+@pytest.mark.db
+def test_an_over_long_video_is_ingestible_only_clipped_under_the_limit(
+    client: TestClient, probed, monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    probed(video(duration_seconds=10 * 3600))
+    _never_queue(monkeypatch)
+    url = f"https://youtu.be/{VIDEO_ID}"
+    limit_minutes = int(settings.ingest.youtube.max_duration_seconds // 60)
+
+    whole = client.post("/ingest/youtube", json={"url": url})
+    too_long_a_clip = client.post("/ingest/youtube", json={"url": url, "clip_minutes": 600})
+    clipped = client.post("/ingest/youtube", json={"url": url, "clip_minutes": limit_minutes})
+
+    assert whole.status_code == 422
+    assert "clip" in whole.json()["detail"]
+    assert too_long_a_clip.status_code == 422
+    assert clipped.status_code == 202
+
+
+@pytest.mark.db
+def test_a_clipped_youtube_job_carries_its_clip(
+    client: TestClient, probed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    probed(video(duration_seconds=10 * 3600))
+    _never_queue(monkeypatch)
+
+    response = client.post(
+        "/ingest/youtube",
+        json={"url": f"https://youtu.be/{VIDEO_ID}", "genre": "audiobook", "clip_minutes": 20},
+    )
+
+    assert response.status_code == 202
+    job = manager.get_job(response.json()["job_id"])
+    assert job is not None
+    assert job.metadata["clip"] == {"max_seconds": 1200}
+
+
+@pytest.mark.db
+def test_clipping_is_opt_in_even_for_a_genre_with_a_suggested_length(
+    client: TestClient, probed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-genre lengths only prefill the form; nothing is cut unless the form asks (D103)."""
+    probed(video())
+    _never_queue(monkeypatch)
+
+    response = client.post(
+        "/ingest/youtube", json={"url": f"https://youtu.be/{VIDEO_ID}", "genre": "news"}
+    )
+
+    assert response.status_code == 202
+    job = manager.get_job(response.json()["job_id"])
+    assert job is not None
+    assert "clip" not in job.metadata
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("minutes", [0, -5])
+def test_a_clip_shorter_than_a_minute_is_refused(
+    client: TestClient, probed, monkeypatch: pytest.MonkeyPatch, minutes: int
+) -> None:
+    probed(video())
+    _never_queue(monkeypatch)
+    response = client.post(
+        "/ingest/youtube", json={"url": f"https://youtu.be/{VIDEO_ID}", "clip_minutes": minutes}
+    )
+    assert response.status_code == 422

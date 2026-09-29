@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 import yaml
@@ -359,6 +359,23 @@ class YouTubeSettings(BaseModel):
     )
 
 
+class ClipSettings(BaseModel):
+    """Suggested lengths for the ingest form's opt-in clip to the first N minutes (D103).
+
+    These only prefill the form when the annotator ticks the box; nothing is cut unless the form
+    asks. A genre without its own entry gets ``default_minutes``.
+    """
+
+    model_config = _STRICT
+
+    default_minutes: int = Field(default=20, ge=1)
+    minutes_by_genre: dict[str, Annotated[int, Field(ge=1)]] = Field(default_factory=dict)
+
+    def minutes_for(self, genre: str | None) -> int:
+        """The suggested clip length for ``genre``, or the default for a blank or unlisted one."""
+        return self.minutes_by_genre.get(genre or "", self.default_minutes)
+
+
 class IngestSettings(BaseModel):
     """Web ingestion scratch space.
 
@@ -375,6 +392,7 @@ class IngestSettings(BaseModel):
     max_segment_concurrency: int = Field(default=8, ge=1, le=32)
     cpu_workers: int = Field(default=8, ge=1, le=64)
     youtube: YouTubeSettings = Field(default_factory=YouTubeSettings)
+    clip: ClipSettings = Field(default_factory=ClipSettings)
     #: Text route that labels an episode's topic from its transcript (D57). One call per episode,
     #: only when the form left the topic blank. Empty disables it; a name that is not in
     #: `llm_routes.yaml` is logged and skipped, because a metadata field never fails an ingest.

@@ -119,14 +119,21 @@ def list_episodes(session: Session = Depends(get_session)) -> list[EpisodeSummar
 
 
 @router.get("/episodes/vocabulary", response_model=EpisodeVocabularyOut)
-def episode_vocabulary() -> EpisodeVocabularyOut:
-    """Every closed list the metadata editor and the ingest form pick from (D102)."""
+def episode_vocabulary(settings: Settings = Depends(get_config)) -> EpisodeVocabularyOut:
+    """Every closed list the metadata editor and the ingest form pick from (D102).
+
+    Also the clip length the ingest form suggests for each genre when its clip box is ticked
+    (D103), so the form never carries a copy of ``settings.yaml``.
+    """
+    clip = settings.ingest.clip
     return EpisodeVocabularyOut(
         genres=[GenreOut(value=g.value, label=g.label, description=g.description) for g in GENRES],
         topics=list(TOPIC_LABELS),
         genders=sorted(ALLOWED_VALUES["gender"]),
         age_brackets=list(AGE_BRACKETS),
         max_speakers=MAX_SPEAKERS,
+        clip_minutes={g.value: clip.minutes_for(g.value) for g in GENRES},
+        clip_default_minutes=clip.default_minutes,
     )
 
 

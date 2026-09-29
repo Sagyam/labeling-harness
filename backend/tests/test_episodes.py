@@ -277,6 +277,19 @@ def test_the_vocabulary_lists_every_genre_with_its_test_and_every_topic(
     assert vocabulary["max_speakers"] == 8
 
 
+def test_the_vocabulary_suggests_a_clip_length_for_every_genre(
+    client: TestClient, settings
+) -> None:
+    """What the ingest form prefills when the clip box is ticked (D103)."""
+    vocabulary = client.get("/episodes/vocabulary").json()
+
+    clip = settings.ingest.clip
+    assert vocabulary["clip_default_minutes"] == clip.default_minutes
+    assert set(vocabulary["clip_minutes"]) == {g["value"] for g in vocabulary["genres"]}
+    assert vocabulary["clip_minutes"]["news"] == clip.minutes_by_genre["news"]
+    assert vocabulary["clip_minutes"]["podcast"] == clip.minutes_for("podcast")
+
+
 def test_an_episode_metadata_edit_is_stored_listed_and_audited(
     client: TestClient, db_session: Session, imported_episode: str
 ) -> None:

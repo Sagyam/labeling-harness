@@ -71,6 +71,32 @@ def test_an_upload_carries_the_forms_speaker_count(
     assert job.metadata["speaker_count"] == 5
 
 
+def test_an_upload_carries_the_forms_clip(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wav_path = make_test_audio(tmp_path / "upload.wav", duration_seconds=3.0)
+    monkeypatch.setattr(manager, "submit", lambda job, *args, **kwargs: 0)
+
+    with open(wav_path, "rb") as f:
+        clipped = client.post(
+            "/ingest",
+            data={"episode_title": "Book", "episode_id": "api_book", "clip_minutes": "20"},
+            files={"file": ("upload.wav", f, "audio/wav")},
+        )
+    with open(wav_path, "rb") as f:
+        whole = client.post(
+            "/ingest",
+            data={"episode_title": "Whole", "episode_id": "api_whole"},
+            files={"file": ("upload.wav", f, "audio/wav")},
+        )
+
+    clipped_job = manager.get_job(clipped.json()["job_id"])
+    whole_job = manager.get_job(whole.json()["job_id"])
+    assert clipped_job is not None and whole_job is not None
+    assert clipped_job.metadata["clip"] == {"max_seconds": 1200}
+    assert "clip" not in whole_job.metadata
+
+
 def test_api_ingest_unsupported_format_rejected(client: TestClient) -> None:
     dummy = io.BytesIO(b"not an audio file")
     response = client.post(

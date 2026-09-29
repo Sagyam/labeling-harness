@@ -266,20 +266,27 @@ def probe(raw_url: str, settings: Settings | None = None) -> VideoInfo:
     return info
 
 
-def check_duration(info: VideoInfo, settings: Settings | None = None) -> None:
+def check_duration(
+    info: VideoInfo, settings: Settings | None = None, clip_seconds: float | None = None
+) -> None:
     """Refuse a video whose length would make the ASR bill unreasonable.
 
     A video whose duration yt-dlp could not report passes: an unknown length is not evidence of a
-    long one, and every live stream is already rejected by the caller.
+    long one, and every live stream is already rejected by the caller. A clipped video is judged by
+    what will be transcribed, its first ``clip_seconds``, not by what is downloaded (D103).
 
     Raises:
-        VideoTooLong: The duration exceeds ``ingest.youtube.max_duration_seconds``.
+        VideoTooLong: The transcribed length exceeds ``ingest.youtube.max_duration_seconds``.
     """
     limit = _youtube_settings(settings).max_duration_seconds
-    if info.duration_seconds is not None and info.duration_seconds > limit:
+    if info.duration_seconds is None:
+        return
+    kept = min(info.duration_seconds, clip_seconds or info.duration_seconds)
+    if kept > limit:
         raise VideoTooLong(
             f"video is {info.duration_seconds / 60:.0f} min, over the "
-            f"{limit / 60:.0f} min ingestion limit"
+            f"{limit / 60:.0f} min ingestion limit; clip it to {limit / 60:.0f} min or less "
+            "to ingest its opening"
         )
 
 

@@ -74,7 +74,36 @@ class SilentAudioError(RuntimeError):
     """The input holds no sound at all, so there is nothing to normalise."""
 
 
-def normalize_audio(input_path: Path, output_path: Path) -> float:
+def source_duration(path: Path) -> float | None:
+    """The length of any audio file FFmpeg can read, from its container, or None if unreadable.
+
+    ffprobe reads the header rather than decoding, so a ten-hour source costs no more than a
+    short one. Used to record what a clipped episode was cut from (D103).
+    """
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    try:
+        seconds = float(proc.stdout.decode("utf-8", errors="replace").strip())
+    except ValueError:
+        return None
+    return seconds if proc.returncode == 0 and math.isfinite(seconds) else None
+
+
+def normalize_audio(
+    input_path: Path, output_path: Path, *, max_seconds: float | None = None
+) -> float:
     """Stage 1: Normalize audio using FFmpeg with loudnorm filter.
 
     Converts to 16 kHz mono FLAC using two-pass EBU R128 normalization.
@@ -84,11 +113,16 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
     back into the clip as alias.
     Returns duration in seconds.
 
+    ``max_seconds`` keeps only the opening of the input (D103). It limits what both passes read,
+    so the loudness is measured on the part that is kept and the rest is never decoded.
+
     Raises:
         SilentAudioError: The input is digital silence.
         RuntimeError: FFmpeg could not normalise it.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # An input option, so FFmpeg stops reading there rather than decoding the rest to discard it.
+    limit = ["-t", f"{max_seconds:.3f}"] if max_seconds else []
 
     # Pass 1: Measure loudness parameters
     cmd1 = [
@@ -96,6 +130,7 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
         "-y",
         "-threads",
         "0",
+        *limit,
         "-i",
         str(input_path),
         "-af",
@@ -143,6 +178,7 @@ def normalize_audio(input_path: Path, output_path: Path) -> float:
         "-y",
         "-threads",
         "0",
+        *limit,
         "-i",
         str(input_path),
         "-af",

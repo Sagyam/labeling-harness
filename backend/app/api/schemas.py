@@ -396,6 +396,9 @@ class EpisodeVocabularyOut(BaseModel):
     genders: list[str]
     age_brackets: list[str]
     max_speakers: int
+    #: What the ingest form's opt-in clip box prefills, per genre and for a blank one (D103).
+    clip_minutes: dict[str, int]
+    clip_default_minutes: int
 
 
 class EpisodeSegmentSummary(BaseModel):

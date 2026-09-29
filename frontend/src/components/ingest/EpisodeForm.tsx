@@ -26,6 +26,7 @@ import {
   PROBE_DEBOUNCE_MS,
   type SourceTab,
 } from '@/components/ingest/constants'
+import { ClipField } from '@/components/ingest/ClipField'
 import { GenreTopicFields } from '@/components/metadata/GenreTopicFields'
 import { SpeakerRows } from '@/components/metadata/SpeakerRows'
 import { type SpeakerDraft, emptySpeaker } from '@/components/metadata/speakers'
@@ -61,13 +62,51 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
   const [genre, setGenre] = useState<string>('podcast')
   const [topic, setTopic] = useState<string>('')
   const [speakers, setSpeakers] = useState<SpeakerDraft[]>(() => [emptySpeaker()])
+  const [clipEnabled, setClipEnabled] = useState<boolean>(false)
+  const [clipMinutes, setClipMinutes] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const titleIsAnnotatorsRef = useRef<boolean>(false)
   const showIdIsAnnotatorsRef = useRef<boolean>(false)
+  const clipIsAnnotatorsRef = useRef<boolean>(false)
 
   const vocabulary = useEpisodeVocabulary()
+
+  // The clip is opt-in (D103). Ticked, it follows the genre's suggestion until the annotator types
+  // a length of their own.
+  const suggestedClipMinutes = vocabulary
+    ? (vocabulary.clip_minutes[genre] ?? vocabulary.clip_default_minutes)
+    : null
+  const genreLabel = vocabulary?.genres.find((g) => g.value === genre)?.label ?? null
+  const clipNumber = Number(clipMinutes)
+  const clipValid = Number.isInteger(clipNumber) && clipNumber >= 1
+  const clipValue = clipEnabled && clipValid ? clipNumber : undefined
+
+  useEffect(() => {
+    if (clipEnabled && suggestedClipMinutes !== null && !clipIsAnnotatorsRef.current) {
+      setClipMinutes(String(suggestedClipMinutes))
+    }
+  }, [clipEnabled, suggestedClipMinutes])
+
+  const handleClipEnabledChange = (enabled: boolean) => {
+    clipIsAnnotatorsRef.current = false
+    setClipEnabled(enabled)
+  }
+
+  const handleClipMinutesChange = (value: string) => {
+    clipIsAnnotatorsRef.current = true
+    setClipMinutes(value)
+  }
+
+  // Judged on what would be transcribed, as the server judges it: a clip can bring an over-long
+  // video under the limit, so the probe reports the limit rather than refusing.
+  const probeKeptSeconds =
+    probe?.duration_seconds == null
+      ? null
+      : Math.min(probe.duration_seconds, clipValue ? clipValue * 60 : Infinity)
+  const probeOverLimit =
+    probe !== null && probeKeptSeconds !== null && probeKeptSeconds > probe.max_duration_seconds
 
   const buildSpeakersJson = () => {
     const payload: Record<string, any> = {}
@@ -101,6 +140,9 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
     setTopic('')
     setSpeakers([emptySpeaker()])
     setShowSociolinguistics(false)
+    setClipEnabled(false)
+    setClipMinutes('')
+    clipIsAnnotatorsRef.current = false
   }
 
   const handleTitleChange = (val: string) => {
@@ -158,6 +200,7 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
     formData.append('topic', topic.trim())
     formData.append('speakers_json', buildSpeakersJson())
     formData.append('speaker_count', String(speakerCount))
+    if (clipValue) formData.append('clip_minutes', String(clipValue))
 
     try {
       const res = await api.startIngest(formData)
@@ -188,6 +231,7 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
         topic: topic.trim(),
         speakers_json: buildSpeakersJson(),
         speaker_count: speakerCount,
+        clip_minutes: clipValue,
       })
       resetForm()
       onQueued(res, 'youtube')
@@ -365,6 +409,18 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
               </div>
             </div>
           )}
+
+          {!isProbing && probe && probeOverLimit && (
+            <Alert variant="destructive">
+              <RiErrorWarningLine />
+              <AlertTitle>Too long to ingest whole</AlertTitle>
+              <AlertDescription>
+                {clipEnabled
+                  ? `The clip is still over the ${Math.round(probe.max_duration_seconds / 60)} min limit. Shorten it below.`
+                  : `This video is over the ${Math.round(probe.max_duration_seconds / 60)} min limit. Tick "Keep only the opening" below to ingest its first minutes.`}
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
       </TabsContent>
 
@@ -462,6 +518,18 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
       )}
     </div>
 
+    {suggestedClipMinutes !== null && (
+      <ClipField
+        enabled={clipEnabled}
+        minutes={clipMinutes}
+        onEnabledChange={handleClipEnabledChange}
+        onMinutesChange={handleClipMinutesChange}
+        suggestedMinutes={suggestedClipMinutes}
+        genreLabel={genreLabel}
+        sourceSeconds={sourceTab === 'youtube' ? (probe?.duration_seconds ?? null) : null}
+      />
+    )}
+
     {/* Submit Bar */}
     <div className="flex items-center justify-between gap-3 border-t pt-4">
       <span className="font-mono text-xs text-muted-foreground">
@@ -473,7 +541,8 @@ export function EpisodeForm({ queueBusy, onQueued }: EpisodeFormProps) {
         disabled={
           isSubmitting ||
           !episodeTitle.trim() ||
-          (sourceTab === 'file' ? !selectedFile : !probe || isProbing)
+          (clipEnabled && !clipValid) ||
+          (sourceTab === 'file' ? !selectedFile : !probe || isProbing || probeOverLimit)
         }
         onClick={sourceTab === 'file' ? handleStartIngestion : handleStartYoutubeIngestion}
         className="gap-2"

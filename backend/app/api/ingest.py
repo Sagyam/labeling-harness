@@ -82,13 +82,20 @@ def _slugify(text: str) -> str:
 
 
 def _episode_metadata(
-    genre: str, topic: str, speakers_json: str, speaker_count: int = 0
+    genre: str,
+    topic: str,
+    speakers_json: str,
+    speaker_count: int = 0,
+    clip_minutes: int | None = None,
 ) -> dict[str, Any]:
     """Build the episode's free-form metadata from the form's optional fields.
 
     ``speaker_count`` is the number of speaker rows on the form, kept apart from ``speakers``
     because a row whose demographics were left blank is not sent there but is still a person the
     diarizer must find (D79).
+
+    ``clip_minutes`` is present only when the annotator ticked the clip box (D103): stage 1 then
+    keeps the recording's first that many minutes, and records what it was cut from.
 
     Genre and topic must be on their closed lists (D57, D102): anything else is a 422, raised
     before the caller has written anything to disk.
@@ -112,6 +119,8 @@ def _episode_metadata(
             metadata["speakers"] = json.loads(speakers_json)
     if speaker_count > 0:
         metadata["speaker_count"] = speaker_count
+    if clip_minutes is not None:
+        metadata["clip"] = {"max_seconds": clip_minutes * 60}
     return strip_speaker_pii(metadata)
 
 
@@ -135,6 +144,8 @@ class YouTubeIngestIn(YouTubeProbeIn):
     topic: str = ""
     speakers_json: str = ""
     speaker_count: int = Field(default=0, ge=0, le=MAX_SPEAKERS)
+    #: Opt-in: keep only the video's first this many minutes (D103). Absent keeps all of it.
+    clip_minutes: int | None = Field(default=None, ge=1)
 
 
 class RetryAllIn(BaseModel):
@@ -155,13 +166,17 @@ class YouTubeProbeOut(BaseModel):
     upload_date: str | None = None
     is_live: bool = False
     suggested_episode_id: str
+    #: The spend guard. A longer video is ingestible only clipped to this or less (D103), so the
+    #: probe reports it rather than refusing, and the form says what to do.
+    max_duration_seconds: float
 
 
 def _probe_or_http_error(url: str, settings: Settings) -> VideoInfo:
     """Look a video up, mapping every failure onto the status code it deserves.
 
-    A bad URL and an over-long video are the caller's problem (422); a yt-dlp or network failure
-    is not (502), and telling the two apart is what makes the modal's error message actionable.
+    A bad URL or a live stream is the caller's problem (422); a yt-dlp or network failure is not
+    (502), and telling the two apart is what makes the modal's error message actionable. Length
+    is judged separately, by :func:`_check_length`, because a clip can fix it (D103).
     """
     # A lookup is one request, not a download, so it does not queue for the download slot; but a
     # bot check it hits cools the downloads down like one a download hit (D88).
@@ -182,13 +197,18 @@ def _probe_or_http_error(url: str, settings: Settings) -> VideoInfo:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="live streams cannot be ingested; wait for the recording to be published",
         )
+    return info
+
+
+def _check_length(info: VideoInfo, settings: Settings, clip_minutes: int | None) -> None:
+    """Refuse, with a 422, a video whose transcribed part is over the spend guard."""
     try:
-        check_duration(info, settings=settings)
+        clip_seconds = clip_minutes * 60 if clip_minutes is not None else None
+        check_duration(info, settings=settings, clip_seconds=clip_seconds)
     except VideoTooLong as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    return info
 
 
 @router.post("/youtube/probe")
@@ -199,8 +219,8 @@ async def probe_youtube(
     """Read a video's metadata without downloading it, so the form can prefill itself.
 
     Cheap and side-effect free: no file is written and no job is created. It also front-loads
-    every rejection the ingest endpoint would make, so the annotator learns a video is too long
-    before committing to it rather than after.
+    every rejection the ingest endpoint would make but one: a video over the length limit is
+    reported with the limit, not refused, because clipping it makes it ingestible (D103).
     """
     info = _probe_or_http_error(body.url, settings)
     return YouTubeProbeOut(
@@ -213,6 +233,7 @@ async def probe_youtube(
         upload_date=info.upload_date,
         is_live=info.is_live,
         suggested_episode_id=_slugify(info.title),
+        max_duration_seconds=settings.ingest.youtube.max_duration_seconds,
     )
 
 
@@ -230,13 +251,16 @@ async def start_youtube_ingestion(
     download itself is the job's first act.
     """
     info = _probe_or_http_error(body.url, settings)
+    _check_length(info, settings, body.clip_minutes)
 
     title = body.episode_title.strip() or info.title
     # Slugified for the same reason the upload path slugifies: this becomes a directory name under
     # the work root and a prefix of every object key.
     final_episode_id = _slugify(body.episode_id) if body.episode_id.strip() else _slugify(title)
 
-    metadata = _episode_metadata(body.genre, body.topic, body.speakers_json, body.speaker_count)
+    metadata = _episode_metadata(
+        body.genre, body.topic, body.speakers_json, body.speaker_count, body.clip_minutes
+    )
 
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -280,6 +304,7 @@ async def start_ingestion(
     topic: str = Form(""),
     speakers_json: str = Form(""),
     speaker_count: int = Form(0, ge=0, le=MAX_SPEAKERS),
+    clip_minutes: int | None = Form(None, ge=1),
     settings: Settings = Depends(get_config),
     storage: ObjectStorage = Depends(get_object_storage),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
@@ -303,7 +328,7 @@ async def start_ingestion(
     # "../.." would otherwise write -- and later delete -- outside the tree entirely.
     final_episode_id = _slugify(episode_id) if episode_id.strip() else _slugify(episode_title)
 
-    metadata = _episode_metadata(genre, topic, speakers_json, speaker_count)
+    metadata = _episode_metadata(genre, topic, speakers_json, speaker_count, clip_minutes)
 
     # Prepare temporary directory. run_pipeline removes it when the job finishes.
     work_dir = settings.ingest.work_root / f"{final_episode_id}_{int(time.time())}"
