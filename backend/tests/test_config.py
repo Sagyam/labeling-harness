@@ -305,6 +305,7 @@ def test_every_genre_given_its_own_clip_length_is_a_real_genre() -> None:
     assert set(clip.minutes_by_genre) <= set(GENRE_LABELS)
     assert clip.minutes_by_genre["audiobook"] == 20
     assert clip.minutes_by_genre["news"] == 45
+    assert clip.minutes_by_genre["fm_radio"] == 45
 
 
 def test_a_genre_without_its_own_clip_length_gets_the_default() -> None:

@@ -144,6 +144,7 @@ ingest:
     minutes_by_genre:
       audiobook: 20               # one narrator; past ~5 min it is vocabulary, not voices
       news: 45
+      fm_radio: 45                # phone-in callers rotate, unmeasured: treated like news
       street_interview: 45        # rotating cast, unmeasured: treated like news
       streaming: 45               # guests come and go, unmeasured: treated like news
       speech: 45                  # several speakers at one event, unmeasured: treated like news

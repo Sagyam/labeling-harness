@@ -269,7 +269,7 @@ def test_the_vocabulary_lists_every_genre_with_its_test_and_every_topic(
     vocabulary = client.get("/episodes/vocabulary").json()
 
     genres = {g["value"]: g for g in vocabulary["genres"]}
-    assert {"advert", "explainer", "commentary"} <= set(genres)
+    assert {"advert", "explainer", "commentary", "fm_radio"} <= set(genres)
     assert all(g["label"] and g["description"] for g in genres.values())
     assert "technology" in vocabulary["topics"]
     assert vocabulary["genders"] == ["female", "male"]

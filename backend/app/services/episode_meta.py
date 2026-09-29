@@ -41,6 +41,7 @@ GENRES: tuple[Genre, ...] = (
     Genre("talk_show", "Talk show", "Studio or TV production with several guests."),
     Genre("street_interview", "Street interview", "Outdoor vox pop with strangers."),
     Genre("news", "News", "Broadcast report or official statement; mostly read speech."),
+    Genre("fm_radio", "FM radio", "A radio programme on air: host, phone-in callers, music beds."),
     Genre("commentary", "Commentary", "One host, unscripted, on a live subject: markets, a match."),
     Genre("explainer", "Explainer", "One person, scripted, teaching a how-to to camera or screen."),
     Genre("lecture", "Lecture", "A structured class; dense technical vocabulary."),

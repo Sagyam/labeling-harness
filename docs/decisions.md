@@ -2346,11 +2346,12 @@ said nothing new. Four named a format: `podcast` (12 different topics), `reels` 
 drives crosstalk, register and noise. **Topic is what it is about**, which drives vocabulary and
 English share.
 
-- **Sixteen formats, each with a test** (`app/services/episode_meta.py`, shown as the picker's
+- **Seventeen formats, each with a test** (`app/services/episode_meta.py`, shown as the picker's
   hint): podcast (unscripted conversation), interview (prepared questions; scripted, which is
   what separates it from podcast), talk_show, street_interview, news, commentary (one host,
   unscripted, on a live subject), explainer (one person, scripted, a how-to), lecture, review,
-  vlog, advert, sketch, standup, streaming, speech, audiobook. Several are empty on purpose:
+  vlog, advert, sketch, standup, streaming, speech, audiobook, and fm_radio (a programme on
+  air: host, phone-in callers, music beds; added 2026-09-29). Several are empty on purpose:
   they are formats the owner means to collect.
 - **`reels` is gone.** It described length and platform, not a format. The 105 reels held
   podcast clips, adverts, vlogs and explainers side by side. The owner checked a relabelling
@@ -2388,7 +2389,7 @@ news bulletin had new voices at 23, 31 and 37 minutes.
   minutes. Ticked, it prefills `ingest.clip.minutes_by_genre` for the chosen genre, else
   `ingest.clip.default_minutes` (20); the annotator can change it. Nothing is cut unless the form
   sends `clip_minutes`. The suggestions: 20 for fixed-cast formats and audiobooks; 45 for news,
-  and for street interviews, streams and speeches by analogy (unmeasured).
+  and for street interviews, streams, speeches and FM radio by analogy (unmeasured).
 - **Cut at stage 1, not at download.** The whole file is downloaded and FFmpeg reads only the
   first N minutes (`-t` as an input option, on both loudnorm passes, so loudness is measured on
   what is kept). yt-dlp's `--download-sections` was measured and rejected: it streams through
