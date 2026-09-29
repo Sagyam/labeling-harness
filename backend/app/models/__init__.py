@@ -6,6 +6,7 @@ from app.models.annotation import (
     LabelVersion,
     LabelWord,
     SegmentLabel,
+    VoiceAttribute,
     VoiceConfirmation,
 )
 from app.models.content import (
@@ -43,5 +44,6 @@ __all__ = [
     "SegmentScore",
     "SpeakerTurn",
     "TranslitCacheEntry",
+    "VoiceAttribute",
     "VoiceConfirmation",
 ]

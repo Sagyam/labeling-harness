@@ -55,8 +55,17 @@ dataset:
     - gender
     - age_bracket
     - topic
-  min_stratum_hours: 1.0         # under this, the corpus page calls a stratum thin (D69)
-  min_stratum_voices: 5          # under this many voices, a stratum is an anecdote, not a group (D91)
+  coverage:                      # what the corpus page calls thin / enough / plenty, per pot (D104)
+    train:                       # train and val together
+      thin_hours: 1.0            # under this a bucket is thin (D69)
+      thin_voices: 5             # under this many usable voices a people/content bucket is thin (D91)
+      voice_words: 300           # attributed words that make a voice usable inside a bucket
+    gold:                        # a benchmark: minutes per stratum, and reels are short
+      thin_hours: 0.1667         # 10 minutes, roughly 1,800 reference words
+      thin_voices: 5
+      voice_words: 50
+    plenty_factor: 3.0           # at 3x the floor a bucket is plenty: more adds little
+    dominant_share: 0.5          # over half its category is overdone: it crowds the rest out
 
 queue:
   weights:                       # must sum to 1.0; validated at load. Provisional (D74).

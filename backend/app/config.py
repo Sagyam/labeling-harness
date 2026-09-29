@@ -113,6 +113,39 @@ class ImporterSettings(BaseModel):
     expected_format: str = "FLAC"
 
 
+class PotFloor(BaseModel):
+    """One pot's floors on the corpus page (D104)."""
+
+    model_config = _STRICT
+
+    #: Hours below which a bucket is thin. A floor rather than a target share: there is no
+    #: defensible ideal share for "speech from 60-79 year olds", but there is a point below which
+    #: a stratum supports no claim at all (D69).
+    thin_hours: float = Field(gt=0)
+    #: Usable voices below which a people or content bucket is thin, however long: five voices is
+    #: the smallest group the page will call a group rather than an anecdote (D91).
+    thin_voices: int = Field(default=5, ge=1)
+    #: Attributed reference words a voice needs inside a bucket to count as usable there.
+    voice_words: int = Field(default=300, ge=1)
+
+
+class CoverageSettings(BaseModel):
+    """Where the corpus page draws thin, enough and plenty, for each pot separately (D104).
+
+    Gold is a benchmark sized in minutes per stratum and train/val is training data sized in
+    hours, so each has its own floor and nothing is rated against the other's.
+    """
+
+    model_config = _STRICT
+
+    train: PotFloor = Field(default_factory=lambda: PotFloor(thin_hours=1.0))
+    gold: PotFloor = Field(default_factory=lambda: PotFloor(thin_hours=10 / 60, voice_words=50))
+    #: A bucket with this many times its pot's hour floor is plenty: more of it adds little.
+    plenty_factor: float = Field(default=3.0, gt=1)
+    #: A bucket above this share of its category is overdone: it crowds the rest out.
+    dominant_share: float = Field(default=0.5, gt=0, le=1)
+
+
 class DatasetSettings(BaseModel):
     """Pot targets and the train/val line (D71).
 
@@ -142,14 +175,8 @@ class DatasetSettings(BaseModel):
     coverage_keys: list[Literal["show_id", "gender", "age_bracket", "topic"]] = Field(
         default_factory=lambda: ["show_id", "gender", "age_bracket", "topic"]
     )
-    #: Hours below which the inventory calls a stratum thin and asks for more of it (D69). A
-    #: floor rather than a target share: there is no defensible ideal share for "speech from
-    #: 60-79 year olds", but there is a point below which a stratum supports no claim at all.
-    min_stratum_hours: float = Field(default=1.0, gt=0)
-    #: Voices below which a stratum supports no comparison between people (D91). The unit of a
-    #: sociolinguistic claim is a speaker, not an hour: five voices is the smallest group the
-    #: corpus page will call a group rather than an anecdote.
-    min_stratum_voices: int = Field(default=5, ge=1)
+    #: What the corpus page calls thin, enough and plenty, per pot (D104).
+    coverage: CoverageSettings = Field(default_factory=lambda: CoverageSettings())
 
 
 class QueueWeights(BaseModel):

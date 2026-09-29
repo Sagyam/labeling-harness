@@ -86,7 +86,6 @@ def assign_buckets(
             "age_bracket": _person_bucket(clip, episode, "age_bracket", identity),
             "role": _role_bucket(clip, episode, resolution),
             "voice_exposure": clip.classes["voice_exposure"],
-            "voice": clip.voice or "unlinked",
             "topic": episode.topic or "untagged",
             "genre": episode.genre or "untagged",
             "show": episode.show_id or "no show id",
@@ -114,8 +113,8 @@ class BucketStats:
     shows: int = 0
     #: Distinct linked voices with any clip here.
     voices: int = 0
-    #: Voices with :data:`MIN_VOICE_WORDS` reference words attributed inside this bucket -- the
-    #: n a comparison between people can use.
+    #: Voices with the pot's word floor (:data:`MIN_VOICE_WORDS` by default) attributed inside
+    #: this bucket -- the n a comparison between people can use.
     usable_voices: int = 0
     verified_hours: float = 0.0
     screened_hours: float = 0.0
@@ -126,6 +125,11 @@ class BucketStats:
     share: float = 0.0
     #: True for a value the closed vocabulary does not contain -- dirt, not a stratum (D57).
     off_vocabulary: bool = False
+    #: ``missing``, ``thin``, ``enough`` or ``plenty`` for a stratum; ``unknown``, ``defect``,
+    #: ``off_list`` or ``unrated`` for a bucket that is none (:mod:`coverage`). Empty until rated.
+    status: str = ""
+    #: The measurement behind the status, in numbers; empty for ``enough``.
+    reason: str = ""
 
 
 @dataclass
@@ -135,9 +139,9 @@ class CategoryReport:
     key: str
     label: str
     group: str
-    goals: tuple[str, ...]
     unit: str
     why: str
+    rated: bool = True
     defect: list[str] = field(default_factory=list)
     buckets: list[BucketStats] = field(default_factory=list)
     #: Closed-vocabulary buckets with no audio at all.
@@ -147,25 +151,33 @@ class CategoryReport:
     unknown_hours: float = 0.0
     top_bucket: str | None = None
     top_share: float = 0.0
+    #: How many buckets hold each status, once rated.
+    counts: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["goals"] = list(self.goals)
-        return data
+        return asdict(self)
 
     def stats(self, bucket: str) -> BucketStats | None:
         return next((b for b in self.buckets if b.bucket == bucket), None)
 
 
 def build_category(
-    category: Category, clips: Sequence[ClipRow], episodes: Mapping[str, EpisodeRow]
+    category: Category,
+    clips: Sequence[ClipRow],
+    episodes: Mapping[str, EpisodeRow],
+    *,
+    voice_words: int = MIN_VOICE_WORDS,
 ) -> CategoryReport:
-    """Total one category over the clips."""
+    """Total one category over the clips.
+
+    ``voice_words`` is how many attributed reference words a voice needs inside a bucket to
+    count toward its ``usable_voices``.
+    """
     stats: dict[str, BucketStats] = {}
     episode_sets: dict[str, set[str]] = defaultdict(set)
     show_sets: dict[str, set[str]] = defaultdict(set)
     voice_sets: dict[str, set[str]] = defaultdict(set)
-    voice_words: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    words_by_voice: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for clip in clips:
         bucket = clip.buckets[category.key]
@@ -188,7 +200,7 @@ def build_category(
             show_sets[bucket].add(show)
         if clip.voice is not None:
             voice_sets[bucket].add(clip.voice)
-            voice_words[bucket][clip.voice] += attributed_words(clip)
+            words_by_voice[bucket][clip.voice] += attributed_words(clip)
 
     unknown = set(category.unknown)
     raw_hours = {bucket: entry.hours for bucket, entry in stats.items()}
@@ -203,7 +215,7 @@ def build_category(
         entry.shows = len(show_sets[bucket])
         entry.voices = len(voice_sets[bucket])
         entry.usable_voices = sum(
-            1 for words in voice_words[bucket].values() if words >= MIN_VOICE_WORDS
+            1 for words in words_by_voice[bucket].values() if words >= voice_words
         )
         entry.share = (
             _round(entry.hours / measured_hours, 4)
@@ -232,9 +244,9 @@ def build_category(
         key=category.key,
         label=category.label,
         group=category.group,
-        goals=category.goals,
         unit=category.unit,
         why=category.why,
+        rated=category.rated,
         defect=list(category.defect),
         buckets=buckets,
         absent=[b for b in category.buckets if b not in unknown and b not in stats],
@@ -247,24 +259,25 @@ def build_category(
 
 
 def build_categories(
-    clips: Sequence[ClipRow], episodes: Mapping[str, EpisodeRow]
+    clips: Sequence[ClipRow],
+    episodes: Mapping[str, EpisodeRow],
+    *,
+    voice_words: int = MIN_VOICE_WORDS,
 ) -> dict[str, CategoryReport]:
     """Every category, keyed and in :data:`CATEGORIES` order."""
-    return {c.key: build_category(c, clips, episodes) for c in CATEGORIES}
+    return {c.key: build_category(c, clips, episodes, voice_words=voice_words) for c in CATEGORIES}
 
 
 def clip_table(
     clips: Sequence[ClipRow],
     categories: Mapping[str, CategoryReport],
-    episode_index: Mapping[str, int],
     voice_index: Mapping[str, int],
 ) -> dict[str, Any]:
-    """The clips as a compact columnar table, so the page can cut them any way it likes.
+    """The clips as a compact columnar table, so the page can cross any two categories.
 
-    Each row is ``[segment id, episode index, seconds, words, tier index, pot index, voice index,
-    bucket index per category]``; bucket indexes point into the category's bucket list in the
-    order the report lists them. A few hundred kilobytes for the whole corpus, and it is what
-    makes a click on one bucket re-cut every other category without a round trip.
+    Each row is ``[segment id, seconds, words, tier index, pot index, voice index, bucket index
+    per category]``; bucket indexes point into the category's bucket list in the order the report
+    lists them, and the voice index into ``voices``. A few hundred kilobytes for the whole corpus.
     """
     keys = list(categories)
     positions = {k: {b.bucket: i for i, b in enumerate(categories[k].buckets)} for k in keys}
@@ -273,7 +286,6 @@ def clip_table(
     rows = [
         [
             clip.segment_id,
-            episode_index[clip.episode],
             round(clip.duration, 2),
             clip.words if clip.words is not None else -1,
             tiers.index(clip.tier or "none"),
@@ -284,9 +296,10 @@ def clip_table(
         for clip in clips
     ]
     return {
-        "columns": ["segment_id", "episode", "seconds", "words", "tier", "pot", "voice", *keys],
+        "columns": ["segment_id", "seconds", "words", "tier", "pot", "voice", *keys],
         "tiers": tiers,
         "pots": pots,
+        "voices": sorted(voice_index, key=voice_index.__getitem__),
         "buckets": {k: [b.bucket for b in categories[k].buckets] for k in keys},
         "rows": rows,
     }

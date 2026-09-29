@@ -58,6 +58,10 @@ class VoiceProfile:
     #: ``resolved``, ``conflict`` or ``unresolved`` (see :class:`VoiceIdentity`).
     identity: str
     resolved_by: dict[str, int]
+    #: Fields the owner set on the voice by ear (D104), and those where the declared rows say
+    #: something else.
+    manual: list[str]
+    disagrees: list[str]
     #: Roles this voice has held, with episode counts.
     roles: dict[str, int]
     #: Hours of the clips this voice dominates, by pot.
@@ -171,6 +175,8 @@ def build_voices(
                 age_bracket=identity.age_bracket if identity else None,
                 identity=identity.status if identity else "unresolved",
                 resolved_by=dict(identity.by) if identity else {},
+                manual=list(identity.manual) if identity else [],
+                disagrees=list(identity.disagrees) if identity else [],
                 roles=dict(roles),
                 hours={k: _round(v) for k, v in hours.items()},
                 verified_minutes=_round(verified, 2),

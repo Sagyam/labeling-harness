@@ -30,6 +30,10 @@ LABEL_WORD_SOURCES: Final[tuple[str, ...]] = ("label", "recogniser", "typed", "c
 #: newest row per (voice, segment) is current. A judgement, like a label -- not a status of any row.
 VoiceVerdict = Literal["confirmed", "rejected", "cleared"]
 VOICE_VERDICTS: Final[tuple[str, ...]] = ("confirmed", "rejected", "cleared")
+#: A voice's gender and age bracket (D104): the declared speaker row's allowlist (D56), in the
+#: order a picker shows them. ``speaker_meta.ALLOWED_VALUES`` is checked against these.
+GENDERS: Final[tuple[str, ...]] = ("female", "male")
+AGE_BRACKETS: Final[tuple[str, ...]] = ("under_20", "20_39", "40_59", "60_79", "80_plus")
 
 TaskStatus = Literal["pending", "in_progress", "done", "skipped"]
 TASK_STATUSES: Final[tuple[str, ...]] = ("pending", "in_progress", "done", "skipped")

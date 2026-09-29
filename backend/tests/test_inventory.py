@@ -1,8 +1,8 @@
-"""Tests for the corpus page: clips cut by category, voices followed across episodes, and the
-advice both produce (D91).
+"""Tests for the corpus page: clips cut by category and rated per pot, and voices followed across
+episodes (D91, D104).
 
 Almost everything here needs no database. The package is a pure pipeline after ``load_rows`` --
-resolve, bucket, total, profile, advise -- so a corpus is described in a few lines of
+resolve, bucket, total, rate, profile -- so a corpus is described in a few lines of
 :func:`clip` and :func:`episode` calls. The database tests check only that the loader reads real
 rows into that pipeline and that reading never writes.
 
@@ -28,14 +28,17 @@ from app.services.inventory import (
     CATEGORIES,
     ClipRow,
     EpisodeRow,
+    Floor,
     assemble,
     assign_buckets,
     attributed_words,
     build_categories,
+    build_pot,
     build_voices,
     clip_table,
     collect_inventory,
-    recommend,
+    collect_voice_profiles,
+    collect_voices,
     resolve_corpus,
     resolve_episode,
     speaking_rate_bucket,
@@ -133,17 +136,6 @@ def cut(episodes, clips):
 
 def buckets_of(rows, key: str) -> list[str]:
     return [r.buckets[key] for r in rows]
-
-
-def advise(episodes, clips, *, hours: float = 1.0, voices: int = 5):
-    rows, categories, per_episode, per_voice = cut(episodes, clips)
-    by_id = {e.external_id: e for e in episodes}
-    summary = summarize_voices(build_voices(rows, by_id, per_episode, per_voice))
-    return recommend(categories, summary, min_stratum_hours=hours, min_stratum_voices=voices)
-
-
-def kinds(recs, category: str | None = None) -> list[tuple[str, str | None]]:
-    return [(r.kind, r.bucket) for r in recs if category is None or r.category == category]
 
 
 # --- resolving rows to voices -----------------------------------------------------------------
@@ -424,7 +416,7 @@ def test_the_clip_table_round_trips_to_the_category_totals() -> None:
         clip("ep2", seconds=60, pot="gold", tier="screened"),
     ]
     rows, categories, *_ = cut(episodes, clips)
-    table = clip_table(rows, categories, {"ep1": 0, "ep2": 1}, {"v1": 0})
+    table = clip_table(rows, categories, {"v1": 0})
     assert len(table["rows"]) == 3
     columns = table["columns"]
     for key, report in categories.items():
@@ -504,132 +496,172 @@ def test_a_recurring_host_needs_guests_in_the_room() -> None:
     assert summary["single_episode"] == 5
 
 
-# --- advice -----------------------------------------------------------------------------------
+# --- coverage status, per pot ------------------------------------------------------------------
+
+TRAIN_FLOOR = Floor(thin_hours=1.0, thin_voices=2, voice_words=100, plenty_factor=3.0,
+                    dominant_share=0.5)  # fmt: skip
 
 
-def _people_corpus(*, female_voices: int, shows: int = 2, verified: bool = True):
-    """``female_voices`` female guests spread over ``shows`` shows, plus one male host."""
-    episodes, clips = [], []
-    for i in range(female_voices):
-        show = f"show-{i % shows}"
-        ep = f"ep{i}"
-        episodes.append(
-            episode(ep, show_id=show, voices=(f"g{i}", "h"),
-                    declared=({"role": "guest", "gender": "female", "age_bracket": "20_39"},
-                              {"role": "host", "gender": "male", "age_bracket": "20_39"}))
-        )  # fmt: skip
-        clips.append(clip(ep, seconds=1200, voice=f"g{i}", words=500,
-                          tier="verified" if verified else "screened"))  # fmt: skip
-        clips.append(clip(ep, seconds=600, voice="h", words=500))
-    return episodes, clips
+def rated(pot: str, clips, episodes, floor: Floor = TRAIN_FLOOR):
+    """Resolve and bucket like ``assemble``, then total and rate one pot."""
+    per_episode, per_voice = resolve_corpus(list(episodes.values()))
+    rows = assign_buckets(clips, episodes, per_episode, per_voice)
+    return build_pot(pot, rows, episodes, floor)
 
 
-def test_an_absent_bucket_is_asked_for_first_and_a_thin_one_says_how_short_it_is() -> None:
-    episodes, clips = _people_corpus(female_voices=2)
-    recs = advise(episodes, clips)
-    gender = [r for r in recs if r.category == "gender"]
-    assert kinds(gender)[0][0] in ("thin", "dominant")
-    thin = next(r for r in gender if r.kind == "thin" and r.bucket == "female")
-    assert thin.voices_present == 2 and thin.voices_needed == 3
-    assert thin.goal == "both"
-    assert "2 voice(s)" in thin.reason
-    age = [r for r in recs if r.category == "age_bracket"]
-    absent = [r for r in age if r.kind == "absent"]
-    assert {r.bucket for r in absent} == {"under_20", "40_59", "60_79", "80_plus"}
-    assert absent[0].priority > thin.priority
+def _status(report, bucket: str) -> tuple[str, str]:
+    entry = report.stats(bucket)
+    assert entry is not None, bucket
+    return entry.status, entry.reason
 
 
-def test_a_people_bucket_with_enough_voices_is_not_asked_for() -> None:
-    episodes, clips = _people_corpus(female_voices=6)
-    recs = advise(episodes, clips)
-    assert ("thin", "female") not in kinds(recs, "gender")
+def test_an_empty_bucket_of_a_closed_list_is_missing() -> None:
+    pot = rated("train", [clip("ep1", seconds=7200)], {"ep1": episode("ep1")})
+    genre = pot.category("genre")
+    assert _status(genre, "advert") == ("missing", "no audio")
+    assert "advert" in genre.absent
 
 
-def test_a_condition_bucket_is_thin_in_hours_and_needs_gold() -> None:
-    clips = [clip("ep1", seconds=1800, snr="<15 dB"), clip("ep1", seconds=7200, pot="gold")]
-    recs = advise([episode("ep1")], clips)
-    noise = {(r.kind, r.bucket): r for r in recs if r.category == "noise"}
-    assert noise[("thin", "<15 dB")].hours_needed == pytest.approx(0.5)
-    assert noise[("thin", "<15 dB")].goal == "asr"
-    # 45+ dB has gold; a thin bucket is asked for before it is asked for gold.
-    assert ("no_gold", "45+ dB") not in noise
-    clips = [clip("ep1", seconds=7200, snr="<15 dB"), clip("ep1", seconds=7200, pot="gold")]
-    recs = advise([episode("ep1")], clips)
-    assert ("no_gold", "<15 dB") in kinds(recs, "noise")
+def test_a_bucket_under_the_hour_floor_is_thin_and_says_by_how_much() -> None:
+    clips = [clip("ep1", seconds=1800, snr="<15 dB"), clip("ep1", seconds=7200)]
+    pot = rated("train", clips, {"ep1": episode("ep1")})
+    status, reason = _status(pot.category("noise"), "<15 dB")
+    assert status == "thin"
+    assert reason == "30 min, under 1 h"
+    clips = [clip("ep1", seconds=18, snr="<15 dB"), clip("ep1", seconds=7200)]
+    pot = rated("train", clips, {"ep1": episode("ep1")})
+    assert _status(pot.category("noise"), "<15 dB")[1] == "18 s, under 1 h"
 
 
-def test_gold_is_not_asked_for_on_people_or_content_buckets() -> None:
-    """Gold holds voices train never sees (D76): a female bucket without gold is the design."""
-    episodes, clips = _people_corpus(female_voices=6)
-    recs = advise(episodes, clips)
-    assert not any(r.kind == "no_gold" for r in recs if r.category in ("gender", "topic", "show"))
+def test_a_people_or_content_bucket_is_thin_without_enough_voices_however_long() -> None:
+    """Four hours of one reviewer is one voice: plenty of audio, too few people."""
+    episodes = {"ep1": episode("ep1", genre="review", voices=("v1",))}
+    clips = [clip("ep1", seconds=14400, voice="v1", words=5000)]
+    pot = rated("train", clips, episodes)
+    assert _status(pot.category("genre"), "review") == ("thin", "1 voice, under 2")
+    # A condition counts hours only: the same audio is all the clean speech there is.
+    assert _status(pot.category("noise"), "45+ dB")[0] == "overdone"
 
 
-def test_a_paper_bucket_resting_on_screened_labels_is_asked_to_verify_a_sample() -> None:
-    episodes, clips = _people_corpus(female_voices=6, verified=False)
-    recs = advise(episodes, clips)
-    unverified = next(r for r in recs if r.category == "gender" and r.kind == "unverified")
-    assert unverified.bucket == "female" and unverified.goal == "paper"
-    episodes, clips = _people_corpus(female_voices=6, verified=True)
-    assert not any(r.kind == "unverified" for r in advise(episodes, clips) if r.bucket == "female")
+def test_a_voice_counts_only_with_the_pots_word_floor_inside_the_bucket() -> None:
+    episodes = {"ep1": episode("ep1", voices=("v1", "v2"))}
+    clips = [
+        clip("ep1", seconds=3600 * 2, voice="v1", words=100),
+        clip("ep1", seconds=3600 * 2, voice="v2", words=99),
+    ]
+    pot = rated("train", clips, episodes)
+    entry = pot.category("topic").stats("technology")
+    assert (entry.voices, entry.usable_voices) == (2, 1)
+    assert entry.status == "thin"
 
 
-def test_a_value_carried_by_one_show_is_reported_at_half_severity() -> None:
-    episodes, clips = _people_corpus(female_voices=6, shows=1)
-    recs = advise(episodes, clips)
-    single = next(r for r in recs if r.category == "gender" and r.kind == "single_show")
-    assert single.bucket == "female"
-    episodes, clips = _people_corpus(female_voices=6, shows=2)
-    assert ("single_show", "female") not in kinds(advise(episodes, clips), "gender")
+def test_three_times_the_floor_is_plenty_and_most_of_the_category_is_overdone() -> None:
+    episodes = {"ep1": episode("ep1", voices=("v1", "v2"))}
+    clips = [
+        clip("ep1", seconds=3 * 3600, voice="v1", words=500, overlap="none"),
+        clip("ep1", seconds=3600, voice="v2", words=500, overlap=">15%"),
+        clip("ep1", seconds=2 * 3600, voice="v2", words=500, overlap="0-5%"),
+    ]
+    pot = rated("train", clips, episodes)
+    crosstalk = pot.category("crosstalk")
+    assert _status(crosstalk, "none") == ("plenty", "3.0 h, over 3 h")
+    assert _status(crosstalk, ">15%") == ("enough", "")
+    assert _status(crosstalk, "0-5%") == ("enough", "")
+    dominated = rated(
+        "train",
+        [clip("ep1", seconds=7200, overlap="none"), clip("ep1", seconds=3600, overlap=">15%")],
+        {"ep1": episode("ep1")},
+    )
+    assert _status(dominated.category("crosstalk"), "none") == ("overdone", "67% of the category")
+    assert dominated.category("crosstalk").counts["overdone"] == 1
 
 
-def test_a_dominant_bucket_is_reported_even_though_nothing_is_absent() -> None:
-    clips = [clip("ep1", seconds=9000, overlap="none"), clip("ep1", seconds=900, overlap=">15%")]
-    recs = advise([episode("ep1")], clips)
-    dominant = next(r for r in recs if r.category == "crosstalk" and r.kind == "dominant")
-    assert dominant.bucket == "none" and "91%" in dominant.reason
+def test_unknown_defect_off_list_and_unrated_buckets_are_never_a_gap() -> None:
+    episodes = {"a": episode("a", genre="reels", show_id="s1"), "b": episode("b", topic=None)}
+    clips = [clip("a", seconds=60, speakers="none", snr="unmeasured"), clip("b", seconds=60)]
+    pot = rated("train", clips, episodes)
+    assert pot.category("noise").stats("unmeasured").status == "unknown"
+    assert pot.category("topic").stats("untagged").status == "unknown"
+    assert pot.category("speakers").stats("none").status == "defect"
+    assert pot.category("genre").stats("reels").status == "off_list"
+    # A show is where audio comes from, not a stratum anyone fills (D91).
+    assert pot.category("show").stats("s1").status == "unrated"
 
 
-def test_too_much_unmeasured_is_reported_as_paperwork_with_the_fix() -> None:
-    clips = [clip("ep1", seconds=3600, snr="unmeasured"), clip("ep1", seconds=3600)]
-    recs = advise([episode("ep1")], clips)
-    unmeasured = next(r for r in recs if r.category == "noise" and r.kind == "unmeasured")
-    assert "backfill_acoustics" in unmeasured.target and "50%" in unmeasured.reason
-    clips = [clip("ep1", seconds=360, snr="unmeasured"), clip("ep1", seconds=3600)]
-    assert not any(
-        r.kind == "unmeasured" for r in advise([episode("ep1")], clips) if r.category == "noise"
+def test_a_pot_holds_only_its_own_clips_and_train_includes_val() -> None:
+    episodes = {"ep1": episode("ep1", voices=("v1", "v2"))}
+    clips = [
+        clip("ep1", seconds=600, voice="v1", pot="train"),
+        clip("ep1", seconds=300, voice="v1", pot="val", tier="screened"),
+        clip("ep1", seconds=120, voice="v2", pot="gold", tier=None),
+    ]
+    train = rated("train", clips, episodes)
+    gold = rated("gold", clips, episodes)
+    assert train.totals["clips"] == 2 and gold.totals["clips"] == 1
+    assert train.totals["hours"] == pytest.approx(900 / 3600, abs=1e-3)
+    assert train.totals["val_hours"] == pytest.approx(300 / 3600, abs=1e-3)
+    assert train.totals["voices"] == 1 and gold.totals["voices"] == 1
+    assert gold.totals["unlabeled_hours"] == pytest.approx(120 / 3600, abs=1e-3)
+    assert sum(b.hours for b in gold.category("topic").buckets) == pytest.approx(
+        120 / 3600, abs=1e-3
     )
 
 
-def test_shows_are_not_asked_for_more_speakers_but_a_dominant_show_is_reported() -> None:
-    episodes = [episode("a", show_id="big"), episode("b", show_id="small")]
-    clips = [clip("a", seconds=9000), clip("b", seconds=600)]
-    recs = advise(episodes, clips)
-    show = kinds(recs, "show")
-    assert ("thin", "small") not in show
-    assert ("dominant", "big") in show
+def test_a_pot_counts_its_gaps_and_its_plenty() -> None:
+    pot = rated("train", [clip("ep1", seconds=4 * 3600)], {"ep1": episode("ep1")})
+    genre = pot.category("genre")
+    assert genre.counts["missing"] == len(genre.absent)
+    assert genre.counts["thin"] == 1  # podcast: four hours but no linked voice
+    assert pot.category("noise").counts["overdone"] == 1
 
 
-def test_the_diarizers_empty_clip_is_a_defect_not_a_stratum() -> None:
-    clips = [clip("ep1", seconds=5, speakers="none"), clip("ep1", seconds=7200)]
-    recs = advise([episode("ep1")], clips)
-    assert not any(r.bucket == "none" for r in recs if r.category == "speakers")
+# --- hand-assigned voices (D104) --------------------------------------------------------------
 
 
-def test_voice_recurrence_advice_names_the_design_it_serves() -> None:
-    episodes, clips = _people_corpus(female_voices=6)
-    recs = [r for r in advise(episodes, clips) if r.category == "voice"]
-    assert any(r.kind == "recurrence" and "host" in r.target and r.goal == "paper" for r in recs)
-    assert any(r.kind == "recurrence" and "guest on more than one show" in r.target for r in recs)
+def test_a_hand_assigned_value_wins_over_the_declared_rows_and_is_marked() -> None:
+    episodes = [episode("ep1", declared=({"role": "host", "gender": "male"},), voices=("v1",))]
+    _, per_voice = resolve_corpus(episodes, manual={"v1": {"gender": "female"}})
+    identity = per_voice["v1"]
+    assert identity.gender == "female" and identity.status == "resolved"
+    assert identity.manual == ("gender",)
+    assert identity.disagrees == ("gender",)
 
 
-def test_recommendations_come_back_highest_priority_first_with_numbers_in_every_reason() -> None:
-    episodes, clips = _people_corpus(female_voices=2, shows=1)
-    recs = advise(episodes, clips)
-    assert recs
-    assert [r.priority for r in recs] == sorted((r.priority for r in recs), reverse=True)
-    assert all(any(ch.isdigit() for ch in r.reason) for r in recs)
-    assert all(r.goal in ("asr", "paper", "both") for r in recs)
+def test_a_hand_assigned_value_reaches_a_voice_no_rule_could_and_its_clips() -> None:
+    episodes = [episode("reel", voices=("v1", "v2"))]
+    clips = [clip("reel", voice="v1"), clip("reel", voice="v2")]
+    by_id = {e.external_id: e for e in episodes}
+    per_episode, per_voice = resolve_corpus(
+        episodes, manual={"v1": {"gender": "female", "age_bracket": "60_79"}}
+    )
+    assert per_voice["v1"].age_bracket == "60_79" and per_voice["v1"].disagrees == ()
+    assert per_voice["v2"].status == "unresolved"
+    rows = assign_buckets(clips, by_id, per_episode, per_voice)
+    assert buckets_of(rows, "gender") == ["female", "undeclared"]
+    assert buckets_of(rows, "age_bracket") == ["60_79", "undeclared"]
+
+
+def test_a_hand_assigned_field_settles_a_conflict_on_that_field_only() -> None:
+    episodes = [
+        episode("ep1", declared=({"gender": "female", "age_bracket": "20_39"},), voices=("v1",)),
+        episode("ep2", declared=({"gender": "male", "age_bracket": "40_59"},), voices=("v1",)),
+    ]
+    _, per_voice = resolve_corpus(episodes, manual={"v1": {"gender": "male"}})
+    assert per_voice["v1"].gender == "male"
+    assert per_voice["v1"].age_bracket is None
+    assert per_voice["v1"].status == "conflict"
+    _, per_voice = resolve_corpus(
+        episodes, manual={"v1": {"gender": "male", "age_bracket": "40_59"}}
+    )
+    assert per_voice["v1"].status == "resolved"
+
+
+def test_the_voice_allowlist_is_the_speaker_rows_allowlist() -> None:
+    from app.models.enums import AGE_BRACKETS, GENDERS
+    from app.services.speaker_meta import ALLOWED_VALUES
+
+    assert set(GENDERS) == ALLOWED_VALUES["gender"]
+    assert set(AGE_BRACKETS) == ALLOWED_VALUES["age_bracket"]
 
 
 # --- assembling ----------------------------------------------------------------------------------
@@ -637,20 +669,37 @@ def test_recommendations_come_back_highest_priority_first_with_numbers_in_every_
 
 def test_assemble_produces_the_payload_the_page_reads() -> None:
     episodes = [episode("ep1", declared=({"role": "host", "gender": "female"},), voices=("v1",))]
-    clips = [clip("ep1", seconds=60, voice="v1", words=400), clip("ep1", seconds=60, tier=None)]
-    payload = assemble(
-        episodes, clips, min_stratum_hours=1.0, min_stratum_voices=5, gold_target_hours=3.0
-    ).as_dict()
-    assert payload["totals"]["hours"] == pytest.approx(120 / 3600, abs=1e-3)
-    assert payload["totals"]["unlabeled_hours"] == pytest.approx(60 / 3600, abs=1e-3)
-    assert payload["totals"]["clips"] == 2 and payload["totals"]["episodes"] == 1
-    assert [c["key"] for c in payload["categories"]] == [c.key for c in CATEGORIES]
-    assert payload["voices"][0]["voice"] == "v1"
-    assert payload["voice_summary"]["usable"] == 1
-    assert {g["key"] for g in payload["groups"]} == {"people", "content", "speech", "acoustics"}
+    clips = [
+        clip("ep1", seconds=60, voice="v1", words=400),
+        clip("ep1", seconds=60, tier=None, pot="gold"),
+    ]
+    payload = assemble(episodes, clips, floors={"train": TRAIN_FLOOR, "gold": TRAIN_FLOOR},
+                       targets={"train": 20.0, "gold": 3.0}).as_dict()  # fmt: skip
+    assert set(payload["pots"]) == {"train", "gold"}
+    train, gold = payload["pots"]["train"], payload["pots"]["gold"]
+    assert train["totals"]["hours"] == pytest.approx(60 / 3600, abs=1e-3)
+    assert gold["totals"]["target_hours"] == 3.0
+    assert gold["floor"]["thin_hours"] == 1.0
+    keys = [c["key"] for c in payload["categories"]]
+    assert keys == [c.key for c in CATEGORIES] and "voice" not in keys
+    assert [c["key"] for c in train["categories"]] == keys
+    bucket = train["categories"][keys.index("gender")]["buckets"][0]
+    assert {"bucket", "hours", "voices", "usable_voices", "status", "reason"} <= set(bucket)
+    assert "recommendations" not in payload and "voices" not in payload
+    assert "goals" not in payload["categories"][0]
     assert len(payload["clips"]["rows"]) == 2
+    assert payload["clips"]["voices"] == ["v1"]
     assert {r["field"] for r in payload["records"]} >= {"genre", "topic", "speakers", "diarized"}
-    assert payload["episodes"][0]["voices"] == ["v1"]
+
+
+def test_voice_profiles_carry_what_was_assigned_by_hand() -> None:
+    episodes = [episode("ep1", voices=("v1",))]
+    payload = collect_voice_profiles(
+        episodes, [clip("ep1", voice="v1")], manual={"v1": {"age_bracket": "40_59"}}
+    )
+    (voice,) = payload["voices"]
+    assert voice["age_bracket"] == "40_59" and voice["manual"] == ["age_bracket"]
+    assert payload["summary"]["age_resolved"] == 1
 
 
 # --- database --------------------------------------------------------------------------------
@@ -686,21 +735,27 @@ def test_the_inventory_reads_a_real_corpus_into_clips_and_voices(
     db_session.flush()
 
     payload = collect_inventory(db_session, settings=settings).as_dict()
+    train, gold = payload["pots"]["train"], payload["pots"]["gold"]
     seconds = db_session.scalar(sa.select(sa.func.sum(Segment.duration_seconds)))
-    assert payload["totals"]["hours"] == pytest.approx(seconds / 3600, abs=1e-3)
-    assert payload["totals"]["clips"] == len(segments)
-    assert payload["totals"]["gold_hours"] == pytest.approx(
-        segments[0].duration_seconds / 3600, abs=1e-3
+    assert train["totals"]["hours"] + gold["totals"]["hours"] == pytest.approx(
+        seconds / 3600, abs=1e-3
     )
+    assert train["totals"]["clips"] + gold["totals"]["clips"] == len(segments)
+    assert gold["totals"]["hours"] == pytest.approx(segments[0].duration_seconds / 3600, abs=1e-3)
     assert len(payload["clips"]["rows"]) == len(segments)
-    voice = payload["voices"][0]
+    gender = next(c for c in train["categories"] if c["key"] == "gender")
+    female = next(b for b in gender["buckets"] if b["bucket"] == "female")
+    assert female["clips"] == len(segments) - 1
+    # Words come from the fused seed for clips nobody has labelled.
+    rate = next(c for c in train["categories"] if c["key"] == "speaking_rate")
+    assert (
+        sum(b["clips"] for b in rate["buckets"] if b["bucket"] != "unmeasured") == len(segments) - 1
+    )
+
+    voices = collect_voices(db_session)
+    voice = voices["voices"][0]
     assert voice["voice"] == "v001" and voice["gender"] == "female"
     assert voice["resolved_by"] == {"only_pair": 1}
-    gender = next(c for c in payload["categories"] if c["key"] == "gender")
-    assert next(b for b in gender["buckets"] if b["bucket"] == "female")["clips"] == len(segments)
-    # Words come from the fused seed for clips nobody has labelled.
-    rate = next(c for c in payload["categories"] if c["key"] == "speaking_rate")
-    assert sum(b["clips"] for b in rate["buckets"] if b["bucket"] != "unmeasured") == len(segments)
 
 
 @pytest.mark.db
@@ -718,5 +773,5 @@ def test_the_inventory_endpoint_serves_the_payload(client, imported_episode: str
     response = client.get("/stats/inventory")
     assert response.status_code == 200
     body = response.json()
-    assert body["totals"]["clips"] == 6
-    assert "clips" in body and "voices" in body and "recommendations" in body
+    assert body["pots"]["train"]["totals"]["clips"] + body["pots"]["gold"]["totals"]["clips"] == 6
+    assert "clips" in body and "recommendations" not in body

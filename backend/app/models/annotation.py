@@ -28,8 +28,10 @@ from app.db.base import Base, utc_now_column, utc_optional_column
 from app.models.content import AsrHypothesis, DiarizationRun, JsonB, Segment
 from app.models.enums import (
     ACTIVE_TASK_STATUSES,
+    AGE_BRACKETS,
     DISPOSITIONS,
     EVENT_ACTIONS,
+    GENDERS,
     LABEL_WORD_SOURCES,
     QUEUE_NAMES,
     TASK_STATUSES,
@@ -226,6 +228,33 @@ class VoiceConfirmation(Base):
     #: Unit 256-d WeSpeaker embedding of the stretch, for a confirmed verdict; null otherwise, or
     #: when the model was unavailable.
     embedding_jsonb: Mapped[list[float] | None] = mapped_column(JsonB)
+    annotator: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[dt.datetime] = utc_now_column()
+
+
+class VoiceAttribute(Base):
+    """A voice's gender and age bracket, set by the owner from listening to it (D104).
+
+    Append-only: the newest row per ``voice`` is current, and a row with both fields null clears
+    the voice. The two fields and their values are the declared speaker row's allowlist (D56), so
+    a voice gains nothing a row could not already say. Assigned here, a value outranks what the
+    episode rows force by rule (D91): a person heard is better evidence than an episode's shape.
+    """
+
+    __tablename__ = "voice_attributes"
+    __table_args__ = (
+        CheckConstraint(f"gender IS NULL OR {check_in('gender', GENDERS)}", name="gender_allowed"),
+        CheckConstraint(
+            f"age_bracket IS NULL OR {check_in('age_bracket', AGE_BRACKETS)}",
+            name="age_bracket_allowed",
+        ),
+        Index("ix_voice_attributes_voice", "voice"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    voice: Mapped[str] = mapped_column(String(16), nullable=False)
+    gender: Mapped[str | None] = mapped_column(String(16))
+    age_bracket: Mapped[str | None] = mapped_column(String(16))
     annotator: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[dt.datetime] = utc_now_column()
 

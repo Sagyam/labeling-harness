@@ -183,6 +183,9 @@ class VoiceClip:
     end: float
     #: The whole clip is this voice: no other speaker diarized in it, no crosstalk detected.
     whole: bool
+    #: False for a clip the voice only speaks in alongside someone else (asked for with
+    #: ``shared``): the whole clip is played, and it cannot be judged or join the print.
+    alone: bool = True
 
 
 @dataclass
@@ -205,7 +208,12 @@ class VoicePage:
 
 
 def voice_page(
-    session: Session, voice: str, *, episode: str | None = None, limit: int = 60
+    session: Session,
+    voice: str,
+    *,
+    episode: str | None = None,
+    limit: int = 60,
+    shared: bool = False,
 ) -> VoicePage:
     """Where ``voice`` speaks and the clips it speaks alone in, longest first.
 
@@ -213,6 +221,8 @@ def voice_page(
         voice: The anonymous voice id.
         episode: Only this episode's clips (external id); every episode is still listed.
         limit: How many clips to return; ``total_clips`` counts them all.
+        shared: List instead the clips the voice speaks in without a stretch alone -- whole,
+            marked ``alone=False``, longest first (D104).
 
     Raises:
         VoiceError: No current diarization run links any speaker to ``voice``.
@@ -226,6 +236,7 @@ def voice_page(
     page.rejected = sum(v.verdict == "rejected" for v in verdicts.values())
 
     candidates: list[tuple[Segment, Episode, tuple[float, float]]] = []
+    with_others: list[tuple[Segment, Episode, tuple[float, float]]] = []
     for run, label in runs:
         number = run.speakers_jsonb.index(label) + 1
         ep = session.get(Episode, run.episode_id)
@@ -257,6 +268,13 @@ def voice_page(
         )
         if episode is None or ep.external_id == episode:
             candidates.extend((s, ep, stretch) for s, stretch in offered)
+            if shared:
+                solo = {s.id for s, _ in offered}
+                with_others.extend(
+                    (s, ep, (0.0, s.duration_seconds))
+                    for s in segments
+                    if s.id not in solo and any(t.speaker == number for t in turns[s.id])
+                )
 
     page.episodes.sort(key=lambda e: -e.talk_seconds)
     # Confirmed first, then stretches nobody has judged, rejected last; longest first within each.
@@ -268,6 +286,10 @@ def voice_page(
             c[0].id,
         )
     )
+    with_others.sort(key=lambda c: (-c[0].duration_seconds, c[0].id))
+    alone_ids = {s.id for s, _, _ in candidates}
+    if shared:
+        candidates = with_others
     page.total_clips = len(candidates)
     chosen = candidates[:limit]
     texts = _stretch_texts(session, [(s.id, stretch) for s, _, stretch in chosen])
@@ -282,13 +304,14 @@ def voice_page(
             verdict=_verdict(verdicts, voice, s.id),
             start=start,
             end=end,
-            whole=end - start >= s.duration_seconds - 0.25,
+            whole=s.id in alone_ids and end - start >= s.duration_seconds - 0.25,
+            alone=s.id in alone_ids,
         )
         for s, ep, (start, end) in chosen
     ]
     page.reference = next(
         (c for c in page.clips if c.verdict == "confirmed"),
-        next((c for c in page.clips if c.verdict is None), None),
+        next((c for c in page.clips if c.verdict is None and c.alone), None),
     )
     return page
 

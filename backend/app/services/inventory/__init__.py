@@ -1,26 +1,20 @@
-"""What the corpus contains, cut every way it can be cut, and what to record next (D91).
+"""What the corpus contains, cut every way it can be cut, pot by pot (D91, D104).
 
-The status report next door answers *how much is done*. This package answers a different
-question, and the one that decides what to do with an afternoon: **is this corpus any good for
-its two purposes -- fine-tuning an ASR model and describing Nepali-English code-mixing -- and
-what would make it better?**
+The status report next door answers *how much is done*. This package answers *what is lacking
+and what is plenty*: every clip carries one bucket on each category -- gender, age, role and the
+voice's exposure in train; topic, genre, show and code-mixing; speaking speed, clip length,
+crosstalk and speakers; noise, room and bandwidth -- so hours cut by any of them sum to the pot.
 
-The unit is the **clip**, and the person is the **voice**. Every clip carries one bucket on each
-of sixteen categories -- gender, age, role, voice and its exposure in train; topic, genre, show
-and code-mixing; speaking speed, clip length, crosstalk and speakers; noise, room and bandwidth
--- so hours cut by any of them sum to the corpus. D69 attributed an episode's hours to every
-value it carried because no route diarized; every episode is diarized now (D79) and its speakers
-are linked into voices across episodes (D87), so a clip has one dominant voice and the voice
-has one gender, where the episode's declared rows force it (:mod:`resolve`).
-
-Three things come out: the categories totalled up, one profile per voice followed across
-episodes, and per-category advice tagged with the purpose it serves. And the clip table itself,
-compact enough to ship, so the page can cut everything by anything without a round trip.
+Gold and train/val are separate views, each rated against its own floor (:mod:`coverage`),
+because a benchmark and a training set want different things and drawing them on one axis made
+the smaller one unreadable. Voices, followed across episodes, are served on their own
+(:func:`collect_voices`) for the voices page.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -37,8 +31,15 @@ from app.services.inventory.categories import (
     speaking_rate_bucket,
 )
 from app.services.inventory.constants import CATEGORIES, GROUPS, Category
+from app.services.inventory.coverage import (
+    POTS,
+    Floor,
+    PotReport,
+    build_pot,
+    category_meta,
+    rate_bucket,
+)
 from app.services.inventory.facts import ClipRow, EpisodeRow, count_words, load_rows, now_iso
-from app.services.inventory.recommendations import Recommendation, recommend
 from app.services.inventory.resolve import (
     Resolution,
     VoiceIdentity,
@@ -46,17 +47,20 @@ from app.services.inventory.resolve import (
     resolve_episode,
 )
 from app.services.inventory.voices import VoiceProfile, build_voices, summarize_voices
+from app.services.voice_attributes import current_voice_attributes
 
 __all__ = [
     "CATEGORIES",
     "GROUPS",
+    "POTS",
     "BucketStats",
     "Category",
     "CategoryReport",
     "ClipRow",
     "EpisodeRow",
+    "Floor",
     "Inventory",
-    "Recommendation",
+    "PotReport",
     "Resolution",
     "VoiceIdentity",
     "VoiceProfile",
@@ -65,48 +69,41 @@ __all__ = [
     "attributed_words",
     "build_categories",
     "build_category",
+    "build_pot",
     "build_voices",
     "clip_table",
     "collect_inventory",
+    "collect_voice_profiles",
+    "collect_voices",
     "count_words",
     "load_rows",
-    "recommend",
+    "rate_bucket",
     "resolve_corpus",
     "resolve_episode",
     "speaking_rate_bucket",
     "summarize_voices",
 ]
 
-
-def _round(value: float, digits: int = 3) -> float:
-    return round(float(value), digits)
+Manual = Mapping[str, Mapping[str, str | None]]
 
 
 @dataclass
 class Inventory:
-    """The whole answer, ready for the API."""
+    """The corpus page's payload."""
 
     generated_at: str = ""
-    totals: dict[str, Any] = field(default_factory=dict)
     groups: list[dict[str, str]] = field(default_factory=list)
-    categories: list[CategoryReport] = field(default_factory=list)
-    voices: list[VoiceProfile] = field(default_factory=list)
-    voice_summary: dict[str, Any] = field(default_factory=dict)
-    recommendations: list[Recommendation] = field(default_factory=list)
-    episodes: list[dict[str, Any]] = field(default_factory=list)
+    categories: list[dict[str, Any]] = field(default_factory=list)
+    pots: dict[str, PotReport] = field(default_factory=dict)
     records: list[dict[str, Any]] = field(default_factory=list)
     clips: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "generated_at": self.generated_at,
-            "totals": self.totals,
             "groups": self.groups,
-            "categories": [c.as_dict() for c in self.categories],
-            "voices": [v.as_dict() for v in self.voices],
-            "voice_summary": self.voice_summary,
-            "recommendations": [asdict(r) for r in self.recommendations],
-            "episodes": self.episodes,
+            "categories": self.categories,
+            "pots": {key: pot.as_dict() for key, pot in self.pots.items()},
             "records": self.records,
             "clips": self.clips,
         }
@@ -141,76 +138,53 @@ def _records(episodes: list[EpisodeRow]) -> list[dict[str, Any]]:
     ]
 
 
+def _bucketed(
+    episodes: list[EpisodeRow], clips: list[ClipRow], manual: Manual | None
+) -> tuple[dict[str, EpisodeRow], list[ClipRow], dict, dict]:
+    by_id = {e.external_id: e for e in episodes}
+    per_episode, per_voice = resolve_corpus(episodes, manual)
+    return by_id, assign_buckets(clips, by_id, per_episode, per_voice), per_episode, per_voice
+
+
 def assemble(
     episodes: list[EpisodeRow],
     clips: list[ClipRow],
     *,
-    min_stratum_hours: float,
-    min_stratum_voices: int,
-    gold_target_hours: float,
+    floors: Mapping[str, Floor],
+    targets: Mapping[str, float],
+    manual: Manual | None = None,
 ) -> Inventory:
-    """Everything after the database: resolve, bucket, total, profile, advise. Pure."""
-    by_id = {e.external_id: e for e in episodes}
-    per_episode, per_voice = resolve_corpus(episodes)
-    clips = assign_buckets(clips, by_id, per_episode, per_voice)
-    categories = build_categories(clips, by_id)
-    voices = build_voices(clips, by_id, per_episode, per_voice)
-    summary = summarize_voices(voices)
-
-    hours = sum(c.duration for c in clips) / 3600
-    verified = sum(c.duration for c in clips if c.tier == "verified") / 3600
-    screened = sum(c.duration for c in clips if c.tier == "screened") / 3600
-    totals = {
-        "hours": _round(hours),
-        "speech_hours": _round(sum(c.speech_seconds or 0.0 for c in clips) / 3600),
-        "clips": len(clips),
-        "episodes": len(episodes),
-        "shows": len({e.show_id for e in episodes if e.show_id}),
-        "words": sum(c.words or 0 for c in clips),
-        "verified_hours": _round(verified),
-        "screened_hours": _round(screened),
-        "unlabeled_hours": _round(max(0.0, hours - verified - screened)),
-        "gold_hours": _round(sum(c.duration for c in clips if c.pot == "gold") / 3600),
-        "val_hours": _round(sum(c.duration for c in clips if c.pot == "val") / 3600),
-        "train_hours": _round(sum(c.duration for c in clips if c.pot == "train") / 3600),
-        "gold_target_hours": gold_target_hours,
-        "min_stratum_hours": min_stratum_hours,
-        "min_stratum_voices": min_stratum_voices,
+    """Everything after the database: resolve, bucket, then total and rate each pot. Pure."""
+    by_id, clips, _, _ = _bucketed(episodes, clips, manual)
+    pots = {
+        key: build_pot(key, clips, by_id, floors[key], target_hours=targets.get(key))
+        for key, _ in POTS
     }
-    episode_index = {e.external_id: i for i, e in enumerate(episodes)}
-    voice_index = {v.voice: i for i, v in enumerate(voices)}
+    # Bucket order for the clip table is the pot-independent one: the whole corpus's.
+    everything = build_categories(clips, by_id)
+    voices = sorted({c.voice for c in clips if c.voice})
     return Inventory(
         generated_at=now_iso(),
-        totals=totals,
         groups=[{"key": key, "label": label} for key, label in GROUPS],
-        categories=list(categories.values()),
-        voices=voices,
-        voice_summary=summary,
-        recommendations=recommend(
-            categories,
-            summary,
-            min_stratum_hours=min_stratum_hours,
-            min_stratum_voices=min_stratum_voices,
-        ),
-        episodes=[
-            {
-                "external_id": e.external_id,
-                "title": e.title,
-                "show_id": e.show_id,
-                "genre": e.genre,
-                "topic": e.topic,
-                "topic_in_taxonomy": e.topic_in_taxonomy,
-                "published_at": e.published_at,
-                "split": e.split,
-                "declared": [dict(r) for r in e.declared],
-                "voices": list(e.voices),
-                "diarized": e.diarized,
-            }
-            for e in episodes
-        ],
+        categories=category_meta(),
+        pots=pots,
         records=_records(episodes),
-        clips=clip_table(clips, categories, episode_index, voice_index),
+        clips=clip_table(clips, everything, {v: i for i, v in enumerate(voices)}),
     )
+
+
+def _floors(settings: Settings) -> dict[str, Floor]:
+    coverage = settings.dataset.coverage
+    return {
+        key: Floor(
+            thin_hours=pot.thin_hours,
+            thin_voices=pot.thin_voices,
+            voice_words=pot.voice_words,
+            plenty_factor=coverage.plenty_factor,
+            dominant_share=coverage.dominant_share,
+        )
+        for key, pot in (("train", coverage.train), ("gold", coverage.gold))
+    }
 
 
 def collect_inventory(session: Session, *, settings: Settings | None = None) -> Inventory:
@@ -224,7 +198,29 @@ def collect_inventory(session: Session, *, settings: Settings | None = None) -> 
     return assemble(
         episodes,
         clips,
-        min_stratum_hours=settings.dataset.min_stratum_hours,
-        min_stratum_voices=settings.dataset.min_stratum_voices,
-        gold_target_hours=settings.dataset.gold_hours_target,
+        floors=_floors(settings),
+        targets={
+            "train": settings.dataset.train_hours_target,
+            "gold": settings.dataset.gold_hours_target,
+        },
+        manual=current_voice_attributes(session),
     )
+
+
+def collect_voice_profiles(
+    episodes: list[EpisodeRow], clips: list[ClipRow], *, manual: Manual | None = None
+) -> dict[str, Any]:
+    """Every voice followed across episodes, with the corpus-wide summary. Pure."""
+    by_id, clips, per_episode, per_voice = _bucketed(episodes, clips, manual)
+    profiles = build_voices(clips, by_id, per_episode, per_voice)
+    return {
+        "generated_at": now_iso(),
+        "summary": summarize_voices(profiles),
+        "voices": [p.as_dict() for p in profiles],
+    }
+
+
+def collect_voices(session: Session) -> dict[str, Any]:
+    """The voices page's payload, read from the database. Reads only."""
+    episodes, clips = load_rows(session)
+    return collect_voice_profiles(episodes, clips, manual=current_voice_attributes(session))

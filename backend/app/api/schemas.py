@@ -733,6 +733,9 @@ class VoiceClipOut(BaseModel):
     end: float
     #: The stretch is the whole clip: nobody else diarized in it, no crosstalk detected.
     whole: bool
+    #: False for a clip listed with ``shared``: the voice speaks in it only alongside someone else,
+    #: the whole clip is played, and it cannot be judged (D104).
+    alone: bool = True
 
 
 class VoiceOut(BaseModel):
@@ -755,6 +758,22 @@ class VoiceVerdictIn(BaseModel):
 
     verdict: str = Field(pattern="^(confirmed|rejected|cleared)$")
     annotator: str | None = None
+
+
+class VoiceAttributesIn(BaseModel):
+    """A voice's gender and age bracket, set by ear (D104); null leaves a field unassigned."""
+
+    gender: Literal["female", "male"] | None = None
+    age_bracket: Literal["under_20", "20_39", "40_59", "60_79", "80_plus"] | None = None
+    annotator: str | None = None
+
+
+class VoiceAttributesOut(BaseModel):
+    voice: str
+    gender: str | None
+    age_bracket: str | None
+    #: False when both values already stood and nothing was written.
+    changed: bool
 
 
 class VoiceVerdictOut(BaseModel):

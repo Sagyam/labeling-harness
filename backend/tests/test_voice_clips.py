@@ -145,6 +145,36 @@ def test_a_clip_with_another_voice_offers_only_the_stretch_alone(
     assert offered["whole"] is False
 
 
+def test_shared_clips_are_the_ones_the_voice_never_holds_alone(
+    client, imported_episode, db_session
+) -> None:
+    """A clip where the voice only ever talks over someone has no stretch alone to offer; asked
+    for its shared clips, the page lists those instead, played whole and marked not alone."""
+    segments = _segments(db_session)
+    mixed = max(segments, key=lambda s: s.duration_seconds)
+    turns = [[s.start_time, s.end_time, "SPEAKER_00"] for s in segments]
+    turns.append([mixed.start_time, mixed.end_time, "SPEAKER_01"])
+    _diarize(db_session, imported_episode, turns)
+    run = db_session.scalars(sa.select(DiarizationRun)).one()
+    voice = run.voices_jsonb["SPEAKER_00"]
+
+    solo = client.get(f"/voices/{voice}").json()
+    assert mixed.id not in {c["segment_id"] for c in solo["clips"]}
+    assert all(c["alone"] for c in solo["clips"])
+
+    body = client.get(f"/voices/{voice}", params={"shared": "true"}).json()
+    assert [c["segment_id"] for c in body["clips"]] == [mixed.id]
+    shared = body["clips"][0]
+    assert shared["alone"] is False and shared["whole"] is False and shared["verdict"] is None
+    assert (shared["start"], shared["end"]) == (0.0, pytest.approx(mixed.duration_seconds))
+    assert body["total_clips"] == 1
+    # A sample is always a stretch alone, so a list of shared clips offers none.
+    assert body["reference"] is None
+    # The other voice speaks only in the mixed clip.
+    other = client.get(f"/voices/{run.voices_jsonb['SPEAKER_01']}", params={"shared": "true"})
+    assert [c["segment_id"] for c in other.json()["clips"]] == [mixed.id]
+
+
 def test_detected_crosstalk_is_left_out_of_the_stretch(client, solo, db_session) -> None:
     voice, clips = next(iter(solo.items()))
     clip = _long(clips)

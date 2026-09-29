@@ -1,8 +1,10 @@
-"""Voices: where an anonymous voice speaks, its solo clips, and the owner's verdicts (D99)."""
+"""Voices: every voice in the corpus, where one speaks, its clips, the owner's verdicts on them
+(D99), and its gender and age set by ear (D104)."""
 
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -15,6 +17,8 @@ from app.api.deps import (
     require_auth,
 )
 from app.api.schemas import (
+    VoiceAttributesIn,
+    VoiceAttributesOut,
     VoiceClipOut,
     VoiceEpisodeOut,
     VoiceOut,
@@ -23,6 +27,8 @@ from app.api.schemas import (
 )
 from app.api.serializers import audio_url
 from app.config import Settings
+from app.services.inventory import collect_voices
+from app.services.voice_attributes import VoiceAttributeError, set_voice_attributes
 from app.services.voice_clips import VoiceClip, VoiceError, record_verdict, voice_page
 from app.services.voiceprint import VoiceEmbedder
 from app.storage import ObjectStorage
@@ -45,7 +51,14 @@ def _clip(clip: VoiceClip) -> VoiceClipOut:
         start=clip.start,
         end=clip.end,
         whole=clip.whole,
+        alone=clip.alone,
     )
+
+
+@router.get("/voices")
+def list_voices(session: Session = Depends(get_session)) -> dict[str, Any]:
+    """Every voice followed across episodes, most talk first, with the corpus-wide summary."""
+    return collect_voices(session)
 
 
 @router.get("/voices/{voice}", response_model=VoiceOut)
@@ -54,12 +67,13 @@ def get_voice(
     session: Session = Depends(get_session),
     episode: str | None = Query(default=None, description="only this episode's clips"),
     limit: int = Query(default=60, ge=1, le=500),
+    shared: bool = Query(default=False, description="the clips it speaks in with others instead"),
 ) -> VoiceOut:
     """Where a voice speaks, and the clips the diarization hears it alone in, longest first."""
     if not re.match(VOICE_PATTERN, voice):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown voice")
     try:
-        page = voice_page(session, voice, episode=episode, limit=limit)
+        page = voice_page(session, voice, episode=episode, limit=limit, shared=shared)
     except VoiceError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return VoiceOut(
@@ -107,4 +121,30 @@ def post_verdict(
         embedded=row.embedding_jsonb is not None,
         confirmed=page.confirmed,
         rejected=page.rejected,
+    )
+
+
+@router.put("/voices/{voice}/attributes", response_model=VoiceAttributesOut)
+def put_attributes(
+    voice: str,
+    body: VoiceAttributesIn,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_config),
+) -> VoiceAttributesOut:
+    """Set a voice's gender and age bracket from listening to it; both are replaced."""
+    if not re.match(VOICE_PATTERN, voice):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown voice")
+    try:
+        row = set_voice_attributes(
+            session,
+            voice,
+            gender=body.gender,
+            age_bracket=body.age_bracket,
+            annotator=body.annotator or settings.labels.default_annotator,
+        )
+    except VoiceAttributeError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    session.commit()
+    return VoiceAttributesOut(
+        voice=voice, gender=body.gender, age_bracket=body.age_bracket, changed=row is not None
     )

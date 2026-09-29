@@ -16,6 +16,10 @@ since 2026-09-18. The same three rules live here so the page and the notebook ag
 Gender and age belong to the person, so a voice resolved in one episode carries the value to
 every episode it appears in; two episodes that disagree make the voice a ``conflict``, which is
 reported rather than averaged. Role belongs to the recording and stays per episode.
+
+A value the owner set on the voice by ear (D104) outranks all three rules, field by field: a
+person heard is better evidence than an episode's shape. Where the rules said something else,
+the voice says so (``disagrees``) rather than hiding it.
 """
 
 from __future__ import annotations
@@ -110,6 +114,11 @@ class VoiceIdentity:
     status: str
     #: The rules that reached it, by episode count.
     by: Mapping[str, int]
+    #: Fields the owner set on the voice by ear (D104).
+    manual: tuple[str, ...] = ()
+    #: Hand-set fields where the declared rows force a different value, or disagree among
+    #: themselves.
+    disagrees: tuple[str, ...] = ()
 
     def get(self, key: str) -> str | None:
         return getattr(self, key)
@@ -125,8 +134,13 @@ def recurring_voices(episodes: Iterable[EpisodeRow]) -> set[str]:
 
 def resolve_corpus(
     episodes: Sequence[EpisodeRow],
+    manual: Mapping[str, Mapping[str, str | None]] | None = None,
 ) -> tuple[dict[tuple[str, str], Resolution], dict[str, VoiceIdentity]]:
     """Resolve every episode, then pool each voice's person-level values across episodes.
+
+    Args:
+        episodes: Every episode, with its declared rows and voices.
+        manual: Voice to the fields the owner set by ear (D104); each one set wins.
 
     Returns:
         ``(per_episode, per_voice)``: ``(episode external id, voice) -> Resolution`` for the
@@ -148,16 +162,26 @@ def resolve_corpus(
                 if (value := resolution.get(key)) is not None:
                     values[voice][key].add(value)
 
+    manual = manual or {}
     per_voice: dict[str, VoiceIdentity] = {}
     for voice in sorted(heard):
         fields = values.get(voice, {})
-        conflict = any(len(v) > 1 for v in fields.values())
-        resolved = {k: next(iter(v)) for k, v in fields.items() if len(v) == 1}
+        by_hand = {k: v for k, v in (manual.get(voice) or {}).items() if k in PERSON_FIELDS and v}
+        conflict = any(len(v) > 1 for k, v in fields.items() if k not in by_hand)
+        ruled = {k: next(iter(v)) for k, v in fields.items() if len(v) == 1}
+        chosen = {} if conflict else {k: v for k, v in ruled.items() if k not in by_hand}
+        chosen.update(by_hand)
         per_voice[voice] = VoiceIdentity(
-            gender=None if conflict else resolved.get("gender"),
-            age_bracket=None if conflict else resolved.get("age_bracket"),
-            status="conflict" if conflict else "resolved" if resolved else "unresolved",
+            gender=chosen.get("gender"),
+            age_bracket=chosen.get("age_bracket"),
+            status="conflict" if conflict else "resolved" if chosen else "unresolved",
             by=dict(rules.get(voice, {})),
+            manual=tuple(k for k in PERSON_FIELDS if k in by_hand),
+            disagrees=tuple(
+                k
+                for k in PERSON_FIELDS
+                if k in by_hand and fields.get(k) and fields[k] != {by_hand[k]}
+            ),
         )
     return per_episode, per_voice
 

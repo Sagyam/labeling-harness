@@ -101,6 +101,7 @@ on the first recording (D92).
 | `segment_labels` | Append-only human decisions; latest row per (segment, label_version) is current. A per-speaker label (`speakers-v1`, D98) also names its `diarization_run_id` |
 | `label_words` | A per-speaker label's words: text, clip-relative span, the run's speaker label, the speaker the diarization proposed, the speaker a voiceprint suggested (D99), and `source` (`label`, `recogniser`, `typed`, `copy`) |
 | `voice_confirmations` | The owner's verdicts on a voice's stretch alone in a clip (`confirmed`, `rejected`, `cleared`; newest per voice and clip current), with the stretch and, when confirmed, its voiceprint embedding (D99) |
+| `voice_attributes` | A voice's gender and age bracket set by ear (D104); append-only, newest per voice current, both null clears. Outranks the declared rows' rules, field by field |
 | `annotation_events` | Timing and action per interaction, for throughput measurement |
 | `audit_logs` | Every write, with old and new values |
 | `translit_cache` | Latin token -> ranked Devanagari candidates |
@@ -557,7 +558,9 @@ the same inputs and filters produce byte-identical output.
 | `POST /tasks/{id}/flag` | `unusable_audio` or `uncertain` |
 | `POST /tasks/{id}/skip` | Defer; event only, no label |
 | `POST /tasks/{id}/attribute` | Speakers queue only: every word with a span and a speaker, stored as a `speakers-v1` label (D98) |
-| `GET /voices/{voice}` | A voice's episodes and its longest stretch alone per clip; `episode`, `limit` (D99) |
+| `GET /voices` | Every voice's profile across episodes (talk, episodes, roles, pots, gender and age with where they came from) and the corpus-wide summary (D104) |
+| `GET /voices/{voice}` | A voice's episodes and its longest stretch alone per clip; `episode`, `limit` (D99); `shared=true` lists instead the clips it only speaks in alongside someone else, whole (D104) |
+| `PUT /voices/{voice}/attributes` | Set a voice's `gender` and `age_bracket` by ear; null leaves a field to the declared rows; audited, no write when unchanged (D104) |
 | `POST /voices/{voice}/clips/{segment_id}` | `confirmed`, `rejected` or `cleared` for that clip's stretch of the voice; a confirmed one is embedded into the voice's print |
 | `POST /tasks/bulk-accept` | Accept many tasks in one transaction |
 | `POST /translit` | Latin token → ranked Devanagari candidates |
@@ -581,7 +584,7 @@ the same inputs and filters produce byte-identical output.
 | `DELETE /segments/{id}` | Delete one segment and its stored objects |
 | `POST /segments/bulk-delete` | Delete several segments, all or none; 409 if any is gold (D94) |
 | `GET /stats/report` | Pipeline status: pots, coverage, verification mix, agreement, accept-rate trend |
-| `GET /stats/inventory` | The corpus page's payload (D91): every clip bucketed on sixteen categories, per-bucket hours by tier and pot and voices, one profile per voice across episodes, per-category recommendations tagged ASR / paper, the paperwork checks, and the clip table itself for client-side cross-filtering |
+| `GET /stats/inventory` | The corpus page's payload (D91, D104): every clip bucketed on fifteen categories, then per pot (`train` = train + val, `gold`) each bucket's hours, voices and status against that pot's `dataset.coverage` floor (missing, thin, enough, plenty, overdone), the paperwork checks, and the clip table for the cross-tab |
 | `POST /segments/{id}/pot` | Put one clip in gold or take it out (D71); 409 for a screened clip |
 | `POST /export` | Export dataset profiles (`training`, `gold`, `analytics`, `error_mining`) |
 | `GET /export/download/{kind}/{filename}` | Download exported dataset JSONL or manifest |
@@ -622,7 +625,8 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Triage | `components/TriageView.tsx` | Dense keyboard-first list over `/queue`; one keystroke per decision |
 | Editor | `components/EditorView.tsx` | Waveform, playback, transcript editing, hypothesis switching, live diff |
 | Multitrack editor | `components/MultitrackEditor.tsx`, `lib/lanes.ts` | Speakers-queue tasks (D98): a lane per diarized speaker, a block per word on a 10 ms grid; move words between lanes (drag or the speaker's number), copy one both voices said (Shift+number), add words by typing at the playhead or taking one the recognisers heard, drag edges to size; undo, and a karaoke line of the mix tagged by speaker. Each lane plays its voice alone and opens its voice page; voiceprint suggestions mark blocks another voice sounds like (`V`, D99) |
-| Voice page | `components/VoiceDialog.tsx` | One voice across episodes (D99): its longest stretch alone in each clip, to play and confirm or reject; confirmed stretches become its print. Opened from the editor's lanes and the Corpus voices table |
+| Voice dialog | `components/VoiceDialog.tsx` | `VoiceClips`: one voice's longest stretch alone in each clip, to play and confirm or reject (D99), or the clips it shares with others; confirmed stretches become its print. The dialog wraps it for the editor's lanes |
+| Voices | `components/VoicesView.tsx` | Every voice from `/voices` (D104): search, pot filter, "needs gender or age"; for the picked voice a sample, gender and age set by ear, its episodes and co-voices, and `VoiceClips` |
 | Playback speed | `lib/playback.ts` | 0.25× to 1.25×, remembered in the browser across clips by both editors |
 | Video link | `lib/video.ts` | Both editors open a YouTube episode's video at the playhead, 2 s early, to see who is talking; `segment.video_url` is rebuilt from the video id (D23) and null for an uploaded file |
 | Waveform | `components/Waveform.tsx` | Draws the precomputed peaks; click to seek, playhead follows audio |
@@ -632,7 +636,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodesView.tsx`, `components/metadata/` | Browse episodes and segments, delete either, edit an episode's genre, topic and speakers (D102) |
 | Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the clips worst first with audio and the folded diff (D83) |
-| Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One cross-filter over the clip table from `/stats/inventory` (D91): a card per category in four rows (people, content, speech, acoustics), a goal switch (ASR / paper), a measure switch (labels / pots / voices), any-by-any cross-tab, the voices table with each voice's episode strip, per-category advice, and the records check |
+| Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One pot at a time from `/stats/inventory` (D104): the ledger, a summary of what is missing and thin beside what is overdone and plenty, a table per category in four groups (status, hours bar with the floor ticked, usable voices), the any-by-any cross-tab, and the records check |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
 
 Audio is never decoded in the browser to draw a waveform (D8), and clips are streamed from

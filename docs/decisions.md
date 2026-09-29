@@ -1098,9 +1098,9 @@ Three rules from the page that replaced it still hold, each because its opposite
 that looks fine and is false:
 - **A stratum is judged by absence, thinness and dominance, never against a target
   distribution.** There is no defensible ideal share of any stratum; there is a floor below which
-  it supports no claim (`dataset.min_stratum_hours`).
-- **Every recommendation carries the measurement that produced it.** A recommendation whose number
-  is not visible is an opinion.
+  it supports no claim (`dataset.coverage`, per pot since D104).
+- **Every rating carries the measurement that produced it.** A status whose number is not visible
+  is an opinion.
 - **Off-taxonomy values are reported as dirt, not as gaps.** A free-typed topic cannot be
   stratified on, and otherwise looks exactly like a topic that is simply rare.
 
@@ -1940,15 +1940,17 @@ podcasts, the most whole episodes the corpus allows at 10%.
 **Reversal:** restore the splits from `data/backups/harness_2026-09-17_pre_val_redraw.dump`, or
 reverse the `split_changed` audit rows.
 
-## D91 — The corpus page counts clips and voices, not episodes, and advises per category
+## D91 — The corpus page counts clips and voices, not episodes
 
 `app/services/inventory/` is rewritten and the analytics page is replaced. The unit of every
 count is the **clip**, and the person is the **voice**. Every clip carries one bucket on each of
-sixteen categories — gender, age, role, voice and its exposure in train; topic, genre, show and
-code-mixing; speaking speed, clip length, crosstalk and speakers in the clip; noise (SNR), room
-(C50) and bandwidth — so hours cut by any category sum to the corpus. The payload also ships the
-clip table itself (one compact row per clip, a few hundred kilobytes), and the page re-cuts every
-card client-side when a bucket, a cross-tab cell, a recommendation or a voice is clicked.
+sixteen categories (fifteen since D104 moved the voice to its own page) — gender, age, role,
+voice and its exposure in train; topic, genre, show and code-mixing; speaking speed, clip length,
+crosstalk and speakers in the clip; noise (SNR), room (C50) and bandwidth — so hours cut by any
+category sum to the corpus. The payload also ships the
+clip table itself (one compact row per clip, a few hundred kilobytes) for the cross-tab. How the
+page is laid out, how a bucket is rated and where voices live is D104's; the advice, the goal
+switch and the cross-filter this entry introduced are gone.
 
 **Why the episode attribution of D69 went.** It existed because no route diarized, so an episode
 with a male host and a female guest had to count its whole duration on both sides. Every episode
@@ -1971,36 +1973,20 @@ where a clip has one and the fused seed otherwise. It is computed here rather th
 `clip_classes.py`, whose axes never read the reference (D87). Edges 2.0 / 2.6 / 3.2 / 3.8 sit
 near the 10th, 30th, 70th and 93rd percentiles of the corpus (median 2.9 w/s).
 
-**Advice is per category and per purpose.** Each recommendation names the category and bucket it
-came from and whether it hurts the recogniser, the paper or both, so the page can be read for one
-purpose at a time. A bucket is thin in its own unit: `dataset.min_stratum_voices` (5, new) for
-people and content, where the claim is about speakers, and `dataset.min_stratum_hours` for speech
-and acoustic conditions. A voice counts toward a bucket once it has 300 reference words attributed
-inside it, the notebook's floor for a usable voice. Gold is asked for only on speech and acoustic
-conditions: gold holds voices train never sees (D76), so a people bucket with no gold is the
-design. A paper bucket resting on screened labels is asked to verify a sample, because the mixing
-variable is the script choice the fused seed made (docs/sociolinguistics.md). Shows are not asked
-for more speakers; a show is where audio comes from, not a stratum anyone fills. The diarizer's
-"nobody heard" clip is a defect, not a condition, and is excluded from every rule.
-
 **Voices are followed.** One profile per voice: talk time inside the corpus's clips, attributed
 words, episodes with minutes and share and the other voices in the room, shows, roles, hours by
-pot, verified share, mean CMI, speaking rate, first and last date. The page draws each voice's
-episodes as a strip and lets a co-voice be followed with a click. The recurrence the accommodation
-design needs — hosts with five or more host–guest episodes, guests who appear with more than one
-host — is measured and asked for; a monologue host in twenty episodes accommodates nobody.
-
-**Not built: the manual voice-to-row link.** docs/sociolinguistics.md ranks it first among the
-metadata worth adding. It needs a listen-and-click UI and a stored link on `diarization_runs`;
-the forced rules above cover the podcasts whose structure decides it, and the page now shows,
-per voice, that the rest are unresolved rather than absent.
+pot, verified share, mean CMI, speaking rate, first and last date. A voice counts toward a bucket
+once it has enough reference words attributed inside it (300 in train, the notebook's floor for a
+usable voice). The recurrence the accommodation design needs — hosts with five or more
+host–guest episodes, guests who appear with more than one host — is measured; a monologue host in
+twenty episodes accommodates nobody.
 
 **Cost.** One request builds everything in under a second on 7.6k clips; the payload is ~850 KB.
 `/stats/report` is unchanged and no longer read by the page. The old panels are deleted, not
 hidden.
 
 **Reversal:** restore `app/services/inventory/` and `frontend/src/components/analytics/` from
-before this commit; drop `dataset.min_stratum_voices`. No schema change was made.
+before this commit. No schema change was made.
 
 ## D93 — An interrupted ingest resumes by itself and never pays twice
 
@@ -2420,3 +2406,46 @@ news bulletin had new voices at 23, 31 and 37 minutes.
 
 **Reversal:** cheap. Remove the form field and the `clip_minutes` parameters; clipped episodes
 stay as they are and still say so.
+
+## D104 — The corpus page rates each pot on its own, and a voice can be given a gender and age by ear
+
+The D91 page answered with a ranked shopping list read "for ASR" or "for the paper", on cards
+whose bars stacked minutes and voices in one track and drew gold beside train on one axis. The
+owner found it hard to read and asked for four things: no advice section, one purpose rather than
+two, gold kept apart from train/val, and a look that says at once what is lacking and what is
+plentiful. The goal split is gone everywhere, including `Category.goals`, and so is
+`recommendations.py`.
+
+- **Two views, never one axis.** `Train + val` (everything not gold) and `Gold (test)` are cut and
+  rated separately (`app/services/inventory/coverage.py`). A benchmark is sized in minutes per
+  stratum and a training set in hours, and drawn on one scale the smaller pot was a sliver.
+- **Every bucket gets a status from its pot's floor** (`dataset.coverage`): *missing* (a closed
+  list's value with no audio), *thin* (under the hour floor, or, for people and content, under
+  `thin_voices` usable voices however long: four hours of one reviewer is one voice),
+  *overdone* (over `dominant_share` of its category), *plenty* (`plenty_factor` times the floor)
+  and *enough*. Unknown, the diarizer's empty clip, off-list values and shows are listed, never
+  rated. Floors: train 1 h, 5 voices of 300 words; gold 10 min (about 1,800 reference words),
+  5 voices of 50 words, because reels are short. D69's rule stands: absence, thinness and
+  dominance, never a target share, and every status carries its numbers.
+- **Overdone is separate from plenty.** At train's size nearly every acoustic bucket passes 3 h,
+  so a single "plenty" buried the buckets that crowd the rest out (male 70%, podcast 55%, one
+  speaker 70%). The page's summary shows missing and thin on one side and overdone beside plenty
+  on the other, folding plentiful speech and acoustic conditions away. Each category is then a
+  table: status, hours as a bar with the floor ticked on it, usable voices as a number. Hours and
+  voices never share a bar. The cross-tab stays, scoped to the pot.
+- **Voices get their own page.** Every voice in a list; a sample to play; where it speaks; its
+  clips, either its stretches alone (to confirm into its print, D99) or the clips it only shares
+  with someone else, played whole (`GET /voices/{voice}?shared=true`). `GET /voices` serves the
+  profiles.
+- **A voice can be given a gender and an age bracket by ear** (`voice_attributes`, append-only,
+  newest per voice current, an `audit_logs` row per change, nothing written when nothing changed;
+  `PUT /voices/{voice}/attributes`). The values are exactly a declared row's allowlist (D56, D70),
+  and a person heard is a declaration by hand, not the audio inference D58 refused. Declared rows
+  still reach voices by D91's three rules; a value set by ear outranks them field by field, and
+  where the rows say otherwise the voice is marked `disagrees` rather than silently overruled. It
+  replaces the voice-to-row link D91 left unbuilt, and it is what reaches the reels and
+  multi-guest shows no rule can. Like `voice_confirmations`, it is keyed by voice id, so a
+  `link_voices --relink` that renumbers voices orphans both.
+
+**Reversal:** the page is cheap: restore the D91 frontend and `recommendations.py` from git.
+`voice_attributes` is one table with a working downgrade; the resolver ignores it when empty.
