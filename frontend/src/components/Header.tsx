@@ -9,6 +9,7 @@ import {
   RiPlayFill,
   RiQuestionLine,
   RiUploadCloud2Line,
+  RiUserVoiceLine,
 } from '@remixicon/react'
 
 import { ModeToggle } from '@/components/ModeToggle'
@@ -24,6 +25,7 @@ export type HeaderMode =
   | 'editor'
   | 'episodes'
   | 'analytics'
+  | 'voices'
   | 'export'
   | 'costs'
   | 'ingest'
@@ -86,6 +88,7 @@ export function Header({
     { id: 'editor', label: 'Editor', icon: RiEditLine },
     { id: 'episodes', label: 'Episodes', icon: RiFolderMusicLine, count: episodeCount },
     { id: 'analytics', label: 'Analytics', icon: RiBarChartBoxLine },
+    { id: 'voices', label: 'Voices', icon: RiUserVoiceLine },
     { id: 'export', label: 'Export', icon: RiFolderDownloadLine },
     { id: 'costs', label: 'Cost Tracker', icon: RiMoneyDollarCircleLine },
     { id: 'models', label: 'Models', icon: RiCpuLine },

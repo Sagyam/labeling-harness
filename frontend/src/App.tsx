@@ -12,6 +12,7 @@ import { ModelsView } from '@/components/ModelsView'
 import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
 import { MultitrackEditor } from '@/components/MultitrackEditor'
 import { TriageView } from '@/components/TriageView'
+import { VoicesView } from '@/components/VoicesView'
 import { api } from '@/services/api'
 import type {
   HealthResponse,
@@ -39,7 +40,7 @@ export default function App() {
     const hash = window.location.hash.replace('#', '')
     const target = modeParam || hash
     if (
-      ['triage', 'editor', 'episodes', 'analytics', 'export', 'costs', 'ingest', 'models'].includes(
+      ['triage', 'editor', 'episodes', 'analytics', 'voices', 'export', 'costs', 'ingest', 'models'].includes(
         target,
       )
     ) {
@@ -571,6 +572,8 @@ export default function App() {
         />
       ) : activeMode === 'analytics' ? (
         <AnalyticsView />
+      ) : activeMode === 'voices' ? (
+        <VoicesView />
       ) : activeMode === 'export' ? (
         <ExportView />
       ) : activeMode === 'costs' ? (

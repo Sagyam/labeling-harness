@@ -27,6 +27,8 @@ import {
   YouTubeProbe,
   YouTubeIngestIn,
   CorpusInventory,
+  VoiceAttributesOut,
+  VoiceList,
   ExportResponse,
   ExportHistoryItem,
   CostReportResponse,
@@ -166,13 +168,30 @@ export const api = {
   },
 
   /** Where a voice speaks and the clips it speaks alone in (D99). */
-  getVoice: (voice: string, opts: { episode?: string; limit?: number } = {}): Promise<VoicePage> => {
+  getVoice: (
+    voice: string,
+    opts: { episode?: string; limit?: number; shared?: boolean } = {},
+  ): Promise<VoicePage> => {
     const params = new URLSearchParams()
     if (opts.episode) params.set('episode', opts.episode)
     if (opts.limit) params.set('limit', String(opts.limit))
+    if (opts.shared) params.set('shared', 'true')
     const qs = params.toString()
     return request<VoicePage>(`/voices/${encodeURIComponent(voice)}${qs ? `?${qs}` : ''}`)
   },
+
+  /** Every voice followed across episodes, with the corpus-wide summary (D104). */
+  getVoices: (): Promise<VoiceList> => request<VoiceList>('/voices'),
+
+  /** Set a voice's gender and age bracket from listening to it; null leaves a field unset. */
+  setVoiceAttributes: (
+    voice: string,
+    body: { gender: string | null; age_bracket: string | null },
+  ): Promise<VoiceAttributesOut> =>
+    request<VoiceAttributesOut>(`/voices/${encodeURIComponent(voice)}/attributes`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
 
   /** Only this voice, not only this voice, or take the verdict back (D99). */
   setVoiceVerdict: (

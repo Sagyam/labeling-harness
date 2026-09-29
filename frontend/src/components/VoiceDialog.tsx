@@ -25,14 +25,6 @@ import { cn } from '@/lib/utils'
 import { api, resolveUrl } from '@/services/api'
 import type { VoiceClip, VoicePage, VoiceVerdict } from '@/types'
 
-interface VoiceDialogProps {
-  /** The anonymous voice id (D87); null closes the dialog. */
-  voice: string | null
-  /** Show this episode's clips first; the annotator can widen to every episode. */
-  episode?: string | null
-  onClose: () => void
-}
-
 /**
  * Play ``[start, end]`` of a clip on ``audio``, stopping on a timer: ``timeupdate`` is too coarse
  * to end a stretch where the next voice comes in. Returns a cancel function.
@@ -69,19 +61,31 @@ function playStretch(
 const minutes = (seconds: number) =>
   seconds >= 60 ? `${(seconds / 60).toFixed(1)} min` : `${seconds.toFixed(0)} s`
 
+interface VoiceClipsProps {
+  voice: string
+  /** Show this episode's clips first; the annotator can widen to every episode. */
+  episode?: string | null
+  /** Offer the clips the voice shares with others, played whole (D104). */
+  allowShared?: boolean
+  /** Take the keyboard (J/K, Space, Y/N/U) from the whole window rather than a focused box. */
+  globalKeys?: boolean
+  className?: string
+}
+
 /**
- * One voice across the corpus (D99): where it speaks, and its longest stretch alone in each clip,
- * to listen to and confirm.
+ * One voice's clips (D99): its longest stretch alone in each, to play and confirm or reject, and
+ * -- with `allowShared` -- every other clip it speaks in, played whole and not judged (D104).
  *
  * "Only this voice" means the owner heard the stretch and nobody else speaks in it. Confirmed
  * stretches become the voice's print, which the multitrack editor's suggestions are scored
- * against; until there is one, the diarizer's own centroid stands in. A voice never gets a name (D56):
- * knowing what it sounds like is the point, not who it is.
+ * against; until there is one, the diarizer's own centroid stands in. A voice never gets a name
+ * (D56): knowing what it sounds like is the point, not who it is.
  */
-export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
+export function VoiceClips({ voice, episode, allowShared = false, globalKeys = false, className }: VoiceClipsProps) {
   const [page, setPage] = useState<VoicePage | null>(null)
   const [scope, setScope] = useState<'episode' | 'all'>(episode ? 'episode' : 'all')
   const [episodeFilter, setEpisodeFilter] = useState<string | null>(episode ?? null)
+  const [shared, setShared] = useState(false)
   const [loading, setLoading] = useState(false)
   const [focused, setFocused] = useState(0)
   const [playing, setPlaying] = useState<number | null>(null)
@@ -94,16 +98,19 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
     setScope(episode ? 'episode' : 'all')
     setEpisodeFilter(episode ?? null)
     setFocused(0)
+    cancelRef.current?.()
+    audioRef.current?.pause()
+    setPlaying(null)
   }, [voice, episode])
 
   const load = useCallback(async () => {
-    if (!voice) return
     setLoading(true)
     try {
       setPage(
         await api.getVoice(voice, {
           episode: scope === 'episode' && episodeFilter ? episodeFilter : undefined,
           limit: 120,
+          shared,
         }),
       )
     } catch (err: any) {
@@ -112,19 +119,19 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
     } finally {
       setLoading(false)
     }
-  }, [voice, scope, episodeFilter])
+  }, [voice, scope, episodeFilter, shared])
 
   useEffect(() => {
     load()
   }, [load])
 
-  useEffect(() => {
-    if (!voice) {
+  useEffect(
+    () => () => {
       cancelRef.current?.()
       audioRef.current?.pause()
-      setPlaying(null)
-    }
-  }, [voice])
+    },
+    [],
+  )
 
   const play = (clip: VoiceClip) => {
     const audio = audioRef.current
@@ -139,7 +146,7 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
   }
 
   const judge = async (clip: VoiceClip, verdict: VoiceVerdict) => {
-    if (!voice) return
+    if (!clip.alone) return
     try {
       const out = await api.setVoiceVerdict(voice, clip.segment_id, verdict)
       setPage((p) =>
@@ -167,7 +174,7 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
 
   const clips = page?.clips ?? []
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const handleKey = (e: { key: string; preventDefault: () => void; stopPropagation: () => void }) => {
     const clip = clips[focused]
     const move = (to: number) => {
       const next = Math.max(0, Math.min(clips.length - 1, to))
@@ -177,54 +184,88 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
     if (e.key === 'j' || e.key === 'ArrowDown') move(focused + 1)
     else if (e.key === 'k' || e.key === 'ArrowUp') move(focused - 1)
     else if (e.key === ' ' && clip) play(clip)
-    else if ((e.key === 'y' || e.key === 'Y') && clip) {
+    else if ((e.key === 'y' || e.key === 'Y') && clip?.alone) {
       judge(clip, 'confirmed')
       move(focused + 1)
-    } else if ((e.key === 'n' || e.key === 'N') && clip) {
+    } else if ((e.key === 'n' || e.key === 'N') && clip?.alone) {
       judge(clip, 'rejected')
       move(focused + 1)
-    } else if ((e.key === 'u' || e.key === 'U') && clip) judge(clip, 'cleared')
+    } else if ((e.key === 'u' || e.key === 'U') && clip?.alone) judge(clip, 'cleared')
     else return
     e.preventDefault()
     e.stopPropagation()
   }
 
-  return (
-    <Dialog open={voice !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="flex max-h-[85vh] flex-col gap-4 sm:max-w-4xl"
-        onKeyDown={onKeyDown}
-      >
-        <audio ref={audioRef} onEnded={() => setPlaying(null)} onPause={() => setPlaying(null)} />
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-mono">
-            {voice}
-            {page && (
-              <Chip
-                className={cn(
-                  page.print_source === 'confirmed'
-                    ? 'bg-success/15 text-success'
-                    : 'bg-muted text-muted-foreground',
-                )}
-              >
-                {page.print_source === 'confirmed'
-                  ? `print from ${page.confirmed} confirmed clip${page.confirmed === 1 ? '' : 's'}`
-                  : 'print from the diarizer'}
-              </Chip>
-            )}
-          </DialogTitle>
-          <DialogDescription>
-            {page
-              ? `${minutes(page.talk_seconds)} of talk in ${page.episodes.length} episode${
-                  page.episodes.length === 1 ? '' : 's'
-                }. Each row plays this voice's longest stretch alone in a clip. Confirm the ones where only this voice speaks: they become its print.`
-              : 'Loading…'}
-          </DialogDescription>
-        </DialogHeader>
+  const keyRef = useRef(handleKey)
+  keyRef.current = handleKey
+  useEffect(() => {
+    if (!globalKeys) return
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      keyRef.current(e)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [globalKeys])
 
+  return (
+    <div
+      className={cn('flex min-h-0 flex-col gap-3', className)}
+      onKeyDown={globalKeys ? undefined : handleKey}
+    >
+      <audio ref={audioRef} onEnded={() => setPlaying(null)} onPause={() => setPlaying(null)} />
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {page && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {page.episodes.map((e) => (
+          <Chip
+            className={cn(
+              page.print_source === 'confirmed'
+                ? 'bg-success/15 text-success'
+                : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {page.print_source === 'confirmed'
+              ? `print from ${page.confirmed} confirmed clip${page.confirmed === 1 ? '' : 's'}`
+              : 'print from the diarizer'}
+          </Chip>
+        )}
+        <span>
+          {page
+            ? `${minutes(page.talk_seconds)} of talk in ${page.episodes.length} episode${
+                page.episodes.length === 1 ? '' : 's'
+              }. ${
+                shared
+                  ? 'A row plays a whole clip the voice shares with someone else.'
+                  : "A row plays the voice's longest stretch alone in a clip; confirm the ones where only this voice speaks."
+              }`
+            : 'Loading…'}
+        </span>
+      </div>
+
+      {page && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {page.episodes.length > 6 ? (
+            <select
+              value={scope === 'episode' && episodeFilter ? episodeFilter : ''}
+              onChange={(ev) => {
+                const value = ev.target.value
+                setEpisodeFilter(value || null)
+                setScope(value ? 'episode' : 'all')
+                setFocused(0)
+              }}
+              className="h-7 max-w-80 truncate rounded-md border border-input bg-background px-2 text-[11px]"
+              aria-label="Episode"
+            >
+              <option value="">All {page.episodes.length} episodes</option>
+              {page.episodes.map((e) => (
+                <option key={e.episode_id} value={e.external_id}>
+                  {(e.title ?? e.external_id).slice(0, 60)} · {minutes(e.talk_seconds)} · {e.solo_clips} solo
+                </option>
+              ))}
+            </select>
+          ) : (
+            page.episodes.map((e) => (
               <button
                 key={e.episode_id}
                 type="button"
@@ -244,13 +285,36 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
                 <span className="font-mono">S{e.speaker_number}</span> ·{' '}
                 {e.title ?? e.external_id} · {minutes(e.talk_seconds)}
               </button>
-            ))}
+            ))
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {allowShared && (
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                spacing={0}
+                value={shared ? 'shared' : 'alone'}
+                onValueChange={(v) => {
+                  if (!v) return
+                  setShared(v === 'shared')
+                  setFocused(0)
+                }}
+                aria-label="Which clips"
+              >
+                <ToggleGroupItem value="alone" title="Its longest stretch alone in each clip, to confirm">
+                  Alone
+                </ToggleGroupItem>
+                <ToggleGroupItem value="shared" title="Clips it only speaks in alongside someone else, played whole">
+                  With others
+                </ToggleGroupItem>
+              </ToggleGroup>
+            )}
             <ToggleGroup
               type="single"
               variant="outline"
               size="sm"
               spacing={0}
-              className="ml-auto"
               value={scope}
               onValueChange={(v) => {
                 if (!v) return
@@ -264,56 +328,68 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
               <ToggleGroupItem value="all">All episodes</ToggleGroupItem>
             </ToggleGroup>
           </div>
-        )}
+        </div>
+      )}
 
-        <div className="scrollbar-thin -mx-2 min-h-40 flex-1 overflow-y-auto px-2" tabIndex={-1}>
-          {loading && !page ? (
-            <div className="flex justify-center py-10">
-              <Spinner />
-            </div>
-          ) : clips.length === 0 ? (
-            <p className="py-10 text-center text-muted-foreground">
-              No clip has this voice alone for 1.5 s
-              {scope === 'episode' ? ' in this episode — try all episodes.' : '.'}
-            </p>
-          ) : (
-            <div className="flex flex-col">
-              {clips.map((clip, index) => (
-                <div
-                  key={clip.segment_id}
-                  ref={(el) => {
-                    if (el) rowRefs.current.set(index, el)
-                    else rowRefs.current.delete(index)
-                  }}
-                  onClick={() => setFocused(index)}
-                  className={cn(
-                    'flex items-center gap-3 border-b px-2 py-2 last:border-b-0',
-                    index === focused && 'bg-muted/60',
-                    clip.verdict === 'rejected' && 'opacity-50',
-                  )}
+      <div className="scrollbar-thin -mx-2 min-h-40 flex-1 overflow-y-auto px-2" tabIndex={-1}>
+        {loading && !page ? (
+          <div className="flex justify-center py-10">
+            <Spinner />
+          </div>
+        ) : clips.length === 0 ? (
+          <p className="py-10 text-center text-muted-foreground">
+            {shared ? 'No clip has this voice only alongside someone else' : 'No clip has this voice alone for 1.5 s'}
+            {scope === 'episode' ? ' in this episode — try all episodes.' : '.'}
+          </p>
+        ) : (
+          <div className="flex flex-col">
+            {clips.map((clip, index) => (
+              <div
+                key={clip.segment_id}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(index, el)
+                  else rowRefs.current.delete(index)
+                }}
+                onClick={() => setFocused(index)}
+                className={cn(
+                  'flex items-center gap-3 border-b px-2 py-2 last:border-b-0',
+                  index === focused && 'bg-muted/60',
+                  clip.verdict === 'rejected' && 'opacity-50',
+                )}
+              >
+                <Button
+                  size="icon-sm"
+                  variant={playing === clip.segment_id ? 'default' : 'outline'}
+                  onClick={() => play(clip)}
+                  aria-label={playing === clip.segment_id ? 'Pause' : 'Play'}
                 >
-                  <Button
-                    size="icon-sm"
-                    variant={playing === clip.segment_id ? 'default' : 'outline'}
-                    onClick={() => play(clip)}
-                    aria-label={playing === clip.segment_id ? 'Pause' : 'Play'}
-                  >
-                    {playing === clip.segment_id ? <RiPauseFill /> : <RiPlayFill />}
-                  </Button>
-                  <div className="min-w-0 flex-1">
-                    <div className="line-clamp-2 font-devanagari text-sm leading-6">
-                      {clip.text ?? <span className="text-muted-foreground">no verified text</span>}
-                    </div>
-                    <div className="flex gap-2 font-mono text-[10px] text-muted-foreground">
-                      <span title={clip.whole ? 'the whole clip is this voice' : 'the longest stretch of this voice alone in the clip'}>
-                        {clip.whole
+                  {playing === clip.segment_id ? <RiPauseFill /> : <RiPlayFill />}
+                </Button>
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 font-devanagari text-sm leading-6">
+                    {clip.text ?? <span className="text-muted-foreground">no verified text</span>}
+                  </div>
+                  <div className="flex gap-2 font-mono text-[10px] text-muted-foreground">
+                    <span
+                      title={
+                        !clip.alone
+                          ? 'the voice speaks here alongside someone else; the whole clip is played'
+                          : clip.whole
+                            ? 'the whole clip is this voice'
+                            : 'the longest stretch of this voice alone in the clip'
+                      }
+                    >
+                      {!clip.alone
+                        ? `${clip.duration_seconds.toFixed(1)} s, with others`
+                        : clip.whole
                           ? `${clip.duration_seconds.toFixed(1)} s, whole clip`
                           : `${(clip.end - clip.start).toFixed(1)} s alone at ${clip.start.toFixed(1)}–${clip.end.toFixed(1)} s of ${clip.duration_seconds.toFixed(1)} s`}
-                      </span>
-                      <span className="truncate">{clip.episode_external_id}</span>
-                      {clip.pot === 'gold' && <span className="text-amber-600">gold</span>}
-                    </div>
+                    </span>
+                    <span className="truncate">{clip.episode_external_id}</span>
+                    {clip.pot === 'gold' && <span className="text-amber-600">gold</span>}
                   </div>
+                </div>
+                {clip.alone ? (
                   <div className="flex shrink-0 items-center gap-1">
                     <Button
                       size="sm"
@@ -346,24 +422,47 @@ export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
                       </Button>
                     )}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {page && (
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            <span>
-              {clips.length} of {page.total_clips} clips shown · {page.confirmed} confirmed ·{' '}
-              {page.rejected} rejected
-            </span>
-            <span>
-              <Kbd>J</Kbd>/<Kbd>K</Kbd> move · <Kbd>Space</Kbd> play · <Kbd>Y</Kbd> only this voice
-              · <Kbd>N</Kbd> not only · <Kbd>U</Kbd> undo
-            </span>
+                ) : null}
+              </div>
+            ))}
           </div>
         )}
+      </div>
+
+      {page && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+          <span>
+            {clips.length} of {page.total_clips} clips shown · {page.confirmed} confirmed ·{' '}
+            {page.rejected} rejected
+          </span>
+          <span>
+            <Kbd>J</Kbd>/<Kbd>K</Kbd> move · <Kbd>Space</Kbd> play · <Kbd>Y</Kbd> only this voice
+            · <Kbd>N</Kbd> not only · <Kbd>U</Kbd> undo
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface VoiceDialogProps {
+  /** The anonymous voice id (D87); null closes the dialog. */
+  voice: string | null
+  /** Show this episode's clips first; the annotator can widen to every episode. */
+  episode?: string | null
+  onClose: () => void
+}
+
+/** A voice's clips in a dialog, opened from the multitrack editor's lanes (D99). */
+export function VoiceDialog({ voice, episode, onClose }: VoiceDialogProps) {
+  return (
+    <Dialog open={voice !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[85vh] flex-col gap-4 sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="font-mono">{voice}</DialogTitle>
+          <DialogDescription className="sr-only">This voice's clips, to listen to and confirm.</DialogDescription>
+        </DialogHeader>
+        {voice ? <VoiceClips voice={voice} episode={episode} className="flex-1" /> : null}
       </DialogContent>
     </Dialog>
   )

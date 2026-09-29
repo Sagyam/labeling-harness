@@ -1,23 +1,16 @@
 /**
- * The corpus page (D91): the dataset subdivided every way it can be, the people in it followed
- * across episodes, and advice on what to record next, one category at a time.
+ * The corpus page (D91, D104): what one pot is short of and what it has plenty of.
  *
- * The page is one cross-filter. Every clip arrives with a bucket on each of sixteen categories;
- * clicking a bucket anywhere -- a card, the cross-tab, a recommendation, a voice -- filters every
- * other card to the clips in it, and the arithmetic is done here from the clip table, so it is
- * instant. The goal switch reads the page for one of the corpus's two purposes at a time: the
- * recogniser cares about conditions and unseen voices, the paper cares about people and what
- * confounds a comparison between them.
- *
- * Order: the ledger, then the advice (the only section that ends in an action), then the
- * evidence for it -- people, content, speech, acoustics -- then the cross-tab, the voices and
- * the paperwork.
+ * Gold and train/val are separate views, never drawn on one axis: a benchmark wants minutes per
+ * stratum and many different voices, a training set wants hours. Each is rated against its own
+ * floor (`dataset.coverage`), and the page leads with the answer -- the missing and thin buckets
+ * beside the plentiful ones -- then a table per category as the evidence, the cross-tab, and the
+ * paperwork. People are followed on the Voices page.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   RiChat3Line,
-  RiCloseLine,
   RiDatabase2Line,
   RiErrorWarningLine,
   RiGroupLine,
@@ -30,17 +23,15 @@ import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { AdvicePanel } from '@/components/analytics/AdvicePanel'
-import { CategoryCard, TIER_FILL, type Measure } from '@/components/analytics/CategoryCard'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { CategoryTable, GapSummary } from '@/components/analytics/Coverage'
 import { CrossTabPanel } from '@/components/analytics/CrossTabPanel'
 import { RecordsPanel } from '@/components/analytics/RecordsPanel'
-import { VoicesPanel } from '@/components/analytics/VoicesPanel'
-import { GROUP_NOTE, bucketLabel, hoursOrMinutes } from '@/components/analytics/labels'
-import { aggregateAll, hasFilters, totals, type Filters } from '@/components/analytics/model'
-import { Legend, POT_COLOR, Stat, hours } from '@/components/analytics/primitives'
-import { cn } from '@/lib/utils'
+import { GROUP_NOTE, hoursOrMinutes } from '@/components/analytics/labels'
+import { Stat, percent } from '@/components/analytics/primitives'
+import { StatusLegend } from '@/components/analytics/status'
 import { api } from '@/services/api'
-import type { CategoryGroup, CorpusInventory, Goal } from '@/types'
+import type { CategoryGroup, CorpusInventory, CorpusPot } from '@/types'
 
 const GROUP_ICON: Record<CategoryGroup, React.ComponentType<{ className?: string }>> = {
   people: RiGroupLine,
@@ -49,44 +40,39 @@ const GROUP_ICON: Record<CategoryGroup, React.ComponentType<{ className?: string
   acoustics: RiSoundModuleLine,
 }
 
-const SEGMENT =
-  'rounded px-2 py-0.5 text-[11px] data-[on=true]:bg-background data-[on=true]:shadow-sm data-[on=true]:text-foreground text-muted-foreground'
+const POT_KEY = 'corpus-pot'
 
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-  label,
-}: {
-  value: T
-  options: Array<[T, string, string?]>
-  onChange: (next: T) => void
-  label: string
-}) {
-  return (
-    <div className="flex items-center gap-1 rounded-md bg-muted p-0.5" role="group" aria-label={label}>
-      {options.map(([key, text, title]) => (
-        <button key={key} type="button" data-on={value === key} onClick={() => onChange(key)} className={SEGMENT} title={title}>
-          {text}
-        </button>
-      ))}
-    </div>
-  )
+/** A threshold, rounded the way a person would say it: "10 min", "1 h", "3 h". */
+const floorText = (hours: number) =>
+  hours < 1 ? `${Math.round(hours * 60)} min` : `${Number(hours.toFixed(1))} h`
+
+function storedPot(): CorpusPot {
+  try {
+    return window.localStorage.getItem(POT_KEY) === 'gold' ? 'gold' : 'train'
+  } catch {
+    return 'train'
+  }
 }
 
 export function AnalyticsView() {
   const [inventory, setInventory] = useState<CorpusInventory | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filters, setFilters] = useState<Filters>({})
-  const [goal, setGoal] = useState<Goal | 'both'>('both')
-  const [measure, setMeasure] = useState<Measure>('labels')
-  const [adviceCategory, setAdviceCategory] = useState<string | null>(null)
+  const [pot, setPotState] = useState<CorpusPot>(storedPot)
   const [cross, setCross] = useState<{ rows: string; cols: string; unit: 'hours' | 'voices' }>({
-    rows: 'gender',
-    cols: 'age_bracket',
+    rows: 'genre',
+    cols: 'topic',
     unit: 'hours',
   })
+
+  const setPot = (next: CorpusPot) => {
+    setPotState(next)
+    try {
+      window.localStorage.setItem(POT_KEY, next)
+    } catch {
+      // a remembered tab is a convenience
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -104,17 +90,6 @@ export function AnalyticsView() {
   useEffect(() => {
     load()
   }, [])
-
-  const aggregates = useMemo(() => (inventory ? aggregateAll(inventory, filters) : {}), [inventory, filters])
-  const cut = useMemo(() => (inventory ? totals(inventory, filters) : null), [inventory, filters])
-
-  const toggle = (key: string, bucket: string) =>
-    setFilters((prev) => {
-      const next = { ...prev }
-      if (next[key] === bucket) delete next[key]
-      else next[key] = bucket
-      return next
-    })
 
   if (loading && !inventory) {
     return (
@@ -140,46 +115,42 @@ export function AnalyticsView() {
     )
   }
 
-  if (!inventory || !cut) return null
+  if (!inventory) return null
 
-  const { totals: t, voice_summary: voices } = inventory
-  const labels = Object.fromEntries(inventory.categories.map((c) => [c.key, c.label]))
-  // The voice category is filterable and cross-tabulated, but its card is the Voices table below.
-  const visible = inventory.categories.filter(
-    (c) => c.key !== 'voice' && (goal === 'both' || c.goals.includes(goal))
-  )
-  const filtered = hasFilters(filters)
+  const report = inventory.pots[pot]
+  const t = report.totals
+  const f = report.floor
+  const heard = t.hours > 0 ? t.verified_hours / t.hours : 0
 
   return (
     <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto bg-background p-4">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <RiDatabase2Line className="size-5 text-primary" />
           <h1 className="font-heading text-lg font-bold tracking-tight">Corpus</h1>
-          <p className="text-xs text-muted-foreground">every clip, cut by who, what, how and where; every voice followed</p>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={0}
+            value={pot}
+            onValueChange={(v) => v && setPot(v as CorpusPot)}
+            aria-label="Pot"
+          >
+            {(['train', 'gold'] as const).map((key) => (
+              <ToggleGroupItem key={key} value={key} className="gap-1.5 px-3">
+                {inventory.pots[key].label}
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {hoursOrMinutes(inventory.pots[key].totals.hours)}
+                </span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Segmented
-            label="Goal"
-            value={goal}
-            onChange={setGoal}
-            options={[
-              ['both', 'Both goals'],
-              ['asr', 'ASR', 'Conditions a recogniser trips on, and the voices a benchmark should hold out'],
-              ['paper', 'Paper', 'People, and what confounds a comparison between them'],
-            ]}
-          />
-          <Segmented
-            label="Measure"
-            value={measure}
-            onChange={setMeasure}
-            options={[
-              ['labels', 'Labels', 'Verified, screened and undecided hours'],
-              ['pots', 'Pots', 'Gold, val and train hours'],
-              ['voices', 'Voices', 'Voices per bucket, usable ones solid'],
-            ]}
-          />
-          <span className="font-mono text-[11px] text-muted-foreground">{new Date(inventory.generated_at).toLocaleTimeString()}</span>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {new Date(inventory.generated_at).toLocaleTimeString()}
+          </span>
           <Button variant="outline" size="sm" onClick={load} className="h-8 gap-1.5">
             <RiRefreshLine className="size-3.5" />
             Refresh
@@ -187,110 +158,42 @@ export function AnalyticsView() {
         </div>
       </div>
 
-      {/* The ledger: size on the left, people on the right, because people are the constraint. */}
-      <div className="grid grid-cols-2 divide-x divide-y rounded-lg border bg-card sm:grid-cols-4 xl:grid-cols-8 xl:divide-y-0">
-        <Stat label="Audio" value={`${hours(t.hours)} h`} sub={`${t.clips.toLocaleString()} clips · ${t.episodes} episodes`} />
-        <Stat label="Speech" value={`${hours(t.speech_hours)} h`} sub={`${t.words.toLocaleString()} reference words`} title="VAD speech inside the clips" />
+      <div className="grid grid-cols-2 divide-x divide-y rounded-lg border bg-card sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
         <Stat
-          label="Heard"
-          value={`${hours(t.verified_hours)} h`}
-          sub={`${hours(t.screened_hours)} h screened`}
-          title="Verified: played and read. Screened: accepted on the disagreement signal without listening (D63)."
+          label="Audio"
+          value={hoursOrMinutes(t.hours)}
+          sub={t.target_hours ? `of ${t.target_hours} h target` : undefined}
         />
+        <Stat label="Clips" value={t.clips.toLocaleString()} sub={`${t.words.toLocaleString()} words`} />
+        <Stat label="Episodes" value={t.episodes} sub={`${t.shows} shows`} />
+        <Stat label="Voices" value={t.voices} sub="lead at least one clip" />
         <Stat
-          label="Gold"
-          value={`${hours(t.gold_hours)} h`}
-          sub={`of ${t.gold_target_hours} h · val ${hours(t.val_hours)} h`}
-          tone={t.gold_hours < t.gold_target_hours ? 'text-amber-600 dark:text-amber-400' : ''}
+          label="Verified"
+          value={percent(heard)}
+          sub={`${hoursOrMinutes(t.screened_hours)} screened`}
+          title="Verified: played and read. Screened: accepted on the disagreement signal without listening."
         />
-        <Stat label="Shows" value={t.shows} sub="series recorded from" />
-        <Stat label="Voices" value={voices.voices} sub={`${voices.recurring} recur across episodes`} />
-        <Stat
-          label="Usable"
-          value={voices.usable}
-          sub="voices with 300+ words"
-          title="The paper's n: a voice needs enough words attributed to one person before anything can be said about them"
-        />
-        <Stat
-          label="Known"
-          value={`${voices.gender_resolved}/${voices.age_resolved}`}
-          sub="gender / age resolved"
-          tone={voices.gender_resolved < voices.usable ? 'text-amber-600 dark:text-amber-400' : ''}
-          title="Voices whose declared row the episode forces; the rest are declared but unmatched, or in episodes with no rows"
-        />
-      </div>
-
-      {/* The active cut. Every card below is summed over these clips. */}
-      <div
-        className={cn(
-          'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs',
-          filtered ? 'border-indigo-500/40 bg-indigo-500/5' : 'border-dashed text-muted-foreground'
-        )}
-      >
-        {filtered ? (
-          <>
-            <span className="font-semibold">Filtered to</span>
-            {Object.entries(filters).map(([key, bucket]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => toggle(key, bucket)}
-                className="flex items-center gap-1 rounded-full bg-indigo-500/15 px-2 py-0.5 text-[11px] text-indigo-700 hover:bg-indigo-500/25 dark:text-indigo-300"
-                title="Remove this filter"
-              >
-                {labels[key] ?? key}: {bucketLabel(bucket)}
-                <RiCloseLine className="size-3" />
-              </button>
-            ))}
-            <span className="ml-auto font-mono text-[11px] tabular-nums">
-              {hoursOrMinutes(cut.hours)} · {cut.clips.toLocaleString()} clips · {cut.episodes} episodes · {cut.usableVoices} of {cut.voices} voices usable ·
-              verified {hoursOrMinutes(cut.verifiedHours)} · gold {hoursOrMinutes(cut.goldHours)}
-            </span>
-            <button type="button" onClick={() => setFilters({})} className="text-[11px] underline hover:text-foreground">
-              clear
-            </button>
-          </>
+        {pot === 'train' ? (
+          <Stat label="Of which val" value={hoursOrMinutes(t.val_hours)} sub="redrawn freely" />
         ) : (
-          <>
-            <span>Click any bucket, cell or voice to cut every other card to it. Filters combine across categories.</span>
-            <span className="ml-auto">
-              <Legend
-                items={
-                  measure === 'pots'
-                    ? [
-                        { fill: POT_COLOR.gold, label: 'gold' },
-                        { fill: POT_COLOR.val, label: 'val' },
-                        { fill: POT_COLOR.train, label: 'train' },
-                      ]
-                    : measure === 'voices'
-                      ? [
-                          { fill: 'bg-indigo-500', label: 'usable voices' },
-                          { fill: 'bg-indigo-500/35', label: 'under 300 words' },
-                        ]
-                      : [
-                          { fill: TIER_FILL.verified, label: 'verified' },
-                          { fill: TIER_FILL.screened, label: 'screened' },
-                          { fill: TIER_FILL.unlabeled, label: 'undecided' },
-                        ]
-                }
-              />
-            </span>
-          </>
+          <Stat label="Undecided" value={hoursOrMinutes(t.unlabeled_hours)} sub="no label yet" />
         )}
       </div>
 
-      <AdvicePanel
-        recommendations={inventory.recommendations}
-        categories={inventory.categories}
-        goal={goal}
-        category={adviceCategory}
-        onPickCategory={setAdviceCategory}
-        onPickBucket={(category, bucket) => setFilters((prev) => ({ ...prev, [category]: bucket }))}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-muted-foreground">
+        <StatusLegend />
+        <span>
+          Thin under {floorText(f.thin_hours)}, or under {f.thin_voices} voices with {f.voice_words}+ words for
+          people and content · plenty from {floorText(f.thin_hours * f.plenty_factor)} · overdone over{' '}
+          {percent(f.dominant_share)} of a category · the tick on each bar is the floor
+        </span>
+      </div>
+
+      <GapSummary pot={report} />
 
       {inventory.groups.map((group) => {
-        const cards = visible.filter((c) => c.group === group.key)
-        if (!cards.length) return null
+        const tables = report.categories.filter((c) => c.group === group.key)
+        if (!tables.length) return null
         const Icon = GROUP_ICON[group.key]
         return (
           <section key={group.key} className="space-y-2">
@@ -301,19 +204,9 @@ export function AnalyticsView() {
               </h2>
               <p className="text-[11px] text-muted-foreground">{GROUP_NOTE[group.key]}</p>
             </div>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {cards.map((report) => (
-                <CategoryCard
-                  key={report.key}
-                  report={report}
-                  entries={aggregates[report.key] ?? []}
-                  measure={measure}
-                  active={filters[report.key] ?? null}
-                  onToggle={(bucket) => toggle(report.key, bucket)}
-                  minHours={t.min_stratum_hours}
-                  minVoices={t.min_stratum_voices}
-                  filtered={Object.keys(filters).some((k) => k !== report.key)}
-                />
+            <div className="grid items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+              {tables.map((c) => (
+                <CategoryTable key={c.key} report={c} pot={report} />
               ))}
             </div>
           </section>
@@ -322,28 +215,11 @@ export function AnalyticsView() {
 
       <CrossTabPanel
         inventory={inventory}
-        filters={filters}
+        pot={pot}
         rows={cross.rows}
         cols={cross.cols}
         unit={cross.unit}
         onChange={(next) => setCross((prev) => ({ ...prev, ...next }))}
-        onPick={(rowsKey, rowBucket, colsKey, colBucket) =>
-          setFilters((prev) => ({ ...prev, [rowsKey]: rowBucket, [colsKey]: colBucket }))
-        }
-      />
-
-      <VoicesPanel
-        inventory={inventory}
-        filters={filters}
-        activeVoice={filters.voice ?? null}
-        onPickVoice={(voice) =>
-          setFilters((prev) => {
-            const next = { ...prev }
-            if (voice === null) delete next.voice
-            else next.voice = voice
-            return next
-          })
-        }
       />
 
       <RecordsPanel records={inventory.records} />
