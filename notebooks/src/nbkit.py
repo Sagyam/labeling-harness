@@ -102,7 +102,7 @@ FT.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(FT))
 """
 
-_RUN_FOLDER = r"""
+RUN_FOLDER = r"""
 if SMOKE:
     RUN_PREFIX += "-smoke"  # a smoke run's outputs never land among the real runs
 OUT_ROOT = FT / "out" / RUN_PREFIX
@@ -112,7 +112,7 @@ print("runs:", RUN_PREFIX, "| outputs:", OUT_ROOT, "| SMOKE RUN" if SMOKE else "
 """
 
 
-def setup(pip: str, tail: str = _RUN_FOLDER) -> dict:
+def setup(pip: str, tail: str = RUN_FOLDER) -> dict:
     """The Setup cell: `pip` packages, the HF token, and the working folder `FT`, which is on the
     import path for the kits. `tail` follows; by default it names the run folder from
     `RUN_PREFIX` and `SMOKE`, which the Config cell defines."""

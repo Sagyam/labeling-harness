@@ -8,9 +8,9 @@ what these write."""
 import sys
 from pathlib import Path
 
-import build_distill
 import build_flex
 import build_predistill
+import build_students
 import build_teacher
 import nbkit
 
@@ -25,7 +25,7 @@ def notebooks(commit: str | None = None) -> dict[str, list]:
         **build_flex.NOTEBOOKS,
         **build_predistill.notebooks(commit),
         **build_teacher.NOTEBOOKS,
-        **build_distill.NOTEBOOKS,
+        **build_students.NOTEBOOKS,
     }
 
 

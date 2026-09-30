@@ -607,6 +607,80 @@ def speed_check(
     return rec
 
 
+class HubResume:
+    """One run's resume point in a scratch model repo on the hub: `<path>/resume.pt`.
+
+    `train` saves it after every epoch's evaluation and reads it when it starts, so a lost
+    runtime costs the epoch in progress, not the run. It holds the weights as they are, the best
+    weights when they differ, the counters and the history; not the optimizer's moments, which
+    are twice the model's size and rebuild within a few steps. Every save replaces the last one,
+    and the blobs it supersedes are deleted from the repo's storage, which is why this lives in a
+    repo of its own: nothing else can be deleted by mistake. A failed save, load or clean-up is
+    reported and never stops training."""
+
+    NAME = "resume.pt"
+
+    def __init__(self, api: Any, repo: str, path: str, local: Path):
+        self.api, self.repo, self.path, self.local = api, repo, path, Path(local)
+
+    @property
+    def remote(self) -> str:
+        return f"{self.path}/{self.NAME}"
+
+    def load(self) -> dict | None:
+        try:
+            if not self.api.file_exists(self.repo, self.remote):
+                return None
+            from huggingface_hub import hf_hub_download
+
+            with timed(f"resuming from {self.repo}/{self.remote}"):
+                path = hf_hub_download(self.repo, self.remote, token=self.api.token)
+                return torch.load(path, map_location="cpu", weights_only=True)
+        except Exception as exc:  # a broken resume point means starting over, not failing
+            print(
+                f"no usable resume point ({type(exc).__name__}: {exc}); starting over", flush=True
+            )
+            return None
+
+    def save(self, state: dict) -> None:
+        try:
+            self.local.mkdir(parents=True, exist_ok=True)
+            torch.save(state, self.local / self.NAME)
+            with timed(f"saving the resume point after epoch {state['epoch']}"):
+                self.api.upload_file(
+                    path_or_fileobj=str(self.local / self.NAME),
+                    path_in_repo=self.remote,
+                    repo_id=self.repo,
+                    commit_message=f"{self.path}: after epoch {state['epoch']}",
+                )
+            self._purge(keep_newest=True)
+        except Exception as exc:
+            print(f"resume point not saved ({type(exc).__name__}: {exc})", flush=True)
+
+    def clear(self) -> None:
+        """Remove the resume point once the run's weights are safely uploaded elsewhere."""
+        try:
+            if self.api.file_exists(self.repo, self.remote):
+                self.api.delete_file(
+                    self.remote, self.repo, commit_message=f"{self.path}: run finished"
+                )
+            self._purge(keep_newest=False)
+            shutil.rmtree(self.local, ignore_errors=True)
+        except Exception as exc:
+            print(f"resume point not cleared ({type(exc).__name__}: {exc})", flush=True)
+
+    def _purge(self, keep_newest: bool) -> None:
+        """Delete this run's superseded blobs for good: a replaced file stays in the repo's
+        history, and its storage stays counted, until it is removed from LFS as well."""
+        mine = sorted(
+            (f for f in self.api.list_lfs_files(self.repo) if f.filename == self.remote),
+            key=lambda f: f.pushed_at,
+        )
+        stale = mine[:-1] if keep_newest else mine
+        if stale:
+            self.api.permanently_delete_lfs_files(self.repo, stale)
+
+
 def train(
     model: torch.nn.Module,
     *,
@@ -619,6 +693,7 @@ def train(
     save_best: Callable[[torch.nn.Module], None],
     optimizer: torch.optim.Optimizer,
     monitor: GpuMonitor,
+    resume: Any | None = None,
 ) -> dict:
     """Train with bf16 autocast and gradient accumulation; evaluate on val after every epoch;
     keep the best weights (by val WER) in CPU memory and hand them to `save_best`. A hand stop
@@ -627,7 +702,11 @@ def train(
     `loss_fn` returns a *summed* loss and the number of units it sums over (clips for CTC, tokens
     for cross-entropy); gradients are divided by the step's total units, so accumulated
     micro-batches of different sizes are weighted exactly. Count the units on the CPU (in
-    `collate`): an `int()` of a GPU tensor stalls the host once per micro-batch."""
+    `collate`): an `int()` of a GPU tensor stalls the host once per micro-batch.
+
+    `resume` (a `HubResume`) makes the run restartable: its state is saved after every epoch and,
+    when one is found at the start, training continues from the epoch after it, on the same
+    batches and at the same point of the LR schedule. The optimizer's moments start again."""
     out = Path(cfg.out)
     out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(cfg.seed)
@@ -637,13 +716,28 @@ def train(
     params = [p for p in model.parameters() if p.requires_grad]
     history, best, best_state, bad, step = [], float("inf"), None, 0, 0
     counted = float("inf")  # the val WER that last reset `bad`
+    first_epoch, finished = 0, False
+    state = resume.load() if resume is not None else None
+    if state is not None:
+        model.load_state_dict(state["model"])
+        best_state = state["best_model"] or state["model"]
+        history, best, counted = state["history"], state["best"], state["counted"]
+        bad, step, first_epoch, finished = (
+            state["bad"],
+            state["step"],
+            state["epoch"],
+            state["done"],
+        )
+        print(
+            f"{cfg.name}: resumed after epoch {first_epoch} (best val WER {best:.2f})", flush=True
+        )
     print(
         f"{cfg.name}: {total} optimizer steps over {cfg.epochs} epochs "
         f"(~{cfg.effective_s / 60:.0f} min of audio each), peak lr {cfg.lr:g}, {cfg.schedule}"
     )
     stopped_by_hand = False
     try:
-        for epoch in range(cfg.epochs):
+        for epoch in range(first_epoch, 0 if finished else cfg.epochs):
             model.train()
             flat = [b for s in plan[epoch] for b in s]
             sizes = [len(s) for s in plan[epoch]]
@@ -721,21 +815,39 @@ def train(
                 flush=True,
             )
             (out / "history.json").write_text(json.dumps(history, indent=1))
-            if improved:
-                best_state = {
+            current = None
+            if improved or resume is not None:  # a copy on the CPU: the run's only other one
+                current = {
                     k: v.detach().to("cpu", copy=True) for k, v in model.state_dict().items()
                 }
-                best = val["wer"]
+            if improved:
+                best_state, best = current, val["wer"]
             if val["wer"] < counted - cfg.min_delta:  # at 0: the old rule, any strict gain
                 counted, bad = val["wer"], 0
             else:
                 bad += 1
-                if bad >= cfg.patience:
-                    print(
-                        f"val WER gained less than {cfg.min_delta:g} points in {cfg.patience} "
-                        "evaluations; stopping"
-                    )
-                    break
+            finished = bad >= cfg.patience
+            if resume is not None:
+                resume.save(
+                    {
+                        "epoch": epoch + 1,
+                        "step": step,
+                        "best": best,
+                        "counted": counted,
+                        "bad": bad,
+                        "done": finished,
+                        "history": history,
+                        "model": current,
+                        "best_model": None if improved else best_state,
+                    }
+                )
+            del current
+            if finished:
+                print(
+                    f"val WER gained less than {cfg.min_delta:g} points in {cfg.patience} "
+                    "evaluations; stopping"
+                )
+                break
     except KeyboardInterrupt:
         # Colab's stop button: end training here and keep the best weights so far, so they are
         # saved and scored like a finished run's. Before any evaluation there are none to keep.
