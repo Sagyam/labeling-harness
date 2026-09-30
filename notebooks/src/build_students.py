@@ -7,7 +7,9 @@ then on the public sets. What differs between notebooks is one cell: how the stu
 what its loss is and how it decodes. Shared code lives in ftkit.py, evalkit.py, sweep.py,
 distill.py, xtalk.py and augment.py, written out by %%writefile cells."""
 
+import ast
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -456,6 +458,31 @@ VOCAB_SIZE = 1024
 EPOCHS = {"human": __HUMAN_EPOCHS__, "distill": __DISTILL_EPOCHS__}
 LR_ENCODER, LR_HEADS = __LR_ENCODER__, __LR_HEADS__
 """
+
+CONFORMER_CONFIG = r"""
+# The Conformer trained from scratch: IndicConformer's architecture (17 layers, d_model 512, 121M)
+# at this size, with random weights. A first guess at a size 150 h can train.
+CONFORMER = {"d_model": 256, "n_layers": 16, "n_heads": 4}
+"""
+
+CONFORMER_LOADER = r'''def load_conformer():
+    """IndicConformer's architecture at a smaller size, with random weights: no pretraining at all,
+    and the same tokenizer, heads and recipe as the two pretrained transducers. The checkpoint is
+    downloaded for its config alone."""
+    _, cfg = _indic_checkpoint()
+    with open_dict(cfg):
+        cfg.encoder.d_model = CONFORMER["d_model"]
+        cfg.encoder.n_layers = CONFORMER["n_layers"]
+        cfg.encoder.n_heads = CONFORMER["n_heads"]
+        if "model_defaults" in cfg:  # what the constructor sizes the joint's encoder input from
+            cfg.model_defaults.enc_hidden = CONFORMER["d_model"]
+        cfg.joint.jointnet.encoder_hidden = CONFORMER["d_model"]
+        cfg.aux_ctc.decoder.feat_in = CONFORMER["d_model"]
+    model = EncDecHybridRNNTCTCBPEModel(cfg=cfg)
+    print(f"Conformer from scratch: {sum(p.numel() for p in model.parameters()) / 1e6:.0f}M parameters, "
+          "random weights")
+    return model
+'''
 
 NEMO_SETUP_TAIL = r"""
 import torch
@@ -1043,6 +1070,231 @@ def probe(model, optimizer, rows):
 '''
 
 
+# --- Omnilingual CTC: a script in its own Python environment (fairseq2) --------------------------
+
+OMNI_CONFIG = r"""
+OMNI_CARD = "omniASR_CTC_1B_v2"   # the card the 2026-09-14 bake-off fine-tuned; the 300M is a one-line change
+OMNI_VERSION = "0.2.0"            # omnilingual-asr; it needs Python <= 3.12 and fairseq2 0.6
+# Per stage: the most epochs, which is also the length of the LR schedule.
+EPOCHS = {"human": 20, "distill": 10}
+LR = 1e-5
+EVAL_ITEMS = 128
+"""
+
+OMNI_ENV = r"""
+# omnilingual-asr needs Python <= 3.12 and fairseq2 0.6, which pins torch 2.8.0, numpy 1.x and
+# huggingface_hub 0.x. None of that installs into the Colab kernel, so the student runs in an
+# environment of its own, as a script this notebook writes and launches.
+OMNI_ENV = Path("/content/omni-env") if IN_COLAB else FT / "omni-env"
+OMNI_PY = OMNI_ENV / "bin" / "python"
+if not OMNI_PY.exists():
+    !pip install -q uv
+    !uv venv -q --python 3.12 {OMNI_ENV}
+    !uv pip install -q --python {OMNI_PY} "omnilingual-asr=={OMNI_VERSION}" "torch==2.8.0" "torchaudio==2.8.0"
+!uv pip install -q --python {OMNI_PY} soundfile rapidfuzz pyyaml scipy pyarrow requests
+!{OMNI_PY} -c "import torch, omnilingual_asr; print('omni env: torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+"""
+
+OMNI_STUDENT = r'''
+from fairseq2.nn import BatchLayout
+from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+ARCHITECTURE = "Omnilingual ASR CTC: wav2vec 2.0 encoder + CTC head; its own character vocabulary"
+BASE_MODEL = OMNI_CARD
+DECODER_NAME = "greedy CTC"
+LR_CARD = LR
+PEAK_LR, SCHEDULE = LR, "tristage"  # fairseq2's recipe: 10% warmup, 40% hold, 50% decay
+FRAMES_PER_S = 50  # the wav2vec2 frontend strides 320 samples
+
+
+def normalize(text: str) -> str:
+    # ZWJ/ZWNJ are the only characters of the corpus missing from the written_v2 vocabulary
+    # besides "ॐ" (3 uses); they change rendering, not the word.
+    return text.replace("\u200d", "").replace("\u200c", "")
+
+
+def load_student(weights=None):
+    """The student as `model`: the pretrained card in float32 master weights (the loader the
+    bake-off used), or with the weights of a stage's `best/` folder loaded over it."""
+    global model, encode_text, decode_ids, UNK, PAD, VOCAB
+    pipe = ASRInferencePipeline(model_card=OMNI_CARD, dtype=torch.float32)
+    model, tokenizer = pipe.model, pipe.tokenizer
+    if weights is not None:
+        state = torch.load(Path(weights) / "model.pt", map_location="cpu", weights_only=True)
+        model.load_state_dict({k: v.float() if v.is_floating_point() else v for k, v in state.items()})
+        print(f"{STUDENT}: {len(state)} tensors loaded from {weights}")
+    encode_text, decode_ids = tokenizer.create_encoder(), tokenizer.create_decoder(skip_special_tokens=True)
+    UNK, PAD, VOCAB = tokenizer.vocab_info.unk_idx, tokenizer.vocab_info.pad_idx, tokenizer.vocab_info.size
+    # The official recipe always freezes the convolutional feature extractor (recipe.py).
+    for p in model.encoder_frontend.feature_extractor.parameters():
+        p.requires_grad_(False)
+    return model
+
+
+def _target(text, seconds):
+    """The CTC target of `text`, or None when the vocabulary cannot write it, it is empty
+    (fairseq2's BatchLayout rejects a zero-length target) or it has more tokens than frames."""
+    ids = encode_text(normalize(text))
+    if UNK is not None and bool((ids == UNK).any()):
+        return None
+    return ids.tolist() if 0 < len(ids) < seconds * FRAMES_PER_S else None
+
+
+def prepare_rows(rows):
+    kept = []
+    for r in rows:
+        ids = _target(r["text"], ftkit.duration(r))
+        if ids is not None:
+            kept.append({**r, "ids": ids})
+    print(f"{STUDENT}: dropped {len(rows) - len(kept)} clip(s) with an unknown character, an empty target "
+          "or an impossible CTC alignment")
+    return kept
+
+
+def retarget(row, text):
+    ids = _target(text, ftkit.duration(row))
+    return None if ids is None else {**row, "text": text, "ids": ids}
+
+
+def save_weights(model, folder):
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    torch.save({k: v.to(torch.bfloat16) if v.is_floating_point() else v for k, v in model.state_dict().items()},
+               folder / "model.pt")
+    (folder / "README.txt").write_text(
+        f"state_dict for {OMNI_CARD} (bf16). Load the card with ASRInferencePipeline(model_card=...), then "
+        "model.load_state_dict(torch.load(...)) with the floats cast to float32.\n")
+
+
+def decoder():
+    return transcribe
+
+
+def make_optimizer(model):
+    return torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=LR, betas=(0.9, 0.98),
+                             eps=1e-8, weight_decay=0.0, fused=True)
+
+
+def waveforms(clips):
+    """Per-clip layer norm, as the recipe's `normalize_audio` and the inference pipeline do."""
+    clips = [torch.nn.functional.layer_norm(c, c.shape) for c in clips]
+    wav = torch.zeros(len(clips), ftkit.pad_len(max(len(c) for c in clips), PAD_TO_S))
+    for i, c in enumerate(clips):
+        wav[i, :len(c)] = c
+    return wav, [len(c) for c in clips]
+
+
+def collate(rows):
+    audio, rows = train_batch(rows)
+    wav, lens = waveforms([torch.from_numpy(np.asarray(a).astype(np.float32) / 32768.0) for a in audio])
+    targets = torch.full((len(rows), max(len(r["ids"]) for r in rows)), PAD, dtype=torch.long)
+    for i, r in enumerate(rows):
+        targets[i, :len(r["ids"])] = torch.tensor(r["ids"])
+    return {"wav": wav, "lens": lens, "targets": targets, "tlens": [len(r["ids"]) for r in rows],
+            "seconds": sum(lens) / ftkit.SR, "padded_seconds": wav.numel() / ftkit.SR}
+
+
+def loss_fn(model, b):
+    wav = b["wav"].cuda(non_blocking=True)
+    targets = b["targets"].cuda(non_blocking=True)
+    layout = BatchLayout(wav.shape, seq_lens=b["lens"], device=wav.device)
+    tlayout = BatchLayout(targets.shape, seq_lens=b["tlens"], device=wav.device)
+    # Summed CTC over the batch; the recipe normalises by the number of clips.
+    return model(wav, layout, targets, tlayout), len(b["lens"])
+
+
+def transcribe(rows):
+    wav, lens = waveforms([store.clip_f32(r) for r in rows])
+    wav = wav.cuda()
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        logits, layout = model(wav, BatchLayout(wav.shape, seq_lens=lens, device=wav.device))
+    pred = logits.argmax(-1)
+    texts = []
+    for i in range(pred.shape[0]):  # the inference pipeline's greedy CTC decode
+        seq = pred[i, :layout.seq_lens[i]]
+        keep = torch.ones_like(seq, dtype=torch.bool)
+        keep[1:] = seq[1:] != seq[:-1]
+        texts.append(decode_ids(seq[keep]))
+    return texts
+
+
+def probe(model, optimizer, rows):
+    """The largest micro-batch at the longest padded clip with the longest target, with the
+    optimizer state allocated: (seconds of padded audio per micro-batch, clips per micro-batch)."""
+    longest = max(rows, key=ftkit.duration)
+    max_len = ftkit.pad_len(round(ftkit.duration(longest) * ftkit.SR), PAD_TO_S)
+    max_t = max(len(r["ids"]) for r in rows)
+
+    def probe_step(n):
+        wav = torch.randn(n, max_len, device="cuda")
+        targets = torch.randint(10, VOCAB, (n, max_t), device="cuda")
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            loss = model(wav, BatchLayout(wav.shape, seq_lens=[max_len] * n, device=wav.device),
+                         targets, BatchLayout(targets.shape, seq_lens=[max_t] * n, device=wav.device))
+        loss.backward()
+
+    model.train()
+    ftkit.init_optimizer_state(model, optimizer)
+    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+    budget = n * max_len / ftkit.SR * PROBE_FRACTION
+    print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s: {n} clips -> budget {budget:.0f} s of padded "
+          "audio per micro-batch")
+    return budget, 256
+'''
+
+
+def config_names(*parts: str) -> list[str]:
+    """Every name a Config cell assigns, in order: what the Omnilingual script is handed."""
+    names: list[str] = []
+    for node in ast.parse("\n".join(parts)).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                names += [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
+    return list(dict.fromkeys(names))
+
+
+def omni_script(names: list[str]) -> str:
+    """`student_omni.py`: the cells every other student notebook runs in its kernel, as one script
+    for the environment fairseq2 needs. Run as `student_omni.py <config.json> <stage|report>`."""
+    preamble = [
+        '"""One stage of the Omnilingual student (D105), in the Python 3.12 environment fairseq2 needs.',
+        "",
+        "Written by the notebook from the same cell sources the other students run in their kernels:",
+        "build_students.py assembles it, so the stages, the scoring and the uploads are one code.",
+        '"""',
+        "import json",
+        "import os",
+        "import sys",
+        "from pathlib import Path",
+        "",
+        "CONFIG = json.loads(Path(sys.argv[1]).read_text())  # the notebook's Config cell",
+        "ACTION = sys.argv[2]  # a stage, or `report`",
+        *[f'{name} = CONFIG["{name}"]' for name in names],
+        'FT = Path(CONFIG["FT"])',
+        "sys.path.insert(0, str(FT))",
+        'OUT_ROOT = FT / "out" / RUN_PREFIX',
+        "OUT_ROOT.mkdir(parents=True, exist_ok=True)",
+    ]
+    main = (
+        'if ACTION == "report":\n'
+        + textwrap.indent(REPORT.strip("\n"), "    ")
+        + "\nelse:\n    run_stage(ACTION)\nmonitor.stop()"
+    )
+    cells = [DATA, OMNI_STUDENT, AUG_KIT, PUBLIC_SETS, STAGES]
+    return "\n\n\n".join(["\n".join(preamble), *[c.strip("\n") for c in cells], main]) + "\n"
+
+
+OMNI_LAUNCH = r"""
+# What the script is handed: this notebook's Config, as it stands after Setup.
+CONFIG_NAMES = __CONFIG_NAMES__
+(FT / "omni_config.json").write_text(json.dumps({**{name: globals()[name] for name in CONFIG_NAMES}, "FT": str(FT)}))
+
+
+def stage(action):
+    !{OMNI_PY} {FT / "student_omni.py"} {FT / "omni_config.json"} {action}
+"""
+
+
 @dataclass(frozen=True)
 class Student:
     """One student's notebook: its name, where its cells come from, and what its intro says."""
@@ -1050,7 +1302,7 @@ class Student:
     key: str
     file: str
     title: str
-    family: str  # "nemo" or "hf"
+    family: str  # "nemo", "hf" or "omni"
     intro: str
     architecture: str
     base_model: str  # a Python expression, read in the notebook
@@ -1165,16 +1417,86 @@ decoding.
             "__LR_HEADS__": "3e-4",
         },
     ),
+    Student(
+        key="omnilingual",
+        file="06e_Student_Omnilingual.ipynb",
+        title="Omnilingual CTC",
+        family="omni",
+        intro="""
+**The student.** Meta's Omnilingual ASR, CTC variant (`omniASR_CTC_1B_v2`): a self-supervised
+wav2vec 2.0 encoder with a CTC head, already trained for ASR on Nepali among 1,600+ languages. It
+has no language token, which suits code-switching, and its character vocabulary covers all but
+0.02% of the corpus's characters, so the pretrained head is kept. It is the one family the other
+students leave out, and the one least able to use the context a code-switch needs: CTC predicts
+each token independently. In the 2026-09-14 bake-off it reached about 16.6% on val before it was
+stopped at epoch 6, under another protocol.
+
+**It runs as a script.** `omnilingual-asr` needs Python <= 3.12 and `fairseq2` 0.6, which pins
+`torch==2.8.0`, numpy 1.x and `huggingface_hub` 0.x, none of which installs into the Colab kernel.
+The stages therefore run in a `uv` environment as `student_omni.py`, which this notebook writes
+and launches. The script is the very cells the other student notebooks run in their kernels,
+joined end to end, so the stages, the scoring and the uploads are one code; only the model cell
+is its own.
+
+**Not yet run in this form.** The model code (loading, loss, decoding, probe) is the 2026-09-14
+fine-tuning notebook's, restored from git history. The stages around it, and the environment's
+older `huggingface_hub`, have never run together. The smoke run is the first test.
+
+**Choices, from the official fairseq2 recipe** (`ctc-finetune-recommendation.yaml`, `recipe.py`,
+`criterion.py`): peak LR 1e-5 with the tri-stage schedule (10% warmup, 40% hold, 50% decay), AdamW
+with betas (0.9, 0.98), summed CTC normalised per clip, per-clip waveform layer norm, a frozen
+convolutional feature extractor. Up to 20 epochs on the human labels and 10 on the mixture,
+stopping once val WER has gained less than 0.2 points over 3 epochs. Greedy CTC decoding.
+""",
+        architecture="",
+        base_model="",
+        settings={},
+    ),
+    Student(
+        key="conformer",
+        file="06f_Student_Conformer.ipynb",
+        title="a Conformer from scratch",
+        family="nemo",
+        intro="""
+**The student.** A hybrid RNN-T/CTC Conformer with **random weights**: no pretraining at all. It
+takes IndicConformer's architecture at a smaller size (`CONFORMER` in Config) and shares the
+tokenizer, heads and recipe of the two pretrained transducers (06c, 06d). It asks one question:
+once pseudo-labels and human labels together reach about 150 h, does pretraining still matter?
+Its stage 1, on the human labels alone, is the point with the least to learn from and is expected
+to be poor; the curve is what it is for.
+
+**Not yet run.** This loader has run nowhere: the resized config is built here for the first
+time, and the smoke run is its first test. If NeMo's constructor rejects it, the error names the
+field; the three sizes are set in `load_conformer`. IndicConformer's checkpoint is downloaded for
+its config alone.
+
+**Choices, first guesses fixed before any run.** Peak LR 1e-3 for the whole model (nothing is
+pretrained, so there is no slower group), linear decay after 10% warmup, up to 40 epochs on the
+human labels and 30 on the mixture, stopping once val WER has gained less than 0.2 points over 3
+epochs. ~12 min of audio per optimizer step, NeMo's own SpecAugment. A model trained from scratch
+usually wants a longer schedule than a fine-tune; if the curve is still falling when the epochs
+run out, raise `EPOCHS`.
+""",
+        architecture="Conformer hybrid RNN-T/CTC from random weights; 1,024-token heads",
+        base_model=repr("none: random weights, IndicConformer's config resized"),
+        settings={
+            "__HUMAN_EPOCHS__": "40",
+            "__DISTILL_EPOCHS__": "30",
+            "__LR_ENCODER__": "1e-3",
+            "__LR_HEADS__": "1e-3",
+        },
+    ),
 )
 
 
 def fill(template: str, student: Student, **extra: str) -> str:
     """A family's cell with one student's settings put in."""
+    scratch = student.key == "conformer"
     values = {
         "__ARCHITECTURE__": repr(student.architecture),
         "__BASE_MODEL__": student.base_model,
-        "__EXTRA_LOADERS__": "",
-        "__EXTRA_LOADER_NAMES__": "",
+        "__EXTRA_LOADERS__": CONFORMER_LOADER if scratch else "",
+        "__EXTRA_LOADER_NAMES__": ', "conformer": load_conformer' if scratch else "",
         **student.settings,
         **extra,
     }
@@ -1195,8 +1517,12 @@ def student_cells(student: Student) -> list[dict]:
     notebook = student.file.removesuffix(".ipynb")
     intro = f"# {notebook[:3]} — Student: {student.title}\n\nStep 6 of the protocol (D105)."
     head = f'NOTEBOOK = "{notebook}"\nSTUDENT = "{student.key}"'
+    if student.family == "omni":
+        return omni_cells(student, intro, head)
     if student.family == "nemo":
         config = [head, COMMON_CONFIG, fill(NEMO_CONFIG, student)]
+        if student.key == "conformer":
+            config.append(CONFORMER_CONFIG)
         setup = nbkit.setup(
             'rapidfuzz pyarrow "nemo_toolkit[asr]=={NEMO_VERSION}"',
             tail=NEMO_SETUP_TAIL + nbkit.RUN_FOLDER,
@@ -1231,7 +1557,32 @@ def student_cells(student: Student) -> list[dict]:
     ]
 
 
+def omni_cells(student: Student, intro: str, head: str) -> list[dict]:
+    config = [head, COMMON_CONFIG, OMNI_CONFIG]
+    names = config_names(*config)
+    out = [
+        md(intro + "\n" + student.intro + PROTOCOL + SMOKE_NOTE + GPU_NOTE),
+        md("## Config"),
+        code("\n".join(part.strip("\n") for part in config)),
+        md("## Setup"),
+        nbkit.setup("rapidfuzz"),
+        code(OMNI_ENV),
+        *nbkit.kits("ftkit", "evalkit", "sweep", "distill", "xtalk", "augment"),
+        md(
+            "## The script\n\nThe data, the student, the augmenter, the public sets and the stages, "
+            "as the other student notebooks run them cell by cell."
+        ),
+        code("%%writefile /content/ft/student_omni.py\n" + omni_script(names)),
+        code(OMNI_LAUNCH.replace("__CONFIG_NAMES__", repr(names))),
+    ]
+    for stage, note in RUN_NOTES.items():
+        out += [md(note), code(f'stage("{stage}")')]
+    return [*out, md(REPORT_NOTE), code('stage("report")')]
+
+
 NOTEBOOKS = {student.file: student_cells(student) for student in STUDENTS}
+#: The Omnilingual script as it is written into its notebook, for the builds test to read.
+OMNI_SCRIPT = omni_script(config_names(COMMON_CONFIG, OMNI_CONFIG, 'NOTEBOOK = ""\nSTUDENT = ""'))
 
 if __name__ == "__main__":
     nbkit.write(NOTEBOOKS, OUT_DIR)

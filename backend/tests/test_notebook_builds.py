@@ -74,15 +74,28 @@ def test_no_cell_uses_a_name_the_notebook_never_defines(name: str, tmp_path: Pat
     """The cells of a notebook share one namespace, top to bottom. Read as one module, a name
     that no earlier cell defines or imports is a NameError waiting on the GPU."""
     cells = [c["source"] for c in _BUILT[name] if c["cell_type"] == "code"]
-    module = tmp_path / (Path(name).stem + ".py")
-    module.write_text(
-        "\n\n".join(_python(c) for c in cells if not c.startswith("%%writefile")) + "\n", "utf-8"
-    )
+    module = "\n\n".join(_python(c) for c in cells if not c.startswith("%%writefile")) + "\n"
+    assert _undefined_names(module, tmp_path / (Path(name).stem + ".py")) == ""
+
+
+def _undefined_names(source: str, path: Path) -> str:
+    """ruff's report of names `source` uses and never defines; empty when there are none."""
+    path.write_text(source, "utf-8")
     command = [sys.executable, "-m", "ruff", "check", "--isolated", "--select", "F821,F823,E9"]
     found = subprocess.run(
-        [*command, "--output-format", "concise", str(module)], capture_output=True, text=True
+        [*command, "--output-format", "concise", str(path)], capture_output=True, text=True
     )
-    assert found.returncode == 0, found.stdout
+    return "" if found.returncode == 0 else found.stdout
+
+
+def test_the_omnilingual_script_is_a_whole_program(tmp_path: Path) -> None:
+    """06e runs its stages as a script in another Python environment, assembled from the cells
+    the other student notebooks run. It gets its Config as JSON, so every name a cell reads has
+    to be one the script assigns."""
+    script = importlib.import_module("build_students").OMNI_SCRIPT
+    ast.parse(script)
+    assert _undefined_names(script, tmp_path / "student_omni.py") == ""
+    assert "get_ipython" not in script and "\n%" not in script and "\n!" not in script
 
 
 def test_a_kit_cell_is_the_kit_file() -> None:
