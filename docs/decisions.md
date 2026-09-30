@@ -2562,6 +2562,9 @@ ear. The by-ear values were simply never read.
   writes, and `test_export.py` holds the two to the same answer. It runs over the whole corpus
   whatever the export's filters, because which voice is a series' host turns on the other
   episodes it is heard in.
+- **The notebooks read it.** `01_EDA` and `02_Sociolinguistics` take gender, age and role off
+  the turns, and their own resolvers are deleted. What that changed is in
+  `docs/sociolinguistics.md`.
 - **On the turn, not beside it.** A turn is read on its own, by the crosstalk mixer among others,
   and three short keys on 69,000 turns cost less than a second table every consumer must join.
 - **What did not change.** `classes.gender` and `classes.age_bracket` stay the episode's declared
