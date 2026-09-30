@@ -13,14 +13,16 @@ frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
 docs/            architecture, decisions, roadmap, findings, sociolinguistics, custom-arch
-notebooks/       EDA, sociolinguistics and fine-tuning (04c, Indic-Transcribe; generated from notebooks/src/)
+notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 03 Flex, 04-05 pseudo-labels,
+                 06 students, 07 report; 03-07 are generated from notebooks/src/ by build_all.py
 ```
 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
 
 ASR work: what is next is in [docs/roadmap.md](docs/roadmap.md), what has been measured in
 [docs/findings.md](docs/findings.md). Model-building designs parked until a tcpWER uplift are in
-[docs/custom-arch.md](docs/custom-arch.md).
+[docs/custom-arch.md](docs/custom-arch.md). A model is trained and evaluated by running the
+notebooks in the order of their numbers (D105).
 
 Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
 formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they
@@ -78,12 +80,13 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (1626 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (1868 tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 .venv/bin/alembic revision -m "..." && .venv/bin/alembic upgrade head
 cd ../frontend && npm run build                # tsc -b && vite build
+cd .. && python notebooks/src/build_all.py     # regenerate notebooks 03-07 after a kit or builder edit
 ```
 
 `docker compose up -d postgres minio` before `db`-marked tests; the suite creates and migrates its
@@ -220,6 +223,18 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   disables it, which is what keeps fixtures and the degradation test from pulling 317 MB.
   `HARNESS_ALIGNER_MODEL_DIR` moves it (the container uses `/app/data/models`, inside the bind
   mount, so it survives `up`); `HARNESS_ALIGNER_NO_DOWNLOAD=1` refuses it.
+- **The notebooks are generated, and a kit edit is not done until they are rebuilt.** Each embeds
+  `notebooks/src/*.py` as `%%writefile` cells, so after changing a kit or a builder run
+  `python notebooks/src/build_all.py` and commit the notebooks with it; `test_notebook_builds.py`
+  fails otherwise. It also reads every notebook's cells as one module and fails on a name no
+  earlier cell defines. That is all the suite can check: nothing in a notebook is known to work
+  on a GPU until its `SMOKE` run has passed. `01_EDA` and `02_Sociolinguistics` are written by
+  hand.
+- **One evaluation, one export, one teacher** (D105). Score a model only through
+  `notebooks/src/evalkit.py`, or its numbers cannot sit beside the others'. Every notebook refuses
+  a dataset that is not its `DATASET_EXPORT`. The teacher is whatever `teacher.json` in the Flex
+  model repo names: never hard-code a run as the teacher, and never choose anything on gold or on
+  the public sets.
 - The transcribe stage commits per segment on purpose (D20). Do not "tidy" it into one transaction.
 - **A paid result is checkpointed only after its `llm_requests` row is committed** (D93). Move a
   new paid call into ingest the same way — through `Checkpoint` in `app/services/ingest/`,

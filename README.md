@@ -152,6 +152,20 @@ genre or crosstalk bar to filter; `j`/`k` walk the clips, `Space` plays and `r` 
 In the transliteration popup: `1`–`5` pick a candidate, `Enter` takes the first, `Esc` keeps the
 Latin exactly as typed. `?` opens the full list in the app.
 
+### Training notebooks
+
+`notebooks/` is numbered in the order it runs, and that order is how a model is trained and
+evaluated (D105): `01_EDA` and `02_Sociolinguistics` describe the corpus; `03a`–`03e` train
+Indic-Transcribe-Flex, score it on the public Nepali sets, ablate the augmentations, blend its
+weights with the base model and freeze one teacher; `04_PreDistill` and `05_Teacher` cut and
+pseudo-label unlabelled audio; `06a`–`06f` train one student each; `07_Report` puts every model in
+one table. They run in Colab against the dataset on Hugging Face, each with a `SMOKE` switch for
+a run of a few minutes first. Notebooks 03 to 07 are generated:
+
+```bash
+python notebooks/src/build_all.py   # after editing notebooks/src/*.py
+```
+
 ## Command-line scripts
 
 Run from the repository root with the backend virtualenv:
@@ -205,7 +219,7 @@ Object storage defaults to the local filesystem, so the harness is fully usable 
 
 ```bash
 cd backend
-.venv/bin/python -m pytest              # 1512 tests
+.venv/bin/python -m pytest              # 1868 tests
 .venv/bin/python -m pytest -m "not db"  # skip the ones that need Postgres
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
 cd ../frontend && npm run build         # tsc -b && vite build

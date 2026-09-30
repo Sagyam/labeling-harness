@@ -2319,11 +2319,11 @@ not become episodes at all.
 
 - **Amended 2026-09-25: cut in Colab from the owner's zip.** The owner uploads `distill.zip`
   (`<channel_name>_<NN>.mp3`, no info JSON) to the root of `Sagyam/nepanglish-asr`, and
-  `notebooks/PreDistill.ipynb` cuts it there with ingest's own `normalize_audio` and Silero VAD,
+  `notebooks/04_PreDistill.ipynb` cuts it there with ingest's own `normalize_audio` and Silero VAD,
   fetched from GitHub at a pinned commit and checked by sha256. It stores each recording whole
   (`distill/episodes/<id>.flac`) with its clip times (`distill/sources/<id>.json`,
   `distill/clips.jsonl`), the layout `ftkit.AudioStore` reads, in that repo; the exports' downloads
-  never fetch `distill/`. `Teacher.ipynb` reads this layout. The owner vouches that these channels
+  never fetch `distill/`. `05_Teacher.ipynb` reads this layout. The owner vouches that these channels
   are new, so this path has no voiceprint screen and no known-recording check (there are no video
   ids); gold's shows are still refused by file name.
 - **Amended 2026-09-25: the local path is deleted** at the owner's request, with its voiceprint
@@ -2450,3 +2450,96 @@ plentiful. The goal split is gone everywhere, including `Category.goals`, and so
 
 **Reversal:** the page is cheap: restore the D91 frontend and `recommendations.py` from git.
 `voice_attributes` is one table with a working downgrade; the resolver ignores it when empty.
+
+## D105 — The notebooks are one numbered protocol: how a model is trained and evaluated
+
+The 2026-09-30 export (57 h of labels) came with every fine-tuned weight deleted, so everything is
+trained again. Until then `notebooks/` held seven notebooks named by history, two copies of the
+scoring cell, a teacher notebook pointing at weights that no longer existed, and no repository
+code at all for the public benchmarks or weight blending (both had been scratch Colab cells). From
+now on a model is trained and evaluated by running the notebooks in the order of their numbers.
+
+| Step | Notebook | What it does |
+|---|---|---|
+| 1 | `01_EDA` | the corpus, and the recognisers on it (written by hand) |
+| 2 | `02_Sociolinguistics` | what the corpus records about its speakers (written by hand) |
+| 3 | `03a_Flex_Train` | Flex, the vanilla recipe, seeds 0 and 1 |
+| | `03b_Flex_Benchmarks` | base Flex and any run on the five public sets |
+| | `03c_Flex_Augment` | one `augment.py` stage per run, then the kept ones together |
+| | `03d_Flex_Blend` | `(1 − a)·base + a·fine-tuned` for a = 0.25, 0.5, 0.75 |
+| | `03e_Flex_Ship` | freezes the teacher in `teacher.json`, exports it for the CPU |
+| 4 | `04_PreDistill` | cuts the unlabelled recordings (D101) and measures each clip's overlap |
+| 5 | `05_Teacher` | the frozen teacher pseudo-labels them; the labels are filtered |
+| 6 | `06a`–`06f_Student_*` | one notebook per student, three stages each (D106) |
+| 7 | `07_Report` | every model's scores read back into one table; no GPU |
+
+- **One notebook per GPU session.** Each starts from the hub and ends with an upload, a run whose
+  result is already there is skipped, and a run whose weights are there without its scores is
+  scored without training again. The order inside step 3 is train, evaluate, ablate, blend,
+  freeze: blending is the remedy for what 03b measures, and the ablation can change which run is
+  blended.
+- **One evaluation** (`notebooks/src/evalkit.py`), for Flex, its blends and every student stage:
+  gold and val, folded and raw, S/D/I, per clip class, paired against named runs on the clips both
+  scored with episodes resampled; then the five public sets of 2026-09-27, folded, raw and plain,
+  paired against base Flex with each set's own unit resampled. On the public sets "forgetting" is
+  only meaningful for a model that knew Nepali; for the others they measure generalisation.
+- **Every choice is made on val, by a rule fixed before the result** (`sweep.py`). An augmentation
+  is kept only if it beats vanilla's better seed by more than the gap between vanilla's two seeds.
+  The blend is the one closest to base whose val WER is within 0.3 of the fine-tune's. Gold and
+  the public sets are reported and never choose.
+- **One teacher, frozen.** `teacher.json` at the root of the Flex model repo names the model that
+  leaves step 3. Steps 5, 6 and 7 read it; none names a model of its own. An existing file is not
+  overwritten with another model unless `REPLACE_TEACHER` is set, because students trained on the
+  old teacher's labels would no longer match it.
+- **One export, pinned by its date.** Every notebook refuses a dataset whose training manifest is
+  not `DATASET_EXPORT`. A date and not a commit: the dataset repo's history is squashed after each
+  upload, which would orphan a pinned commit.
+- **Crosstalk in the unlabelled audio is measured in step 4 and dropped in step 5.** The harness's
+  own overlap detector (D77) gives each clip its overlapped share, and step 4's summary prices each
+  threshold in hours per channel. `MAX_OVERLAP_SHARE` in step 5's filter applies the one the owner
+  picks; changing it never needs another pass. It is `None` until picked. Round-table shows are
+  the most overlapped and bring the most voices, which is why nothing is dropped at cut time.
+- **The augmentation ablation runs on Flex only**, where a run is cheap. A student gets the recipe
+  that won there, switched on, against the same stage without it; not an ablation of its own.
+  SpecAugment is part of vanilla, so the ablation covers `augment.py`'s seven waveform stages. The
+  strengths in `ABLATION` are first guesses: a stage that fails at one strength has not been shown
+  useless at every strength.
+- **Generated, and checked.** `python notebooks/src/build_all.py` writes every notebook from
+  `build_*.py`. `test_notebook_builds.py` fails when a committed notebook is not what its builder
+  writes (a kit edited without a rebuild left the fine-tuning notebook running old code in
+  September 2026), when a cell does not parse, or when a cell uses a name no earlier cell defines.
+- **A smoke run first.** `SMOKE = True` runs a notebook end to end on a few hundred clips for one
+  epoch under `<RUN_PREFIX>-smoke`. No notebook is known to work on a GPU until its smoke run has
+  passed; the test suite cannot reach that.
+- **Names in older entries.** "04c" is the fine-tuning notebook that is now 03a–03e, "04a" and
+  "04b" the Whisper and Omnilingual ones that are now 06a and 06e.
+
+**Reversal:** cheap. The notebooks are generated, so another order is a rename in the builders;
+the kits and their tests do not depend on the numbering.
+
+## D106 — A student's second stage continues its human-label fine-tune
+
+The owner's choice (2026-09-30), reversing the roadmap's rule of 2026-09-26 that every student
+start from its pretrained checkpoint on the mixture of pseudo-labels and human labels, with the
+human-only fine-tune kept apart as the 0 h point.
+
+- **Three stages per student.** *human*: from the pretrained weights, on the verified train labels.
+  *distill*: those weights continued on the teacher's filtered pseudo-labels mixed with the human
+  labels. *distill-aug*: the distill stage again, from the human stage's weights, with the recipe
+  that won Flex's ablation; skipped when vanilla won.
+- **The human labels stay in the mixture.** They take `HUMAN_SHARE` (0.5) of every epoch's draws;
+  the rest is split between the unlabelled channels by the square root of their hours, as settled
+  on 2026-09-26 (`distill.mixture_weights`). So the model does not end on the teacher's errors
+  alone, which was one of the two objections to continuing.
+- **What the comparison can no longer say.** Distill minus human is the pseudo-labels *and* the
+  extra training together; the two cannot be separated, which the fresh-weights rule existed to
+  avoid. What it still says: whether the student a human-label fine-tune produces gets closer to
+  the teacher when it is given the teacher's labels. Distill-aug minus distill is the
+  augmentation alone, since both start from the same weights.
+- **Resumable.** A stage saves a resume point to a scratch model repo after every epoch
+  (`ftkit.HubResume`): the weights and the counters, not the optimizer's moments. Each save
+  replaces the last, and the superseded blobs are deleted from that repo's storage.
+
+**Reversal:** cheap in code: `train_stage` in `notebooks/src/build_students.py` loads the human
+stage's weights for the later stages, and passing none restores fresh weights. Costly in GPU once
+the students are trained, since every distill stage would be run again.

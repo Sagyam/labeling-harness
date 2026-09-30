@@ -34,6 +34,22 @@ code-switching paper.
 E is how all of it is measured. Sections are lettered so they do not collide with the retired
 numbered items that code comments still cite, which is why F and G come after E.
 
+**How a model is trained and evaluated (D105, 2026-09-30).** B and C are no longer run ad hoc:
+the notebooks are numbered in the order they run, and that order is the protocol.
+
+| Step | Notebook | Roadmap section |
+|---|---|---|
+| 1–2 | `01_EDA`, `02_Sociolinguistics` | the corpus |
+| 3 | `03a_Flex_Train` to `03e_Flex_Ship` | Flex retrained, scored on the public sets, C's ablation, blended, one teacher frozen |
+| 4 | `04_PreDistill` | B step 1, and each clip's overlap measured |
+| 5 | `05_Teacher` | B steps 2–3 |
+| 6 | `06a`–`06f_Student_*` | B step 4, one notebook per student |
+| 7 | `07_Report` | E: every model in one table |
+
+Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
+val by a rule fixed before the result. Each notebook has a smoke switch; none has run on a GPU
+yet. **Next:** the smoke runs, in order, then the real runs on the 2026-09-30 export.
+
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
 Built on 2026-09-23 (D98) with voiceprint suggestions (D99), and piloted on gold crosstalk. On
@@ -81,7 +97,7 @@ Checked on 2026-09-24:
 | **Whisper-large-v3-turbo** (OpenAI, MIT) | weakly (123% zero-shot, loops) | yes: byte-level BPE | 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. Its decoder stops at 448 positions, and Devanagari costs several tokens a character: 9 train labels do not fit, and 5 gold clips cannot be written whole in one pass. |
 | **Qwen3-ASR-0.6B** ([Alibaba](https://github.com/QwenLM/Qwen3-ASR), Apache-2.0) | no; Hindi among its 30 languages | yes: byte-level BPE | An audio encoder feeding a Qwen3 decoder, the 0.6B picked over the 1.7B for being Parakeet's size and smaller than Flex. Zero-shot it writes rough Nepanglish already. Streams through vLLM only; its forced aligner covers 11 languages, not Hindi or Nepali. Its prompt names the language, and `language None` means "no speech", so ours is fixed at `language Nepali`. `qwen-asr` pins transformers 4.57.6, so it runs in its own runtime. |
 | **Omnilingual CTC** (Meta; 300M or 1B) | yes: 1,600+ languages | to check | Added for step 4 (2026-09-26), not in step 0. A self-supervised wav2vec 2.0 encoder with a CTC head: the one family the other students leave out, and the one least able to use the context a code-switch needs, since CTC predicts each token independently. The 1B reached ~16.6% on val in the 2026-09-14 bake-off before it was stopped at epoch 6, under a different protocol. |
-| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. Built from `Distill.ipynb`'s stock NeMo path without the encoder copy. |
+| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. `06f_Student_Conformer` builds it from IndicConformer's config, resized, without the encoder copy (not yet run). |
 
 **Pick, before step 0.** Parakeet-v2 was the main bet, with IndicConformer next to it as the
 safety net. Step 0 overturned it (findings.md, 2026-09-25): Whisper-turbo came closest to Flex, and
@@ -93,8 +109,9 @@ compares an English encoder with a Nepali one, not two vocabularies. Precedent f
 encoder: Flex is built on `canary-1b-v2`, which had no Nepali and was taught it later. Qwen and
 Whisper keep their own tokenizers: step 0 for them is a plain fine-tune, and they make the
 comparison across architectures (transducer against encoder-decoder and decoder-only) the paper
-reports. `notebooks/Distill.ipynb` trains the transducers, `notebooks/DistillHF.ipynb` the other two,
-with the same scoring cells and the same Flex reference.
+reports. Each student has its own notebook (`06a_Student_Whisper` to `06f_Student_Conformer`),
+generated from one builder, with the same stages, the same scoring and the same frozen teacher
+(D105).
 
 **Is 30 h enough?** For IndicConformer, possibly: Flex's learning curve was flat (4.6 h scored
 about the same as 18.3 h), but Flex already knew Nepali. For Parakeet, probably not. That curve
@@ -115,8 +132,8 @@ step 4's curve says how much audio closes the gap.
    - Nepali podcasts and tech reviews from YouTube, in the corpus's genres.
    - Downloaded outside the harness, since D86 allows only two ways in. The corpus is files, never
      rows (D101). The owner uploads `distill.zip` to the dataset repo, and
-     `notebooks/PreDistill.ipynb` cuts it in Colab with ingest's own code into `distill/`, which
-     `notebooks/Teacher.ipynb` labels (steps 2-3). First tranche: about 100 h (2026-09-25).
+     `notebooks/04_PreDistill.ipynb` cuts it in Colab with ingest's own code into `distill/`, which
+     `notebooks/05_Teacher.ipynb` labels (steps 2-3). First tranche: about 100 h (2026-09-25).
    - Cut into clips of 20 s or less with the same silero VAD.
    - Collected by the owner as whole playlists, audio only, with yt-dlp's info JSON (video id,
      channel, playlist) kept for the gold check and the provenance record. Prefer shows the corpus
@@ -129,9 +146,15 @@ step 4's curve says how much audio closes the gap.
      they are reliable.
    - First tranche: about 130 h of source for about 100 h of kept speech, collected while step 0
      runs. More only once step 0 says the gap is worth closing.
-2. **Teacher decode** (`notebooks/Teacher.ipynb`). Flex p00-s0, greedy, keeping each clip's mean
-   log-prob. No loop retry: step 3 drops a looping clip anyway, so a retry would be wasted GPU.
+2. **Teacher decode** (`notebooks/05_Teacher.ipynb`). The model `teacher.json` names (D105),
+   greedy, keeping each clip's mean log-prob. No loop retry: step 3 drops a looping clip anyway,
+   so a retry would be wasted GPU.
 3. **Filter the labels, cheapest first.**
+   - Drop clips overlapped beyond `MAX_OVERLAP_SHARE` (D105). Crosstalk is where the teacher is
+     weakest. `04_PreDistill` measures each clip's overlapped share with the harness's detector and
+     prices each threshold in hours per channel; the owner picks the threshold from that table.
+     Round-table shows are the most overlapped and bring the most voices, so a strict one can leave
+     a solo commentator carrying the corpus.
    - Drop clips whose output loops.
    - Drop clips whose tokens per second fall outside the range seen in train.
    - Drop the least confident 10–20% by mean log-prob.
@@ -147,12 +170,13 @@ step 4's curve says how much audio closes the gap.
      already is one. Parakeet stays because it pairs with IndicConformer: same tokenizer, heads and
      recipe, and only the encoder differs (English against Nepali), so its curve says whether the
      13 points the English encoder cost at 30 h shrink with pseudo-labels.
-   - **Fresh base weights, equal opportunity.** Every student starts from its pretrained
-     checkpoint (random weights for the Conformer), never from step 0's fine-tune, and trains on
-     the same mixture of pseudo-labels and the 30 h. Step 0's runs are the 0 h point of the curve;
-     resuming from them would train the later points twice and mix the pseudo-labels' gain with the
-     extra training, and would end each model on the teacher's errors rather than the verified
-     labels. Nothing of the 30 h is lost: those clips are in the mixture.
+   - **Each student continues its human-label fine-tune (D106, the owner, 2026-09-30).** Three
+     stages: *human* (the pretrained weights on the verified labels), *distill* (those weights on
+     the mixture of pseudo-labels and human labels) and *distill-aug* (distill again, from the
+     human stage's weights, with the recipe that won Flex's ablation). This reverses the rule of
+     2026-09-26, fresh weights for every point: the difference between the first two stages is now
+     the pseudo-labels together with the extra training. The human labels take half of every
+     epoch's draws, so a student does not end on the teacher's errors alone.
    - **Run the 100 h point for every student first**, and go further only for students whose
      curves are still rising. Six students at ~145 h each is several A100-days.
    - **Weight channels by the square root of their hours; cap none** (owner, 2026-09-26). Every
@@ -168,10 +192,11 @@ step 4's curve says how much audio closes the gap.
      kept it for the first run: if the students disappoint, oversampled data is cut or more is
      added then.
    - **Resume from HF per epoch.** At 100 h and more a run takes many hours, which a lost runtime
-     or power cut must not cost again (deferred at step 0, when runs took about an hour).
-   - **Order of the first run:** `PreDistill.ipynb`, then `Teacher.ipynb` with `LIMIT` of about 500
-     (its log-prob masking and `output_scores` memory have never run on a GPU), then the whole
-     corpus, then step 4.
+     or power cut must not cost again. Built 2026-09-30 (`ftkit.HubResume`): a stage saves its
+     weights and counters to a scratch model repo after every epoch and continues from them.
+   - **Order of the first run:** `04_PreDistill` (its overlap pass, on the corpus already cut),
+     then `05_Teacher` with `SMOKE` (its log-prob masking and `output_scores` memory have never run
+     on a GPU), then the whole corpus, then the students.
 
 **Success bar.** The student's gold and val WER falls within Flex's episode-bootstrap CI, per clip
 class, folded and raw, split into S/D/I. Only then are its extras (streaming, timestamps,
@@ -205,7 +230,9 @@ voice can also get its own room and microphone before it is mixed (`donor_reverb
 `donor_channel`), because in real crosstalk it reaches the target's microphone from further away.
 The corpus's overlap is near-symmetric, though (both voices within 3 dB), so always processing the
 donor would teach "ignore the wetter voice"; keep those below p = 1 unless that is the experiment.
-The defaults reproduce D96 exactly. Nothing is wired into a notebook yet.
+The defaults reproduce D96 exactly. Since 2026-09-30 it is wired into `03c_Flex_Augment`, which
+ablates one stage per run on Flex, and into every student's third stage, which switches on the
+recipe that won there (D105). The strengths in `ABLATION` are first guesses.
 
 **What the label says** (`CrosstalkConfig.label`, 2026-09-26). D96 kept the clip's own text, which
 teaches a model to leave the other voice out; since D100, gold writes everything said, so a
