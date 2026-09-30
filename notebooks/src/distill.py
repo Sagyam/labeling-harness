@@ -66,23 +66,32 @@ def filter_pseudo(
     *,
     tokens_per_s: tuple[float, float],
     drop_fraction: float,
+    max_overlap_share: float | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Roadmap §B step 3: keep the teacher's labels worth training on, cheapest rule first.
 
     Each row carries ``segment_id``, ``text``, ``n_tokens`` (teacher tokens), ``duration`` (s),
-    ``mean_logprob`` and ``looped`` (the greedy output loops, ``ftkit.is_loop``). Dropped, in
-    order: a clip whose output loops; an empty transcript; a rate outside ``tokens_per_s`` (the
-    range train's labels span, in the teacher's tokens); then the least confident
-    ``drop_fraction`` of what is left, by mean log-prob. Returns the kept rows, in input order,
-    and a report of what each rule dropped.
+    ``mean_logprob`` and ``looped`` (the greedy output loops, ``ftkit.is_loop``), and, once
+    PreDistill has measured it, ``overlap_share``. Dropped, in order: a clip overlapped for more
+    than ``max_overlap_share`` of its length (crosstalk is where the teacher is weakest; ``None``
+    applies no such rule, and a clip never measured is kept and counted); a clip whose output
+    loops; an empty transcript; a rate outside ``tokens_per_s`` (the range train's labels span, in
+    the teacher's tokens); then the least confident ``drop_fraction`` of what is left, by mean
+    log-prob. Returns the kept rows, in input order, and a report of what each rule dropped.
     """
     if not 0.0 <= drop_fraction < 1.0:
         raise ValueError(f"drop_fraction must be in [0, 1), not {drop_fraction}")
+    if max_overlap_share is not None and not 0.0 <= max_overlap_share <= 1.0:
+        raise ValueError(f"max_overlap_share must be in [0, 1], not {max_overlap_share}")
     lo, hi = tokens_per_s
-    dropped = {"loop": 0, "empty": 0, "rate": 0, "confidence": 0}
+    dropped = {"overlap": 0, "loop": 0, "empty": 0, "rate": 0, "confidence": 0}
+    unmeasured = sum(r.get("overlap_share") is None for r in rows)
     left = []
     for r in rows:
-        if r["looped"]:
+        share = r.get("overlap_share")
+        if max_overlap_share is not None and share is not None and share > max_overlap_share:
+            dropped["overlap"] += 1
+        elif r["looped"]:
             dropped["loop"] += 1
         elif not r["text"].strip():
             dropped["empty"] += 1
@@ -106,6 +115,8 @@ def filter_pseudo(
         "logprob_cut": cut,
         "tokens_per_s": [lo, hi],
         "drop_fraction": drop_fraction,
+        "max_overlap_share": max_overlap_share,
+        "overlap_unmeasured": unmeasured,
     }
     return left, report
 
@@ -177,3 +188,134 @@ def slice_rows(source_id: str, channel: str, slices: Sequence[tuple[float, float
         }
         for i, (start, end) in enumerate(slices)
     ]
+
+
+# --- overlapped speech on the unlabelled corpus (D105) -------------------------------------------
+#
+# The harness measures overlap per episode (app/services/overlap.py) and classes a clip by the
+# share of it that is overlapped (app/services/clip_classes.py). The second module imports
+# SQLAlchemy and the models, so it cannot be fetched into Colab; its two pure functions are
+# repeated here, and a test keeps them equal to the harness's.
+
+
+def spans_within(
+    spans: Sequence[Sequence[float]], start: float, end: float
+) -> list[tuple[float, float]]:
+    """A recording's overlap spans cut to one clip, clip-relative, as the labelled export's
+    ``overlap_spans`` are. Empty when the clip holds none."""
+    out: list[tuple[float, float]] = []
+    for lo, hi in spans:
+        a, b = max(lo, start), min(hi, end)
+        if b > a:
+            out.append((round(a - start, 3), round(b - start, 3)))
+    return out
+
+
+def overlap_share(spans: Sequence[Sequence[float]] | None, duration: float) -> float | None:
+    """The fraction of a clip spent in crosstalk; ``None`` when it was never measured."""
+    if spans is None:
+        return None
+    if duration <= 0:
+        return 0.0
+    return min(1.0, sum(max(0.0, end - start) for start, end in spans) / duration)
+
+
+def overlap_bucket(share: float | None) -> str:
+    """The overlap bucket of a clip's overlap share, the corpus's clip class (D87)."""
+    if share is None:
+        return "unmeasured"
+    if share <= 0:
+        return "none"
+    if share < 0.05:
+        return "0-5%"
+    if share <= 0.15:
+        return "5-15%"
+    return ">15%"
+
+
+def with_overlap(rows: Sequence[dict], spans: Sequence[Sequence[float]] | None) -> list[dict]:
+    """One recording's clip rows with ``overlap_spans`` (clip-relative) and ``overlap_share``,
+    from the recording's overlap spans. ``None`` spans (no detector) leave both ``None``: never
+    measured, which is not the same as clean."""
+    out = []
+    for r in rows:
+        mine = None if spans is None else spans_within(spans, r["start_time"], r["end_time"])
+        share = overlap_share(mine, r["end_time"] - r["start_time"])
+        out.append(
+            {
+                **r,
+                "overlap_spans": None if mine is None else [list(s) for s in mine],
+                "overlap_share": None if share is None else round(share, 4),
+            }
+        )
+    return out
+
+
+def overlap_loss(rows: Sequence[dict], thresholds: Sequence[float]) -> dict[str, dict[str, Any]]:
+    """What a ``max_overlap_share`` would cost, per channel and for ``all``: the hours of speech,
+    the hours never measured, and the hours dropped at each threshold (a clip is dropped when its
+    share is *above* the threshold, as ``filter_pseudo`` drops it). The table the owner reads
+    before choosing the threshold."""
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        hours = (r["end_time"] - r["start_time"]) / 3600
+        share = r.get("overlap_share")
+        for name in (r["channel"], "all"):
+            c = out.setdefault(
+                name,
+                {
+                    "hours": 0.0,
+                    "unmeasured_hours": 0.0,
+                    "dropped_hours": dict.fromkeys(thresholds, 0.0),
+                },
+            )
+            c["hours"] += hours
+            if share is None:
+                c["unmeasured_hours"] += hours
+                continue
+            for threshold in thresholds:
+                if share > threshold:
+                    c["dropped_hours"][threshold] += hours
+    return dict(sorted(out.items(), key=lambda kv: (kv[0] == "all", kv[0])))
+
+
+# --- stage 2 of a student: pseudo-labels and human labels in one mixture (D106) ------------------
+
+
+def mixture_weights(
+    groups: Sequence[str | None], hours: Sequence[float], human_share: float
+) -> list[float]:
+    """Each clip's chance of being drawn, summing to 1.
+
+    ``groups[i]`` is clip i's channel for a pseudo-labelled clip and ``None`` for a human-labelled
+    one; ``hours[i]`` is its length. The human labels take ``human_share`` of the draws. The rest
+    is split between channels in proportion to the *square root* of their hours (roadmap §B,
+    2026-09-26: no channel is capped, and a 22 h channel weighs about 2x a 5 h one, not 4.4x).
+    Inside a channel, and inside the human labels, a clip is drawn in proportion to its length.
+    With no pseudo-labelled clip, or no human one, the other kind takes every draw.
+    """
+    if len(groups) != len(hours):
+        raise ValueError("groups and hours must describe the same clips")
+    if not 0.0 < human_share < 1.0:
+        raise ValueError(f"human_share must be in (0, 1), not {human_share}")
+    total: dict[str | None, float] = {}
+    for g, h in zip(groups, hours, strict=True):
+        if h <= 0:
+            raise ValueError("every clip needs a positive length")
+        total[g] = total.get(g, 0.0) + h
+    channels = {g: h for g, h in total.items() if g is not None}
+    roots = sum(h**0.5 for h in channels.values())
+    share: dict[str | None, float] = {}
+    if None in total:
+        share[None] = human_share if channels else 1.0
+    for g, h in channels.items():
+        share[g] = (1.0 - human_share if None in total else 1.0) * h**0.5 / roots
+    return [share[g] * h / total[g] for g, h in zip(groups, hours, strict=True)]
+
+
+def draw_epoch(weights: Sequence[float], n: int, seed: int) -> list[int]:
+    """The ``n`` clips of one epoch, as indices drawn with replacement by ``weights``; repeatable
+    from ``seed``, so a resumed run trains the epochs it would have."""
+    import random
+
+    return random.Random(seed).choices(range(len(weights)), weights=list(weights), k=n)

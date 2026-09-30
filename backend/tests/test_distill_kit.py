@@ -124,7 +124,7 @@ def test_filter_drops_looped_empty_and_out_of_rate_clips_before_confidence():
     ]
     kept, report = distill.filter_pseudo(rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.0)
     assert [r["segment_id"] for r in kept] == ["ok"]
-    assert report["dropped"] == {"loop": 1, "empty": 1, "rate": 2, "confidence": 0}
+    assert report["dropped"] == {"overlap": 0, "loop": 1, "empty": 1, "rate": 2, "confidence": 0}
 
 
 def test_filter_drops_the_least_confident_fraction_of_what_is_left():
@@ -144,6 +144,35 @@ def test_filter_reports_what_it_kept_in_clips_and_hours():
 def test_filter_refuses_a_fraction_outside_zero_to_one():
     with pytest.raises(ValueError):
         distill.filter_pseudo([], tokens_per_s=(0.5, 13.0), drop_fraction=1.0)
+
+
+def test_filter_drops_a_clip_overlapped_beyond_the_threshold_first():
+    rows = [
+        {**_pseudo("heavy", looped=True), "overlap_share": 0.4},  # overlap is judged before loops
+        {**_pseudo("at", logprob=-0.2), "overlap_share": 0.15},  # at the threshold: kept
+        {**_pseudo("clean"), "overlap_share": 0.0},
+        _pseudo("unmeasured"),  # never measured is not the same as overlapped
+    ]
+    kept, report = distill.filter_pseudo(
+        rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.0, max_overlap_share=0.15
+    )
+    assert [r["segment_id"] for r in kept] == ["at", "clean", "unmeasured"]
+    assert report["dropped"]["overlap"] == 1 and report["dropped"]["loop"] == 0
+    assert (report["max_overlap_share"], report["overlap_unmeasured"]) == (0.15, 1)
+
+
+def test_filter_without_a_threshold_drops_nothing_for_overlap():
+    rows = [{**_pseudo("heavy"), "overlap_share": 0.9}]
+    kept, report = distill.filter_pseudo(rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.0)
+    assert len(kept) == 1 and report["dropped"]["overlap"] == 0
+    assert report["max_overlap_share"] is None
+
+
+def test_filter_refuses_an_overlap_threshold_outside_zero_to_one():
+    with pytest.raises(ValueError):
+        distill.filter_pseudo(
+            [], tokens_per_s=(0.5, 13.0), drop_fraction=0.0, max_overlap_share=1.5
+        )
 
 
 def test_latin_share_counts_words_written_in_latin_script():
@@ -204,3 +233,119 @@ def test_slice_rows_name_each_clip_under_its_recording():
             "duration": 7.0,
         },
     ]
+
+
+# --- overlapped speech on the unlabelled corpus (D105) -------------------------------------------
+
+
+def test_the_overlap_helpers_are_the_harness_own():
+    """distill.py repeats three pure functions of the harness, which Colab cannot import."""
+    from app.services import clip_classes, overlap
+
+    spans = [(1.0, 2.5), (9.0, 12.0), (30.0, 31.0)]
+    for start, end in ((0.0, 5.0), (2.0, 10.0), (12.0, 20.0), (9.5, 9.75)):
+        mine = distill.spans_within(spans, start, end)
+        assert mine == overlap.spans_within(spans, start, end)
+        assert distill.overlap_share(mine, end - start) == clip_classes.overlap_share(
+            mine, end - start
+        )
+    assert distill.overlap_share(None, 5.0) is clip_classes.overlap_share(None, 5.0) is None
+    assert distill.overlap_share([(0.0, 9.0)], 0.0) == clip_classes.overlap_share([(0.0, 9.0)], 0.0)
+    for share in (None, 0.0, 0.01, 0.0499, 0.05, 0.1, 0.15, 0.1501, 0.6, 1.0):
+        assert distill.overlap_bucket(share) == clip_classes.overlap_bucket(share)
+
+
+def _clip(sid: str, start: float, end: float, channel: str = "Show", **extra) -> dict:
+    return {"segment_id": sid, "channel": channel, "start_time": start, "end_time": end, **extra}
+
+
+def test_with_overlap_gives_each_clip_its_spans_and_share():
+    rows = [_clip("a", 0.0, 10.0), _clip("b", 10.0, 20.0), _clip("c", 20.0, 30.0)]
+    out = distill.with_overlap(rows, [(8.0, 12.0), (25.0, 26.0)])
+    assert [r["overlap_spans"] for r in out] == [[[8.0, 10.0]], [[0.0, 2.0]], [[5.0, 6.0]]]
+    assert [r["overlap_share"] for r in out] == [0.2, 0.2, 0.1]
+    assert [r["segment_id"] for r in out] == ["a", "b", "c"] and "overlap_share" not in rows[0]
+
+
+def test_a_clean_clip_is_measured_clean_and_an_unmeasured_one_is_none():
+    clean = distill.with_overlap([_clip("a", 0.0, 10.0)], [])[0]
+    assert (clean["overlap_spans"], clean["overlap_share"]) == ([], 0.0)
+    unmeasured = distill.with_overlap([_clip("a", 0.0, 10.0)], None)[0]
+    assert (unmeasured["overlap_spans"], unmeasured["overlap_share"]) == (None, None)
+
+
+def test_overlap_loss_says_what_each_threshold_costs_per_channel():
+    hour = 3600.0
+    rows = [
+        _clip("a", 0.0, hour, "Round_Table", overlap_share=0.3),
+        _clip("b", 0.0, hour, "Round_Table", overlap_share=0.1),
+        _clip("c", 0.0, hour, "Solo", overlap_share=0.0),
+        _clip("d", 0.0, hour, "Solo", overlap_share=None),
+    ]
+    loss = distill.overlap_loss(rows, (0.05, 0.15))
+    assert list(loss) == ["Round_Table", "Solo", "all"]
+    assert loss["Round_Table"]["dropped_hours"] == {0.05: 2.0, 0.15: 1.0}
+    assert loss["Solo"] == {
+        "hours": 2.0,
+        "unmeasured_hours": 1.0,
+        "dropped_hours": {0.05: 0.0, 0.15: 0.0},
+    }
+    assert (loss["all"]["hours"], loss["all"]["dropped_hours"][0.15]) == (4.0, 1.0)
+
+
+def test_overlap_loss_drops_what_the_filter_drops():
+    rows = [
+        {**_pseudo(f"c{i}", duration=3600.0, tokens=7200), **_clip(f"c{i}", 0.0, 3600.0)}
+        for i in range(4)
+    ]
+    for r, share in zip(rows, (0.0, 0.15, 0.16, 0.5), strict=True):
+        r["overlap_share"] = share
+    kept, _ = distill.filter_pseudo(
+        rows, tokens_per_s=(0.5, 13.0), drop_fraction=0.0, max_overlap_share=0.15
+    )
+    assert distill.overlap_loss(rows, (0.15,))["all"]["dropped_hours"][0.15] == 4 - len(kept)
+
+
+# --- stage 2's mixture (D106) --------------------------------------------------------------------
+
+
+def test_the_human_labels_take_their_share_and_channels_split_the_rest_by_root_hours():
+    groups = [None, None, "A", "B", "B"]
+    hours = [1.0, 3.0, 4.0, 8.0, 8.0]  # human 4 h; A 4 h (root 2); B 16 h (root 4)
+    w = distill.mixture_weights(groups, hours, human_share=0.4)
+    assert sum(w) == pytest.approx(1.0)
+    assert w[0] + w[1] == pytest.approx(0.4)
+    assert w[2] == pytest.approx(0.6 * 2 / 6)
+    assert w[3] + w[4] == pytest.approx(0.6 * 4 / 6)
+
+
+def test_inside_a_group_a_clip_is_drawn_by_its_length():
+    w = distill.mixture_weights([None, None, "A", "A"], [1.0, 3.0, 2.0, 6.0], human_share=0.5)
+    assert w[1] == pytest.approx(3 * w[0]) and w[3] == pytest.approx(3 * w[2])
+
+
+def test_one_kind_of_label_alone_takes_every_draw():
+    assert sum(distill.mixture_weights([None, None], [1.0, 1.0], 0.5)) == pytest.approx(1.0)
+    only_pseudo = distill.mixture_weights(["A", "B"], [1.0, 4.0], 0.5)
+    assert only_pseudo == pytest.approx([1 / 3, 2 / 3])
+
+
+@pytest.mark.parametrize("share", [0.0, 1.0, -0.1])
+def test_the_human_share_is_strictly_between_zero_and_one(share):
+    with pytest.raises(ValueError):
+        distill.mixture_weights([None, "A"], [1.0, 1.0], share)
+
+
+def test_the_mixture_needs_one_length_per_clip_and_positive_lengths():
+    with pytest.raises(ValueError):
+        distill.mixture_weights([None, "A"], [1.0], 0.5)
+    with pytest.raises(ValueError):
+        distill.mixture_weights([None, "A"], [1.0, 0.0], 0.5)
+
+
+def test_an_epoch_is_drawn_by_weight_and_is_repeatable_from_its_seed():
+    weights = [0.0, 0.75, 0.25]
+    draw = distill.draw_epoch(weights, 4000, seed=3)
+    assert draw == distill.draw_epoch(weights, 4000, seed=3)
+    assert draw != distill.draw_epoch(weights, 4000, seed=4)
+    assert 0 not in draw and draw.count(1) / 4000 == pytest.approx(0.75, abs=0.03)
