@@ -535,7 +535,12 @@ text, both fields are null. `scripts/export_dataset.py` loads the aligner only f
 
 The `analytics` and `error_mining` kinds also carry what the classes were computed from:
 `vad_spans` (D55) and `speaker_turns`, the newest diarization run's turns cut to the clip, each
-with its linked voice (D78, D87); null when never measured or never diarized.
+with its linked voice (D78, D87); null when never measured or never diarized. A turn also says
+who its voice is (D107): `gender` and `age_bracket`, by ear where the owner set them (D104) and
+otherwise what the declared rows force (D91), and `role`, which belongs to the recording and
+comes from the rows alone. Each is null where nothing reached the voice. They are resolved by
+`inventory.resolve_voices`, the voices page's own resolver, over the whole corpus whatever the
+export's filters.
 
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:

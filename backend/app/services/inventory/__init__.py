@@ -80,6 +80,7 @@ __all__ = [
     "rate_bucket",
     "resolve_corpus",
     "resolve_episode",
+    "resolve_voices",
     "speaking_rate_bucket",
     "summarize_voices",
 ]
@@ -218,6 +219,15 @@ def collect_voice_profiles(
         "summary": summarize_voices(profiles),
         "voices": [p.as_dict() for p in profiles],
     }
+
+
+def resolve_voices(
+    session: Session,
+) -> tuple[dict[tuple[str, str], Resolution], dict[str, VoiceIdentity]]:
+    """Who each voice is: :func:`resolve_corpus` over the whole corpus, with the values the owner
+    set by ear (D104). What the voices page shows and the export writes on a turn (D107)."""
+    episodes, _ = load_rows(session)
+    return resolve_corpus(episodes, current_voice_attributes(session))
 
 
 def collect_voices(session: Session) -> dict[str, Any]:

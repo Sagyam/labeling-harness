@@ -1,8 +1,9 @@
 """Which declared speaker row is which diarized voice, where the episode forces the answer (D91).
 
 The harness never links a row to a voice by listening (D78). But an episode's own structure
-often leaves no choice, and the sociolinguistics notebook has been resolving those cases by hand
-since 2026-09-18. The same three rules live here so the page and the notebook agree:
+often leaves no choice, and the sociolinguistics notebook resolved those cases by hand from
+2026-09-18. The three rules live here, and the export writes their answer on every turn (D107),
+so the page and the notebooks agree:
 
 1. **only pair** -- one declared row and one voice: the row is the voice.
 2. **recurring host** -- one row declares a host, and exactly one of the episode's voices also

@@ -10,10 +10,19 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app.config import Settings, load_settings
-from app.models import AnnotationTask, DiarizationRun, Episode, Segment, SegmentLabel, SpeakerTurn
+from app.models import (
+    AnnotationTask,
+    DiarizationRun,
+    Episode,
+    Segment,
+    SegmentLabel,
+    SpeakerTurn,
+    VoiceAttribute,
+)
 from app.services.clip_classes import AXES, classify_segments
 from app.services.export import ExportError, GoldLeakError, export_dataset
 from app.services.importer import import_manifest
+from app.services.inventory import collect_voices
 from app.services.labeling import Decision, record_decision
 from app.services.normalize import load_ruleset
 from app.services.queue_builder import build_queue
@@ -591,13 +600,15 @@ def test_analytics_carries_vad_spans_and_the_clip_speaker_turns(
     rows = {r["segment_id"]: r for r in read_jsonl(result.data_path)}
     row = rows[first.external_id]
     assert row["vad_spans"] == [[0.0, 1.0]]
+    nobody = {"gender": None, "age_bracket": None, "role": None}
     assert row["speaker_turns"] == [
-        {"start": 0.0, "end": pytest.approx(cut - t0), "speaker": "A", "voice": "v001"},
+        {"start": 0.0, "end": pytest.approx(cut - t0), "speaker": "A", "voice": "v001", **nobody},
         {
             "start": pytest.approx(cut - t0),
             "end": pytest.approx(t1 - t0),
             "speaker": "B",
             "voice": None,
+            **nobody,
         },
     ]
     assert row["classes"]["speakers"] == "2"
@@ -612,6 +623,84 @@ def test_analytics_carries_vad_spans_and_the_clip_speaker_turns(
     train_row = read_jsonl(training.data_path)[0]
     assert "speaker_turns" not in train_row
     assert "vad_spans" not in train_row
+
+
+def _diarize(session: Session, segment: Segment, voices: dict[str, str]) -> None:
+    """One run on ``segment``'s episode whose speakers split the clip evenly, in order."""
+    speakers = list(voices)
+    step = (segment.end_time - segment.start_time) / len(speakers)
+    session.add(
+        DiarizationRun(
+            episode_id=segment.episode_id,
+            model="test",
+            checksum=f"turns-{segment.episode_id}",
+            speakers_jsonb=speakers,
+            voices_jsonb=voices,
+            turns=[
+                SpeakerTurn(
+                    speaker=speaker,
+                    start_time=segment.start_time + i * step,
+                    end_time=segment.start_time + (i + 1) * step,
+                )
+                for i, speaker in enumerate(speakers)
+            ],
+        )
+    )
+
+
+def test_a_speaker_turn_carries_its_voices_gender_age_and_role(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """Each turn says who its voice is, as the voices page resolves it (D91, D104, D107): what
+    the episode's declared rows force, with a value the owner set by ear outranking them field
+    by field. Role belongs to the recording, so it comes from the rows alone. A consumer of the
+    export no longer has to resolve any of it again, or do without the by-ear values."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    episodes = db_session.scalars(sa.select(Episode).order_by(Episode.id)).all()
+    pair, solo = (max(e.segments, key=lambda s: s.duration_seconds) for e in episodes[:2])
+
+    # Two rows, two voices, neither recurring: the rows agree on gender alone.
+    _diarize(db_session, pair, {"A": "v001", "B": "v002"})
+    episodes[0].metadata_jsonb = {
+        **(episodes[0].metadata_jsonb or {}),
+        "speakers": {
+            "spk0": {"role": "host", "gender": "male", "age_bracket": "20_39"},
+            "spk1": {"role": "guest", "gender": "male", "age_bracket": "40_59"},
+        },
+    }
+    # One row, one voice: the row is the voice, role included.
+    _diarize(db_session, solo, {"A": "v003"})
+    episodes[1].metadata_jsonb = {
+        **(episodes[1].metadata_jsonb or {}),
+        "speakers": {"spk0": {"role": "host", "gender": "female", "age_bracket": "60_79"}},
+    }
+    # Heard by the owner: v002 is a woman, whatever the rows agreed on.
+    db_session.add(
+        VoiceAttribute(voice="v002", gender="female", age_bracket="40_59", annotator="owner")
+    )
+    db_session.flush()
+
+    result = export_dataset(db_session, kind="analytics", output_root=tmp_path / "out")
+    rows = {r["segment_id"]: r for r in read_jsonl(result.data_path)}
+
+    def who(segment: Segment) -> list[dict]:
+        keys = ("voice", "gender", "age_bracket", "role")
+        return [{k: turn[k] for k in keys} for turn in rows[segment.external_id]["speaker_turns"]]
+
+    assert who(pair) == [
+        {"voice": "v001", "gender": "male", "age_bracket": None, "role": None},
+        {"voice": "v002", "gender": "female", "age_bracket": "40_59", "role": None},
+    ]
+    assert who(solo) == [
+        {"voice": "v003", "gender": "female", "age_bracket": "60_79", "role": "host"}
+    ]
+
+    # The same answer as the voices page, which is the point of sharing its resolver.
+    profiles = {p["voice"]: p for p in collect_voices(db_session)["voices"]}
+    for row in rows.values():
+        for turn in row["speaker_turns"] or []:
+            assert turn["gender"] == profiles[turn["voice"]]["gender"]
+            assert turn["age_bracket"] == profiles[turn["voice"]]["age_bracket"]
 
 
 # --- label word timings (2026-09-26) -------------------------------------------------------

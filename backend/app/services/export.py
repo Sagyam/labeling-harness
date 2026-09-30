@@ -52,6 +52,7 @@ from app.models import (
 from app.services.alignment import WORD_TOKEN_RE as SPAN_TOKEN_RE
 from app.services.alignment import WordSpan
 from app.services.clip_classes import ClipFacts, classify, load_clip_facts
+from app.services.inventory import Resolution, VoiceIdentity, resolve_voices
 from app.services.normalize import WORD_TOKEN_RE as TEXT_TOKEN_RE
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 from app.services.pots import effective_split, effective_split_sql
@@ -250,16 +251,40 @@ def _realign(
     return [(t, round(s.start, 3), round(s.end, 3)) for t, s in zip(tokens, spans, strict=True)]
 
 
-def _speaker_turns(facts: ClipFacts) -> list[dict[str, Any]] | None:
+#: ``(episode external id, voice) -> Resolution`` and ``voice -> VoiceIdentity``, as
+#: :func:`app.services.inventory.resolve_voices` returns them.
+Identities = tuple[dict[tuple[str, str], Resolution], dict[str, VoiceIdentity]]
+
+
+def _speaker_turns(
+    facts: ClipFacts, episode: str, identities: Identities
+) -> list[dict[str, Any]] | None:
     """The clip's turns from its episode's newest diarization run, clip-relative and each with
-    its linked voice (D78, D87). Null when the episode was never diarized."""
+    its linked voice (D78, D87) and who that voice is (D107): its gender and age bracket, by ear
+    where the owner set them (D104) and otherwise what the declared rows force (D91), and its
+    role in this recording. Each is null where nothing reached the voice. Null turns when the
+    episode was never diarized."""
     if facts.turns is None:
         return None
     voices = facts.voices or {}
-    return [
-        {"start": start, "end": end, "speaker": speaker, "voice": voices.get(speaker)}
-        for start, end, speaker in sorted(facts.turns)
-    ]
+    per_episode, per_voice = identities
+    turns = []
+    for start, end, speaker in sorted(facts.turns):
+        voice = voices.get(speaker)
+        person = per_voice.get(voice) if voice is not None else None
+        here = per_episode.get((episode, voice)) if voice is not None else None
+        turns.append(
+            {
+                "start": start,
+                "end": end,
+                "speaker": speaker,
+                "voice": voice,
+                "gender": person.gender if person else None,
+                "age_bracket": person.age_bracket if person else None,
+                "role": here.role if here else None,
+            }
+        )
+    return turns
 
 
 def _record(
@@ -271,6 +296,7 @@ def _record(
     ruleset: Ruleset,
     spanning_episode_ids: set[int],
     facts: ClipFacts,
+    identities: Identities,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "segment_id": segment.external_id,
@@ -309,9 +335,10 @@ def _record(
     if kind.include_hypotheses:
         #: What the classes above were computed from, for analysis that needs the raw spans:
         #: the VAD speech regions (D55) and the newest diarization run's turns cut to the clip,
-        #: each with its linked voice (D78, D87). Null is never measured or never diarized.
+        #: each with its linked voice (D78, D87) and that voice's gender, age bracket and role
+        #: (D107). Null is never measured or never diarized.
         record["vad_spans"] = segment.vad_spans_jsonb
-        record["speaker_turns"] = _speaker_turns(facts)
+        record["speaker_turns"] = _speaker_turns(facts, segment.episode.external_id, identities)
         record["speaker_id"] = segment.speaker_id
         record["duration_seconds"] = segment.duration_seconds
         record["p_en"] = segment.p_en
@@ -533,6 +560,11 @@ def export_dataset(
         )
 
         facts = load_clip_facts(session, [segment for segment, _ in rows])
+        # Resolved over the whole corpus whatever the filters: a voice's gender and age belong to
+        # the person, and which voice is a host turns on the other episodes it is heard in.
+        identities: Identities = (
+            resolve_voices(session) if definition.include_hypotheses else ({}, {})
+        )
 
         can_realign = aligner is not None and storage is not None and aligner.available
         for segment, label in rows:
@@ -545,6 +577,7 @@ def export_dataset(
                 ruleset,
                 spanning_episode_ids,
                 facts[segment.id],
+                identities,
             )
             if definition.include_label_words:
                 seed = next(

@@ -2543,3 +2543,31 @@ human-only fine-tune kept apart as the 0 h point.
 **Reversal:** cheap in code: `train_stage` in `notebooks/src/build_students.py` loads the human
 stage's weights for the later stages, and passing none restores fresh weights. Costly in GPU once
 the students are trained, since every distill stage would be run again.
+
+## D107 — The export says who each voice is, so nothing downstream resolves it again
+
+D104 gave a voice a gender and an age bracket by ear and wired them into the corpus and voices
+pages, but not into the export. A turn in `speaker_turns` named its voice and nothing else, so
+the two hand-written notebooks, which read only the export, kept resolving gender, age and role
+themselves with an older copy of D91's rules. On the 2026-09-30 corpus that copy reached 170 of
+358 voices; the voices page, with the 175 voices set by ear, reaches 357. Where both had a value
+they agreed on every gender and on 167 of 171 ages, the four being ages the owner corrected by
+ear. The by-ear values were simply never read.
+
+- **Each turn of the `analytics` and `error_mining` kinds carries `gender`, `age_bracket` and
+  `role`.** Gender and age belong to the person: one value per voice, by ear where set, else what
+  the declared rows force, null when nothing reached the voice or two episodes disagree. Role
+  belongs to the recording, so it is per episode and from the rows alone.
+- **One resolver.** `inventory.resolve_voices` is what the voices page shows and what the export
+  writes, and `test_export.py` holds the two to the same answer. It runs over the whole corpus
+  whatever the export's filters, because which voice is a series' host turns on the other
+  episodes it is heard in.
+- **On the turn, not beside it.** A turn is read on its own, by the crosstalk mixer among others,
+  and three short keys on 69,000 turns cost less than a second table every consumer must join.
+- **What did not change.** `classes.gender` and `classes.age_bracket` stay the episode's declared
+  values (D87): moving them to the leading voice would re-cut every imported run's breakdown,
+  which is its own decision. The `training` and `gold` kinds carry no turns and so none of this.
+  Nothing new is stored: the three values are what a declared row may already say (D56).
+
+**Reversal:** cheap. Drop the three keys in `export._speaker_turns`; a consumer that read them
+goes back to resolving declared rows itself and loses the by-ear values.
