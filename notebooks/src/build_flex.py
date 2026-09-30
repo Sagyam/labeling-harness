@@ -1286,6 +1286,11 @@ that file, so none of them names a model of its own.
 points of the fine-tune, or the fine-tune itself. `TEACHER` in Config overrides it with a run's
 name.
 
+**Scored as shipped.** `best/` holds bf16 weights, while a run is scored from the fp32 weights in
+memory and a blend is never written before this notebook. Gold and val are decoded here once more
+with the weights as they were written, so the teacher's numbers and the per-clip counts every
+student is paired against belong to the exact file that 05 and the playground load.
+
 **Frozen means frozen.** Students are trained on this model's labels and scored against it.
 Replacing it after that invalidates them, so an existing `teacher.json` that names another model is
 not overwritten unless `REPLACE_TEACHER` is set.
@@ -1329,6 +1334,20 @@ if alpha < 1:
 else:
     shutil.copytree(download_weights(run), OUT / "best", dirs_exist_ok=True)
 load_model(OUT / "best").eval()
+
+# Score the weights as shipped. The run was scored from fp32 weights in memory (or, for a blend,
+# never written at all); `best/` is bf16. The teacher's numbers, and the per-clip counts every
+# student is paired against, are those of the exact weights 05 and the playground load.
+before = row
+card_on_hub = json.loads((HARNESS / "model_card.json").read_text())
+references = {k: v for k, v in (("base", run_counts("base")),
+                                (source, run_counts(source) if source and source != run else None)) if v}
+row = evalkit.evaluate_run(OUT, run, splits=splits, decode=decode, score=score, card=card_on_hub,
+                           meta={k: before[k] for k in ("recipe", "seed", "alpha", "source", "stages",
+                                                        "best_epoch", "epochs", "lr") if k in before},
+                           references=references)
+print(f"as shipped (bf16): val {row['val_wer']:.2f} (was {before['val_wer']:.2f}), "
+      f"gold {row['gold_wer']:.2f} (was {before['gold_wer']:.2f})")
 
 
 def read_texts(name):
