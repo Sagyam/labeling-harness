@@ -8,10 +8,12 @@
 #       --name labeling-harness-eda --display-name "labeling-harness (EDA)"
 #
 # No torch: voices come from the harness's own diarizer and cross-episode linking (D79, D87),
-# exported with every clip, so the notebook runs no model of its own.
+# exported with every clip, so the notebook runs no model of its own. statsmodels is for the
+# mixed models of 02_Sociolinguistics (a random intercept per show), which scipy does not fit.
 pandas==3.0.5
 numpy==2.5.3
 scipy==1.18.1
+statsmodels==0.15.0
 matplotlib==3.11.1
 joblib==1.6.0
 rapidfuzz==3.14.6
