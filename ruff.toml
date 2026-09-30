@@ -8,3 +8,4 @@ extend-exclude = ["*.ipynb"]
 "scripts/*" = ["E402"]
 # Notebook builders embed whole notebook cells as strings: line length and typography are the cells'.
 "notebooks/src/build_*.py" = ["E501", "RUF001"]
+"notebooks/src/nbkit.py" = ["E501", "RUF001"]

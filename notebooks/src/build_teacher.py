@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from build_finetune import code, md, notebook
+from nbkit import code, md, notebook
 
 HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
