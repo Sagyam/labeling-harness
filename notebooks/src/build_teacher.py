@@ -1,6 +1,7 @@
-"""Build notebooks/Teacher.ipynb: `python notebooks/src/build_teacher.py`. Roadmap §B steps 2-3:
-Flex, the teacher, transcribes the unlabelled distillation corpus (D101), and its labels are
-filtered. Shared code lives in ftkit.py and distill.py, written out by %%writefile cells."""
+"""Build notebooks/05_Teacher.ipynb: `python notebooks/src/build_teacher.py`. Step 5 of the
+protocol (D105; roadmap §B steps 2-3): the frozen teacher transcribes the unlabelled distillation
+corpus (D101), and its labels are filtered. Shared code lives in ftkit.py and distill.py, written
+out by %%writefile cells."""
 
 import sys
 from pathlib import Path
@@ -9,80 +10,64 @@ import nbkit
 from nbkit import code, md
 
 HERE = Path(__file__).parent
-FTKIT = (HERE / "ftkit.py").read_text()
-DISTILLKIT = (HERE / "distill.py").read_text()
 OUT_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent
 
 INTRO = """
-# Distillation, steps 2-3 — the teacher labels the unlabelled corpus
+# 05 — The teacher labels the unlabelled corpus
 
-Roadmap §B. Flex, the teacher, transcribes every clip of the unlabelled corpus that
-`PreDistill.ipynb` cut into `DATASET_REPO/distill/` (D101), and its labels are filtered before any
-student trains on them. Never the paid routes: Flex on this
+Step 5 of the protocol (D105; roadmap §B, steps 2-3). The teacher transcribes every clip of the
+unlabelled corpus that `04_PreDistill.ipynb` cut into `DATASET_REPO/distill/` (D101), and its
+labels are filtered before any student trains on them. Never the paid routes: the teacher on this
 GPU is the only model.
 
-**Teacher.** Flex p00-s0, the 2026-09-22 run on the current export: the model the step-0
-students were scored against (gold 11.56, val 7.19). Greedy decoding, with per-token log-probs
-kept. There is no loop retry: step 3 drops every clip whose greedy output loops, so retrying would
-spend GPU on labels that are thrown away.
+**Teacher.** The model `03e_Flex_Ship.ipynb` froze: `FLEX_REPO/teacher.json` names it, and this
+notebook reads that file rather than naming a model of its own. Greedy decoding, with per-token
+log-probs kept. There is no loop retry: the filter drops every clip whose greedy output loops, so
+retrying would spend GPU on labels that are thrown away. The labels go to a folder named after the
+teacher, so another teacher's labels never mix with these.
 
-**Step 3, cheapest rule first** (`distill.filter_pseudo`): drop a clip whose output loops; an
-empty transcript; a rate outside the tokens per second train's labels span, in the teacher's own
-tokens; then the least confident `DROP_FRACTION` of what is left, by mean log-prob. The report
-splits what was kept and the teacher's confidence by the share of English words, because every
-step-0 student fell furthest behind Flex on pure Nepali.
+**The filter, cheapest rule first** (`distill.filter_pseudo`): drop a clip overlapped for more
+than `MAX_OVERLAP_SHARE` of its length (crosstalk is where the teacher is weakest; 04 measured it);
+a clip whose output loops; an empty transcript; a rate outside the tokens per second train's
+labels span, in the teacher's own tokens; then the least confident `DROP_FRACTION` of what is
+left, by mean log-prob.
+
+**Choose `MAX_OVERLAP_SHARE` from 04's table**, which prices each threshold in hours per channel.
+It is `None` until then, which drops nothing for overlap. Every clip is decoded whatever the
+threshold (about one GPU-hour per 100 h), so changing it later reruns only the filter cell.
+
+**The report** splits what was kept by channel, by overlap bucket and by the share of English
+words: every student fell furthest behind Flex on pure Nepali, and a threshold that empties the
+round-table channels leaves a corpus of few voices.
 
 **Small blast radius.** Labels go to `DATASET_REPO/<LABELS>/shards/` every `SHARD_CLIPS` clips, and
-a rerun skips every clip already in a shard, so a lost runtime costs at most one shard. `LIMIT`
-decodes only the first clips, for a smoke run before the whole corpus.
+a rerun skips every clip already in a shard, so a lost runtime costs at most one shard.
+
+**Smoke run first.** `SMOKE = True` reads `teacher-smoke.json`, decodes the first 500 clips and
+writes under `distill/pseudo-smoke/`. The log-prob masking and the memory that `output_scores`
+takes have not run on a GPU until it has.
 """
 
 CONFIG = r"""
-DATASET_REPO = "Sagyam/nepanglish-asr"     # PreDistill.ipynb wrote the corpus to its distill/
+DATASET_REPO = "Sagyam/nepanglish-asr"     # 04_PreDistill.ipynb wrote the corpus to its distill/
 PREFIX = "distill"
-FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"
-TEACHER = "flex-xtalk-sweep-2026-09-22/flex-xtalk-sweep-2026-09-22-p00-s0"
-LABELS = f"{PREFIX}/pseudo/flex-p00-s0"      # DATASET_REPO/<LABELS>/: shards, labels.jsonl, report.json
+FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"   # its teacher.json names the model (03e_Flex_Ship.ipynb)
 LANG, MODE = "ne", "mixed"
-LIMIT = None               # decode only the first N clips (a smoke run); None for the whole corpus
+SMOKE = False              # True: teacher-smoke.json, the first 500 clips, labels under pseudo-smoke/
+LIMIT = None               # decode only the first N clips; None for the whole corpus
 SHARD_CLIPS = 2000         # clips per uploaded shard: a lost runtime loses at most one
 DECODE_BUDGET_S, DECODE_ITEMS = 1200.0, 64
 PAD_TO_S = 1.0
-MAX_NEW_TOKENS = 300       # as the students' reference decoder
-DROP_FRACTION = 0.15       # step 3: the least confident share dropped (roadmap: 10-20%)
+MAX_NEW_TOKENS = 300       # as the decoder gold is scored with
+MAX_OVERLAP_SHARE = None   # drop a clip overlapped for more than this share; None drops none. From 04's table
+DROP_FRACTION = 0.15       # the least confident share dropped (roadmap: 10-20%)
 """
 
-SETUP = r"""
-%pip install -q rapidfuzz
-import json
-import os
-import sys
-from pathlib import Path
-
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-IN_COLAB = "google.colab" in sys.modules
-# Secrets only work from a cell run in the Colab UI: run this cell by hand once when cells are
-# driven from outside (the Colab MCP); the token is then kept in the hub's token file on the VM.
-if IN_COLAB:
-    from google.colab import userdata
-
-    TOKEN_FILE = Path.home() / ".cache" / "huggingface" / "token"
-    if not os.environ.get("HF_TOKEN"):
-        os.environ["HF_TOKEN"] = (TOKEN_FILE.read_text().strip() if TOKEN_FILE.exists()
-                                  else userdata.get("HF_TOKEN"))
-    if not TOKEN_FILE.exists():
-        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_FILE.write_text(os.environ["HF_TOKEN"])
-        TOKEN_FILE.chmod(0o600)
-FT = Path("/content/ft") if IN_COLAB else Path.cwd() / ".cache-ft"
-FT.mkdir(parents=True, exist_ok=True)
-OUT = FT / "out" / LABELS
-(OUT / "shards").mkdir(parents=True, exist_ok=True)
+SETUP_TAIL = r"""
 !nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 """
 
 DATA = r"""
-sys.path.insert(0, str(FT))
 import warnings
 
 import torch
@@ -98,10 +83,24 @@ ftkit.fast_cuda()
 TOKEN = os.environ["HF_TOKEN"]
 api = HfApi(token=TOKEN)
 
+teacher = json.loads(Path(hf_hub_download(FLEX_REPO, "teacher-smoke.json" if SMOKE else "teacher.json",
+                                          token=TOKEN)).read_text("utf-8"))
+TEACHER = teacher["run"]
+LABELS = f"{PREFIX}/{'pseudo-smoke' if SMOKE else 'pseudo'}/{TEACHER.replace('/', '--')}"
+if SMOKE:
+    LIMIT = LIMIT or 500
+OUT = FT / "out" / LABELS
+(OUT / "shards").mkdir(parents=True, exist_ok=True)
+print("teacher:", TEACHER, f"(val {teacher['val_wer']:.2f}, gold {teacher['gold_wer']:.2f}) | labels:", LABELS)
+
 with ftkit.timed("downloading the corpus"):
     CORPUS = Path(snapshot_download(DATASET_REPO, repo_type="dataset", token=TOKEN,
                                     allow_patterns=[f"{PREFIX}/clips.jsonl", f"{PREFIX}/episodes/*"]))
 clips = [json.loads(line) for line in (CORPUS / PREFIX / "clips.jsonl").read_text("utf-8").splitlines() if line]
+unmeasured = sum(c.get("overlap_share") is None for c in clips)
+if unmeasured:
+    print(f"{unmeasured} of {len(clips)} clips have no overlap measured: run 04_PreDistill.ipynb's overlap "
+          "pass first, or the overlap rule keeps them all")
 if LIMIT:
     clips = clips[:LIMIT]
 with ftkit.timed("reading the recordings into RAM"):
@@ -119,14 +118,15 @@ itn, romanized = MODES[MODE]
 PROMPT = tk.encode_prompt(LANG, itn=itn, romanized=romanized)
 EOS, PAD = tk.eos_id, tk.pad_id
 print(f"{len(clips)} clips, {sum(ftkit.duration(c) for c in clips) / 3600:.1f} h, from "
-      f"{len({c['source_id'] for c in clips})} sources | teacher {TEACHER}")
+      f"{len({c['source_id'] for c in clips})} sources")
 """
 
 RATE_NOTE = """
 ## The rate train's labels span, in the teacher's tokens
 
-Step 3's rate rule keeps a clip whose tokens per second fall inside the range the verified train
-labels span when the teacher's tokenizer writes them, as Finetune.ipynb encodes its targets.
+The filter's rate rule keeps a clip whose tokens per second fall inside the range the verified
+train labels span when the teacher's tokenizer writes them, as `03a_Flex_Train.ipynb` encodes its
+targets. The labels are the export the teacher was trained on.
 """
 
 RATE = r'''
@@ -134,14 +134,19 @@ DEV_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
 
 def normalize(text: str) -> str:
-    """Finetune.ipynb's target normalisation: the characters the tokenizer lacks, mapped onto ones
-    fold.py scores as identical."""
+    """03a_Flex_Train.ipynb's target normalisation: the characters the tokenizer lacks, mapped onto
+    ones fold.py scores as identical."""
     return (text.replace("।", ".").translate(DEV_DIGITS).replace("—", "-")
             .replace("‍", "").replace("‌", ""))
 
 
 with ftkit.timed("reading train's labels"):
-    splits = ftkit.load_splits(ftkit.download_dataset())
+    labelled = ftkit.download_dataset()
+    splits = ftkit.load_splits(labelled)
+exported = json.loads((labelled / "training" / "manifest.json").read_text())["exported_at"]
+if exported != teacher["dataset_export"]:
+    print(f"the labelled export on the hub ({exported}) is not the one the teacher trained on "
+          f"({teacher['dataset_export']}); the rate range below is this export's")
 rates = sorted(len(tk.multi.encode(normalize(r["text"]), out_type=int)) / ftkit.duration(r)
                for r in splits["train"])
 RATE_RANGE = (rates[0], rates[-1])
@@ -150,11 +155,11 @@ print(f"train: {len(rates)} clips, {RATE_RANGE[0]:.2f} to {RATE_RANGE[1]:.2f} te
 '''
 
 DECODE_NOTE = """
-## Step 2: decode, shard by shard
+## Decode, shard by shard
 
-Greedy, fp32 weights under bf16 autocast (the decoding Finetune.ipynb scores with). Each clip
-keeps its text, its token count and its mean log-prob over the tokens up to and including EOS,
-and whether its output loops. A shard is uploaded as soon as it is decoded.
+Greedy, fp32 weights under bf16 autocast (the decoding gold is scored with). Each clip keeps its
+text, its token count and its mean log-prob over the tokens up to and including EOS, and whether
+its output loops. A shard is uploaded as soon as it is decoded.
 """
 
 DECODE = r'''
@@ -220,39 +225,60 @@ for k in range(0, len(todo), SHARD_CLIPS):
 '''
 
 FILTER_NOTE = """
-## Step 3: filter, and what the teacher is sure of
+## Filter, and what is left to train on
 
-Every shard is read back from the repo, so this cell works on whatever has been labelled so far.
-The kept labels are what a student trains on; the report says what each rule dropped and how
-confident the teacher was, split by the share of English words (the corpus's CMI buckets).
+Every shard is read back from the repo, so this cell works on whatever has been labelled so far,
+and it is the only cell to run again after changing `MAX_OVERLAP_SHARE` or `DROP_FRACTION`. Each
+label is joined with its clip's times, channel and overlap, so `labels.jsonl` is all a student
+notebook needs beside the audio. The report says what each rule dropped, and what was kept per
+channel, per overlap bucket and per share of English words.
 """
 
 FILTER = r"""
+by_id = {c["segment_id"]: c for c in clips}
 rows = []
 for name in shard_names():
     path = Path(hf_hub_download(DATASET_REPO, name, repo_type="dataset", token=TOKEN))
-    rows += [json.loads(line) for line in path.read_text("utf-8").splitlines()]
-kept, report = distill.filter_pseudo(rows, tokens_per_s=RATE_RANGE, drop_fraction=DROP_FRACTION)
+    for line in path.read_text("utf-8").splitlines():
+        r = json.loads(line)
+        if (c := by_id.get(r["segment_id"])) is not None:  # a clip outside LIMIT is left out
+            rows.append({**r, **{k: c.get(k) for k in ("episode_id", "channel", "start_time", "end_time",
+                                                       "overlap_share")}})
+kept, report = distill.filter_pseudo(rows, tokens_per_s=RATE_RANGE, drop_fraction=DROP_FRACTION,
+                                     max_overlap_share=MAX_OVERLAP_SHARE)
 kept_ids = {r["segment_id"] for r in kept}
-by_mix = {}
-for r in rows:
-    b = by_mix.setdefault(distill.mixing_bucket(distill.latin_share(r["text"])), {"clips": 0, "kept": 0, "lp": 0.0, "h": 0.0})
-    b["clips"] += 1
-    b["kept"] += r["segment_id"] in kept_ids
-    b["lp"] += r["mean_logprob"]
-    b["h"] += r["duration"] / 3600
-report["by_english_share"] = {k: {"clips": v["clips"], "hours": round(v["h"], 2),
-                                  "kept": round(v["kept"] / v["clips"], 3),
-                                  "mean_logprob": round(v["lp"] / v["clips"], 4)}
-                              for k, v in sorted(by_mix.items())}
+
+
+def tally(key):
+    # clips, hours and kept hours per value of `key(row)`, and the teacher's mean confidence
+    out = {}
+    for r in rows:
+        b = out.setdefault(key(r), {"clips": 0, "hours": 0.0, "kept_hours": 0.0, "lp": 0.0})
+        b["clips"] += 1
+        b["hours"] += r["duration"] / 3600
+        b["kept_hours"] += r["duration"] / 3600 * (r["segment_id"] in kept_ids)
+        b["lp"] += r["mean_logprob"]
+    return {str(k): {"clips": v["clips"], "hours": round(v["hours"], 2), "kept_hours": round(v["kept_hours"], 2),
+                     "mean_logprob": round(v["lp"] / v["clips"], 4)}
+            for k, v in sorted(out.items(), key=lambda kv: str(kv[0]))}
+
+
+report["by_channel"] = tally(lambda r: r["channel"])
+report["by_overlap"] = tally(lambda r: distill.overlap_bucket(r["overlap_share"]))
+report["by_english_share"] = tally(lambda r: distill.mixing_bucket(distill.latin_share(r["text"])))
 report["teacher"], report["rate_range"] = TEACHER, list(RATE_RANGE)
-print(json.dumps(report, indent=1))
+print(json.dumps({k: v for k, v in report.items() if not k.startswith("by_")}, indent=1))
+for name in ("by_channel", "by_overlap", "by_english_share"):
+    print(f"\n{name[3:]:<40} {'clips':>7} {'hours':>7} {'kept h':>7} {'kept':>6} {'log-prob':>9}")
+    for value, b in report[name].items():
+        print(f"  {value:<38} {b['clips']:>7} {b['hours']:>7.1f} {b['kept_hours']:>7.1f} "
+              f"{b['kept_hours'] / max(b['hours'], 1e-9):>6.0%} {b['mean_logprob']:>9.3f}")
 (OUT / "labels.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept), "utf-8")
 (OUT / "report.json").write_text(json.dumps(report, indent=1), "utf-8")
 with ftkit.timed("uploading the filtered labels and the report"):
     for f in ("labels.jsonl", "report.json"):
         api.upload_file(path_or_fileobj=str(OUT / f), path_in_repo=f"{LABELS}/{f}", repo_id=DATASET_REPO,
-                        repo_type="dataset", commit_message=f"{LABELS}: step 3, {report['kept']} clips kept")
+                        repo_type="dataset", commit_message=f"{LABELS}: filtered, {report['kept']} clips kept")
 """
 
 cells = [
@@ -260,9 +286,8 @@ cells = [
     md("## Config"),
     code(CONFIG),
     md("## Setup"),
-    code(SETUP),
-    code("%%writefile /content/ft/ftkit.py\n" + FTKIT),
-    code("%%writefile /content/ft/distill.py\n" + DISTILLKIT),
+    nbkit.setup("rapidfuzz", tail=SETUP_TAIL),
+    *nbkit.kits("ftkit", "distill"),
     code(DATA),
     md(RATE_NOTE),
     code(RATE),
@@ -272,7 +297,7 @@ cells = [
     code(FILTER),
 ]
 
-NOTEBOOKS = {"Teacher.ipynb": cells}
+NOTEBOOKS = {"05_Teacher.ipynb": cells}
 
 if __name__ == "__main__":
     nbkit.write(NOTEBOOKS, OUT_DIR)
