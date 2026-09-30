@@ -1,4 +1,4 @@
-# Environment for notebooks/EDA.ipynb. Deliberately separate from backend/pyproject.toml: the
+# Environment for notebooks/01_EDA.ipynb and 02_Sociolinguistics.ipynb. Deliberately separate from backend/pyproject.toml: the
 # harness itself must not grow a pandas/matplotlib dependency (D43 keeps the runtime image thin
 # and hash-checked), and nothing here is imported by app code. `make env` builds it:
 #

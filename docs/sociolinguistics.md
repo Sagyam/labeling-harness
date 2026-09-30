@@ -3,7 +3,7 @@
 The corpus was collected to fine-tune an ASR model. This note records what it can and cannot
 support as material for a sociolinguistic study of Nepali–English code-mixing, what to collect
 next to make such a study robust, and what metadata is worth adding at ingest. The measurements
-behind it are in `notebooks/Sociolinguistics.ipynb`, run on the export of 2026-09-18, and every
+behind it are in `notebooks/02_Sociolinguistics.ipynb`, run on the export of 2026-09-18, and every
 number below is printed by that notebook's verdict cell, so a rerun on a newer export revises it.
 The Voices page in the harness computes the voice counts live (D91, D104) and should agree with
 the notebook's; where they differ, the export is stale or a voice was given a value by ear.

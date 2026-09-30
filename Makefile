@@ -6,7 +6,7 @@ PY          := $(VENV)/bin/python
 JUPYTER     := $(VENV)/bin/jupyter
 STAMP       := $(VENV)/.requirements-stamp
 KERNEL_NAME := labeling-harness-eda
-NOTEBOOK    := notebooks/EDA.ipynb
+NOTEBOOK    := notebooks/01_EDA.ipynb
 EXPORT      := exports/analytics/analytics.jsonl
 PORT        ?= 8888
 
