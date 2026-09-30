@@ -54,3 +54,63 @@ def test_a_file_that_cannot_be_read_fails_alone_and_leaves_nothing_behind(tmp_pa
     assert result["status"] == "failed" and result["error"]
     assert not (tmp_path / "out" / "episodes" / "Broken_01.flac").exists()
     assert not (tmp_path / "out" / "sources" / "Broken_01.json").exists()
+
+
+# --- overlapped speech on a recording already cut (D105) -----------------------------------------
+
+
+def _cut(tmp_path: Path) -> tuple[Path, Path]:
+    result = _run(tmp_path)
+    out = tmp_path / "out"
+    return (
+        out / "episodes" / f"{result['source_id']}.flac",
+        out / "sources" / f"{result['source_id']}.json",
+    )
+
+
+def test_overlap_is_written_into_each_clip_row_from_the_recording_spans(tmp_path: Path) -> None:
+    flac, meta = _cut(tmp_path)
+    before = json.loads(meta.read_text("utf-8"))
+    first = before["rows"][0]
+    span = (first["start_time"] + 0.5, first["start_time"] + 1.5)  # one second inside clip 0
+    heard = []
+
+    def detect(audio, sample_rate):
+        heard.append((audio.dtype.name, audio.ndim, sample_rate))
+        return [span]
+
+    result = prekit.measure_overlap(str(flac), str(meta), str(tmp_path / "again"), detect=detect)
+    assert heard == [("float32", 1, 16000)]
+    assert result["status"] == "measured" and result["overlap_seconds"] == 1.0
+    after = json.loads((tmp_path / "again" / "sources" / meta.name).read_text("utf-8"))
+    assert after["overlap"] == "injected" and after["overlap_seconds"] == 1.0
+    assert after["rows"][0]["overlap_spans"] == [[0.5, 1.5]]
+    assert after["rows"][0]["overlap_share"] == round(1.0 / first["duration"], 4)
+    assert all(r["overlap_spans"] == [] and r["overlap_share"] == 0.0 for r in after["rows"][1:])
+    # everything the cut wrote is kept
+    assert {k: v for k, v in after.items() if k not in ("rows", "overlap", "overlap_seconds")} == {
+        k: v for k, v in before.items() if k != "rows"
+    }
+    assert [r["segment_id"] for r in after["rows"]] == [r["segment_id"] for r in before["rows"]]
+
+
+def test_without_a_detector_a_recording_stays_unmeasured_and_nothing_is_written(
+    tmp_path: Path,
+) -> None:
+    flac, meta = _cut(tmp_path)
+    result = prekit.measure_overlap(
+        str(flac), str(meta), str(tmp_path / "again"), model_path=str(tmp_path / "none.onnx")
+    )
+    assert result["status"] == "unmeasured"
+    assert not (tmp_path / "again").exists()
+
+
+def test_a_recording_that_cannot_be_measured_fails_alone(tmp_path: Path) -> None:
+    flac, meta = _cut(tmp_path)
+
+    def detect(audio, sample_rate):
+        raise RuntimeError("the graph rejected the input")
+
+    result = prekit.measure_overlap(str(flac), str(meta), str(tmp_path / "again"), detect=detect)
+    assert result["status"] == "failed" and "rejected" in result["error"]
+    assert not (tmp_path / "again" / "sources" / meta.name).exists()

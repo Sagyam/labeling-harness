@@ -1,17 +1,23 @@
-"""PreDistill's per-file worker (roadmap §B step 1, D101).
+"""PreDistill's per-file workers (roadmap §B step 1, D101, D105).
 
-One recording from the owner's zip goes through ingest's own stage 1 (``normalize_audio``: two-pass
-loudness normalisation to 16 kHz mono FLAC) and stage 2 (Silero VAD, ``segment_audio_to_slices``:
-2-20 s), imported from the harness's modules, which the notebook fetches at a pinned commit. What
-it keeps is the whole normalised recording and its clip rows, the layout ``ftkit.AudioStore``
-reads. One process per core: the VAD runs single-threaded here, so twelve workers do not fight
-over twelve cores; its output does not depend on the thread count.
+`process_file`: one recording from the owner's zip goes through ingest's own stage 1
+(``normalize_audio``: two-pass loudness normalisation to 16 kHz mono FLAC) and stage 2 (Silero VAD,
+``segment_audio_to_slices``: 2-20 s), imported from the harness's modules, which the notebook
+fetches at a pinned commit. What it keeps is the whole normalised recording and its clip rows, the
+layout ``ftkit.AudioStore`` reads.
+
+`measure_overlap`: a recording already cut is given to the harness's own overlap detector
+(``app/services/overlap.py``, D77), and each clip row gets its overlapped spans and share.
+
+One process per core: both models run single-threaded here, so twelve workers do not fight over
+twelve cores; their output does not depend on the thread count.
 """
 
 from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -96,4 +102,81 @@ def process_file(
     except Exception as exc:  # one bad file is reported, never fatal
         flac.unlink(missing_ok=True)
         meta_path.unlink(missing_ok=True)
+        return {**base, "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+# --- overlapped speech (D105) --------------------------------------------------------------------
+
+_OVERLAP: dict[str | None, Any] = {}
+#: (16 kHz mono float32 audio, sample rate) -> the recording's overlapped spans, or None when
+#: there is no model to measure with.
+Detect = Callable[[Any, int], Sequence[Sequence[float]] | None]
+
+
+def _overlap(model_path: str | None):
+    """This process's overlap detector, loaded once, on one thread."""
+    if model_path not in _OVERLAP:
+        from app.services.overlap import OverlapDetector
+
+        _OVERLAP[model_path] = OverlapDetector(Path(model_path) if model_path else None, threads=1)
+    return _OVERLAP[model_path]
+
+
+def measure_overlap(
+    flac_path: str,
+    meta_path: str,
+    out_dir: str,
+    model_path: str | None = None,
+    detect: Detect | None = None,
+) -> dict[str, Any]:
+    """Measure overlapped speech on one cut recording and write its clip rows back with it.
+
+    Reads ``meta_path`` (the recording's ``sources/<id>.json``) and writes
+    ``out_dir/sources/<id>.json``: the same metadata, ``overlap`` (what measured it),
+    ``overlap_seconds``, and every row with ``overlap_spans`` (clip-relative) and
+    ``overlap_share``, as the labelled export's rows carry them.
+
+    Returns ``status`` ``measured``, ``unmeasured`` (no model: nothing is written, so a later run
+    measures it) or ``failed`` (with ``error``), so one bad recording never stops the run.
+
+    Args:
+        flac_path: The whole recording, as ``process_file`` wrote it.
+        meta_path: Its ``sources/<id>.json``.
+        out_dir: Where the chunk's files go before they are uploaded.
+        model_path: The segmentation ONNX; None for the harness's default location, which
+            fetches the pinned graph when it is missing.
+        detect: A stand-in for the harness's detector, for tests.
+    """
+    started = time.perf_counter()
+    meta = json.loads(Path(meta_path).read_text("utf-8"))
+    base = {"source_id": meta["source_id"], "channel": meta["channel"]}
+    target = Path(out_dir) / "sources" / Path(meta_path).name
+    try:
+        audio, sample_rate = sf.read(flac_path, dtype="float32")
+        if detect is None:
+            detector = _overlap(model_path)
+            spans, name = detector.detect(audio, sample_rate), "pyannote-segmentation-3.0"
+        else:
+            spans, name = detect(audio, sample_rate), "injected"
+        if spans is None:
+            return {**base, "status": "unmeasured"}
+        rows = distill.with_overlap(meta["rows"], spans)
+        seconds = round(sum(e - s for r in rows for s, e in r["overlap_spans"]), 3)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(
+                {**meta, "overlap": name, "overlap_seconds": seconds, "rows": rows},
+                ensure_ascii=False,
+            ),
+            "utf-8",
+        )
+        return {
+            **base,
+            "status": "measured",
+            "duration": meta["duration"],
+            "overlap_seconds": seconds,
+            "seconds_taken": round(time.perf_counter() - started, 1),
+        }
+    except Exception as exc:  # one bad recording is reported, never fatal
+        target.unlink(missing_ok=True)
         return {**base, "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
