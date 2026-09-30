@@ -2,11 +2,11 @@
 student fine-tuned on the verified labels alone, the baseline distillation has to beat. Shared code
 lives in ftkit.py, sweep.py and distill.py, written out by %%writefile cells."""
 
-import json
 import sys
 from pathlib import Path
 
-from nbkit import GPU_NOTE, code, md, notebook
+import nbkit
+from nbkit import GPU_NOTE, code, md
 
 HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
@@ -131,9 +131,11 @@ import ftkit
 import sweep
 
 ftkit.fast_cuda()
-DATA = ftkit.download_dataset(DATA_LOCAL)
+DATA = ftkit.download_dataset(DATA_LOCAL)  # labels and the scorer; the audio follows
 splits = ftkit.load_splits(DATA)
-store = ftkit.AudioStore(DATA, [r["episode_id"] for rows in splits.values() for r in rows])
+episodes = [r["episode_id"] for rows in splits.values() for r in rows]
+DATA = ftkit.download_dataset(DATA_LOCAL, episodes=episodes)
+store = ftkit.AudioStore(DATA, episodes)
 score = ftkit.harness_scorer(DATA, FT)
 export = json.loads((DATA / "training" / "manifest.json").read_text())
 print({k: len(v) for k, v in splits.items()}, f"audio in RAM: {store.gib:.1f} GiB |",
@@ -1110,10 +1112,7 @@ cells = [
     code(REPORT),
 ]
 
+NOTEBOOKS = {"Distill.ipynb": cells, "DistillHF.ipynb": hf_cells}
+
 if __name__ == "__main__":
-    for name, nb_cells in (("Distill.ipynb", cells), ("DistillHF.ipynb", hf_cells)):
-        path = OUT_DIR / name
-        path.write_text(
-            json.dumps(notebook(nb_cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
-        print("wrote", path, len(nb_cells), "cells")
+    nbkit.write(NOTEBOOKS, OUT_DIR)

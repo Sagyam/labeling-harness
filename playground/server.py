@@ -4,8 +4,9 @@ The harness backend never imports torch (D32, D79). It sends a recording here an
 (``app/llm/local_asr.py``). This process holds one model at a time and loads it from the folder
 the Models page reads, ``data/models/asr/<slug>/``, mounted read-only at ``/models``:
 
-* ``cpu/``: 04c's weight-only int8 export, loaded with the ``cpukit.py`` it carries;
-* ``best/``: the bf16 fine-tune, used when 04c rejected int8.
+* ``cpu/``: the weight-only int8 export of the Flex notebook (03e), loaded with the ``cpukit.py``
+  it carries;
+* ``best/``: the bf16 fine-tune, used when the notebook rejected int8.
 
 Decoding is the standard decoder (docs/findings.md, decoder search):
 * greedy, capped at 13 tokens per second of audio;

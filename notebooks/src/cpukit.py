@@ -1,7 +1,7 @@
-"""Weight-only int8 for Indic-Transcribe-Flex on a CPU (04c's CPU export).
+"""Weight-only int8 for Indic-Transcribe-Flex on a CPU (the CPU export of 03e_Flex_Ship).
 
-Written out by a %%writefile cell in 04c and copied into `OUT/cpu/`, so the export loads anywhere
-with plain PyTorch -- no torchao, no ONNX.
+Written out by a %%writefile cell in that notebook and copied into `OUT/cpu/`, so the export
+loads anywhere with plain PyTorch -- no torchao, no ONNX.
 
 **Why weight-only.** Measured on the owner's Ryzen 7 7700X, 2026-09-15, base Flex on 10 gold clips:
 fp32 RTF 0.41, bf16 RTF 0.18 at the same WER (21.8%). PyTorch's *dynamic* int8, which also

@@ -54,7 +54,7 @@ sharper, publishable null.
 **Teacher.** The current Flex fine-tune with its standard decoder (greedy + cap + retry).
 Flex is `bodhan-ai/indic-transcribe-flex`: a 1.2 B Canary-style encoder-decoder, 32-layer
 conformer encoder, 24-layer transformer decoder, SentencePiece targets offset by 1,152 special
-tokens. The release is inference-only; 04c (`notebooks/src/build_finetune.py`) already built the
+tokens. The release is inference-only; the Flex notebooks (`notebooks/src/build_flex.py`, once called 04c) already built the
 training pieces -- teacher-forced cross-entropy, target encoding, SpecAugment -- and a full
 fine-tune is ~40 min on an A100.
 

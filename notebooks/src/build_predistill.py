@@ -8,7 +8,8 @@ import json
 import sys
 from pathlib import Path
 
-from nbkit import code, md, notebook
+import nbkit
+from nbkit import code, md
 
 HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
@@ -264,24 +265,26 @@ def cells(commit: str) -> list:
     ]
 
 
-if __name__ == "__main__":
-    # The commit whose harness files the notebook fetches: HEAD, whose files must match the
-    # working tree (the digests are read from it), so build after committing them.
+def head_commit() -> str:
+    """The commit whose harness files the notebook fetches: HEAD, whose files must match the
+    working tree (the digests are read from it), so build after committing them."""
     import subprocess
 
-    commit = subprocess.run(
-        ["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    dirty = subprocess.run(
-        ["git", "-C", str(REPO), "status", "--porcelain", "--", *HARNESS_FILES],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    dirty = git("status", "--porcelain", "--", *HARNESS_FILES)
     if dirty:
         sys.exit(f"harness files differ from HEAD; commit them first:\n{dirty}")
-    path = OUT_DIR / "PreDistill.ipynb"
-    path.write_text(
-        json.dumps(notebook(cells(commit)), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    print("wrote", path, len(cells(commit)), "cells, harness at", commit[:7])
+    return git("rev-parse", "HEAD")
+
+
+def notebooks(commit: str | None = None) -> dict[str, list]:
+    """{file name: cells}, fetching the harness at `commit` (HEAD when not given)."""
+    return {"PreDistill.ipynb": cells(commit or head_commit())}
+
+
+if __name__ == "__main__":
+    nbkit.write(notebooks(), OUT_DIR)

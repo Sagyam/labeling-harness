@@ -2,11 +2,11 @@
 Flex, the teacher, transcribes the unlabelled distillation corpus (D101), and its labels are
 filtered. Shared code lives in ftkit.py and distill.py, written out by %%writefile cells."""
 
-import json
 import sys
 from pathlib import Path
 
-from nbkit import code, md, notebook
+import nbkit
+from nbkit import code, md
 
 HERE = Path(__file__).parent
 FTKIT = (HERE / "ftkit.py").read_text()
@@ -272,9 +272,7 @@ cells = [
     code(FILTER),
 ]
 
+NOTEBOOKS = {"Teacher.ipynb": cells}
+
 if __name__ == "__main__":
-    path = OUT_DIR / "Teacher.ipynb"
-    path.write_text(
-        json.dumps(notebook(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    print("wrote", path, len(cells), "cells")
+    nbkit.write(NOTEBOOKS, OUT_DIR)

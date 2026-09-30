@@ -1,8 +1,9 @@
 """The Models page playground (D85): a recording from the page, transcribed by a fine-tuned model.
 
-The model runs on this machine's CPU in the ``playground`` sidecar, from the weights 04c's CPU
-export writes: ``cpu/`` (weight-only int8) when the notebook accepted it, ``best/`` (bf16)
-otherwise. The owner copies that folder next to the model's card, in ``data/models/asr/<slug>/``.
+The model runs on this machine's CPU in the ``playground`` sidecar, from the weights the Flex
+notebook's CPU export (03e) writes: ``cpu/`` (weight-only int8) when the notebook accepted it,
+``best/`` (bf16) otherwise. The owner copies that folder next to the model's card, in
+``data/models/asr/<slug>/``.
 
 A recording is prepared exactly as ingest prepares an episode -- two-pass EBU R128 loudness, mono,
 16 kHz through soxr -- so the model hears a microphone the way it heard its training audio. It is
@@ -52,8 +53,8 @@ class PlaygroundResult:
 def cpu_weights(folder: Path, card: Mapping[str, Any] | None) -> str | None:
     """The subfolder of a model's folder the sidecar can load, or ``None`` when there is none.
 
-    04c names it in the card's ``cpu.export`` (``cpu/`` or ``best/``). A card from before the
-    CPU export, or a folder where only the other one was copied, falls back to whichever is
+    The notebook names it in the card's ``cpu.export`` (``cpu/`` or ``best/``). A card from before
+    the CPU export, or a folder where only the other one was copied, falls back to whichever is
     there, int8 first.
     """
     cpu = (card or {}).get("cpu")

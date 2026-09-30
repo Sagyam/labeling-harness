@@ -125,8 +125,9 @@ episodes — talk time, words, the shows and the people it shared a room with, a
 gender and age where the episode forces the match — with a strip of its episodes. Everything is
 derived on read; nothing is stored.
 
-**Models** (`8`) is for iterating on the ASR fine-tune. After a 04c run, copy its `harness/`
-folder from Drive to `data/models/asr/<slug>/` and press **Rescan**. The page scores the model's
+**Models** (`8`) is for iterating on the ASR fine-tune. After a training notebook has
+scored a run, download the run's `harness/` folder from its Hugging Face model repo to
+`data/models/asr/<slug>/` and press **Rescan**. The page scores the model's
 gold and val transcripts against the current labels (the notebook's numbers, no GPU needed) and
 lists the clips it got wrong, worst first. For each clip you can play it with crosstalk shaded on
 the waveform and read the folded diff, where every coloured mark is one counted error. Click a

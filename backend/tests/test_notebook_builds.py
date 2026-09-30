@@ -1,0 +1,103 @@
+"""The committed notebooks are what their builders write (D105): notebooks/src/build_*.py.
+
+A generated notebook embeds the kits (ftkit.py, evalkit.py, ...) as %%writefile cells, so a kit
+changed without a rebuild leaves a notebook that runs the old code in Colab. That happened to the
+fine-tuning notebook in September 2026. These tests fail until `python notebooks/src/build_all.py`
+has been run. No notebook runs here: a GPU is where that is checked. What can be checked without
+one is that every code cell is Python that parses."""
+
+from __future__ import annotations
+
+import ast
+import importlib
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+_NOTEBOOKS = Path(__file__).resolve().parents[2] / "notebooks"
+sys.path.insert(0, str(_NOTEBOOKS / "src"))  # the builders import each other and the kits' text
+build_all = importlib.import_module("build_all")
+nbkit = importlib.import_module("nbkit")
+
+
+def _pinned_commit() -> str | None:
+    """The harness commit the committed notebooks pin, read back from the one that names it: a
+    notebook cannot hold the hash of the commit it is part of, so it is built at the one before."""
+    for path in sorted(_NOTEBOOKS.glob("*.ipynb")):
+        found = re.search(r'HARNESS_COMMIT = \\"([0-9a-f]{40})\\"', path.read_text("utf-8"))
+        if found:
+            return found.group(1)
+    return None
+
+
+_BUILT = build_all.notebooks(_pinned_commit())
+
+
+@pytest.mark.parametrize("name", sorted(_BUILT))
+def test_a_committed_notebook_is_what_its_builder_writes(name: str) -> None:
+    path = _NOTEBOOKS / name
+    assert path.exists(), f"{name} is not committed: run notebooks/src/build_all.py"
+    assert path.read_text("utf-8") == nbkit.dumps(_BUILT[name]), (
+        f"{name} is stale: run `python notebooks/src/build_all.py`"
+    )
+
+
+def _python(source: str) -> str:
+    """A cell's Python: a %%writefile cell is the file it writes, and a line of IPython magic or
+    shell is a statement that does nothing."""
+    lines = source.split("\n")
+    if lines[0].startswith("%%writefile"):
+        lines = lines[1:]
+    return "\n".join(
+        re.sub(r"^(\s*)[%!].*$", r"\1pass", line) if line.lstrip()[:1] in ("%", "!") else line
+        for line in lines
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_BUILT))
+def test_every_code_cell_parses(name: str) -> None:
+    for number, cell in enumerate(_BUILT[name]):
+        if cell["cell_type"] != "code":
+            continue
+        try:
+            ast.parse(_python(cell["source"]))
+        except SyntaxError as exc:
+            pytest.fail(f"{name}, cell {number}, line {exc.lineno}: {exc.msg}\n{exc.text}")
+
+
+@pytest.mark.parametrize("name", sorted(_BUILT))
+def test_no_cell_uses_a_name_the_notebook_never_defines(name: str, tmp_path: Path) -> None:
+    """The cells of a notebook share one namespace, top to bottom. Read as one module, a name
+    that no earlier cell defines or imports is a NameError waiting on the GPU."""
+    cells = [c["source"] for c in _BUILT[name] if c["cell_type"] == "code"]
+    module = tmp_path / (Path(name).stem + ".py")
+    module.write_text(
+        "\n\n".join(_python(c) for c in cells if not c.startswith("%%writefile")) + "\n", "utf-8"
+    )
+    command = [sys.executable, "-m", "ruff", "check", "--isolated", "--select", "F821,F823,E9"]
+    found = subprocess.run(
+        [*command, "--output-format", "concise", str(module)], capture_output=True, text=True
+    )
+    assert found.returncode == 0, found.stdout
+
+
+def test_a_kit_cell_is_the_kit_file() -> None:
+    cell = nbkit.kit("sweep")
+    text = (_NOTEBOOKS / "src" / "sweep.py").read_text("utf-8")
+    assert cell["source"] == ("%%writefile /content/ft/sweep.py\n" + text).strip("\n")
+
+
+def test_every_notebook_is_generated_or_named_as_hand_written() -> None:
+    committed = {p.name for p in _NOTEBOOKS.glob("*.ipynb")}
+    assert committed == set(_BUILT) | set(build_all.HAND_WRITTEN)
+
+
+def test_a_built_notebook_is_valid_json_with_one_id_per_cell() -> None:
+    name = sorted(_BUILT)[0]
+    nb = json.loads(nbkit.dumps(_BUILT[name]))
+    ids = [c["id"] for c in nb["cells"]]
+    assert nb["nbformat"] == 4 and len(ids) == len(set(ids))

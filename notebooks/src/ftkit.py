@@ -1,7 +1,7 @@
-"""Shared fine-tuning kit for the Nepanglish ASR notebook (04c).
+"""Shared fine-tuning kit for the Nepanglish ASR notebooks (Flex, 03a-03e; the students, 06).
 
 Everything that is not model-specific: the dataset held in RAM, duration-bucketed batches, the
-harness scorer, a GPU utilisation monitor, a batch-size probe and one training loop. The notebook
+harness scorer, a GPU utilisation monitor, a batch-size probe and one training loop. Each notebook
 writes this file out, so it imports exactly the same code as the main kernel. Keep it importable
 on Python 3.10+ with numpy 1.x or 2.x.
 
@@ -18,6 +18,7 @@ How the GPU is kept busy:
 
 from __future__ import annotations
 
+import glob
 import json
 import math
 import random
@@ -45,19 +46,25 @@ SR = 16_000
 # --- data --------------------------------------------------------------------------------------
 
 
-def download_dataset(local: str | None = None) -> Path:
-    """The HF dataset snapshot, or a local copy in the same layout."""
+def download_dataset(
+    local: str | None = None, episodes: Sequence[str] = (), analytics: bool = False
+) -> Path:
+    """The HF dataset snapshot, or a local copy in the same layout.
+
+    Labels, manifests and the harness's scorer always come; audio only for the recordings named
+    in `episodes` (whole FLACs, 8 GiB for every split), and the analytics export, which carries
+    the speaker turns, only when asked. Call it once without episodes to read the splits, then
+    again with the episodes the notebook decodes or trains on: both calls return the same folder.
+    """
     if local:
         return Path(local)
     from huggingface_hub import snapshot_download
 
-    return Path(
-        snapshot_download(
-            REPO,
-            repo_type="dataset",
-            allow_patterns=["training/*", "gold/*", "harness/*", "analytics/*"],
-        )
-    )
+    patterns = ["training/training.jsonl", "training/manifest.json", "gold/*", "harness/*"]
+    if analytics:
+        patterns.append("analytics/*")
+    patterns += [f"training/episodes/{glob.escape(e)}.flac" for e in sorted(set(episodes))]
+    return Path(snapshot_download(REPO, repo_type="dataset", allow_patterns=patterns))
 
 
 def load_splits(data: Path) -> dict[str, list[dict]]:
@@ -106,6 +113,8 @@ class AudioStore:
             self.audio[ep] = audio
 
     def clip(self, row: dict) -> np.ndarray:
+        if "audio" in row:  # a public-benchmark clip carries its own audio (evalkit)
+            return row["audio"]
         audio = self.audio[row["episode_id"]]
         return audio[round(row["start_time"] * SR) : round(row["end_time"] * SR)]
 
@@ -225,7 +234,7 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
     for name in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
         del sys.modules[name]
     sys.path.insert(0, str(dst / "backend"))
-    from app.services.fold import fold_tokens, word_errors
+    from app.services.fold import fold_tokens, fold_version, word_errors
     from rapidfuzz.distance import Levenshtein
 
     dev = re.compile(r"[ऀ-ॿ]")
@@ -282,6 +291,7 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
 
     score.per_clip = per_clip
     score.summarize = summarize
+    score.fold_version = fold_version()  # for the model card: which fold the numbers are in
     return score
 
 
