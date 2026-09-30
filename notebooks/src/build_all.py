@@ -10,6 +10,7 @@ from pathlib import Path
 
 import build_flex
 import build_predistill
+import build_report
 import build_students
 import build_teacher
 import nbkit
@@ -26,6 +27,7 @@ def notebooks(commit: str | None = None) -> dict[str, list]:
         **build_predistill.notebooks(commit),
         **build_teacher.NOTEBOOKS,
         **build_students.NOTEBOOKS,
+        **build_report.NOTEBOOKS,
     }
 
 

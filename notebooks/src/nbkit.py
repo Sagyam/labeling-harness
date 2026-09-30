@@ -13,20 +13,26 @@ HERE = Path(__file__).parent
 
 
 def notebook(cells):
-    nb = {
-        "cells": cells,
-        "nbformat": 4,
-        "nbformat_minor": 5,
-        "metadata": {
-            "accelerator": "GPU",
-            "colab": {"gpuType": "A100", "provenance": [], "machine_shape": "hm"},
-            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
-            "language_info": {"name": "python"},
-        },
+    """The notebook of `cells`. It asks Colab for an A100 unless `cpu(cells)` marked it."""
+    metadata = {
+        "accelerator": "GPU",
+        "colab": {"gpuType": "A100", "provenance": [], "machine_shape": "hm"},
+        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "language_info": {"name": "python"},
     }
+    if cells and cells[0]["metadata"].get("runtime") == "cpu":
+        del metadata["accelerator"]
+        metadata["colab"] = {"provenance": []}
+    nb = {"cells": cells, "nbformat": 4, "nbformat_minor": 5, "metadata": metadata}
     for i, c in enumerate(cells):
         c["id"] = f"c{i:02d}"
     return nb
+
+
+def cpu(cells):
+    """Mark a notebook as needing no GPU: opening it in Colab does not take an A100."""
+    cells[0]["metadata"]["runtime"] = "cpu"
+    return cells
 
 
 def md(src):

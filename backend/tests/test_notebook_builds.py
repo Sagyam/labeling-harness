@@ -109,6 +109,20 @@ def test_every_notebook_is_generated_or_named_as_hand_written() -> None:
     assert committed == set(_BUILT) | set(build_all.HAND_WRITTEN)
 
 
+def test_notebooks_are_numbered_in_the_order_they_run() -> None:
+    names = sorted(set(_BUILT) | set(build_all.HAND_WRITTEN))
+    assert all(re.match(r"\d\d[a-z]?_", name) for name in names), names
+    assert [name[:2] for name in names] == sorted(name[:2] for name in names)
+    assert {name[:2] for name in names} == {f"{step:02d}" for step in range(1, 8)}
+
+
+def test_only_the_report_asks_for_no_gpu() -> None:
+    cpu = [
+        n for n, cells in _BUILT.items() if "accelerator" not in nbkit.notebook(cells)["metadata"]
+    ]
+    assert cpu == ["07_Report.ipynb"]
+
+
 def test_a_built_notebook_is_valid_json_with_one_id_per_cell() -> None:
     name = sorted(_BUILT)[0]
     nb = json.loads(nbkit.dumps(_BUILT[name]))
