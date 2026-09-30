@@ -6,6 +6,8 @@ overlap detector are the harness's own, fetched at a pinned commit."""
 
 import hashlib
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -351,25 +353,34 @@ def cells(commit: str) -> list:
     ]
 
 
-def head_commit() -> str:
-    """The commit whose harness files the notebook fetches: HEAD, whose files must match the
-    working tree (the digests are read from it), so build after committing them."""
-    import subprocess
+NAME = "04_PreDistill.ipynb"
 
-    def git(*args: str) -> str:
-        return subprocess.run(
-            ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
-        ).stdout.strip()
 
-    dirty = git("status", "--porcelain", "--", *HARNESS_FILES)
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True)
+
+
+def harness_commit() -> str:
+    """The commit the notebook fetches the harness files at.
+
+    The one the committed notebook already pins, as long as the files are still what they were
+    there: a rebuild then changes nothing. Otherwise HEAD, whose files must match the working
+    tree (the digests are read from it), so build after committing them."""
+    existing = HERE.parent / NAME
+    pinned = existing.exists() and re.search(
+        r'HARNESS_COMMIT = \\"([0-9a-f]{40})\\"', existing.read_text()
+    )
+    if pinned and _git("diff", "--quiet", pinned.group(1), "--", *HARNESS_FILES).returncode == 0:
+        return pinned.group(1)
+    dirty = _git("status", "--porcelain", "--", *HARNESS_FILES).stdout.strip()
     if dirty:
         sys.exit(f"harness files differ from HEAD; commit them first:\n{dirty}")
-    return git("rev-parse", "HEAD")
+    return _git("rev-parse", "HEAD").stdout.strip()
 
 
 def notebooks(commit: str | None = None) -> dict[str, list]:
-    """{file name: cells}, fetching the harness at `commit` (HEAD when not given)."""
-    return {"04_PreDistill.ipynb": cells(commit or head_commit())}
+    """{file name: cells}, fetching the harness at `commit` (`harness_commit()` when not given)."""
+    return {NAME: cells(commit or harness_commit())}
 
 
 if __name__ == "__main__":
