@@ -5,7 +5,8 @@ Four export kinds, each writing a manifest alongside the data:
 1. ``training`` -- train and val splits, approved labels only; never a gold clip, nor a clip
    sharing any audio with one (D76).
 2. ``gold`` -- test split only, retaining the seed system per segment.
-3. ``analytics`` -- everything labeled, including word-level fields where they were imported.
+3. ``analytics`` -- everything labeled, including word-level fields where they were imported,
+   the label's own timed words, and who and what each clip comes from (D107, D108).
 4. ``error_mining`` -- ``uncertain`` and ``unusable_audio``, for pipeline debugging.
 
 Every export that has an object store to read from also writes out the **whole audio** of each
@@ -111,6 +112,9 @@ EXPORT_KINDS: dict[str, ExportKind] = {
         dispositions=("accepted_unchanged", "edited", "uncertain", "unusable_audio"),
         include_words=True,
         include_hypotheses=True,
+        # The one file with every labeled clip, gold included: what happens at a word boundary
+        # is measured here, not by joining the training kind (D108).
+        include_label_words=True,
     ),
     "error_mining": ExportKind(
         name="error_mining",
@@ -344,6 +348,9 @@ def _record(
         record["p_en"] = segment.p_en
         record["lid"] = segment.lid
         record["notes"] = label.notes
+        #: The show the episode was filed under at ingest (D108): a channel or series for a long
+        #: recording, one shared bucket for the short-form uploads. Typed by the owner.
+        record["show_id"] = segment.episode.show_id
         record["episode_metadata"] = segment.episode.metadata_jsonb
         record["scores"] = (
             {

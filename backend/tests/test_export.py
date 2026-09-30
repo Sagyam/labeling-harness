@@ -703,6 +703,25 @@ def test_a_speaker_turn_carries_its_voices_gender_age_and_role(
             assert turn["age_bracket"] == profiles[turn["voice"]]["age_bracket"]
 
 
+def test_analytics_rows_name_their_show_and_the_training_kind_does_not(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """The show an episode was filed under at ingest reaches the analytics and error-mining
+    rows (D108), so an analysis can group recordings by it without reading a series off the
+    episode id. The kinds a model trains and is scored on stay as they were."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    shows = dict(db_session.execute(sa.select(Episode.external_id, Episode.show_id)).all())
+    assert all(shows.values())
+    for kind in ("analytics", "error_mining"):
+        result = export_dataset(db_session, kind=kind, output_root=tmp_path / f"sh_{kind}")
+        rows = read_jsonl(result.data_path)
+        assert rows, kind
+        assert all(row["show_id"] == shows[row["episode_id"]] for row in rows)
+    for kind in ("training", "gold"):
+        result = export_dataset(db_session, kind=kind, output_root=tmp_path / f"sh_{kind}")
+        assert all("show_id" not in row for row in read_jsonl(result.data_path))
+
+
 # --- label word timings (2026-09-26) -------------------------------------------------------
 
 
@@ -781,3 +800,39 @@ def test_an_edited_label_is_realigned_on_its_own_clip(
         "realigned": len(edited),
         "missing": 0,
     }
+
+
+def test_analytics_rows_carry_label_words_as_training_rows_do(
+    db_session: Session, tmp_path: Path, storage, settings: Settings
+) -> None:
+    """The analytics kind is the one file with every labeled clip, gold included, so it carries
+    the label's timed words too (D108): what happens at a word boundary can be measured without
+    joining the training export, which has no gold. Same words, same sources, same counts."""
+    labeled_corpus(db_session, tmp_path, storage, settings)
+    aligner = _FakeAligner()
+    result = export_dataset(
+        db_session, kind="analytics", output_root=tmp_path / "out", storage=storage, aligner=aligner
+    )
+    records = read_jsonl(result.data_path)
+    approved = [r for r in records if r["disposition"] in ("accepted_unchanged", "edited")]
+    assert {r["pot"] for r in approved} == {"train", "gold"}
+    for record in approved:
+        assert record["label_words_source"] in ("seed", "realigned")
+        assert [w["word"] for w in record["label_words"]] == _text_tokens(record["text"])
+    # A clip nobody could transcribe has no text, so no words: null, and counted as missing.
+    rest = [r for r in records if r not in approved]
+    assert rest and all(r["label_words"] is None for r in rest if not r["text"])
+    manifest = json.loads(result.manifest_path.read_text())
+    assert sum(manifest["label_words"].values()) == len(records)
+
+    training = export_dataset(
+        db_session,
+        kind="training",
+        output_root=tmp_path / "train",
+        storage=storage,
+        aligner=aligner,
+    )
+    by_id = {r["segment_id"]: r for r in records}
+    for row in read_jsonl(training.data_path):
+        assert row["label_words"] == by_id[row["segment_id"]]["label_words"]
+        assert row["label_words_source"] == by_id[row["segment_id"]]["label_words_source"]

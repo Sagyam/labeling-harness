@@ -522,8 +522,9 @@ Every row of every kind carries the clip's per-clip covariates next to its text:
   model run is split by, so a result can be split or a training set weighted without the
   database. An unmeasured axis says so in its bucket.
 
-The `training` kind also carries `label_words`: the words of its `text` with clip-relative
-spans, and `label_words_source` saying where they came from (2026-09-26). A label accepted
+The `training` and `analytics` kinds also carry `label_words`: the words of the row's `text` with
+clip-relative spans, and `label_words_source` saying where they came from (2026-09-26; analytics
+since D108, because it is the one file that holds gold too). A label accepted
 unchanged is its seed's text, so it takes the seed's aligned words (`seed`); any other, an edited
 one, is realigned on its own clip by the MMS aligner (`realigned`). The words are split and
 normalised exactly as `text` is (a rule that writes two scripts, `कम्पनीले` to `companyले`,
@@ -540,7 +541,10 @@ who its voice is (D107): `gender` and `age_bracket`, by ear where the owner set 
 otherwise what the declared rows force (D91), and `role`, which belongs to the recording and
 comes from the rows alone. Each is null where nothing reached the voice. They are resolved by
 `inventory.resolve_voices`, the voices page's own resolver, over the whole corpus whatever the
-export's filters.
+export's filters. Both kinds also carry `show_id` (D108), the show the episode was filed under at
+ingest: a channel or series for a long recording, one shared bucket (`shorts_reels`) for the
+short-form uploads. `episodes.published_at` is not exported: ingest writes the day of ingest
+there, not the day the recording was published.
 
 The manifest records label version, policy version, filters, split row counts, SHA-256 of each
 output file, timestamp, git commit and the contributing `import_runs`. Exports are deterministic:

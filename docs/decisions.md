@@ -2574,3 +2574,30 @@ ear. The by-ear values were simply never read.
 
 **Reversal:** cheap. Drop the three keys in `export._speaker_turns`; a consumer that read them
 goes back to resolving declared rows itself and loses the by-ear values.
+
+## D108 — The analytics export carries the show and the label's timed words
+
+Two things the analytics kind lacked, both needed to study the corpus rather than train on it.
+
+- **`show_id` on every analytics and error-mining row.** The notebooks read a series off the
+  episode id and could name three; the harness knows 80 shows, typed by the owner at ingest. It
+  is a grouping variable for a recording, not for a person, and it says less than the episode id
+  already does. 131 short-form uploads share the bucket `shorts_reels`, which is not a show: a
+  consumer that groups by show must treat each of those recordings as its own group.
+- **`label_words` on every analytics row**, as the training kind has carried since 2026-09-26:
+  the same words, the same two sources, the same counts in the manifest. The analytics kind is
+  the only file with gold in it, and a question about a word boundary (what is said at a switch
+  between languages, how long the gap before it is) needs the label's words with their spans,
+  not a recogniser's. The fused seed's words were already there among the hypotheses, but before
+  normalization, so their script was not always the label's.
+- **Not `published_at`.** `docs/sociolinguistics.md` wanted the upload date. The column exists
+  and is filled for every episode, but ingest writes the day of ingest into it
+  (`pipeline.py`), and 338 of 342 equal the row's creation date. Exporting it as a date of
+  publication would be a wrong variable, not a missing one. The YouTube probe does read
+  `upload_date` and the uploader and still drops both; storing them is a separate change, and a
+  backfill means probing every source URL again.
+- **The `training` and `gold` kinds are untouched**, so their files stay byte-identical and no
+  trained model's export changes under it.
+
+**Reversal:** cheap. Drop the key and the flag in `export.py`; the notebooks' section on the
+moment of the switch would need the training export joined back in and would lose gold.

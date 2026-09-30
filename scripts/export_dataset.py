@@ -5,10 +5,10 @@ python scripts/export_dataset.py --kind training
 python scripts/export_dataset.py --kind gold --label-version v1
 python scripts/export_dataset.py --kind all --output-root ./exports/2026-09-01
 
-A training row carries its label's words with spans. A label accepted unchanged takes its seed's
-aligned words; any other (an edited one) is realigned on its own clip with the MMS aligner, which
-is loaded (and fetched on first use, ~317 MB) only when a kind needs it. `--no-realign` skips that,
-leaving those rows' `label_words` null.
+A training or analytics row carries its label's words with spans. A label accepted unchanged
+takes its seed's aligned words; any other (an edited one) is realigned on its own clip with the
+MMS aligner, which is loaded (and fetched on first use, ~317 MB) only when a kind needs it.
+`--no-realign` skips that, leaving those rows' `label_words` null.
 """
 
 from __future__ import annotations
