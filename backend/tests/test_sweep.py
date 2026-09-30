@@ -1,4 +1,4 @@
-"""The crosstalk sweep's selection rule and statistics (D96): notebooks/src/sweep.py.
+"""The selection rules and statistics of the training notebooks (D96, D105): notebooks/src/sweep.py.
 
 It runs in the Colab notebook, not in the app, but it decides which weights are kept and what the
 paper can claim, and the rule was fixed before any sweep result was read, so it is tested here."""
@@ -94,6 +94,96 @@ def test_the_rule_never_reads_gold():
     for r in rows:
         r["gold_wer"] = 99.0 if r["xtalk_p"] == 0.0 else 1.0
     assert sweep.choose_winner(rows)[0]["xtalk_p"] == 0.0
+
+
+# --- named recipes (D105) ------------------------------------------------------------------------
+
+
+def _recipe(name: str, seed: int, val: float) -> dict:
+    return {"recipe": name, "seed": seed, "val_wer": val, "run_name": f"{name}-s{seed}"}
+
+
+def test_a_recipe_wins_only_by_more_than_the_vanilla_seed_gap():
+    rows = [_recipe("vanilla", 0, 6.0), _recipe("vanilla", 1, 6.4), _recipe("aug-noise", 0, 5.5)]
+    winner, why = sweep.choose_recipe(rows)
+    assert winner["recipe"] == "aug-noise"
+    assert "aug-noise" in why and "vanilla" in why
+
+
+def test_a_recipe_within_the_seed_gap_loses_to_the_better_vanilla_seed():
+    rows = [_recipe("vanilla", 0, 6.4), _recipe("vanilla", 1, 6.0), _recipe("aug-speed", 0, 5.7)]
+    winner, _ = sweep.choose_recipe(rows)
+    assert (winner["recipe"], winner["seed"]) == ("vanilla", 1)
+
+
+def test_recipes_and_crosstalk_shares_follow_the_same_rule():
+    vals = [(0, 6.0), (1, 6.3)]
+    for margin, wins in ((0.31, True), (0.30, False)):
+        by_name = [_recipe("vanilla", s, v) for s, v in vals] + [_recipe("aug", 0, 6.0 - margin)]
+        by_share = [_row(0.0, s, v) for s, v in vals] + [_row(0.3, 0, 6.0 - margin)]
+        assert (sweep.choose_recipe(by_name)[0]["recipe"] == "aug") is wins
+        assert (sweep.choose_winner(by_share)[0]["xtalk_p"] == 0.3) is wins
+
+
+def test_one_run_is_judged_against_the_vanilla_seeds_alone():
+    base = [_recipe("vanilla", 0, 6.0), _recipe("vanilla", 1, 6.4)]
+    assert sweep.beats_baseline(_recipe("aug-noise", 0, 5.5), base)[0] is True
+    assert sweep.beats_baseline(_recipe("aug-codec", 0, 5.7), base)[0] is False
+    # another augmented run among the rows does not change the verdict
+    assert (
+        sweep.beats_baseline(_recipe("aug-codec", 0, 5.7), [*base, _recipe("aug", 0, 1.0)])[0]
+        is False
+    )
+
+
+def test_judging_a_run_needs_a_vanilla_run():
+    with pytest.raises(ValueError):
+        sweep.beats_baseline(_recipe("aug-noise", 0, 5.5), [])
+
+
+# --- weight blends (D105) ------------------------------------------------------------------------
+
+
+def _blend(alpha: float, val: float) -> dict:
+    return {"alpha": alpha, "val_wer": val}
+
+
+def test_the_blend_closest_to_base_within_the_tolerance_is_kept():
+    # the 2026-09-27 grid: 0.5 is within 0.3 of the fine-tune (7.28), 0.25 is not
+    rows = [_blend(0.25, 7.89), _blend(0.5, 7.32), _blend(0.75, 7.04), _blend(1.0, 7.28)]
+    winner, why = sweep.choose_blend(rows)
+    assert winner["alpha"] == 0.5
+    assert "0.5" in why
+
+
+def test_base_itself_is_never_a_blend():
+    rows = [_blend(0.0, 7.0), _blend(0.5, 7.2), _blend(1.0, 7.28)]
+    assert sweep.choose_blend(rows)[0]["alpha"] == 0.5
+
+
+def test_without_a_blend_in_tolerance_the_fine_tune_is_kept():
+    rows = [_blend(0.25, 9.0), _blend(0.5, 8.0), _blend(1.0, 7.0)]
+    winner, why = sweep.choose_blend(rows)
+    assert winner["alpha"] == 1.0
+    assert "kept" in why
+
+
+def test_the_tolerance_is_inclusive_and_can_be_set():
+    rows = [_blend(0.5, 7.3), _blend(1.0, 7.0)]
+    assert sweep.choose_blend(rows)[0]["alpha"] == 0.5
+    assert sweep.choose_blend(rows, tolerance=0.1)[0]["alpha"] == 1.0
+
+
+def test_a_blend_needs_the_fine_tuned_row():
+    with pytest.raises(ValueError):
+        sweep.choose_blend([_blend(0.25, 7.0), _blend(0.5, 7.0)])
+
+
+def test_the_blend_rule_never_reads_gold():
+    rows = [_blend(0.5, 7.3), _blend(0.75, 7.0), _blend(1.0, 7.0)]
+    for r in rows:
+        r["gold_wer"] = 1.0 if r["alpha"] == 0.75 else 99.0
+    assert sweep.choose_blend(rows)[0]["alpha"] == 0.5
 
 
 # --- paired bootstrap ----------------------------------------------------------------------------

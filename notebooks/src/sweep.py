@@ -1,9 +1,11 @@
-"""The crosstalk sweep (D96): which run's weights are kept, and how two runs are compared.
+"""Which run's weights are kept, and how two runs are compared (D96, D105).
 
-The notebook trains one model per (XTALK_P, seed) point on the same export. The winner is chosen by
-val WER alone, under a rule fixed before any sweep result was read: augmentation has to beat p = 0
-by more than the seed noise, measured as the gap between the two p = 0 seeds, or p = 0 is kept.
-Gold never takes part in the choice, so every gold number stays a held-out score.
+A notebook trains several runs on the same export: the crosstalk sweep's `(XTALK_P, seed)` points
+(D96), the augmentation ablation's named recipes, or the weight blends of one fine-tune (D105).
+Each winner is chosen by val WER alone, under a rule fixed before any result was read. For
+training runs: a recipe has to beat the baseline by more than the seed noise, measured as the gap
+between the baseline's two seeds, or the baseline is kept. Gold never takes part in a choice, so
+every gold number stays a held-out score.
 
 Runs are compared on gold with a paired bootstrap that resamples whole episodes: clips of one
 episode share a room and voices, and resampling them one by one would pretend to more independent
@@ -23,6 +25,26 @@ def run_name(prefix: str, p: float, seed: int) -> str:
     return f"{prefix}-p{round(p * 100):02d}-s{seed}"
 
 
+def _winner(base: list[dict], other: list[dict], base_name: str, label) -> tuple[dict, str]:
+    """The rule both choosers share. `base` and `other` are sorted by val WER, best first."""
+    if not base or not other:
+        best = (base or other)[0]
+        return best, "only one kind of run, so the lowest val WER"
+    if len(base) >= 2:
+        noise = base[1]["val_wer"] - base[0]["val_wer"]
+        seeds = f"{base_name} seeds {base[0]['seed']} and {base[1]['seed']}"
+        noise_note = f"seed noise {noise:.2f} ({seeds})"
+    else:
+        noise = 0.0
+        noise_note = f"seed noise unmeasured (one {base_name} seed), so the rule is strict"
+    margin = base[0]["val_wer"] - other[0]["val_wer"]
+    if margin > noise:
+        return other[
+            0
+        ], f"{label(other[0])} beats {base_name} on val by {margin:.2f} > {noise_note}"
+    return base[0], f"best augmented margin {margin:.2f} is within {noise_note}; {base_name} kept"
+
+
 def choose_winner(rows: Sequence[dict]) -> tuple[dict, str]:
     """The run whose weights are kept, and why, from rows with `xtalk_p`, `seed` and `val_wer`.
 
@@ -33,18 +55,59 @@ def choose_winner(rows: Sequence[dict]) -> tuple[dict, str]:
         raise ValueError("no runs to choose from")
     base = sorted((r for r in rows if r["xtalk_p"] == 0), key=lambda r: r["val_wer"])
     aug = sorted((r for r in rows if r["xtalk_p"] != 0), key=lambda r: r["val_wer"])
-    if not base or not aug:
-        best = (base or aug)[0]
-        return best, "only one kind of run, so the lowest val WER"
-    if len(base) >= 2:
-        noise = base[1]["val_wer"] - base[0]["val_wer"]
-        noise_note = f"seed noise {noise:.2f} (p=0 seeds {base[0]['seed']} and {base[1]['seed']})"
-    else:
-        noise, noise_note = 0.0, "seed noise unmeasured (one p=0 seed), so the rule is strict"
-    margin = base[0]["val_wer"] - aug[0]["val_wer"]
-    if margin > noise:
-        return aug[0], f"p={aug[0]['xtalk_p']} beats p=0 on val by {margin:.2f} > {noise_note}"
-    return base[0], f"best augmented margin {margin:.2f} is within {noise_note}; p=0 kept"
+    return _winner(base, aug, "p=0", lambda r: f"p={r['xtalk_p']}")
+
+
+#: The recipe every augmentation is measured against (D105): today's training, nothing added.
+BASELINE = "vanilla"
+
+
+def choose_recipe(rows: Sequence[dict], baseline: str = BASELINE) -> tuple[dict, str]:
+    """`choose_winner` for named recipes (D105): rows carry `recipe`, `seed` and `val_wer`.
+
+    The baseline is its better seed, and the noise is the gap between its two best seeds. Another
+    recipe wins only if it beats the baseline on val by more than that; otherwise the baseline is
+    kept. Gold and the public sets never take part."""
+    if not rows:
+        raise ValueError("no runs to choose from")
+    base = sorted((r for r in rows if r["recipe"] == baseline), key=lambda r: r["val_wer"])
+    other = sorted((r for r in rows if r["recipe"] != baseline), key=lambda r: r["val_wer"])
+    return _winner(base, other, baseline, lambda r: r["recipe"])
+
+
+def beats_baseline(
+    row: dict, baseline_rows: Sequence[dict], baseline: str = BASELINE
+) -> tuple[bool, str]:
+    """Whether one run clears the rule on its own, and why: what decides, as each ablation run
+    finishes, if its stage goes into the combined recipe and its weights are kept."""
+    base = [r for r in baseline_rows if r["recipe"] == baseline]
+    if not base:
+        raise ValueError(f"no {baseline} run to measure against")
+    winner, why = choose_recipe([*base, row], baseline)
+    return winner is row, why
+
+
+def choose_blend(rows: Sequence[dict], tolerance: float = 0.3) -> tuple[dict, str]:
+    """The weight blend that is kept, and why, from rows with `alpha` and `val_wer`.
+
+    A blend is `(1 - alpha) * base + alpha * fine-tuned` (WiSE-FT), so alpha = 1 is the fine-tuned
+    model and must be among the rows. The rule, fixed on 2026-09-27 before any blend was scored:
+    the blend closest to base whose val WER is within `tolerance` points of the fine-tuned
+    model's. Base itself (alpha = 0) is never a candidate, and if no blend qualifies the
+    fine-tuned model is kept. Gold and the public sets never take part."""
+    tuned = [r for r in rows if r["alpha"] == 1]
+    if len(tuned) != 1:
+        raise ValueError("the rule needs exactly one alpha = 1 row, the fine-tuned model")
+    limit = tuned[0]["val_wer"] + tolerance
+    ok = sorted(
+        (r for r in rows if 0 < r["alpha"] < 1 and r["val_wer"] <= limit), key=lambda r: r["alpha"]
+    )
+    if not ok:
+        return tuned[0], f"no blend is within {tolerance:g} of the fine-tuned val WER; it is kept"
+    return ok[0], (
+        f"alpha={ok[0]['alpha']:g} is the blend closest to base with val WER "
+        f"{ok[0]['val_wer']:.2f} <= {tuned[0]['val_wer']:.2f} + {tolerance:g}"
+    )
 
 
 def paired_bootstrap(
