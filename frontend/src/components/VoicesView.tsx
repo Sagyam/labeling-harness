@@ -5,6 +5,7 @@
  * ear, see where it speaks, and listen to its clips -- its stretches alone, which can be confirmed
  * into its print (D99), and, on request, every clip it shares with someone else. A voice is an id
  * and nothing more (D56): what it can be given is exactly what a declared speaker row may carry.
+ * "Tag by ear" swaps the two panes for `VoiceTagger`, which walks the voices still missing either.
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react'
@@ -26,6 +27,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { VoiceClips, useVoiceSample } from '@/components/VoiceDialog'
+import { VoiceTagger } from '@/components/VoiceTagger'
 import { bucketLabel, minutes } from '@/components/analytics/labels'
 import { POT_TEXT, Stat, percent } from '@/components/analytics/primitives'
 import { cn } from '@/lib/utils'
@@ -293,7 +295,8 @@ export function VoicesView() {
   const [needsPerson, setNeedsPerson] = useState(false)
   const [sort, setSort] = useState<SortKey>('talk')
   const [selected, setSelected] = useState<string | null>(null)
-  const { playVoice, playingVoice } = useVoiceSample()
+  const [tagging, setTagging] = useState(false)
+  const { playVoice, playingVoice, stop } = useVoiceSample()
 
   const load = async () => {
     setLoading(true)
@@ -361,6 +364,7 @@ export function VoicesView() {
   const s = data.summary
   const inGold = data.voices.filter((v) => goldMinutes(v) > 0).length
   const inTrain = data.voices.filter((v) => trainMinutes(v) > 0).length
+  const untagged = data.voices.filter((v) => !v.gender || !v.age_bracket).length
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4">
@@ -372,10 +376,25 @@ export function VoicesView() {
             anonymous ids linked across episodes by the diarizer's embeddings; gender and age are declared or set by ear
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={load} className="h-8 gap-1.5">
-          <RiRefreshLine className="size-3.5" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={tagging ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              stop()
+              setTagging((t) => !t)
+            }}
+            className="h-8 gap-1.5"
+            title="Hear each voice without a gender or an age and set both with one key each"
+          >
+            <RiHeadphoneLine className="size-3.5" />
+            Tag by ear · {untagged}
+          </Button>
+          <Button variant="outline" size="sm" onClick={load} className="h-8 gap-1.5">
+            <RiRefreshLine className="size-3.5" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 divide-x divide-y rounded-lg border bg-card sm:grid-cols-6 sm:divide-y-0">
@@ -387,105 +406,109 @@ export function VoicesView() {
         <Stat label="In gold" value={inGold} sub="lead a gold clip" />
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <div className="flex min-h-0 flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="relative">
-              <RiSearchLine className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="voice or episode"
-                className="h-8 w-44 pl-7 text-xs"
-              />
+      {tagging ? (
+        <VoiceTagger voices={data.voices} initialPot={pot} onChange={replace} onClose={() => setTagging(false)} />
+      ) : (
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+          <div className="flex min-h-0 flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="relative">
+                <RiSearchLine className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="voice or episode"
+                  className="h-8 w-44 pl-7 text-xs"
+                />
+              </div>
+              <ToggleGroup type="single" variant="outline" size="sm" spacing={0} value={pot} onValueChange={(v) => v && setPot(v as PotFilter)}>
+                <ToggleGroupItem value="all">All</ToggleGroupItem>
+                <ToggleGroupItem value="train">Train + val</ToggleGroupItem>
+                <ToggleGroupItem value="gold">Gold</ToggleGroupItem>
+              </ToggleGroup>
+              <label className="flex items-center gap-1.5">
+                <Switch checked={needsPerson} onCheckedChange={setNeedsPerson} />
+                needs gender or age
+              </label>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as SortKey)}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                aria-label="Sort"
+              >
+                <option value="talk">most talk</option>
+                <option value="episodes">most episodes</option>
+                <option value="voice">id</option>
+              </select>
+              <span className="ml-auto text-muted-foreground">{rows.length} shown</span>
             </div>
-            <ToggleGroup type="single" variant="outline" size="sm" spacing={0} value={pot} onValueChange={(v) => v && setPot(v as PotFilter)}>
-              <ToggleGroupItem value="all">All</ToggleGroupItem>
-              <ToggleGroupItem value="train">Train + val</ToggleGroupItem>
-              <ToggleGroupItem value="gold">Gold</ToggleGroupItem>
-            </ToggleGroup>
-            <label className="flex items-center gap-1.5">
-              <Switch checked={needsPerson} onCheckedChange={setNeedsPerson} />
-              needs gender or age
-            </label>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              aria-label="Sort"
-            >
-              <option value="talk">most talk</option>
-              <option value="episodes">most episodes</option>
-              <option value="voice">id</option>
-            </select>
-            <span className="ml-auto text-muted-foreground">{rows.length} shown</span>
-          </div>
-          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto rounded-lg border bg-card">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-card text-[10px] uppercase tracking-wider text-muted-foreground">
-                <tr className="border-b text-left">
-                  <th className="w-8" />
-                  <th className="py-1.5 pr-2 font-semibold">Voice</th>
-                  <th className="py-1.5 pr-2 font-semibold">Person</th>
-                  <th className="py-1.5 pr-2 text-right font-semibold">Talk</th>
-                  <th className="py-1.5 pr-2 text-right font-semibold">Eps</th>
-                  <th className="py-1.5 pr-2 font-semibold">Pots</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((v) => (
-                  <tr
-                    key={v.voice}
-                    onClick={() => setSelected(v.voice)}
-                    className={cn(
-                      'cursor-pointer border-b border-border/50 hover:bg-muted/40',
-                      selected === v.voice && 'bg-indigo-500/10',
-                    )}
-                  >
-                    <td className="py-1 pl-1">
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          playVoice(v.voice)
-                        }}
-                        aria-label={`Play ${v.voice}`}
-                      >
-                        {playingVoice === v.voice ? <RiPauseFill /> : <RiPlayFill />}
-                      </Button>
-                    </td>
-                    <td className="py-1 pr-2 font-mono">{v.voice}</td>
-                    <td className="py-1 pr-2">
-                      <PersonCell voice={v} />
-                    </td>
-                    <td className="py-1 pr-2 text-right font-mono tabular-nums">{minutes(v.talk_minutes)}</td>
-                    <td className="py-1 pr-2 text-right font-mono tabular-nums">{v.episode_count}</td>
-                    <td className="py-1 pr-2 font-mono text-[10px]">
-                      {trainMinutes(v) > 0 ? <span className={POT_TEXT.train}>train </span> : null}
-                      {goldMinutes(v) > 0 ? <span className={POT_TEXT.gold}>gold</span> : null}
-                    </td>
+            <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto rounded-lg border bg-card">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <tr className="border-b text-left">
+                    <th className="w-8" />
+                    <th className="py-1.5 pr-2 font-semibold">Voice</th>
+                    <th className="py-1.5 pr-2 font-semibold">Person</th>
+                    <th className="py-1.5 pr-2 text-right font-semibold">Talk</th>
+                    <th className="py-1.5 pr-2 text-right font-semibold">Eps</th>
+                    <th className="py-1.5 pr-2 font-semibold">Pots</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rows.map((v) => (
+                    <tr
+                      key={v.voice}
+                      onClick={() => setSelected(v.voice)}
+                      className={cn(
+                        'cursor-pointer border-b border-border/50 hover:bg-muted/40',
+                        selected === v.voice && 'bg-indigo-500/10',
+                      )}
+                    >
+                      <td className="py-1 pl-1">
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            playVoice(v.voice)
+                          }}
+                          aria-label={`Play ${v.voice}`}
+                        >
+                          {playingVoice === v.voice ? <RiPauseFill /> : <RiPlayFill />}
+                        </Button>
+                      </td>
+                      <td className="py-1 pr-2 font-mono">{v.voice}</td>
+                      <td className="py-1 pr-2">
+                        <PersonCell voice={v} />
+                      </td>
+                      <td className="py-1 pr-2 text-right font-mono tabular-nums">{minutes(v.talk_minutes)}</td>
+                      <td className="py-1 pr-2 text-right font-mono tabular-nums">{v.episode_count}</td>
+                      <td className="py-1 pr-2 font-mono text-[10px]">
+                        {trainMinutes(v) > 0 ? <span className={POT_TEXT.train}>train </span> : null}
+                        {goldMinutes(v) > 0 ? <span className={POT_TEXT.gold}>gold</span> : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="scrollbar-thin min-h-0 overflow-y-auto pr-1">
+            {current ? (
+              <VoiceDetail
+                voice={current}
+                onChange={replace}
+                onPick={setSelected}
+                playVoice={playVoice}
+                playingVoice={playingVoice}
+              />
+            ) : (
+              <p className="p-8 text-center text-sm text-muted-foreground">Pick a voice.</p>
+            )}
           </div>
         </div>
-
-        <div className="scrollbar-thin min-h-0 overflow-y-auto pr-1">
-          {current ? (
-            <VoiceDetail
-              voice={current}
-              onChange={replace}
-              onPick={setSelected}
-              playVoice={playVoice}
-              playingVoice={playingVoice}
-            />
-          ) : (
-            <p className="p-8 text-center text-sm text-muted-foreground">Pick a voice.</p>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   )
 }

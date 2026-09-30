@@ -29,7 +29,7 @@ import type { VoiceClip, VoicePage, VoiceVerdict } from '@/types'
  * Play ``[start, end]`` of a clip on ``audio``, stopping on a timer: ``timeupdate`` is too coarse
  * to end a stretch where the next voice comes in. Returns a cancel function.
  */
-function playStretch(
+export function playStretch(
   audio: HTMLAudioElement,
   clip: VoiceClip,
   rate: number,
