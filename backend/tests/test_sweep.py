@@ -141,6 +141,51 @@ def test_judging_a_run_needs_a_vanilla_run():
         sweep.beats_baseline(_recipe("aug-noise", 0, 5.5), [])
 
 
+# --- the floor under the seed gap (D109) ---------------------------------------------------------
+
+
+def test_seeds_that_agree_by_luck_do_not_lower_the_bar_below_the_floor():
+    # 03a's seeds: 6.95 and 6.93, a gap of 0.02. A margin of 0.08 clears the gap but not the floor.
+    base = [_recipe("vanilla", 0, 6.95), _recipe("vanilla", 1, 6.93)]
+    keep, why = sweep.beats_baseline(_recipe("aug-gain", 0, 6.85), base)
+    assert keep is False
+    assert "floor" in why
+    assert sweep.beats_baseline(_recipe("aug-noise", 0, 6.77), base)[0] is True
+
+
+def test_a_margin_equal_to_the_floor_keeps_vanilla():
+    base = [_recipe("vanilla", 0, 6.0), _recipe("vanilla", 1, 6.0)]
+    assert sweep.beats_baseline(_recipe("aug", 0, 6.0 - sweep.MIN_NOISE), base)[0] is False
+    assert sweep.beats_baseline(_recipe("aug", 0, 5.84), base)[0] is True
+
+
+def test_a_seed_gap_above_the_floor_is_the_bar():
+    rows = [_recipe("vanilla", 0, 6.0), _recipe("vanilla", 1, 6.4), _recipe("aug", 0, 5.7)]
+    winner, why = sweep.choose_recipe(rows)
+    assert winner["recipe"] == "vanilla"
+    assert "0.40" in why
+
+
+def test_one_vanilla_seed_is_judged_against_the_floor():
+    rows = [_recipe("vanilla", 0, 6.0), _recipe("aug", 0, 5.9)]
+    winner, why = sweep.choose_recipe(rows)
+    assert winner["recipe"] == "vanilla"
+    assert "unmeasured" in why
+
+
+def test_the_floor_can_be_set():
+    rows = [_recipe("vanilla", 0, 6.95), _recipe("vanilla", 1, 6.93), _recipe("aug", 0, 6.85)]
+    assert sweep.choose_recipe(rows, floor=0.0)[0]["recipe"] == "aug"
+    base = rows[:2]
+    assert sweep.beats_baseline(rows[2], base, floor=0.0)[0] is True
+
+
+def test_the_crosstalk_sweep_keeps_its_own_rule_without_a_floor():
+    # D96 was fixed before its run; the floor is D109's and applies to named recipes only.
+    rows = [_row(0.0, 0, 6.95), _row(0.0, 1, 6.93), _row(0.3, 0, 6.85)]
+    assert sweep.choose_winner(rows)[0]["xtalk_p"] == 0.3
+
+
 # --- weight blends (D105) ------------------------------------------------------------------------
 
 

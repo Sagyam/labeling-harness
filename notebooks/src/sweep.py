@@ -4,8 +4,9 @@ A notebook trains several runs on the same export: the crosstalk sweep's `(XTALK
 (D96), the augmentation ablation's named recipes, or the weight blends of one fine-tune (D105).
 Each winner is chosen by val WER alone, under a rule fixed before any result was read. For
 training runs: a recipe has to beat the baseline by more than the seed noise, measured as the gap
-between the baseline's two seeds, or the baseline is kept. Gold never takes part in a choice, so
-every gold number stays a held-out score.
+between the baseline's two seeds, or the baseline is kept. For named recipes that gap is never
+taken as less than `MIN_NOISE` (D109). Gold never takes part in a choice, so every gold number
+stays a held-out score.
 
 Runs are compared on gold with a paired bootstrap that resamples whole episodes: clips of one
 episode share a room and voices, and resampling them one by one would pretend to more independent
@@ -25,8 +26,13 @@ def run_name(prefix: str, p: float, seed: int) -> str:
     return f"{prefix}-p{round(p * 100):02d}-s{seed}"
 
 
-def _winner(base: list[dict], other: list[dict], base_name: str, label) -> tuple[dict, str]:
-    """The rule both choosers share. `base` and `other` are sorted by val WER, best first."""
+def _winner(
+    base: list[dict], other: list[dict], base_name: str, label, floor: float = 0.0
+) -> tuple[dict, str]:
+    """The rule every chooser shares. `base` and `other` are sorted by val WER, best first.
+
+    The bar is the gap between the baseline's two best seeds, or `floor` when that is larger
+    (D109). Both are rounded to 1e-6 so a margin equal to the bar is a tie, not a float win."""
     if not base or not other:
         best = (base or other)[0]
         return best, "only one kind of run, so the lowest val WER"
@@ -36,9 +42,13 @@ def _winner(base: list[dict], other: list[dict], base_name: str, label) -> tuple
         noise_note = f"seed noise {noise:.2f} ({seeds})"
     else:
         noise = 0.0
-        noise_note = f"seed noise unmeasured (one {base_name} seed), so the rule is strict"
+        noise_note = f"seed noise unmeasured (one {base_name} seed)"
+        if not floor:
+            noise_note += ", so the rule is strict"
+    if floor > noise:
+        noise, noise_note = floor, f"the floor {floor:.2f}, as {noise_note} is below it"
     margin = base[0]["val_wer"] - other[0]["val_wer"]
-    if margin > noise:
+    if round(margin, 6) > round(noise, 6):
         return other[
             0
         ], f"{label(other[0])} beats {base_name} on val by {margin:.2f} > {noise_note}"
@@ -61,29 +71,36 @@ def choose_winner(rows: Sequence[dict]) -> tuple[dict, str]:
 #: The recipe every augmentation is measured against (D105): today's training, nothing added.
 BASELINE = "vanilla"
 
+#: The least a named recipe has to beat the baseline by on val, in WER points (D109). Two seeds
+#: can agree by luck: 03a's differed by 0.02 on val and 0.08 on gold. Below this the seed gap is
+#: not trusted as the noise.
+MIN_NOISE = 0.15
 
-def choose_recipe(rows: Sequence[dict], baseline: str = BASELINE) -> tuple[dict, str]:
+
+def choose_recipe(
+    rows: Sequence[dict], baseline: str = BASELINE, floor: float = MIN_NOISE
+) -> tuple[dict, str]:
     """`choose_winner` for named recipes (D105): rows carry `recipe`, `seed` and `val_wer`.
 
-    The baseline is its better seed, and the noise is the gap between its two best seeds. Another
-    recipe wins only if it beats the baseline on val by more than that; otherwise the baseline is
-    kept. Gold and the public sets never take part."""
+    The baseline is its better seed, and the noise is the gap between its two best seeds, or
+    `floor` when that is larger (D109). Another recipe wins only if it beats the baseline on val
+    by more than that; otherwise the baseline is kept. Gold and the public sets never take part."""
     if not rows:
         raise ValueError("no runs to choose from")
     base = sorted((r for r in rows if r["recipe"] == baseline), key=lambda r: r["val_wer"])
     other = sorted((r for r in rows if r["recipe"] != baseline), key=lambda r: r["val_wer"])
-    return _winner(base, other, baseline, lambda r: r["recipe"])
+    return _winner(base, other, baseline, lambda r: r["recipe"], floor)
 
 
 def beats_baseline(
-    row: dict, baseline_rows: Sequence[dict], baseline: str = BASELINE
+    row: dict, baseline_rows: Sequence[dict], baseline: str = BASELINE, floor: float = MIN_NOISE
 ) -> tuple[bool, str]:
     """Whether one run clears the rule on its own, and why: what decides, as each ablation run
     finishes, if its stage goes into the combined recipe and its weights are kept."""
     base = [r for r in baseline_rows if r["recipe"] == baseline]
     if not base:
         raise ValueError(f"no {baseline} run to measure against")
-    winner, why = choose_recipe([*base, row], baseline)
+    winner, why = choose_recipe([*base, row], baseline, floor)
     return winner is row, why
 
 

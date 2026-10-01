@@ -2484,7 +2484,8 @@ now on a model is trained and evaluated by running the notebooks in the order of
   paired against base Flex with each set's own unit resampled. On the public sets "forgetting" is
   only meaningful for a model that knew Nepali; for the others they measure generalisation.
 - **Every choice is made on val, by a rule fixed before the result** (`sweep.py`). An augmentation
-  is kept only if it beats vanilla's better seed by more than the gap between vanilla's two seeds.
+  is kept only if it beats vanilla's better seed by more than the gap between vanilla's two seeds,
+  and never by less than 0.15 points (D109).
   The blend is the one closest to base whose val WER is within 0.3 of the fine-tune's. Gold and
   the public sets are reported and never choose.
 - **One teacher, frozen.** `teacher.json` at the root of the Flex model repo names the model that
@@ -2601,3 +2602,27 @@ Two things the analytics kind lacked, both needed to study the corpus rather tha
 
 **Reversal:** cheap. Drop the key and the flag in `export.py`; the notebooks' section on the
 moment of the switch would need the training export joined back in and would lose gold.
+
+## D109 — An augmentation has to beat vanilla by at least 0.15 points on val
+
+D105 kept a 03c stage if it beat vanilla's better seed on val by more than the gap between
+vanilla's two seeds. 03a, the first run of the protocol, gave seeds of 6.95 and 6.93: a gap of
+0.02. Under the rule as written, any single-seed stage below 6.91 would have been kept, and a kept
+stage goes into the combined run, into the teacher and into every student's recipe.
+
+- **Two runs do not measure a spread.** The same pair differed by 0.08 on gold, with a paired
+  interval of −0.15 to +0.33. 0.02 says the seeds happened to agree, not that val resolves 0.02.
+- **The bar is `max(seed gap, 0.15)`** (`sweep.MIN_NOISE`). 0.15 is a judgement, not derived: it
+  sits just under the half-widths of the paired val intervals measured so far (0.17 to 0.26 in
+  findings.md), so it is a floor against luck, not a significance test. A margin equal to the bar is a
+  tie and keeps vanilla, the simpler recipe. With one vanilla seed the bar is the floor rather
+  than zero.
+- **Changed after 03a and before any 03c stage ran.** The owner chose it on 2026-10-01 over
+  keeping the rule as written and over a second seed for every stage that clears the bar (about an
+  hour of A100 each). Nothing read from an augmented run informed it.
+- **Named recipes only.** D96's crosstalk sweep (`sweep.choose_winner`) keeps its own rule, which
+  was fixed before its run, so its history reads the same. The blend rule (`choose_blend`) is
+  unchanged.
+
+**Reversal:** cheap before 03c's results exist: set `MIN_NOISE` to 0. After them, a reversal
+re-decides which stages were kept and would have to retrain the combined run.

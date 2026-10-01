@@ -573,7 +573,8 @@ gold for the final score.
 **Vanilla, twice.** The recipe is the one every earlier run used with no augmentation added, so
 its numbers stay comparable to history. It runs on seeds 0 and 1, each from the same base weights,
 export and batch budget. The gap between the two seeds on val is the noise every later comparison
-has to clear: an augmentation in 03c is kept only if it beats the better seed by more than that.
+has to clear: an augmentation in 03c is kept only if it beats the better seed by more than that,
+and never by less than 0.15 points (`sweep.MIN_NOISE`, D109), since two seeds can agree by luck.
 
 **What comes after.** 03b scores base Flex and these runs on the public Nepali sets (what
 fine-tuning cost outside our domain). 03c ablates the augmentations. 03d blends the winner's
@@ -662,7 +663,8 @@ TRAIN_REPORT_NOTE = """
 ## Report
 
 Both seeds on val and gold with S/D/I, gold per crosstalk bucket, and each run minus its
-references. **The val gap between the seeds is the noise** 03c's rule uses. The gold columns are
+references. **The val gap between the seeds is the noise** 03c's rule uses, or 0.15 when the gap is
+smaller (D109). The gold columns are
 held-out scores: nothing here was chosen on gold.
 """
 
@@ -674,7 +676,9 @@ for r in rows:
           f"{r['gold']['raw_wer']:9.2f}")
 if len(rows) == 2:
     gap = abs(rows[0]["val_wer"] - rows[1]["val_wer"])
-    print(f"\nseed noise on val: {gap:.2f} points. An augmentation has to beat the better seed by more.")
+    bar = max(gap, sweep.MIN_NOISE)
+    print(f"\nseed noise on val: {gap:.2f} points. An augmentation has to beat the better seed by more"
+          f" than {bar:.2f} (the floor is {sweep.MIN_NOISE:.2f}, D109).")
 print("\ngold by crosstalk bucket:")
 for bucket in evalkit.BUCKETS:
     for r in rows:
@@ -839,10 +843,13 @@ Step 3 of the protocol (D105). Each stage of `augment.py` is switched on alone, 
 vanilla recipe of 03a, and trained from the same base weights on the same export and batch budget.
 Then the stages that earned their place are trained together.
 
-**The rule, fixed before any result.** A stage is kept only if its val WER beats vanilla's better
-seed by more than the gap between vanilla's two seeds (`sweep.beats_baseline`). Val alone decides;
-gold and the public sets are reported, never used to choose. The winner of the whole ablation
-(`sweep.choose_recipe`) is vanilla unless a kept recipe beats it by that margin.
+**The rule, fixed before any result of this notebook.** A stage is kept only if its val WER beats
+vanilla's better seed by more than the gap between vanilla's two seeds, and never by less than
+0.15 points (`sweep.beats_baseline`, `sweep.MIN_NOISE`). The floor was added after 03a and before
+any stage ran (D109): 03a's seeds differed by 0.02, and two runs cannot be trusted to measure a
+gap that small. Val alone decides; gold and the public sets are reported, never used to choose.
+The winner of the whole ablation (`sweep.choose_recipe`) is vanilla unless a kept recipe beats it
+by that margin.
 
 **The stages** (`ABLATION` in Config; edit it before the first run, not after a result):
 - **speed**: 0.9x or 1.1x, tempo and pitch together.
@@ -945,9 +952,11 @@ vanilla_counts = run_counts(best_vanilla["run_name"])
 for r in vanilla:
     print(f"{r['run_name']}: val {line(r['val'])} | gold {line(r['gold'])}")
 if len(vanilla) == 2:
-    print(f"seed noise on val: {abs(vanilla[0]['val_wer'] - vanilla[1]['val_wer']):.2f} points")
+    gap = abs(vanilla[0]["val_wer"] - vanilla[1]["val_wer"])
+    print(f"seed noise on val: {gap:.2f} points; a stage is kept if it beats "
+          f"{best_vanilla['val_wer']:.2f} by more than {max(gap, sweep.MIN_NOISE):.2f}")
 else:
-    print("one vanilla seed only: the noise is unmeasured, and any gain on val counts as a win")
+    print(f"one vanilla seed only: the noise is unmeasured, so the bar is the floor, {sweep.MIN_NOISE:.2f}")
 
 
 def ablate(name, stages=None):
