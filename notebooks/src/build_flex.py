@@ -309,7 +309,7 @@ def probe_step(n):
     loss.backward()
 
 
-max_items = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+max_items = ftkit.probe_max_items(probe_step, 1, 256, model)
 BUDGET_S = max_items * max_len / ftkit.SR * PROBE_FRACTION
 print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_t} tokens: {max_items} clips -> "
       f"budget {BUDGET_S:.0f} s of padded audio per micro-batch")

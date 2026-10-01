@@ -411,29 +411,45 @@ def init_optimizer_state(model: torch.nn.Module, optimizer: torch.optim.Optimize
             state["step"].zero_()
 
 
-def probe_max_items(
-    step: Callable[[int], None], lo: int, hi: int, params: Sequence[torch.nn.Parameter]
-) -> int:
+@contextmanager
+def batchnorm_kept(model: torch.nn.Module) -> Iterator[None]:
+    """Restore every BatchNorm layer's running statistics on exit. A forward pass in train mode
+    updates them with no optimizer step at all: on 2026-10-01 the probe's random noise had
+    rewritten about half of Flex's, and 03a's "val WER before training" read 13.81 for a model
+    that scores 9.24."""
+    bns = [m for m in model.modules() if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)]
+    saved = [{k: v.clone() for k, v in m.state_dict().items()} for m in bns]
+    try:
+        yield
+    finally:
+        for m, s in zip(bns, saved, strict=True):
+            m.load_state_dict(s)
+
+
+def probe_max_items(step: Callable[[int], None], lo: int, hi: int, model: torch.nn.Module) -> int:
     """The largest n in [lo, hi] for which `step(n)` (one forward+backward at the worst case)
-    fits in memory. `step` must not touch the gradients.
+    fits in memory. `step` must not touch the gradients. The model's weights never move, and its
+    BatchNorm statistics are restored after, so it leaves the model as it found it.
 
     The gradient buffer stays allocated throughout, as it does in training from the second
     micro-batch of every accumulated step: freeing it between probes measured the activations
     without it and picked a batch that ran out of memory once training accumulated."""
+    params = [p for p in model.parameters() if p.requires_grad]
     for p in params:
         p.grad = torch.zeros_like(p)
     best = 0
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        try:
-            step(mid)
-            torch.cuda.synchronize()
-            best, lo = mid, mid + 1
-        except torch.cuda.OutOfMemoryError:
-            hi = mid - 1
-        for p in params:
-            p.grad.zero_()
-        torch.cuda.empty_cache()
+    with batchnorm_kept(model):
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            try:
+                step(mid)
+                torch.cuda.synchronize()
+                best, lo = mid, mid + 1
+            except torch.cuda.OutOfMemoryError:
+                hi = mid - 1
+            for p in params:
+                p.grad.zero_()
+            torch.cuda.empty_cache()
     for p in params:
         p.grad = None
     torch.cuda.empty_cache()
@@ -537,8 +553,6 @@ def speed_check(
     search and worker start-up are excluded. Gradients stay allocated between micro-batches, as
     they do under accumulation, so the memory reading is training's. BatchNorm running
     statistics are restored after."""
-    bns = [m for m in model.modules() if isinstance(m, torch.nn.modules.batchnorm._BatchNorm)]
-    saved = [{k: v.clone() for k, v in m.state_dict().items()} for m in bns]
     sample = batches[:n_micro]
     it = iter(loader(rows, sample + sample, collate, workers))
 
@@ -557,15 +571,14 @@ def speed_check(
         return audio, padded, clips
 
     model.train()
-    run()
-    monitor.window()
-    t0 = time.perf_counter()
-    audio, padded, clips = run()
-    train_dt = time.perf_counter() - t0
-    gpu = monitor.window()
-    model.zero_grad(set_to_none=True)
-    for m, s in zip(bns, saved, strict=True):
-        m.load_state_dict(s)
+    with batchnorm_kept(model):
+        run()
+        monitor.window()
+        t0 = time.perf_counter()
+        audio, padded, clips = run()
+        train_dt = time.perf_counter() - t0
+        gpu = monitor.window()
+        model.zero_grad(set_to_none=True)
 
     model.eval()
     torch.cuda.synchronize()

@@ -722,7 +722,7 @@ def probe(model, optimizer, rows):
 
     model.train()
     ftkit.init_optimizer_state(model, optimizer)
-    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+    n = ftkit.probe_max_items(probe_step, 1, 256, model)
     budget = n * max_len / ftkit.SR * PROBE_FRACTION
     print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_u} tokens: {n} clips -> "
           f"budget {budget:.0f} s of padded audio per micro-batch")
@@ -1035,8 +1035,6 @@ def probe(model, optimizer, rows):
     optimizer state allocated: (seconds of audio per micro-batch, clips per micro-batch). Whisper
     pays for 30 s whatever a clip's length, so for it the budget is a clip count, not seconds. For
     Qwen the clip count is probed as well (see below)."""
-    params = [p for p in model.parameters() if p.requires_grad]
-
     def probe_at(clip):
         def step(n):
             b = collate([clip] * n)
@@ -1044,7 +1042,7 @@ def probe(model, optimizer, rows):
                 loss, _ = loss_fn(model, b)
             loss.backward()
 
-        return ftkit.probe_max_items(step, 1, 256, params)
+        return ftkit.probe_max_items(step, 1, 256, model)
 
     longest = max(rows, key=ftkit.duration)
     wordiest = max(rows, key=lambda r: len(r["text"]))
@@ -1235,7 +1233,7 @@ def probe(model, optimizer, rows):
 
     model.train()
     ftkit.init_optimizer_state(model, optimizer)
-    n = ftkit.probe_max_items(probe_step, 1, 256, [p for p in model.parameters() if p.requires_grad])
+    n = ftkit.probe_max_items(probe_step, 1, 256, model)
     budget = n * max_len / ftkit.SR * PROBE_FRACTION
     print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s: {n} clips -> budget {budget:.0f} s of padded "
           "audio per micro-batch")
