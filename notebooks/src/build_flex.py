@@ -819,7 +819,7 @@ bench_cells = [
     config(
         "03b_Flex_Benchmarks",
         r"""
-RUNS = ["base", "vanilla-s0"]   # "base" is Flex as released; the others are runs with best/ in OUT_REPO
+RUNS = ["base", "vanilla-s1"]   # "base" is Flex as released; the others are runs with best/ in OUT_REPO
 """,
     ),
     md("## Setup"),
@@ -1138,7 +1138,7 @@ model's. Gold and the public sets are reported, never used to choose. If no blen
 fine-tuned model is kept.
 
 **What is blended.** `SOURCE` names the fine-tuned run; left at `None` it is the winner in 03c's
-`ablation.json`. To skip the ablation, set `SOURCE = "vanilla-s0"`.
+`ablation.json`. To skip the ablation, set `SOURCE = "vanilla-s1"`.
 
 **No weights are written here.** A blend is rebuilt in seconds from the two models; 03e rebuilds
 the chosen one and writes it once.
