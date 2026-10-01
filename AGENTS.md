@@ -12,7 +12,7 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/            architecture, decisions, roadmap, findings, sociolinguistics, custom-arch
+docs/            architecture, decisions, roadmap, findings, sociolinguistics, custom-arch, WER-Breakdown
 notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 03 Flex, 04-05 pseudo-labels,
                  06 students, 07 report; 03-07 are generated from notebooks/src/ by build_all.py
 ```
@@ -254,7 +254,7 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Documentation
 
-Eight documents, and no others: this file, `README.md`, and the six under `docs/`. When behaviour
+Nine documents, and no others: this file, `README.md`, and the seven under `docs/`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
 its reversal cost. When a later entry overrides an old one, delete the old entry and add one line
