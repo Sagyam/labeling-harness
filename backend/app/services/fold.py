@@ -28,7 +28,7 @@ Four rules, in the order they are tried on a pair of words:
    (ि/ी, ु/ू), chandrabindu against anusvara, nukta, a word-final virama, a nasal consonant
    against anusvara (`सम्पन्न`/`संपन्न`), and the script of the digits. The key also expands English
    contractions (``you're`` is ``youare``, so it matches ``you are`` through a merge) and writes
-   colloquial Nepali in one form (:data:`_COLLOQUIAL_WORDS`, :data:`_COLLOQUIAL`): `हैन`/`होइन`,
+   colloquial Nepali in one form (:data:`_COLLOQUIAL_WORDS`, :data:`_DIALECT`): `हैन`/`होइन`,
    `भाको`/`भएको`, `गरिराको`/`गरिरहेको`, `गर्दियो`/`गरिदियो`, `गर्या`/`गरेको`. Equal keys are the same
    word.
 2. **Numbers.** Digits match the number spelled out in either language -- `15`, `पन्ध्र` and
@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -87,16 +88,8 @@ _NON_WORD = re.compile(r"[^A-Za-z0-9'ऀ-ॣ०-ॿ]+")
 _JOINERS = str.maketrans("", "", "‌‍")
 
 _DEV_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
-_DEV_FOLD = str.maketrans(
-    {
-        "़": None,  # nukta
-        "ँ": "ं",  # chandrabindu -> anusvara
-        "ी": "ि",  # ी -> ि
-        "ू": "ु",  # ू -> ु
-        "ई": "इ",  # ई -> इ
-        "ऊ": "उ",  # ऊ -> उ
-    }
-)
+#: Vowel length, which Nepali writers do not hold consistently: ी/ि, ू/ु, ई/इ, ऊ/उ.
+_VOWEL_LENGTH = str.maketrans({"ी": "ि", "ू": "ु", "ई": "इ", "ऊ": "उ"})
 _VIRAMA = "्"
 
 #: Devanagari to ASCII, longest match first. Deliberately crude -- it feeds a skeleton and a
@@ -168,7 +161,7 @@ _IS_PRONOUNS = frozenset(
 #: Colloquial Nepali (D84, D89). Spoken Nepali contracts what the written language spells out,
 #: and a transcriber may write either. Each group below is one kind of spoken form: a table of
 #: whole words (spoken -> written, before any rule runs) and the productive rewrites it needs.
-#: The groups are applied in the order of :data:`_COLLOQUIAL_GROUPS`; the comment on a group says
+#: The groups are applied in the order of :data:`_DIALECT`; the comment on a group says
 #: when that order matters. fold-v3 (D89) folds every group the owner listed, loose pairs
 #: included, and leaves tightening to listening.
 _C = "[क-ह]"
@@ -310,13 +303,6 @@ _COLLOQUIAL_WORDS = {
     **_CONTRACTED_VERB_WORDS, **_PRONOUN_WORDS, **_EMPHATIC_WORDS, **_LOOSE_WORDS, **_UNSEEN_WORDS,
     **_OTHER_WORDS,
 }  # fmt: skip
-_COLLOQUIAL_GROUPS = (
-    _NASAL, _WESTERN, _LAUNU, _CONTRACTED, _PROGRESSIVE, _BENEFACTIVE, _FIRST_PLURAL, _EMPHATIC,
-    _LOOSE, _UNSEEN, _JOINED, _NASAL,
-)  # fmt: skip
-_COLLOQUIAL = tuple(
-    (re.compile(pattern), repl) for group in _COLLOQUIAL_GROUPS for pattern, repl in group
-)
 #: A table word keeps its fold under a case ending: रुपियाँको -> रुपैयाँको, पहिलादेखि -> पहिलेदेखि.
 _TABLE_SUFFIXES = ("देखि", "सम्म", "लाइ", "बाट", "संग", "हरु", "को", "का", "कि", "मा", "ले")
 #: -म् first person plural endings, read on the key once the virama is gone.
@@ -461,15 +447,76 @@ def is_filler(token: str) -> bool:
 @lru_cache(maxsize=65536)
 def spelling_key(token: str) -> str:
     """The word with every spelling distinction this corpus does not hold consistently removed."""
-    key = _orthographic_key(token)
-    if _DEV.search(key):
-        key = _table_word(key)
-        if token.endswith("म्") and len(key) >= 2:
-            key = _first_plural(key)
-        for pattern, repl in _COLLOQUIAL:
+    return _key_trace(token)[-1]
+
+
+@dataclass(frozen=True)
+class _Stage:
+    """One step of the spelling key, named by the rule of :data:`RULEBOOK` it implements.
+
+    ``apply`` takes the key so far and the original token (the -म् first plural reads the
+    token's virama, which the key has already dropped). A colloquial stage runs only on a key
+    that holds Devanagari.
+    """
+
+    rule: str
+    apply: Callable[[str, str], str]
+    devanagari_only: bool = False
+
+
+def _regex_stage(rule: str, group: tuple[tuple[str, str], ...]) -> _Stage:
+    compiled = tuple((re.compile(pattern), repl) for pattern, repl in group)
+
+    def apply(key: str, _token: str) -> str:
+        for pattern, repl in compiled:
             key = pattern.sub(repl, key)
-        key = _table_word(key)
-    return key
+        return key
+
+    return _Stage(rule, apply, devanagari_only=True)
+
+
+def _nukta(key: str, _token: str) -> str:
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", key).replace("़", ""))
+
+
+def _contraction_stage(key: str, _token: str) -> str:
+    if not _DEV.search(key):
+        key = _expand_contraction(key)
+    return key.replace("'", "")
+
+
+#: Orthography: folding that is about the script, not the dialect. In this order, the spelling
+#: key's first half; each stage names its rule.
+_ORTHOGRAPHY: tuple[_Stage, ...] = (
+    _Stage("case", lambda key, _t: unicodedata.normalize("NFC", key).translate(_JOINERS).lower()),
+    _Stage("contraction", _contraction_stage),
+    _Stage("digits", lambda key, _t: key.translate(_DEV_DIGITS)),
+    _Stage("vowel-length", lambda key, _t: key.translate(_VOWEL_LENGTH)),
+    _Stage("chandrabindu", lambda key, _t: key.replace("ँ", "ं")),
+    _Stage("nukta", _nukta),
+    _Stage("final-virama", lambda key, _t: key.removesuffix(_VIRAMA)),
+)
+
+
+def _run(stages: tuple[_Stage, ...], token: str, key: str) -> list[str]:
+    trace = []
+    for stage in stages:
+        if not stage.devanagari_only or _DEV.search(key):
+            key = stage.apply(key, token)
+        trace.append(key)
+    return trace
+
+
+def _orthographic_key(token: str) -> str:
+    """Folding that is about the script, not the dialect: everything but :data:`_DIALECT`."""
+    return _run(_ORTHOGRAPHY, token, token)[-1]
+
+
+@lru_cache(maxsize=65536)
+def _key_trace(token: str) -> tuple[str, ...]:
+    """The key after each of :data:`_STAGES`, in order; the last is :func:`spelling_key`."""
+    trace = _run(_ORTHOGRAPHY, token, token)
+    return (*trace, *_run(_DIALECT, token, trace[-1]))
 
 
 def _table_word(key: str) -> str:
@@ -490,16 +537,6 @@ def _first_plural(key: str) -> str:
     return key
 
 
-def _orthographic_key(token: str) -> str:
-    """Folding that is about the script, not the dialect: everything but :data:`_COLLOQUIAL`."""
-    text = unicodedata.normalize("NFC", token).translate(_JOINERS).translate(_DEV_DIGITS)
-    text = unicodedata.normalize("NFD", text).translate(_DEV_FOLD)
-    text = unicodedata.normalize("NFC", text).lower()
-    if not _DEV.search(text):
-        text = _expand_contraction(text)
-    return text.replace("'", "").removesuffix(_VIRAMA)
-
-
 def _expand_contraction(word: str) -> str:
     if word in _CONTRACTED_WORDS:
         return _CONTRACTED_WORDS[word]
@@ -517,6 +554,56 @@ def _expand_contraction(word: str) -> str:
 _COLLOQUIAL_KEYS = {
     _orthographic_key(word): _orthographic_key(form) for word, form in _COLLOQUIAL_WORDS.items()
 }
+
+
+def _first_plural_stage(key: str, token: str) -> str:
+    return _first_plural(key) if token.endswith("म्") and len(key) >= 2 else key
+
+
+#: The spelling key's second half: colloquial Nepali in one written form (D84, D89). The table
+#: words first and last, the rule groups in between, in an order that matters (see each group).
+_DIALECT: tuple[_Stage, ...] = (
+    _Stage("colloquial-table", lambda key, _t: _table_word(key), devanagari_only=True),
+    _Stage("first-plural", _first_plural_stage, devanagari_only=True),
+    _regex_stage("nasal-cluster", _NASAL),
+    _regex_stage("western-participle", _WESTERN),
+    _regex_stage("launu", _LAUNU),
+    _regex_stage("contracted-verb", _CONTRACTED),
+    _regex_stage("progressive", _PROGRESSIVE),
+    _regex_stage("benefactive", _BENEFACTIVE),
+    _regex_stage("first-plural", _FIRST_PLURAL),
+    _regex_stage("emphatic", _EMPHATIC),
+    _regex_stage("loose", _LOOSE),
+    _regex_stage("unseen", _UNSEEN),
+    _regex_stage("joined", _JOINED),
+    _regex_stage("nasal-cluster", _NASAL),
+    _Stage("colloquial-table", lambda key, _t: _table_word(key), devanagari_only=True),
+)
+#: Which colloquial group each table word belongs to, by its orthographic key.
+_TABLE_RULES = {
+    _orthographic_key(word): rule
+    for rule, table in (
+        ("contracted-verb", _CONTRACTED_VERB_WORDS), ("pronoun", _PRONOUN_WORDS),
+        ("emphatic", _EMPHATIC_WORDS), ("loose", _LOOSE_WORDS), ("unseen", _UNSEEN_WORDS),
+        ("other-words", _OTHER_WORDS),
+    )
+    for word in table
+}  # fmt: skip
+
+
+def _table_rule(key: str) -> str | None:
+    """The group of the table word ``key`` is, or carries under a case ending."""
+    if key in _TABLE_RULES:
+        return _TABLE_RULES[key]
+    for suffix in _TABLE_SUFFIXES:
+        stem = key.removesuffix(suffix)
+        if stem != key and len(stem) > 2 and stem in _TABLE_RULES:
+            return _TABLE_RULES[stem]
+    return None
+
+
+#: Every stage of the spelling key, in order: :func:`_key_trace` records the key after each.
+_STAGES = (*_ORTHOGRAPHY, *_DIALECT)
 _NUMBER_KEYS = {spelling_key(word): value for word, value in _NUMBER_WORDS.items()}
 _ORDINAL_KEYS = {spelling_key(word): value for word, value in _ORDINAL_WORDS.items()}
 _NUMBER_ATOM = re.compile(
@@ -741,18 +828,50 @@ def same_word(a: str, b: str) -> bool:
     """Whether two words are one word written two ways. See the module docstring for the rules."""
     if spelling_key(a) == spelling_key(b) or same_number(a, b):
         return True
+    return _sound_rule(a, b) is not None
+
+
+def _sound_rule(a: str, b: str) -> str | None:
+    """Rules 3 and 4: which sound rule makes two words of different scripts one, if any."""
     sa, sb = script(a), script(b)
     if sa == sb or "none" in (sa, sb):
-        return False
+        return None
     if any(_skeletons_close(ka, kb) for ka in skeletons(a) for kb in skeletons(b)):
-        return True
+        return "sound-skeleton"
     left, right = _ascii(a), _ascii(b)
     if min(len(left), len(right)) < MIN_SKELETON:
-        return False
+        return None
     if _normalized_distance(left, right) <= CROSS_SCRIPT_THRESHOLD:
-        return True
+        return "sound-ratio"
     # "cha" / छ: too short for a ratio to mean anything, so allow one character.
-    return max(len(left), len(right)) <= SHORT_TOKEN and _levenshtein(left, right) <= 1
+    if max(len(left), len(right)) <= SHORT_TOKEN and _levenshtein(left, right) <= 1:
+        return "sound-short"
+    return None
+
+
+def which_rule(a: str, b: str) -> str | None:
+    """The id of the :data:`RULEBOOK` rule that makes two different words one word, or None.
+
+    None when the two are written identically, and when no rule joins them (:func:`same_word`
+    is false). For a spelling difference it is the last stage of the spelling key at which the
+    two keys still differed: the rule that finally made them one.
+    """
+    if a == b:
+        return None
+    trace_a, trace_b = _key_trace(a), _key_trace(b)
+    if trace_a[-1] == trace_b[-1]:
+        i = len(_STAGES) - 1
+        while i > 0 and trace_a[i - 1] == trace_b[i - 1]:
+            i -= 1
+        rule = _STAGES[i].rule
+        if rule == "colloquial-table":
+            before_a = trace_a[i - 1] if i else a
+            before_b = trace_b[i - 1] if i else b
+            rule = _table_rule(before_a) or _table_rule(before_b) or rule
+        return rule
+    if same_number(a, b):
+        return "number"
+    return _sound_rule(a, b)
 
 
 def align(ref: list[str], hyp: list[str], *, folded: bool = True) -> Alignment:
@@ -857,3 +976,197 @@ def _raw_tokens(text: str | None) -> list[str]:
         return []
     text = unicodedata.normalize("NFC", text)
     return [t if _DEV.search(t) else t.lower() for t in _NON_WORD.sub(" ", text).split()]
+
+
+# --- the rulebook --------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FoldRule:
+    """One rule of the rulebook: what it joins, why, and the evidence it is held to.
+
+    Attributes:
+        id: What :func:`which_rule` returns and an error row's ``fold_rule`` carries.
+        tier: 1 orthography, 2 across scripts by sound, 3 colloquial Nepali (:data:`TIERS`).
+        title: A few words for a reader.
+        description: What the rule joins, and anything it is known to join wrongly.
+        examples: Pairs of texts it makes one -- a test holds each to zero errors.
+        counterexamples: Pairs it must keep apart -- a test holds each to at least one error.
+    """
+
+    id: str
+    tier: int
+    title: str
+    description: str
+    examples: tuple[tuple[str, str], ...]
+    counterexamples: tuple[tuple[str, str], ...] = ()
+
+
+#: What each tier of :data:`RULEBOOK` is.
+TIERS = {
+    1: "Orthography: one word written another way, nothing said differently",
+    2: "Across scripts, by sound: English in Devanagari, Nepali in Latin",
+    3: "Colloquial Nepali: a spoken form and its written form (D84, D89)",
+}
+
+#: Every rule this module folds by, in the order a reader should meet them. The page the
+#: harness serves at ``/fold/rulebook`` is this list, with each rule's evidence from the error
+#: rows beside it; a test holds every example and counterexample to what it claims.
+# fmt: off
+RULEBOOK: tuple[FoldRule, ...] = (
+    FoldRule(
+        "case", 1, "Letter case and Unicode form",
+        "Latin is lowercased, text is put in NFC and zero-width joiners are removed.",
+        (("Team", "team"), ("YouTube", "youtube")),
+    ),
+    FoldRule(
+        "contraction", 1, "English contractions",
+        "A contraction is the words it stands for, so it matches them written out. 's is only "
+        "is after a pronoun: John's is a possessive. Apostrophes are dropped.",
+        (("can't", "cannot"), ("you're", "you are"), ("gonna", "going to")),
+        (("it's", "its"),),
+    ),
+    FoldRule(
+        "digits", 1, "Devanagari digits",
+        "Devanagari digits are the same digits as ASCII ones.",
+        (("२०", "20"), ("२०७९", "2079")),
+    ),
+    FoldRule(
+        "vowel-length", 1, "Vowel length",
+        "ि/ी, ु/ू, इ/ई and उ/ऊ are one vowel: Nepali writers do not hold the distinction. "
+        "Known to join दिन/दीन ('day'/'poor'), which context separates.",
+        (("गरीब", "गरिब"), ("हरु", "हरू")),
+    ),
+    FoldRule(
+        "chandrabindu", 1, "Chandrabindu and anusvara",
+        "ँ and ं are one nasal mark.",
+        (("भनौं", "भनौँ"), ("गाउँ", "गाउं")),
+    ),
+    FoldRule(
+        "nukta", 1, "Nukta",
+        "A nukta is dropped, so ज़ is ज and ऱ (the eyelash ra) is र.",
+        (("ज़", "ज"), ("गऱ्यो", "गर्यो")),
+    ),
+    FoldRule(
+        "final-virama", 1, "Word-final virama",
+        "A virama at the end of a word is dropped: गर् is गर.",
+        (("गर्", "गर"), ("छन्", "छन")),
+    ),
+    FoldRule(
+        "nasal-cluster", 1, "Nasal consonant against anusvara",
+        "A nasal consonant before a consonant of its own class is an anusvara: सम्पन्न is संपन्न.",
+        (("सम्पन्न", "संपन्न"), ("घण्टा", "घंटा")),
+    ),
+    FoldRule(
+        "number", 1, "Numbers in digits and words",
+        "Digits match the number spelled out in either language, when any suffix agrees. One side "
+        "must be in digits: one and एक are two languages, and a speaker said one of them.",
+        (("15", "पन्ध्र"), ("15", "fifteen"), ("2009", "two thousand nine"),
+         ("40,000 को", "चालिस हजारको")),
+        (("one", "एक"),),
+    ),
+    FoldRule(
+        "spacing", 1, "Split and joined words",
+        "Two words against one match when joined they are the same word by any rule; up to "
+        "three a side when the joined spelling or number is the same. An error row records "
+        "these as a merge.",
+        (("गर्नुभयो", "गर्नु भयो"), ("Facebook", "फेस बुक"), ("मिनेटपछि", "minute पछि")),
+    ),
+    FoldRule(
+        "sound-skeleton", 2, "Consonant skeleton",
+        "Across scripts only: both words reduced to their consonants, confusable classes "
+        "merged (v/w/b, f/p, z/j, d/t, m/n, l/r), equal or one consonant apart once long "
+        "enough. Never within one script, where it would erase grammar.",
+        (("एक्टिभ", "active"), ("पुलिस", "police"), ("बजेट", "budget"), ("कम्प्युटर", "computer")),
+        (("एकदमै", "actually"), ("गर्नु", "गर्ने")),
+    ),
+    FoldRule(
+        "sound-ratio", 2, "Romanized spelling",
+        "Across scripts, when the skeleton is too short to be evidence: the romanized words, "
+        "vowels kept, at most a third apart.",
+        (("मोमो", "momo"), ("यु", "you"), ("छ", "chha"), ("हो", "ho")),
+        (("ठीक", "shit"),),
+    ),
+    FoldRule(
+        "sound-short", 2, "Short words, one letter apart",
+        "Across scripts, words of up to four romanized letters one letter apart: इज and is.",
+        (("टु", "to"), ("इज", "is"), ("जू", "zoo")),
+        (("the", "द"), ("म", "me")),
+    ),
+    FoldRule(
+        "contracted-verb", 3, "Contracted verb forms",
+        "भाको for भएको, भाछ for भएछ, थ्यो for थियो, रैछ for रहेछ, हैन for होइन.",
+        (("होइन", "हैन"), ("भएको", "भाको"), ("थियो", "थ्यो"), ("रहेछ", "रैछ")),
+        (("थियो", "थिए"),),
+    ),
+    FoldRule(
+        "western-participle", 3, "The western -या participle",
+        "गर्या for गरेको, गर्न्या for गर्ने.",
+        (("गर्या", "गरेको"), ("भन्या", "भनेको")),
+        (("क्या", "केको"),),
+    ),
+    FoldRule(
+        "progressive", 3, "The progressive",
+        "गरिरहेको, गरिराखेको and गरिरा are one form.",
+        (("गरिरहेको", "गरिराको"), ("गरिराखेको", "गरिराको"), ("भइरहेछ", "भइराछ")),
+        (("कीरा", "कीराको"),),
+    ),
+    FoldRule(
+        "benefactive", 3, "The benefactive",
+        "गर्दियो for गरिदियो, हाल्देर for हालिदिएर. Not a final -दिन, where गर्दिन is 'I don't do'.",
+        (("गरिदियो", "गर्दियो"), ("हालिदिएर", "हाल्देर")),
+        (("गर्दिन", "गरिदिन"),),
+    ),
+    FoldRule(
+        "first-plural", 3, "First person plural",
+        "भनौँ, भनूँ, भनुम् and भनम् are one form; so are जाऊँ, जाऔँ and जाम्.",
+        (("भनौँ", "भनुम्"), ("जाऊँ", "जाऔँ"), ("गर्यौँ", "गरेम्")),
+        (("हुँ", "हौँ"),),
+    ),
+    FoldRule(
+        "pronoun", 3, "Contracted pronouns",
+        "उल्ले for उसले, त्यलाई for त्यसलाई, एले for यसले: a table, since -ल्ले is also बल्ले.",
+        (("उसले", "उल्ले"), ("त्यसलाई", "त्यलाई"), ("यसले", "एले")),
+        (("बल्ले", "बसले"),),
+    ),
+    FoldRule(
+        "launu", 3, "लाउनु for लगाउनु",
+        "लाएर for लगाएर. लाइ- only before a verb, so लाइन ('line') stays.",
+        (("लगाएर", "लाएर"), ("लगाउँछ", "लाउँछ")),
+        (("लाइन", "लगाइन"),),
+    ),
+    FoldRule(
+        "emphatic", 3, "The emphatic -ै and doubled consonants",
+        "मात्रै for मात्र, सुरुमै for सुरुमा, मज्जाले for मजाले. Audible, folded by the owner's choice.",
+        (("मात्र", "मात्रै"), ("सुरुमा", "सुरुमै"), ("मज्जाले", "मजाले")),
+    ),
+    FoldRule(
+        "loose", 3, "Loose pairs",
+        "Forms that may also be another word, folded by the owner's choice and to be tightened by "
+        "ear: नि for पनि, या for यहाँ, the infinitive -नु against -न, गर्नुस् for गर्नुहोस्, and the "
+        "passive -इयो against the active -्यो.",
+        (("पनि", "नि"), ("गर्नु", "गर्न"), ("गर्नुहोस्", "गर्नुस्"), ("देख्यो", "देखियो")),
+        (("अनि", "पनि"),),
+    ),
+    FoldRule(
+        "unseen", 3, "Spoken forms not yet in the corpus",
+        "भनेसि for भनेपछि, गर्चु for गर्छु, जान्न for जान्दिनँ.",
+        (("भनेपछि", "भनेसि"), ("गर्छु", "गर्चु"), ("जान्दिनँ", "जान्न")),
+    ),
+    FoldRule(
+        "joined", 3, "One spoken word for two written ones",
+        "भाथ्यो for भएको थियो, गरिराछ for गरिरहेको छ, गरेनि for गरे पनि; matched as split words.",
+        (("भएको थियो", "भाथ्यो"), ("गरिरहेको छ", "गरिराछ"), ("गरे पनि", "गरेनि")),
+    ),
+    FoldRule(
+        "other-words", 3, "Other spoken words",
+        "पहिला for पहिले, रुपियाँ for रुपैयाँ, बुवा for बुबा, बिहा for बिहे.",
+        (("पहिले", "पहिला"), ("रुपैयाँ", "रुपियाँ"), ("बुबा", "बुवा")),
+    ),
+    FoldRule(
+        "colloquial-table", 3, "Colloquial table words",
+        "A word the colloquial tables hold, when no single group above claims it.",
+        (),
+    ),
+)
+# fmt: on

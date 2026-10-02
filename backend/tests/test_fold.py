@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from app.services.fold import (
+    _STAGES,
     FOLD_VERSION,
+    RULEBOOK,
+    TIERS,
     align,
     fold_tokens,
     fold_version,
@@ -14,6 +17,7 @@ from app.services.fold import (
     similarity,
     skeleton,
     spelling_key,
+    which_rule,
     word_errors,
 )
 from app.services.normalize import Ruleset
@@ -520,3 +524,47 @@ class TestSimilarity:
 def test_the_version_names_the_orthography_table_it_was_built_on(ruleset: Ruleset) -> None:
     # A reported WER is only reproducible with both halves: the fold rules and the D64 table.
     assert fold_version(ruleset) == f"{FOLD_VERSION}+test-v1"
+
+
+class TestRulebook:
+    """The rulebook is what the harness shows as its folding rules, so it is held to its word."""
+
+    @pytest.mark.parametrize(
+        ("rule", "ref", "hyp"),
+        [(r.id, a, b) for r in RULEBOOK for a, b in r.examples],
+    )
+    def test_every_example_is_one_word_and_names_its_rule(
+        self, rule: str, ref: str, hyp: str
+    ) -> None:
+        assert word_errors(ref, hyp).errors == 0
+        assert word_errors(hyp, ref).errors == 0
+        if " " not in ref + hyp:
+            assert which_rule(ref, hyp) == rule
+
+    @pytest.mark.parametrize(
+        ("rule", "ref", "hyp"),
+        [(r.id, a, b) for r in RULEBOOK for a, b in r.counterexamples],
+    )
+    def test_every_counterexample_stays_an_error(self, rule: str, ref: str, hyp: str) -> None:
+        assert word_errors(ref, hyp).errors > 0
+
+    def test_ids_are_unique_and_tiers_are_known(self) -> None:
+        ids = [r.id for r in RULEBOOK]
+        assert len(ids) == len(set(ids))
+        assert {r.tier for r in RULEBOOK} <= set(TIERS)
+
+    def test_every_rule_which_rule_can_name_is_in_the_book(self) -> None:
+        named = {stage.rule for stage in _STAGES} | {"number", "sound-skeleton", "sound-ratio",
+                                                       "sound-short", "pronoun", "loose",
+                                                       "unseen", "other-words"}  # fmt: skip
+        assert named <= {r.id for r in RULEBOOK}
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("राम्रो", "राम्रो"), ("Team", "team"), ("टिम", "team"), ("गर्नु", "गर्ने"), ("15", "पन्ध्र"),
+         ("भएको", "भाको"), ("the", "द"), ("घर", "वन")],
+    )  # fmt: skip
+    def test_a_rule_is_named_exactly_when_two_different_spellings_are_one_word(
+        self, left: str, right: str
+    ) -> None:
+        assert (which_rule(left, right) is not None) == (same_word(left, right) and left != right)
