@@ -54,6 +54,13 @@ this (`benchmarks/acoustics/`, about 18 s of CPU per hour).
   (within), 3.13 are a different Nepali word and 1.03 a similar one (mostly a suffix), against
   0.96 English, 0.56 across scripts and 0.39 numbers; deletions 1.66, insertions 0.90.
 
+- **The fine-tune's gold gain is not a crosstalk gain.** vanilla-s1 minus base, within episode:
+  −2.64 points of WER, of which crosstalk's share moved −0.64 [−1.73, 0.17] and noise's +0.04;
+  the rest moved −2.04 [−3.51, −0.80], almost all fewer deletions (−1.34) and numbers (−0.68).
+  It got better about equally on clean and overlapped clips, which is why its WER drop grows
+  with the crosstalk bucket (−1.91 none, −4.98 over 15%) while crosstalk's own cost hardly moves.
+  On FLEURS the +1.14 loss is a different Nepali word (+0.73 [0.42, 1.07]) and deletions
+  (+0.20), not conditions.
 ---
 
 ## Fine-tuning fixed number formats and hid a loss behind them (2026-10-02)

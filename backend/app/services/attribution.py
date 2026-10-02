@@ -162,7 +162,7 @@ def _estimate(
     width = 2 + len(KINDS)
     pooled: dict[str, list[int]] = {}
     for g, times in Counter(draw).items():
-        for cell, values in groups[g].items():
+        for cell, values in groups.get(g, {}).items():
             into = pooled.setdefault(cell, [0] * width)
             for i in range(width):
                 into[i] += values[i] * times
@@ -330,4 +330,78 @@ def card(clips: Iterable[ClipCounts]) -> dict:
             "ref_words": sum(c.words for c in unmeasured),
             "errors": sum(c.errors for c in unmeasured),
         },
+    }
+
+
+# --- against a base model ------------------------------------------------------------------------
+
+#: ``[difference, low, high]`` in points; the interval is ``None`` with fewer than two groups.
+Diff = list
+
+
+def _within_values(estimate: dict) -> dict[str, float | None]:
+    """The card's within-episode numbers of one estimate, flat: each condition, each factor's
+    total, the rest and each kind."""
+    out: dict[str, float | None] = {
+        "wer": _points(estimate["errors"], estimate["words"]),
+        "rest": estimate["within"]["rest"],
+    }
+    for i, kind in enumerate(KINDS):
+        out[f"kind|{kind}"] = estimate["within"]["kinds"][i]
+    for factor, bucket in _conditions():
+        cell = f"{factor}|{bucket}"
+        found = estimate["cells"].get(cell)
+        out[cell] = None if found is None else found["within"]["points"]
+    for factor in ("crosstalk", "snr"):
+        cells = [c for c in estimate["cells"] if c.startswith(f"{factor}|")]
+        out[f"factor|{factor}"] = (
+            sum(estimate["cells"][c]["within"]["points"] or 0.0 for c in cells) if cells else None
+        )
+    return out
+
+
+def difference(run: Iterable[ClipCounts], base: Iterable[ClipCounts]) -> dict:
+    """The run's card minus the base's, within episode, row by row, on the same clips.
+
+    ``run`` and ``base`` must hold the same clips (the caller keeps those both scored): a clip's
+    cell is its audio's, so only the errors differ. Both are resampled with the same draws of
+    groups, so each interval is paired. A row either cannot measure is ``[None, None, None]``.
+
+    Returns:
+        ``{wer, rest, kinds: {kind: Diff}, factors: {factor: Diff}, conditions: {cell: Diff}}``,
+        each ``Diff`` being ``[run minus base, low, high]`` in points.
+    """
+    import random
+
+    prepared = []
+    for clips in (list(run), list(base)):
+        groups = _per_group(clips)
+        prepared.append((groups, _comparisons(groups)))
+    names = sorted(set(prepared[0][0]) | set(prepared[1][0]))
+    rng = random.Random(SEED)
+    draws = [rng.choices(names, k=len(names)) for _ in range(ROUNDS)] if len(names) > 1 else []
+
+    def diffs(draw: list[str]) -> dict[str, float | None]:
+        mine, theirs = (_within_values(_estimate(g, c, draw)) for g, c in prepared)
+        return {
+            key: None if mine[key] is None or theirs.get(key) is None else mine[key] - theirs[key]
+            for key in mine
+        }
+
+    point = diffs(names)
+    sampled = [diffs(d) for d in draws]
+    need = len(draws) // 2 or 1
+
+    def entry(key: str) -> Diff:
+        if point.get(key) is None:
+            return [None, None, None]
+        ci = _interval([s.get(key) for s in sampled], need=need) if draws else None
+        return [point[key], *(ci or [None, None])]
+
+    return {
+        "wer": entry("wer"),
+        "rest": entry("rest"),
+        "kinds": {kind: entry(f"kind|{kind}") for kind in KINDS},
+        "factors": {f: entry(f"factor|{f}") for f in ("crosstalk", "snr")},
+        "conditions": {f"{f}|{b}": entry(f"{f}|{b}") for f, b in _conditions()},
     }

@@ -307,7 +307,11 @@ def _clips(path: Path) -> dict[str, _Clip]:
 def _card(clips: Sequence[_Clip]) -> dict[str, Any]:
     """The attribution card (D111): points of WER per recording condition, and the rest by
     kind of error."""
-    return attribution.card(
+    return attribution.card(_counts_for_card(clips))
+
+
+def _counts_for_card(clips: Sequence[_Clip]) -> list[attribution.ClipCounts]:
+    return [
         attribution.ClipCounts(
             c.group,
             c.bucket,
@@ -316,7 +320,7 @@ def _card(clips: Sequence[_Clip]) -> dict[str, Any]:
             dict(zip(attribution.KINDS, c.kinds, strict=True)),
         )
         for c in clips
-    )
+    ]
 
 
 def _rate(errors: float, words: float) -> float:
@@ -460,6 +464,11 @@ def breakdown(path: Path, *, base: Path | None = None) -> dict[str, Any]:
     out["overlap"] = buckets
     out["numbers"] = _numbers(clips, theirs)
     out["attribution"] = _card(clips)
+    if theirs is not None:
+        shared = [c for c in clips if c.clip_id in theirs]
+        out["attribution"]["vs_base"] = {"clips": len(shared)} | attribution.difference(
+            _counts_for_card(shared), _counts_for_card([theirs[c.clip_id] for c in shared])
+        )
     out["by_values"] = sorted({c.by_value for c in clips if c.by_value is not None})
     return out
 

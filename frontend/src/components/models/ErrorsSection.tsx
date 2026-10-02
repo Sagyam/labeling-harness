@@ -826,7 +826,11 @@ export function ErrorsSection({
               <>
                 <Headline b={breakdown} />
                 {breakdown.attribution && (
-                  <AttributionCard a={breakdown.attribution} setName={setLabel(set ?? '')} />
+                  <AttributionCard
+                    a={breakdown.attribution}
+                    setName={setLabel(set ?? '')}
+                    baseName={breakdown.base ? (models.find((m) => m.slug === breakdown.base)?.name ?? breakdown.base) : null}
+                  />
                 )}
                 <OverlapBlock
                   b={breakdown}

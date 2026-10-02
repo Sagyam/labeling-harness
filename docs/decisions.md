@@ -2684,6 +2684,10 @@ WER each condition costs, and splits the rest by kind of error.
   within) -- and on IndicVoices it comes out with the wrong sign. Both methods in two columns
   were tried first and made the card unreadable.
 - **Intervals resample the set's own unit**, 1000 seeded draws, like every other interval here.
+- **Against a comparison model, each row is a paired difference** (`attribution.difference`): this
+  model's within-episode points minus the other's, on the clips both scored, both resampled with
+  the same draws of episodes. A clip's cell is its audio's, so only the errors differ. A row
+  either model cannot measure is left blank, not zero.
 - **It tags errors, it never forgives them** (WER-Breakdown.md): the WER is unchanged, and the
   card is an extra block beside it.
 

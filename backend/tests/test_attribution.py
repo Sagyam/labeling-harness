@@ -160,3 +160,49 @@ def test_mh_ratio_counts_a_repeated_group_each_time() -> None:
     ratio, informative = mh_rate_ratio(exposed, baseline, ["a", "b"])
     assert (ratio, informative) == (pytest.approx(14 / 9), 2)
     assert mh_rate_ratio(exposed, baseline, ["a", "a"]) == (pytest.approx(2.0), 2)
+
+
+# --- against a base model ------------------------------------------------------------------------
+
+
+def test_against_itself_every_row_moves_by_nothing() -> None:
+    from app.services.attribution import difference
+
+    clips = []
+    for g in range(4):
+        clips += [_clip(f"e{g}", 100, 4 + g), _clip(f"e{g}", 100, 9 + g, crosstalk=">15%")]
+    got = difference(clips, clips)
+    assert got["wer"][0] == 0.0
+    assert got["factors"]["crosstalk"][0] == 0.0
+    assert got["rest"][0] == 0.0
+    assert all(v[0] == 0.0 for v in got["kinds"].values())
+
+
+def test_a_gain_on_crosstalk_clips_is_charged_to_crosstalk_by_hand() -> None:
+    """Base: clean 5 in 100, crosstalk 20 in 100 (ratio 4, 7.5 points). Run: crosstalk 10 in
+    100 (ratio 2, 2.5 points). The 5 points of WER it gained are all crosstalk's."""
+    from app.services.attribution import difference
+
+    base = [_clip("e1", 100, 5), _clip("e1", 100, 20, crosstalk=">15%")]
+    run = [_clip("e1", 100, 5), _clip("e1", 100, 10, crosstalk=">15%")]
+    got = difference(run, base)
+    assert got["wer"][0] == pytest.approx(-5.0)
+    assert got["factors"]["crosstalk"][0] == pytest.approx(-5.0)
+    assert got["conditions"]["crosstalk|>15%"][0] == pytest.approx(-5.0)
+    assert got["rest"][0] == pytest.approx(0.0)
+    assert got["wer"][1:] == [None, None], "one episode: no interval"
+
+
+def test_differences_carry_paired_intervals_and_skip_what_either_cannot_measure() -> None:
+    from app.services.attribution import difference
+
+    base, run = [], []
+    for g in range(6):
+        base += [_clip(f"e{g}", 100, 5 + g), _clip(f"e{g}", 100, 20 + g, crosstalk=">15%")]
+        run += [_clip(f"e{g}", 100, 5 + g), _clip(f"e{g}", 100, 12 + g, crosstalk=">15%")]
+    base.append(_clip("lonely", 100, 9, crosstalk="0-5%"))  # no clean clip in its episode
+    run.append(_clip("lonely", 100, 3, crosstalk="0-5%"))
+    got = difference(run, base)
+    d, lo, hi = got["factors"]["crosstalk"]
+    assert lo <= d <= hi < 0
+    assert got["conditions"]["crosstalk|0-5%"] == [None, None, None]

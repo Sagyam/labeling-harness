@@ -1269,6 +1269,21 @@ export interface Attribution {
   factors: Partial<Record<'crosstalk' | 'snr', Record<AttributionMethod, { points: number; points_ci: [number, number] | null }>>>
   rest: Record<AttributionMethod, AttributionRest>
   unmeasured: { clips: number; ref_words: number; errors: number }
+  /** With a comparison model: each within-episode row, this model minus it, on the clips both
+   * scored, with a paired interval from resampling episodes. */
+  vs_base?: AttributionVsBase
+}
+
+/** `[difference, low, high]` in points; all null where either model cannot measure the row. */
+export type AttributionDiff = [number | null, number | null, number | null]
+
+export interface AttributionVsBase {
+  clips: number
+  wer: AttributionDiff
+  rest: AttributionDiff
+  kinds: Record<AttributionKind, AttributionDiff>
+  factors: Record<'crosstalk' | 'snr', AttributionDiff>
+  conditions: Record<string, AttributionDiff>
 }
 
 export interface ErrorBreakdown extends ErrorCounts {

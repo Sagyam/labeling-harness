@@ -143,6 +143,8 @@ baseline (no crosstalk, 45+ dB) or unmeasured.
 - **The rest**, everything no condition took, by kind of error: a number, a deletion, an
   insertion, a substitution across scripts, between English words, between Devanagari words at
   similarity 0.75 or more (mostly suffixes), and any other substitution. The rows sum to the WER.
+- **Against another model**, every row gains this model minus that one, on the clips both
+  scored, with a paired interval: which rows a fine-tune moved.
 
 ## The subcases as measured (2026-10-01)
 

@@ -16,7 +16,7 @@ import { RiArrowDownSLine, RiArrowRightSLine } from '@remixicon/react'
 
 import { Legend, PanelHeading } from '@/components/analytics/primitives'
 import { cn } from '@/lib/utils'
-import type { Attribution, AttributionCondition, AttributionKind } from '@/types'
+import type { Attribution, AttributionCondition, AttributionDiff, AttributionKind } from '@/types'
 
 type Factor = 'crosstalk' | 'snr'
 
@@ -62,6 +62,34 @@ function Ci({ ci }: { ci: [number, number] | null | undefined }) {
     <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
       {ci[0].toFixed(2)} to {ci[1].toFixed(2)}
     </span>
+  )
+}
+
+/** This model minus the comparison, coloured only when its interval clears zero: green where it
+ * makes fewer errors, red where it makes more. */
+function DiffCell({ d, strong = false }: { d: AttributionDiff | undefined; strong?: boolean }) {
+  if (!d || d[0] === null) {
+    return <td className="text-right text-[10px] text-muted-foreground">{d ? 'not measurable' : ''}</td>
+  }
+  const [v, lo, hi] = d
+  const tone =
+    lo !== null && lo > 0
+      ? 'text-rose-600 dark:text-rose-400'
+      : hi !== null && hi < 0
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : 'text-muted-foreground'
+  return (
+    <td className={cn('pl-4 text-right font-mono tabular-nums', tone)}>
+      <span className={cn(strong && 'font-semibold')}>
+        {v > 0 ? '+' : ''}
+        {v.toFixed(2)}
+      </span>
+      {lo !== null && hi !== null && (
+        <span className="ml-1.5 text-[10px] font-normal">
+          {lo.toFixed(2)} to {hi.toFixed(2)}
+        </span>
+      )}
+    </td>
   )
 }
 
@@ -167,6 +195,7 @@ function FactorRows({ a, factor }: { a: Attribution; factor: Factor }) {
             </>
           )}
         </td>
+        {a.vs_base && <DiffCell d={a.vs_base.factors[factor]} strong />}
       </tr>
       {open &&
         buckets.map((c) => (
@@ -190,13 +219,24 @@ function FactorRows({ a, factor }: { a: Attribution; factor: Factor }) {
                 </span>
               )}
             </td>
+            {a.vs_base && <DiffCell d={a.vs_base.conditions[`${factor}|${c.bucket}`]} />}
           </tr>
         ))}
     </>
   )
 }
 
-export function AttributionCard({ a, setName }: { a: Attribution; setName: string }) {
+export function AttributionCard({
+  a,
+  setName,
+  baseName,
+}: {
+  a: Attribution
+  setName: string
+  /** The comparison model's name, when one is picked and the card carries `vs_base`. */
+  baseName?: string | null
+}) {
+  const vs = baseName ? a.vs_base : undefined
   const factors = (['crosstalk', 'snr'] as const).filter((f) => a.factors[f])
   const rest = a.rest.within
   const floor = (factor: Factor) => a.factors[factor]?.floor.points
@@ -222,11 +262,19 @@ export function AttributionCard({ a, setName }: { a: Attribution; setName: strin
             <th className="text-right font-normal" title="Points of the set's WER, with a 95% interval from resampling episodes">
               points of WER · 95% interval
             </th>
+            {vs && (
+              <th
+                className="pl-4 text-right font-normal"
+                title={`This model's points minus ${baseName}'s, on the ${vs.clips} clips both scored; green or red only when the interval clears zero`}
+              >
+                minus {baseName}
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
           {factors.map((factor) => (
-            <FactorRows key={factor} a={a} factor={factor} />
+            <FactorRows key={factor} a={vs ? a : { ...a, vs_base: undefined }} factor={factor} />
           ))}
           <tr className="border-t">
             <td className="py-1.5">
@@ -240,6 +288,7 @@ export function AttributionCard({ a, setName }: { a: Attribution; setName: strin
               <span className="font-semibold">{pts(rest.points)}</span>
               <Ci ci={rest.points_ci} />
             </td>
+            {vs && <DiffCell d={vs.rest} strong />}
           </tr>
           {rest.kinds.map((k) => (
             <tr key={k.kind} className="text-[11px]">
@@ -250,11 +299,13 @@ export function AttributionCard({ a, setName }: { a: Attribution; setName: strin
                 {pts(k.points)}
                 <Ci ci={k.points_ci} />
               </td>
+              {vs && <DiffCell d={vs.kinds[k.kind]} />}
             </tr>
           ))}
           <tr className="border-t">
             <td className="py-1.5 font-semibold">Total: the WER</td>
             <td className="text-right font-mono font-semibold tabular-nums">{pts(a.wer)}</td>
+            {vs && <DiffCell d={vs.wer} strong />}
           </tr>
         </tbody>
       </table>

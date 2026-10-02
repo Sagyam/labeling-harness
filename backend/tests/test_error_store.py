@@ -377,3 +377,16 @@ def test_each_error_is_one_kind_and_the_card_reads_both_conditions(tmp_path: Pat
     words = got["ref_words"]
     expected = dict.fromkeys(kinds, 100 / words) | {"deletion": 100 * (1 + 1 / ratio) / words}
     assert kinds == pytest.approx(expected)
+
+
+def test_against_a_base_the_card_says_which_rows_moved(run: Path, base: Path) -> None:
+    from app.services.error_store import breakdown
+
+    got = breakdown(run, base=base)
+    vs = got["attribution"]["vs_base"]
+    assert vs["clips"] == 6
+    assert vs["wer"][0] == pytest.approx(got["vs_base"]["wer"][0])
+    kinds = sum(v[0] for v in vs["kinds"].values())
+    conditions = sum(v[0] or 0.0 for v in vs["factors"].values() if v[0] is not None)
+    assert kinds + conditions == pytest.approx(vs["wer"][0])
+    assert "vs_base" not in breakdown(run)["attribution"]
