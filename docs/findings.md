@@ -17,8 +17,8 @@ What survives:
   `Sagyam/nepanglish-asr-flex-ft` under `flex-2026-09-30/`: bf16 weights for both vanilla seeds,
   and every run's transcripts, metrics and error rows. Base and vanilla-s1 are also imported into
   the harness. Every model before them was deleted on 2026-10-03, from the harness and the hub
-  (the 2026-09-22 sweep, the 2026-09-17 model, the 2026-09-27 public-set runs), with the hub's
-  history squashed: they were scored on exports that no longer exist, so the numbers below are
+  (the 2026-09-22 sweep, the 2026-09-17 model, the 2026-09-27 public-set runs, the 2026-09-24
+  step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
   their only record.
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
@@ -439,8 +439,9 @@ The measuring code was discarded.
 Roadmap §B, step 0: each student fine-tuned on the 30 h of verified train labels, nothing else,
 and scored on this export's val and gold against Flex p00-s0 (the 2026-09-22 run on the same
 export), folded (fold-v3), paired clip by clip with episodes resampled. Weights, transcripts and
-per-class metrics are in the private HF repo `Sagyam/nepanglish-asr-students` under
-`distill-step0-2026-09-24/`; `Distill.ipynb` (NeMo) and `DistillHF.ipynb` (transformers) at
+per-class metrics were in the private HF repo `Sagyam/nepanglish-asr-students` under
+`distill-step0-2026-09-24/` until 2026-10-03, when the repo was emptied for students trained on
+the 2026-09-30 export; `Distill.ipynb` (NeMo) and `DistillHF.ipynb` (transformers) at
 ce63dcd.
 
 | Student | Best epoch | Val WER (S / D / I) | Gold WER (S / D / I) | Gold minus Flex [95% CI] | Gold RTF (A100) |
