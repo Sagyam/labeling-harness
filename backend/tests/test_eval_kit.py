@@ -58,6 +58,19 @@ class _Score:
         }
 
 
+class _Forgiving(_Score):
+    """A newer fold: an ``x`` in the transcript is forgiven."""
+
+    @staticmethod
+    def per_clip(refs, hyps):
+        fixed = []
+        for ref, hyp in zip(refs, hyps, strict=True):
+            r = ref.split()
+            words = [r[i] if w == "x" and i < len(r) else w for i, w in enumerate(hyp.split())]
+            fixed.append(" ".join(words))
+        return _Score.per_clip(refs, fixed)
+
+
 def _row(sid: str, text: str, episode: str = "e1", **classes: str) -> dict:
     return {
         "segment_id": sid,
@@ -247,6 +260,85 @@ def test_a_run_is_paired_against_each_reference_that_scored_its_clips(tmp_path: 
     assert row["gold"]["vs"]["old-gold-only"]["clips"] == 1
     assert set(row["val"]["vs"]) == {"teacher"}
     assert row["val"]["vs"]["teacher"]["all"][0] == pytest.approx(-25.0)
+
+
+# --- scoring a finished run again under newer rules -----------------------------------------------
+
+
+def _finished_run(tmp_path: Path) -> None:
+    evalkit.evaluate_run(
+        tmp_path, "vanilla-s0", splits=_splits(),
+        decode=_decoder({"g2": "one two x y"}, log=[("g2", "x x x x", "one two x y")]),
+        score=_Score, card={"name": "Flex FT", "fold_version": "fold-v3"},
+        meta={"recipe": "vanilla", "seed": 0}, keys=("overlap",),
+    )  # fmt: skip
+
+
+def test_a_finished_run_is_scored_again_from_its_transcripts_without_decoding(tmp_path: Path):
+    _finished_run(tmp_path)
+    before = json.loads((tmp_path / "harness" / "model_card.json").read_text("utf-8"))
+    assert before["gold_wer"] == pytest.approx(100 * 2 / 12)
+
+    row = evalkit.rescore_run(
+        tmp_path, "vanilla-s0", splits=_splits(), score=_Forgiving, fold_version="fold-v4",
+        keys=("overlap",),
+    )  # fmt: skip
+
+    assert row["gold_wer"] == pytest.approx(100 * 1 / 12)  # the x is forgiven, the y is not
+    assert (row["run_name"], row["recipe"], row["seed"]) == ("vanilla-s0", "vanilla", 0)
+    card = json.loads((tmp_path / "harness" / "model_card.json").read_text("utf-8"))
+    assert (card["name"], card["fold_version"], card["gold_wer"]) == (
+        "Flex FT", "fold-v4", row["gold_wer"],
+    )  # fmt: skip
+    assert card["created_at"] == before["created_at"] and card["rescored_at"].endswith("+00:00")
+    gold = json.loads((tmp_path / "gold_metrics.json").read_text("utf-8"))
+    assert gold["retried"] == [{"segment_id": "g2", "first": "x x x x", "retry": "one two x y"}]
+    assert gold["rtf"] == pytest.approx(0.1)  # the compute the decode took, kept
+    assert evalkit.read_hyps(tmp_path / "harness" / "gold.jsonl")["g2"] == "one two x y"
+    assert json.loads((tmp_path / "per_clip.json").read_text())["gold"]["g2"] == [1, 4]
+    assert json.loads((tmp_path / "result.json").read_text("utf-8")) == row
+
+
+def test_a_finished_run_is_paired_again_against_its_references(tmp_path: Path):
+    _finished_run(tmp_path)
+    row = evalkit.rescore_run(
+        tmp_path, "vanilla-s0", splits=_splits(), score=_Score, fold_version="fold-v4",
+        references={"teacher": {"gold": {"g1": [0, 4], "g2": [0, 4], "g3": [0, 4]}}}, keys=(),
+    )  # fmt: skip
+    assert row["gold"]["vs"]["teacher"]["all"][0] == pytest.approx(100 * 2 / 12)
+
+
+def test_a_clip_the_run_never_transcribed_is_refused(tmp_path: Path):
+    _finished_run(tmp_path)
+    splits = _splits()
+    splits["gold"].append(_row("g4", "a b"))
+    with pytest.raises(ValueError, match="g4"):
+        evalkit.rescore_run(tmp_path, "vanilla-s0", splits=splits, score=_Score, fold_version="v")
+
+
+def test_a_public_set_is_scored_again_from_its_lines(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        evalkit, "load_benchmark", lambda name, work, token, limit=None: _bench_rows()
+    )
+    evalkit.run_benchmarks(
+        tmp_path, decode=_decoder({"iv-00001": "a b x y"}), score=_Score, work=tmp_path / "w",
+        token="t", names=("indicvoices",), limit=3,
+    )  # fmt: skip
+    before = json.loads((tmp_path / "benchmarks" / "indicvoices.json").read_text("utf-8"))
+    assert before["wer"] == pytest.approx(100 * 2 / 11)
+
+    summary = evalkit.rescore_benchmark(tmp_path, "indicvoices", score=_Forgiving)
+
+    assert summary["wer"] == pytest.approx(100 * 1 / 11)
+    assert summary["by"]["Conversation"]["wer"] == pytest.approx(25.0)
+    assert {k: summary[k] for k in ("hours", "x_realtime", "retried", "limit")} == {
+        k: before[k] for k in ("hours", "x_realtime", "retried", "limit")
+    }
+    assert json.loads((tmp_path / "benchmarks" / "indicvoices.json").read_text("utf-8")) == summary
+    lines = (tmp_path / "benchmarks" / "indicvoices.jsonl").read_text("utf-8").splitlines()
+    assert json.loads(lines[1]) == {"id": "iv-00001", "group": "s1", "ref": "a b c d",
+                                    "hyp": "a b x y", "errors": 1, "words": 4,
+                                    "scenario": "Conversation"}  # fmt: skip
 
 
 # --- plain WER ------------------------------------------------------------------------------------

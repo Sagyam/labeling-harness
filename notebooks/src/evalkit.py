@@ -395,6 +395,141 @@ def evaluate_run(
     return row
 
 
+# --- a finished run, scored again under newer rules --------------------------------------------
+
+#: What `evaluate_run` derives from the scores, in `result.json` and the card: everything else in
+#: them is the run's recipe, kept as it was when the run is scored again.
+_ROW_SCORES = ("run_name", "val_wer", "gold_wer", "gold", "val", "gold_by_class")
+_CARD_SCORES = (
+    "created_at",
+    "rescored_at",
+    "run_name",
+    "val_wer",
+    "gold_wer",
+    "val_sid",
+    "gold_sid",
+)
+
+
+def stored_decode(out: Path) -> Decode:
+    """A `decode` that reads a finished run's transcripts, compute and loop retries from its
+    files instead of running a model. A clip the run never transcribed is refused: the rows are
+    from another export."""
+    out = Path(out)
+    texts: dict[str, tuple[str, float]] = {}
+    retries: dict[str, tuple[str, str, str]] = {}
+    for split in SPLITS:
+        hyps = out / "harness" / f"{split}.jsonl"
+        if hyps.exists():
+            with hyps.open(encoding="utf-8") as fh:
+                for j in map(json.loads, fh):
+                    texts[j["segment_id"]] = (j["text"], j["compute_s"])
+        metrics = out / f"{split}_metrics.json"
+        if metrics.exists():
+            for r in json.loads(metrics.read_text("utf-8")).get("retried", []):
+                retries[r["segment_id"]] = (r["segment_id"], r["first"], r["retry"])
+
+    def decode(rows: Sequence[dict]) -> tuple[list[str], list[float], list[tuple[str, str, str]]]:
+        missing = [r["segment_id"] for r in rows if r["segment_id"] not in texts]
+        if missing:
+            raise ValueError(
+                f"{len(missing)} clip(s) this run never transcribed, first {missing[0]!r}: "
+                "the rows are from another export"
+            )
+        ids = [r["segment_id"] for r in rows]
+        return (
+            [texts[i][0] for i in ids],
+            [texts[i][1] for i in ids],
+            [retries[i] for i in ids if i in retries],
+        )
+
+    return decode
+
+
+def rescore_run(
+    out: Path,
+    run: str,
+    *,
+    splits: Mapping[str, Sequence[dict]],
+    score: Any,
+    fold_version: str | None = None,
+    references: Mapping[str, Mapping[str, Counts]] | None = None,
+    keys: Sequence[str] = REPORT_KEYS,
+) -> dict[str, Any]:
+    """Score a finished run again from its stored transcripts, under `score`'s rules (D113).
+
+    The run's files (`evaluate_run`) are rewritten as if it had been scored today: the metrics,
+    error rows, per-clip counts, result row and card, with the recipe kept from `result.json`, the
+    card's `created_at` kept and `rescored_at` added, and `fold_version` (default:
+    `score.fold_version`) set. Nothing is decoded."""
+    out = Path(out)
+    old_row = json.loads((out / "result.json").read_text("utf-8"))
+    old_card = json.loads((out / "harness" / "model_card.json").read_text("utf-8"))
+    meta = {k: v for k, v in old_row.items() if k not in _ROW_SCORES}
+    card = {k: v for k, v in old_card.items() if k not in _CARD_SCORES and k not in meta}
+    card["fold_version"] = fold_version or score.fold_version
+    row = evaluate_run(
+        out, run, splits=splits, decode=stored_decode(out), score=score, card=card, meta=meta,
+        references=references, keys=keys,
+    )  # fmt: skip
+    path = out / "harness" / "model_card.json"
+    full = json.loads(path.read_text("utf-8"))
+    full["created_at"] = old_card.get("created_at", full["created_at"])
+    full["rescored_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")  # noqa: UP017
+    path.write_text(json.dumps(full, indent=1, ensure_ascii=False))
+    return row
+
+
+def rescore_benchmark(
+    out: Path,
+    name: str,
+    *,
+    score: Any,
+    run: str | None = None,
+    conditions_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Score a public set again from its stored lines (`run_benchmarks`), under `score`'s rules.
+
+    The lines hold each clip's reference, transcript, group and `by` value, which is all a score
+    needs; the hours, speed, retries and limit of the decode are kept from the old summary.
+    Rewrites `<name>.json`, `<name>.jsonl` and the set's error rows."""
+    out = Path(out)
+    folder = out / "benchmarks"
+    old = json.loads((folder / f"{name}.json").read_text("utf-8"))
+    with (folder / f"{name}.jsonl").open(encoding="utf-8") as fh:
+        lines = [json.loads(line) for line in fh]
+    by = BENCHMARKS[name].by
+    rows = [
+        {
+            "segment_id": x["id"],
+            "episode_id": x["group"],
+            "text": x["ref"],
+            "start_time": 0.0,
+            "end_time": 0.0,
+            **({by: x[by]} if by else {}),
+        }
+        for x in lines
+    ]
+    summary, new_lines = score_benchmark(
+        name,
+        rows,
+        [x["hyp"] for x in lines],
+        score,
+        errors=out / "harness" / "errors" / f"{name}.parquet",
+        run=run or out.name,
+        overlap=_measured(conditions_dir, "overlap", name),
+        snr=_measured(conditions_dir, "acoustics", name),
+    )
+    for key in ("hours", "retried", "x_realtime", "limit"):
+        if key in old:
+            summary[key] = old[key]
+    with (folder / f"{name}.jsonl").open("w", encoding="utf-8") as fh:
+        fh.writelines(json.dumps(line, ensure_ascii=False) + "\n" for line in new_lines)
+    (folder / f"{name}.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
+    print(f"{name}: WER {old['wer']:.2f} -> {summary['wer']:.2f}")
+    return summary
+
+
 # --- the public sets -----------------------------------------------------------------------------
 
 
