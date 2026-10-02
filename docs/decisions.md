@@ -2762,7 +2762,8 @@ crosstalk. Most are a listener's backchannel in crosstalk, which the labels keep
   `evalkit.rescore_run` and `rescore_benchmark`, from their stored transcripts, keeping the
   recipe and `created_at` and adding `rescored_at`. No GPU decode is repeated for a ruler change.
   Older hub folders made from exports that no longer exist (the 2026-09-22 sweep, the 2026-09-17
-  model, the 2026-09-27 benchmarks) stay as written: their rows cannot be rebuilt.
+  model, the 2026-09-27 benchmarks) were not re-scored, since their rows cannot be rebuilt, and
+  were deleted on 2026-10-03 with the hub's history (owner): only the current runs are kept.
 
 **Reversal:** delete the tag and `PARTICLES`, set `MINER_VERSION` back, and derive the error
 files again. Nothing else reads it. Re-scoring is undone by re-scoring under the older rules; the

@@ -626,33 +626,6 @@ the Models page (D83). The weights go up as soon as training ends, before scorin
 result is already there is skipped, so after a dropped session, run the notebook again.
 """
 
-REFERENCES_NOTE = """
-## The earlier model, on the clips both scored
-
-No fine-tuned weights from before this export exist any more, so the earlier model cannot be
-decoded again. Its transcripts are still on the hub. They are scored here against today's labels,
-and each new run is paired with it on the clips both transcribed: the old gold and val clips that
-are still in those splits. The difference is the effect of the data added since, on those clips
-only; the new gold clips have no earlier transcript.
-"""
-
-REFERENCES = r"""
-references = {}
-for name, folder in REFERENCES.items():
-    ref = {}
-    for split in evalkit.SPLITS:
-        remote = f"{folder}/harness/{split}.jsonl"
-        if not api.file_exists(OUT_REPO, remote):
-            print(f"{name}: no {split} transcripts in {OUT_REPO}, left out")
-            continue
-        hyps = evalkit.read_hyps(hf_hub_download(OUT_REPO, remote, token=TOKEN))
-        ref[split] = evalkit.reference_counts(splits[split], hyps, score)
-        errors, words = (sum(c[i] for c in ref[split].values()) for i in (0, 1))
-        print(f"{name} {split}: {len(ref[split])} of {len(splits[split])} clips shared, "
-              f"WER {100 * errors / max(words, 1):.2f} on them")
-    references[name] = ref
-"""
-
 RUNS_NOTE = """
 ## Train, score and upload each seed
 
@@ -703,8 +676,6 @@ train_cells = [
         TRAIN_CONFIG,
         r"""
 SEEDS = (0, 1)            # both vanilla: the second measures run-to-run noise
-# Earlier runs whose transcripts are still in OUT_REPO, as {name: folder holding harness/<split>.jsonl}.
-REFERENCES = {"p00-s0 (2026-09-22)": "flex-xtalk-sweep-2026-09-22/flex-xtalk-sweep-2026-09-22-p00-s0"}
 """,
     ),
     md("## Setup"),
@@ -717,16 +688,13 @@ REFERENCES = {"p00-s0 (2026-09-22)": "flex-xtalk-sweep-2026-09-22/flex-xtalk-swe
     code(TRAIN),
     md(SPEED_NOTE),
     code(SPEED),
-    md(REFERENCES_NOTE),
-    code(REFERENCES),
     md(RUNS_NOTE),
     md("### vanilla, seed 0"),
-    code('train_run("vanilla", SEEDS[0], references=references)'),
+    code('train_run("vanilla", SEEDS[0])'),
     md("### vanilla, seed 1"),
     code(r"""
 first = run_counts(f"vanilla-s{SEEDS[0]}")
-train_run("vanilla", SEEDS[1],
-          references={**references, **({f"vanilla-s{SEEDS[0]}": first} if first else {})})
+train_run("vanilla", SEEDS[1], references={f"vanilla-s{SEEDS[0]}": first} if first else None)
 """),
     md(TRAIN_REPORT_NOTE),
     code(TRAIN_REPORT),

@@ -13,9 +13,13 @@ That folder was **deleted on 2026-09-15** at the owner's request, so the numbers
 longer be re-derived from those files.
 
 What survives:
-- **The current model.** Its int8 CPU export and harness files are in
-  `data/models/asr/indic-transcribe-flex-ft-2026-09-15/`. Its bf16 weights are gone. Re-running
-  04c builds an equivalent model in about 40 minutes on an A100.
+- **The current models.** The 2026-09-30 runs (base, vanilla-s0, vanilla-s1) in
+  `Sagyam/nepanglish-asr-flex-ft` under `flex-2026-09-30/`: bf16 weights for both vanilla seeds,
+  and every run's transcripts, metrics and error rows. Base and vanilla-s1 are also imported into
+  the harness. Every model before them was deleted on 2026-10-03, from the harness and the hub
+  (the 2026-09-22 sweep, the 2026-09-17 model, the 2026-09-27 public-set runs), with the hub's
+  history squashed: they were scored on exports that no longer exist, so the numbers below are
+  their only record.
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
@@ -70,8 +74,8 @@ again. Gold / val, fold-v3 (fold-v2 for 09-16) -> fold-v4:
 | flex-2026-09-30 vanilla-s1 | 10.76 -> 11.12 | 6.93 -> 7.16 |
 | flex-2026-09-30 vanilla-s0 (hub only) | 10.68 -> 11.04 | 6.95 -> 7.19 |
 | flex-2026-09-30 base | 13.40 -> 13.79 | 9.24 -> 9.53 |
-| indic-transcribe-flex-ft-2026-09-17 (harness) | 6.94 -> 7.19 | 5.75 -> 6.11 |
-| indic-transcribe-flex-ft-2026-09-16 (harness) | 6.58 -> 6.49 | 12.59 -> 12.92 |
+| indic-transcribe-flex-ft-2026-09-17 (harness; removed 2026-10-03) | 6.94 -> 7.19 | 5.75 -> 6.11 |
+| indic-transcribe-flex-ft-2026-09-16 (harness; removed 2026-10-03) | 6.58 -> 6.49 | 12.59 -> 12.92 |
 
 The public sets, base / vanilla-s1: FLEURS 10.67 / 11.89, OpenSLR 54 7.98 / 7.78, Common Voice
 8.38 / 8.55, IndicVoices 12.59 / 12.31, nepali_cs 11.26 / 11.92. The seeds' val gap is now 0.03
@@ -241,8 +245,8 @@ The 2026-09-17 model (the deployed one; the 2026-09-22 sweep kept no weights, so
 be used) against base Indic-Transcribe-Flex on five public Nepali sets, same decoder as gold
 (greedy, mixed mode, loop retry), bf16, one A100. Folded (fold-v3), 95% intervals by resampling
 speakers (FLEURS: sentences; nepali_cs: videos). Per-clip transcripts, summaries and the blend
-results are in `Sagyam/nepanglish-asr-flex-ft` under `public-benchmarks-2026-09-27/`; the notebook
-was not kept.
+results were in `Sagyam/nepanglish-asr-flex-ft` under `public-benchmarks-2026-09-27/` until
+2026-10-03; the notebook was not kept.
 
 | Set | Clips | Hours | What it is |
 |---|---:|---:|---|
@@ -758,8 +762,8 @@ Paired on gold against p = 0, 95% interval from resampling episodes:
 **The sweep was cut short, so the D96 rule was not applied.** p = 0.3 was lost mid-run to a power
 cut and the owner then stopped the sweep: p = 0.3 and the second p = 0 seed never ran. No winner
 was chosen and no weights were kept (`best/` is uploaded only for a winner). The 2026-09-17
-model stays the deployed one. Every point's metrics, transcripts and per-clip counts are in
-`Sagyam/nepanglish-asr-flex-ft/flex-xtalk-sweep-2026-09-22/`.
+model stays the deployed one. Every point's metrics, transcripts and per-clip counts were in
+`Sagyam/nepanglish-asr-flex-ft/flex-xtalk-sweep-2026-09-22/` until 2026-10-03.
 
 - **No crosstalk bucket improved, and there is no dose response.** Every interval holds zero. At
   >15% the change runs −0.57, +0.43, −0.69 as p goes 0.1, 0.2, 0.5: putting synthetic crosstalk
