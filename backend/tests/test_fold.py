@@ -662,3 +662,63 @@ class TestSoundMatchesAreEvidence:
     )
     def test_a_nepali_function_word_romanized_still_matches(self, dev: str, latin: str) -> None:
         assert same_word(dev, latin)
+
+
+class TestOrthographyTheAuditFound:
+    """fold-v4, tier 1: one word written another way, charged until now (audit of 2026-10-02)."""
+
+    @pytest.mark.parametrize(
+        ("latin", "dev"),
+        [("B", "बी"), ("A", "ए"), ("J", "जे"), ("ESIC", "इएसआइसी"), ("EPFO", "इपिएफओ"),
+         ("kg", "केजी"), ("UN", "युएन"), ("TV", "टिभी"), ("PhD", "पीएचडी"), ("KC", "केसी"),
+         ("NDTV", "एनडिटिभी"), ("W", "डब्लु"), ("X", "एक्स")],
+    )  # fmt: skip
+    def test_letters_are_their_names(self, latin: str, dev: str) -> None:
+        assert same_word(latin, dev)
+        assert which_rule(latin, dev) == "letter-names"
+
+    @pytest.mark.parametrize(("latin", "dev"), [("a", "ए"), ("B", "भी"), ("UN", "यस"), ("X", "एक")])
+    def test_a_word_is_not_spelled_out_and_a_letter_is_its_own_name(
+        self, latin: str, dev: str
+    ) -> None:
+        assert not same_word(latin, dev)
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("घन्टा", "घण्टा"), ("घन्टाका", "घण्टाका"), ("अन्डा", "अण्डा"), ("मनोरन्जन", "मनोरञ्जन"),
+         ("झन्डै", "झण्डै"), ("कासाब्लाङ्का", "कासाब्लान्का")],
+    )  # fmt: skip
+    def test_any_nasal_before_a_stop_is_an_anusvara(self, left: str, right: str) -> None:
+        assert same_word(left, right)
+
+    @pytest.mark.parametrize(("left", "right"), [("भन्नु", "भन्न"), ("घुम्नु", "घुम्न")])
+    def test_a_nasal_before_a_nasal_keeps_its_virama(self, left: str, right: str) -> None:
+        assert which_rule(left, right) == "loose"
+
+    @pytest.mark.parametrize(
+        ("left", "right"), [("प्राय", "प्रायः"), ("पुन", "पुनः"), ("दुःख", "दुख"), ("क्रमश", "क्रमशः")]
+    )
+    def test_a_visarga_is_not_heard(self, left: str, right: str) -> None:
+        assert same_word(left, right)
+        assert which_rule(left, right) == "visarga"
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("OK", "okay"), ("ok", "Okay"), ("km", "kilometer"), ("kilometre", "kilometer"),
+         ("kW", "kilowatt"), ("kg", "kilogram"), ("cm", "centimeter"), ("किमी", "km")],
+    )  # fmt: skip
+    def test_an_english_abbreviation_is_the_word(self, left: str, right: str) -> None:
+        assert same_word(left, right)
+        assert which_rule(left, right) == "english-variant"
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("11th", "एघारौँ"), ("10th", "दसौँ"), ("19th", "उन्नाइसौँ"), ("13th", "13 औं"),
+         ("1st", "प्रथम"), ("पहिलो", "1st")],
+    )  # fmt: skip
+    def test_a_nepali_ordinal_is_the_ordinal(self, left: str, right: str) -> None:
+        assert word_errors(left, right).errors == 0
+
+    @pytest.mark.parametrize(("left", "right"), [("16th", "सोह्र"), ("1000th", "हजारौं")])
+    def test_a_cardinal_and_thousands_of_are_not_ordinals(self, left: str, right: str) -> None:
+        assert word_errors(left, right).errors > 0

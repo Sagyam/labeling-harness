@@ -63,6 +63,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
+from itertools import product
 
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 
@@ -91,6 +92,23 @@ _DEV_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 #: Vowel length, which Nepali writers do not hold consistently: ी/ि, ू/ु, ई/इ, ऊ/उ.
 _VOWEL_LENGTH = str.maketrans({"ी": "ि", "ू": "ु", "ई": "इ", "ऊ": "उ"})
 _VIRAMA = "्"
+#: English abbreviations and spellings that are one word (fold-v4): ``OK`` is ``okay``, ``km``
+#: and किमी are ``kilometer``. Whole words only, read after case and contractions.
+_LATIN_EQUIVALENTS = {
+    "ok": "okay", "km": "kilometer", "kms": "kilometer", "kilometre": "kilometer",
+    "kg": "kilogram", "kgs": "kilogram", "kw": "kilowatt", "cm": "centimeter",
+    "centimetre": "centimeter", "metre": "meter", "किमी": "kilometer", "किमि": "kilometer",
+}  # fmt: skip
+#: How each Latin letter is said, as Nepali writes it; a letter with two written names has both.
+_LETTER_NAMES = {
+    "a": ("ए",), "b": ("बी",), "c": ("सी",), "d": ("डी",), "e": ("ई",), "f": ("एफ",),
+    "g": ("जी",), "h": ("एच", "एज"), "i": ("आई",), "j": ("जे",), "k": ("के",), "l": ("एल",),
+    "m": ("एम",), "n": ("एन",), "o": ("ओ",), "p": ("पी",), "q": ("क्यू",), "r": ("आर",),
+    "s": ("एस",), "t": ("टी",), "u": ("यू",), "v": ("भी", "वी"),
+    "w": ("डब्लु", "डब्ल्यु", "डबलु"), "x": ("एक्स",), "y": ("वाई",), "z": ("जेड", "जी"),
+}  # fmt: skip
+#: A Latin word read letter by letter: up to six letters, in capitals or with no vowel (kg, PhD).
+_LETTERS = re.compile(r"[A-Za-z]{1,6}")
 
 #: Devanagari to ASCII, longest match first. Deliberately crude -- it feeds a skeleton and a
 #: similarity ratio, never a reader -- and it writes no inherent vowel, which a skeleton would
@@ -297,10 +315,12 @@ _JOINED = (
 #: गरेनि -> गरेपनि, only on a short -ि as written: भाटभटेनी and स्पेनी are not गरे पनि (fold-v4).
 _JOINED_SHORT_I = ((r"(?<=[ेए])नि$", "पनि"),)
 
-#: A nasal consonant before its own class is an anusvara: सम्पन्न -> संपन्न, घण्टा -> घंटा.
-#: Orthography rather than dialect. First, because later rules read the anusvara, and again last,
-#: for the nasal clusters the benefactive makes (भनिदिइ -> भन्दि).
-_NASAL = ((r"ङ्(?=[कखगघ])|ञ्(?=[चछजझ])|ण्(?=[टठडढ])|न्(?=[तथदध])|म्(?=[पफबभ])", "ं"),)
+#: A nasal consonant before a stop is an anusvara: सम्पन्न -> संपन्न, घण्टा -> घंटा, and
+#: since fold-v4 outside its own class too: घन्टा and घण्टा, अन्डा and अण्डा, मनोरन्जन and मनोरञ्जन
+#: are all written. Orthography rather than dialect. First, because later rules read the
+#: anusvara, and again last, for the nasal clusters the benefactive makes (भनिदिइ -> भन्दि).
+#: Not before a nasal: भन्नु and भन्न are the loose infinitive pair, read on the virama.
+_NASAL = ((r"[ङञणनम]्(?=[कखगघचछजझटठडढतथदधपफबभ])", "ं"),)
 
 _OTHER_WORDS = {
     "पहिला": "पहिले", "पहिलाको": "पहिलेको", "रुपियाँ": "रुपैयाँ", "बुवा": "बुबा", "बिहा": "बिहे",
@@ -351,6 +371,7 @@ _NUMBER_WORDS = {
 _ORDINAL_WORDS = {
     "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7,
     "eighth": 8, "ninth": 9, "tenth": 10, "पहिलो": 1, "दोस्रो": 2, "तेस्रो": 3, "चौथो": 4,
+    "प्रथम": 1, "द्वितीय": 2, "तृतीय": 3,
 }  # fmt: skip
 _MULTIPLIERS = frozenset({1000, 10**5, 10**6, 10**7, 10**9})
 
@@ -515,12 +536,14 @@ _DOUBLED_SIGN = re.compile(r"([ऀ-ःा-ौ])\1+")
 _ORTHOGRAPHY: tuple[_Stage, ...] = (
     _Stage("case", lambda key, _t: unicodedata.normalize("NFC", key).translate(_JOINERS).lower()),
     _Stage("contraction", _contraction_stage),
+    _Stage("english-variant", lambda key, _t: _LATIN_EQUIVALENTS.get(key, key)),
     _Stage("digits", lambda key, _t: key.translate(_DEV_DIGITS)),
     _Stage("vowel-length", lambda key, _t: key.translate(_VOWEL_LENGTH)),
     _Stage("chandrabindu", lambda key, _t: key.replace("ँ", "ं")),
     _Stage("doubled-sign", lambda key, _t: _DOUBLED_SIGN.sub(r"\1", key)),
     _Stage("nukta", _nukta),
     _Stage("final-virama", lambda key, _t: key.removesuffix(_VIRAMA)),
+    _Stage("visarga", lambda key, _t: key.replace("\u0903", "")),
 )
 
 
@@ -635,6 +658,8 @@ _ORDINAL_KEYS = {spelling_key(word): value for word, value in _ORDINAL_WORDS.ite
 _NUMBER_ATOM = re.compile(
     r"[0-9]+|" + "|".join(re.escape(w) for w in sorted(_NUMBER_KEYS, key=len, reverse=True))
 )
+#: The Nepali ordinal ending, as a spelling key reads it: एघारौँ, and 13 औं once joined.
+_ORDINAL_MARKERS = ("ौं", "औं")
 _DIGIT_ORDINAL = re.compile(r"([0-9]+)(?:st|nd|rd|th)")
 
 
@@ -694,7 +719,15 @@ def _number(key: str) -> tuple[frozenset[int], str, bool, bool] | None:
         rest = _combine(atoms[1:])
         if rest is not None and 10 <= rest < 100:
             values.add(atoms[0] * 100 + rest)  # a year: nineteen seventy nine
-    return (frozenset(values), key[position:], digits, False) if values else None
+    if not values:
+        return None
+    rest = key[position:]
+    # The Nepali ordinal -औँ (एघारौँ, 13 औं) is the ordinal, except on a hundred or more, where
+    # it is "hundreds of", "thousands of" (हजारौं) (fold-v4).
+    marker = next((m for m in _ORDINAL_MARKERS if rest.startswith(m)), None)
+    if marker and atoms[-1] < 100:
+        return frozenset(values), rest[len(marker) :], digits, True
+    return frozenset(values), rest, digits, False
 
 
 #: Number words that are far more often something else: छ is "is" before it is "six", एक is "a"
@@ -863,7 +896,7 @@ def similarity(a: str, b: str) -> float:
 @lru_cache(maxsize=262144)
 def same_word(a: str, b: str) -> bool:
     """Whether two words are one word written two ways. See the module docstring for the rules."""
-    if spelling_key(a) == spelling_key(b) or same_number(a, b):
+    if spelling_key(a) == spelling_key(b) or same_number(a, b) or _letter_names(a, b):
         return True
     return _sound_rule(a, b) is not None
 
@@ -939,6 +972,20 @@ def _case_stem(word: str) -> str | None:
     return None
 
 
+def _letter_names(a: str, b: str) -> bool:
+    """Whether a Latin abbreviation is the other word's letters said one by one: ``B`` / बी,
+    ``ESIC`` / इएसआइसी, ``kg`` / केजी (fold-v4). A lowercase word with a vowel (``a``) is a word,
+    not letters."""
+    latin, dev = (a, b) if script(a) == "lat" else (b, a)
+    if script(latin) != "lat" or script(dev) != "dev" or not _LETTERS.fullmatch(latin):
+        return False
+    if not (latin.isupper() or not re.search("[aeiou]", latin.lower())):
+        return False
+    target = spelling_key(dev)
+    names = (_LETTER_NAMES[letter] for letter in latin.lower())
+    return any(spelling_key("".join(spelled)) == target for spelled in product(*names))
+
+
 def which_rule(a: str, b: str) -> str | None:
     """The id of the :data:`RULEBOOK` rule that makes two different words one word, or None.
 
@@ -961,6 +1008,8 @@ def which_rule(a: str, b: str) -> str | None:
         return rule
     if same_number(a, b):
         return "number"
+    if _letter_names(a, b):
+        return "letter-names"
     return _sound_rule(a, b)
 
 
@@ -1138,6 +1187,21 @@ RULEBOOK: tuple[FoldRule, ...] = (
         (("it's", "its"),),
     ),
     FoldRule(
+        "english-variant", 1, "English abbreviations",
+        "OK is okay, km and किमी are kilometer, kg is kilogram, kW is kilowatt, cm is "
+        "centimeter; kilometre is kilometer. Whole words only (fold-v4).",
+        (("OK", "okay"), ("km", "kilometer"), ("kW", "kilowatt"), ("किमी", "km")),
+        (("m", "meter"),),
+    ),
+    FoldRule(
+        "letter-names", 1, "Letters said by name",
+        "A Latin abbreviation read letter by letter is its letters' names in Devanagari: B is "
+        "बी, ESIC is इएसआइसी, kg is केजी. Up to six letters, in capitals or with no vowel, so the "
+        "article a is not ए (fold-v4).",
+        (("B", "बी"), ("ESIC", "इएसआइसी"), ("kg", "केजी"), ("PhD", "पीएचडी")),
+        (("a", "ए"), ("B", "भी"), ("X", "एक")),
+    ),
+    FoldRule(
         "digits", 1, "Devanagari digits",
         "Devanagari digits are the same digits as ASCII ones.",
         (("२०", "20"), ("२०७९", "2079")),
@@ -1170,17 +1234,26 @@ RULEBOOK: tuple[FoldRule, ...] = (
         (("गर्", "गर"), ("छन्", "छन")),
     ),
     FoldRule(
+        "visarga", 1, "Visarga",
+        "A visarga is not heard in Nepali speech and is dropped: प्रायः is प्राय, दुःख is दुख "
+        "(fold-v4).",
+        (("प्राय", "प्रायः"), ("दुःख", "दुख")),
+    ),
+    FoldRule(
         "nasal-cluster", 1, "Nasal consonant against anusvara",
-        "A nasal consonant before a consonant of its own class is an anusvara: सम्पन्न is संपन्न.",
-        (("सम्पन्न", "संपन्न"), ("घण्टा", "घंटा")),
+        "A nasal consonant before a stop is an anusvara, in or out of its own class: "
+        "सम्पन्न is संपन्न, and घन्टा, घण्टा and घंटा are one word (out of class since fold-v4).",
+        (("सम्पन्न", "संपन्न"), ("घण्टा", "घंटा"), ("घन्टा", "घण्टा"), ("मनोरन्जन", "मनोरञ्जन")),
     ),
     FoldRule(
         "number", 1, "Numbers in digits and words",
         "Digits match the number spelled out in either language, when any suffix agrees. One side "
-        "must be in digits: one and एक are two languages, and a speaker said one of them.",
+        "must be in digits: one and एक are two languages, and a speaker said one of them. An "
+        "ordinal matches an ordinal: 11th is एघारौँ, 1st is प्रथम (fold-v4), but हजारौं is "
+        "thousands, not thousandth.",
         (("15", "पन्ध्र"), ("15", "fifteen"), ("2009", "two thousand nine"),
-         ("40,000 को", "चालिस हजारको")),
-        (("one", "एक"),),
+         ("40,000 को", "चालिस हजारको"), ("11th", "एघारौँ"), ("13th", "13 औं")),
+        (("one", "एक"), ("16th", "सोह्र"), ("1000th", "हजारौं")),
     ),
     FoldRule(
         "spacing", 1, "Split and joined words",
