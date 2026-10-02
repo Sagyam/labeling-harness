@@ -532,9 +532,7 @@ def _nukta(key: str, _token: str) -> str:
 
 
 def _contraction_stage(key: str, _token: str) -> str:
-    if not _DEV.search(key):
-        key = _expand_contraction(key)
-    return key.replace("'", "")
+    return key if _DEV.search(key) else _expand_contraction(key)
 
 
 #: A vowel sign or nasal mark typed twice (तपाईँं, हुुन्छ): one mark. Devanagari never repeats one.
@@ -545,6 +543,7 @@ _DOUBLED_SIGN = re.compile(r"([ऀ-ःा-ौ])\1+")
 _ORTHOGRAPHY: tuple[_Stage, ...] = (
     _Stage("case", lambda key, _t: unicodedata.normalize("NFC", key).translate(_JOINERS).lower()),
     _Stage("contraction", _contraction_stage),
+    _Stage("apostrophe", lambda key, _t: key.replace("'", "")),
     _Stage("english-variant", lambda key, _t: _LATIN_EQUIVALENTS.get(key, key)),
     _Stage("digits", lambda key, _t: key.translate(_DEV_DIGITS)),
     _Stage("vowel-length", lambda key, _t: key.translate(_VOWEL_LENGTH)),
@@ -1195,9 +1194,15 @@ RULEBOOK: tuple[FoldRule, ...] = (
     FoldRule(
         "contraction", 1, "English contractions",
         "A contraction is the words it stands for, so it matches them written out. 's is only "
-        "is after a pronoun: John's is a possessive. Apostrophes are dropped.",
+        "is after a pronoun: John's is a possessive.",
         (("can't", "cannot"), ("you're", "you are"), ("gonna", "going to")),
         (("it's", "its"),),
+    ),
+    FoldRule(
+        "apostrophe", 1, "Apostrophes",
+        "An apostrophe left in a word is dropped: O'Neil is ONeil, and a quote mark typed onto a "
+        "Devanagari word ('ए) is not part of it.",
+        (("O'Neil", "ONeil"), ("'ए", "ए")),
     ),
     FoldRule(
         "english-variant", 1, "English abbreviations",
