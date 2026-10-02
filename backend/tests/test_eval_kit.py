@@ -592,6 +592,21 @@ def test_a_run_writes_error_files_whose_rows_reproduce_its_scores(tmp_path: Path
     assert "alignment" not in json.dumps(metrics)
 
 
+def test_a_split_s_crosstalk_is_measured_from_the_export_s_clip_spans(tmp_path: Path):
+    """The export carries each clip's ``overlap_spans`` (clip-relative), not a share."""
+    from app.services import error_mining
+
+    splits = _splits()
+    splits["gold"][0]["overlap_spans"] = [[0.0, 1.0]]  # a quarter of a 4 s clip
+    splits["gold"][1]["overlap_spans"] = []
+    evalkit.evaluate_run(
+        tmp_path, "vanilla-s0", splits=splits, decode=_decoder({}), score=_FoldScore, card={},
+    )  # fmt: skip
+    _, gold = error_mining.read(tmp_path / "harness" / "errors" / "gold.parquet")
+    share = {r["clip_id"]: r["overlap_share"] for r in gold}
+    assert share == {"g1": pytest.approx(0.25), "g2": 0.0, "g3": None}
+
+
 def test_a_public_set_writes_its_error_file_with_its_measured_overlap(tmp_path: Path, monkeypatch):
     from app.services import error_mining
     from app.services.benchmark_overlap import write_acoustics, write_overlap

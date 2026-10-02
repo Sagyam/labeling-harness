@@ -189,6 +189,13 @@ def _miner() -> tuple[Any, Any] | None:
     return error_mining, error_store
 
 
+def _share(row: Mapping[str, Any]) -> float | None:
+    """A gold or val clip's crosstalk share: its own, or from the export's `overlap_spans`."""
+    if "overlap_share" in row:
+        return row["overlap_share"]
+    return distill.overlap_share(row.get("overlap_spans"), duration(row))
+
+
 def write_errors(
     path: Path,
     run: str,
@@ -205,7 +212,8 @@ def write_errors(
 
     A clip's alignment is the one `score.per_clip` counted, when it kept it. `overlap` and `snr`
     are a public set's measured crosstalk and speech-to-noise ratio by clip id; gold and val rows
-    carry their own `overlap_share` and `acoustics`."""
+    carry their own `acoustics`, and their crosstalk as the export's clip-relative
+    `overlap_spans` (or an `overlap_share` already taken from them)."""
     kit = _miner()
     if kit is None:
         return None
@@ -220,7 +228,7 @@ def write_errors(
                 "group": r["episode_id"],
                 "ref": r["text"],
                 "hyp": text,
-                "overlap_share": overlap.get(i) if overlap is not None else r.get("overlap_share"),
+                "overlap_share": overlap.get(i) if overlap is not None else _share(r),
                 "snr_db": snr.get(i)
                 if snr is not None
                 else (r.get("acoustics") or {}).get("snr_db"),
