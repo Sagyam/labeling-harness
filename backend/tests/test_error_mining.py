@@ -209,3 +209,21 @@ def test_a_repeated_clip_id_is_numbered_in_file_order() -> None:
     clips = [{"clip_id": "-None", "group": "", "ref": "म", "hyp": "म"} for _ in range(3)]
     found = rows("vanilla-s1", "nepali_cs", clips)
     assert [r["clip_id"] for r in found] == ["-None", "-None#2", "-None#3"]
+
+
+def test_the_dataset_copy_carries_error_mining_beside_fold() -> None:
+    """ftkit.harness_scorer lays these out flat; error mining needs fold.py and its normalizer."""
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "upload_harness_copy", root / "scripts" / "upload_harness_copy.py"
+    )
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    files = script.harness_files()
+    assert sorted(files) == [
+        "harness/error_mining.py", "harness/error_store.py", "harness/fold.py",
+        "harness/normalization.yaml", "harness/normalize.py",
+    ]  # fmt: skip
+    assert all(path.is_file() for path in files.values())
