@@ -606,3 +606,59 @@ class TestRulesSpareWordsTheyAreNotAbout:
     )
     def test_a_doubled_mark_is_one_mark(self, left: str, right: str) -> None:
         assert same_word(left, right)
+
+
+class TestSoundMatchesAreEvidence:
+    """fold-v4: cross-script matches that forgave a real error (audit of 2026-10-02)."""
+
+    @pytest.mark.parametrize(
+        ("ref", "hyp"),
+        [("type को", "type"), ("time मा", "time"), ("investment", "investment लागेको"),
+         ("भनेको", "भनेको X"), ("Republic", "रिपब्लिक डे"), ("operator लाई", "operator")],
+    )  # fmt: skip
+    def test_a_merge_that_swallows_a_word_charges_it(self, ref: str, hyp: str) -> None:
+        assert word_errors(ref, hyp).errors == 1
+        assert word_errors(hyp, ref).errors == 1
+
+    @pytest.mark.parametrize(
+        ("ref", "hyp"),
+        [("Facebook मा", "फेस बुक मा"), ("मिनेटपछि", "minute पछि"), ("Kalimpong मा", "कालिम्पोङमा"),
+         ("thank you", "थ्याङ्क्यु"), ("Hong Kong", "हङकङ"), ("गर्नुभयो", "गर्नु भयो"),
+         ("phone मा", "फोनमा")],
+    )  # fmt: skip
+    def test_a_real_split_still_matches(self, ref: str, hyp: str) -> None:
+        assert word_errors(ref, hyp).errors == 0
+        assert word_errors(hyp, ref).errors == 0
+
+    @pytest.mark.parametrize(("dev", "latin"), [("नेपालमा", "Nepal"), ("होटेलमा", "hotel")])
+    def test_a_case_ending_on_one_side_only_is_not_the_same_word(
+        self, dev: str, latin: str
+    ) -> None:
+        assert not same_word(dev, latin)
+
+    @pytest.mark.parametrize(
+        ("dev", "latin"),
+        [("सिनेमा", "cinema"), ("डिप्लोमा", "diploma"), ("नेपालमा", "Nepalमा"), ("कारुण्या", "Karunya")],
+    )
+    def test_a_word_that_only_ends_like_a_case_ending_still_matches(
+        self, dev: str, latin: str
+    ) -> None:
+        assert same_word(dev, latin)
+
+    @pytest.mark.parametrize(
+        ("dev", "latin"),
+        [("अनि", "and"), ("हो", "No"), ("हो", "So"), ("त्यो", "to"), ("यो", "you"), ("भए", "Bye"),
+         ("बढी", "body"), ("दिन", "time"), ("बाट", "but"), ("सम्म", "some"), ("हामीले", "family"),
+         ("अर", "or"), ("फेरि", "free")],
+    )  # fmt: skip
+    def test_a_nepali_function_word_is_not_an_english_word_that_sounds_like_it(
+        self, dev: str, latin: str
+    ) -> None:
+        assert not same_word(dev, latin)
+
+    @pytest.mark.parametrize(
+        ("dev", "latin"),
+        [("अनि", "ani"), ("हो", "ho"), ("यो", "yo"), ("छ", "chha"), ("हामी", "hami")],
+    )
+    def test_a_nepali_function_word_romanized_still_matches(self, dev: str, latin: str) -> None:
+        assert same_word(dev, latin)

@@ -704,7 +704,18 @@ _NOT_NUMBERS = frozenset(spelling_key(word) for word in ("छ", "एक", "छ�
 #: तिन with a short i and a case ending is "their/them" (तिनको, तिनले). Bare तिन is three as
 #: often as not, and a counter (तिनजना) makes it three.
 _PRONOUN_TIN = "तिन"
-_CASE_ENDINGS = tuple(spelling_key(s) for s in _TABLE_SUFFIXES)
+_CASE_ENDINGS = tuple(spelling_key(s) for s in (*_TABLE_SUFFIXES, "भन्दा"))
+#: Nepali function words that sound like English ones: अनि and ``and``, हो and ``no``, दिन and
+#: ``time``. A sound match proves nothing for them, so they match only their own romanization
+#: (fold-v4). Homographs of English loans -- यस (``yes``), सो (``so``), कम, जब, जो -- are left
+#: out, since either reading may be what was said.
+_FUNCTION_WORDS = frozenset(
+    spelling_key(word)
+    for word in (  # noqa: SIM905 -- forty words read best as prose
+        "अनि अर र हो होइन यो त्यो त्यस मा को का की कि के ले लाई बाट सम्म भए भयो फेरि बढी दिन "
+        "हामी हामीले मेरो धेरै अलिक यसरी यस्तो ठुलो नै पनि त छ"
+    ).split()
+)
 #: What may follow a number word in one token: a counter (दुईटा, सातजना), the ordinal or
 #: "-fold" ending (पाँचौँ, हजारौं), a case or plural ending, or an English plural. Anything else
 #: means the word only started like a number (तिनीहरूका, एकदम, ElevenLabs).
@@ -858,10 +869,38 @@ def same_word(a: str, b: str) -> bool:
 
 
 def _sound_rule(a: str, b: str) -> str | None:
-    """Rules 3 and 4: which sound rule makes two words of different scripts one, if any."""
+    """Rules 3 and 4: which sound rule makes two words of different scripts one, if any.
+
+    fold-v4 holds a sound match to two more conditions. A common Nepali function word
+    (:data:`_FUNCTION_WORDS`) matches only its own romanization: ``ani`` is अनि, ``and`` is not.
+    And a case ending on one side only is a word the other side lacks: नेपालमा is not ``Nepal``
+    when ``Nepal`` alone is the closer match.
+    """
     sa, sb = script(a), script(b)
     if sa == sb or "none" in (sa, sb):
         return None
+    rule = _sound_match(a, b)
+    if rule is None:
+        return None
+    for native, other in ((a, b), (b, a)):
+        if script(native) == "dev" and spelling_key(native) in _FUNCTION_WORDS:
+            romanized_native = _ascii(native)
+            if _ascii(other) not in (romanized_native, romanized_native + "a"):
+                return None
+    for word, other in ((a, b), (b, a)):
+        if script(other) == "lat" and (stem := _case_stem(word)) is not None:
+            # On a Latin stem (``timeमा``) the ending is plainly a word of its own; on a
+            # Devanagari one it may be part of the word (सिनेमा), so the stem must win outright.
+            stem_distance, distance = _sound_distance(stem, other), _sound_distance(word, other)
+            closer = (
+                stem_distance <= distance if script(word) == "mix" else stem_distance < distance
+            )
+            if closer and _sound_match(stem, other):
+                return None
+    return rule
+
+
+def _sound_match(a: str, b: str) -> str | None:
     if any(_skeletons_close(ka, kb) for ka in skeletons(a) for kb in skeletons(b)):
         return "sound-skeleton"
     left, right = _ascii(a), _ascii(b)
@@ -872,6 +911,31 @@ def _sound_rule(a: str, b: str) -> str | None:
     # "cha" / छ: too short for a ratio to mean anything, so allow one character.
     if max(len(left), len(right)) <= SHORT_TOKEN and _levenshtein(left, right) <= 1:
         return "sound-short"
+    return None
+
+
+def _sound_distance(a: str, b: str) -> float:
+    """How far apart two words are by sound, 0 (one spelling) to 1: across scripts, their
+    closest consonant skeletons; within one script, 0 for one spelling key and 1 otherwise."""
+    if spelling_key(a) == spelling_key(b):
+        return 0.0
+    if script(a) == script(b):
+        return 1.0
+    return min(_normalized_distance(ka, kb) for ka in skeletons(a) for kb in skeletons(b))
+
+
+def _case_stem(word: str) -> str | None:
+    """The word without a Devanagari case ending (नेपालमा -> नेपाल), or None if it has none.
+
+    Read on the orthographic key: a colloquial rewrite can end a word in -को that was never
+    written with one (the -या participle makes कारुण्या कारुणेको)."""
+    key = _orthographic_key(word)
+    if not _DEV.search(key):
+        return None
+    for ending in _CASE_ENDINGS:
+        stem = key.removesuffix(ending)
+        if stem != key and len(stem) >= 2:
+            return stem
     return None
 
 
@@ -967,11 +1031,32 @@ def _merges(ref: list[str], hyp: list[str]) -> bool:
     Two against one may match by any rule, sound included (``Facebook`` / `फेस बुक`). Anything
     wider must be the same spelling or the same number once joined: by sound, three words against
     two matched unrelated phrases (`थाहा नै रहेनछ` / ``Thane नै रहेछ``).
+
+    A two-against-one merge across scripts is refused when one of the two words alone matches
+    the single word better than the pair does and the other is not written inside it: that
+    merge swallows a word (``investment`` / ``investment लागेको``), where ``मिनेटपछि`` /
+    ``minute पछि`` and ``Hong Kong`` / `हङकङ` are real splits (fold-v4).
     """
     left, right = "".join(ref), "".join(hyp)
-    if len(ref) + len(hyp) == 3:
-        return same_word(left, right)
-    return spelling_key(left) == spelling_key(right) or same_number(left, right)
+    if len(ref) + len(hyp) != 3:
+        return spelling_key(left) == spelling_key(right) or same_number(left, right)
+    if not same_word(left, right):
+        return False
+    one, two = (ref[0], hyp) if len(ref) == 1 else (hyp[0], ref)
+    joined = "".join(two)
+    if len({script(w) for w in (one, *two)} - {"none"}) <= 1:
+        return True
+    if spelling_key(one) == spelling_key(joined) or same_number(one, joined):
+        return True
+    closest = _sound_distance(one, joined)
+    for word, other in ((two[0], two[1]), (two[1], two[0])):
+        if spelling_key(other) in spelling_key(one):
+            continue
+        if spelling_key(word) == spelling_key(one) or (
+            same_word(one, word) and _sound_distance(one, word) < closest
+        ):
+            return False
+    return True
 
 
 def word_errors(

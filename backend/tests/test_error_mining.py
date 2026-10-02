@@ -82,7 +82,7 @@ def test_the_script_of_a_side(word: str, script: str) -> None:
 def test_a_side_of_two_scripts_is_mixed_and_an_absent_side_has_none() -> None:
     (merged,) = _by_kind(pairs("गर्नुभयो", "गर्नु भयो"), "merge")
     assert (merged["ref_script"], merged["hyp_script"]) == ("dev", "dev")
-    assert _by_kind(pairs("छ Option", "Option"), "merge")[0]["ref_script"] == "mix"
+    assert _by_kind(pairs("phone मा", "फोनमा"), "merge")[0]["ref_script"] == "mix"
     (deleted,) = _by_kind(pairs("म घर जान्छु", "म जान्छु"), "del")
     assert deleted["hyp_script"] is None
     assert deleted["hyp"] == []
