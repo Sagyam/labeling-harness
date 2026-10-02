@@ -420,6 +420,44 @@ def reclassify_runs(
 
 
 @dataclass
+class RemovedModel:
+    runs: int = 0
+    clips: int = 0
+
+
+def remove_model(session: Session, slug: str, *, actor: str) -> RemovedModel:
+    """Delete a model with its runs and their clips, and record it in ``audit_logs``.
+
+    Only the database rows: the caller removes the model's folder, or the next scan imports it
+    again.
+
+    Raises:
+        ModelImportError: The harness has no model of that slug.
+    """
+    model = session.scalars(sa.select(AsrModel).where(AsrModel.slug == slug)).one_or_none()
+    if model is None:
+        raise ModelImportError(f"no model {slug!r}")
+    removed = RemovedModel(runs=len(model.runs), clips=sum(r.clip_count for r in model.runs))
+    session.add(
+        AuditLog(
+            entity_type="asr_model",
+            entity_id=slug,
+            action="model_remove",
+            actor=actor,
+            old_values_jsonb={
+                "name": model.name,
+                "runs": removed.runs,
+                "clips": removed.clips,
+                "wer": {r.split: r.metrics_jsonb.get("wer") for r in model.runs},
+            },
+        )
+    )
+    session.delete(model)
+    session.flush()
+    return removed
+
+
+@dataclass
 class RescoreReport:
     runs: int = 0
     clips: int = 0

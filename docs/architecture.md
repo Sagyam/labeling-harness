@@ -499,6 +499,8 @@ was scored under the current `fold_version()`. A fold version changes the scores
 `scripts/rescore_runs.py` scores every run made under older rules again from its stored
 transcripts and its reference snapshot (never today's label), replaces its counts, breakdowns and
 `fold_version`, and keeps the old WER and version in `audit_logs` (D113).
+`scripts/remove_model.py` deletes a model with its runs and clips, records it in `audit_logs`,
+and removes its folder, which a Rescan would otherwise import again.
 
 ### Known gaps
 

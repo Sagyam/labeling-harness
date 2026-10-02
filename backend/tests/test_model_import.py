@@ -25,6 +25,7 @@ from app.services.model_import import (
     import_model_dir,
     read_card,
     reclassify_runs,
+    remove_model,
     rescore_runs,
     scan_models,
 )
@@ -346,3 +347,29 @@ def test_a_run_already_under_today_s_fold_is_left_alone(
     assert not db_session.scalars(
         sa.select(AuditLog).where(AuditLog.action == "model_eval_rescore")
     ).all()
+
+
+@pytest.mark.db
+def test_removing_a_model_deletes_its_runs_and_clips_and_is_audited(
+    db_session: Session, tmp_path: Path, model_corpus: dict[str, str]
+) -> None:
+    _import_gold_run(db_session, tmp_path, model_corpus)
+    import_model_dir(db_session, write_model(tmp_path / "models", "kept"), actor="test")
+
+    def count(table: type) -> int:
+        return db_session.scalar(sa.select(sa.func.count()).select_from(table))
+
+    runs, clips = count(ModelEvalRun), count(ModelEvalClip)
+    removed = remove_model(db_session, "flex-ft", actor="test")
+
+    assert (removed.runs, removed.clips) == (1, 3)
+    assert db_session.scalars(sa.select(AsrModel.slug)).all() == ["kept"]
+    assert (count(ModelEvalRun), count(ModelEvalClip)) == (runs - 1, clips - 3)
+    audit = db_session.scalars(sa.select(AuditLog).where(AuditLog.action == "model_remove")).one()
+    assert audit.entity_id == "flex-ft" and audit.old_values_jsonb["runs"] == 1
+
+
+@pytest.mark.db
+def test_removing_a_model_the_harness_does_not_have_is_refused(db_session: Session) -> None:
+    with pytest.raises(ModelImportError, match="nope"):
+        remove_model(db_session, "nope", actor="test")
