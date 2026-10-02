@@ -1522,7 +1522,7 @@ def student_cells(student: Student) -> list[dict]:
         if student.key == "conformer":
             config.append(CONFORMER_CONFIG)
         setup = nbkit.setup(
-            'rapidfuzz pyarrow "nemo_toolkit[asr]=={NEMO_VERSION}"',
+            'rapidfuzz duckdb pyarrow "nemo_toolkit[asr]=={NEMO_VERSION}"',
             tail=NEMO_SETUP_TAIL + nbkit.RUN_FOLDER,
         )
         model_cells = [
@@ -1533,7 +1533,7 @@ def student_cells(student: Student) -> list[dict]:
         ]
     else:
         config = [head, COMMON_CONFIG, fill(HF_CONFIG, student)]
-        setup = nbkit.setup('rapidfuzz pyarrow "qwen-asr=={QWEN_ASR_VERSION}"')
+        setup = nbkit.setup('rapidfuzz duckdb pyarrow "qwen-asr=={QWEN_ASR_VERSION}"')
         model_cells = [md(STUDENT_NOTE), code(fill(HF_STUDENT, student))]
     return [
         md(intro + "\n" + student.intro + PROTOCOL + SMOKE_NOTE + GPU_NOTE),

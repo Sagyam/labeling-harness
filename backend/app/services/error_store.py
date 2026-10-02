@@ -581,3 +581,13 @@ def clip_ops(path: Path, clip_id: str) -> list[dict[str, Any]]:
             [clip_id],
         )
     ]
+
+
+def report(path: Path, *, top: int = 20) -> dict[str, Any]:
+    """A file's breakdown and the ``top`` rows of each error kind's confusion table: what a
+    notebook writes beside a WER, from the same queries the page runs."""
+    out = breakdown(path)
+    out["top"] = {
+        kind: confusion(path, ErrorFilter(kind=[kind]), limit=top)["rows"] for kind in _ERRORS
+    }
+    return out

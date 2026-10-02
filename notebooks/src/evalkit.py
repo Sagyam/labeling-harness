@@ -9,6 +9,12 @@ functions here, so a number in one notebook means what it means in another:
   * the public Nepali sets, folded, raw and plain, paired against base Flex with each set's own
     unit resampled (`run_benchmarks`).
 
+Every split and set also keeps its errors: each aligned word pair, classified, in
+`harness/errors/<set>.parquet`, and a `breakdown` beside its WER (crosstalk buckets, numbers, the
+most common substitutions, deletions and insertions; docs/WER-Breakdown.md). Both come from the
+harness's own `error_mining.py` and `error_store.py`, which the dataset's `harness/` copy carries
+beside fold.py, so the Models page reads exactly what the notebook wrote.
+
 The notebook hands in what is model-specific: `decode`, its batched decoder, and `score`,
 `ftkit.harness_scorer`, which is the harness's own fold.py. No torch here, so the rules are tested
 from backend/tests. Keep it importable on Python 3.10+.
@@ -20,6 +26,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import tarfile
 import time
@@ -167,6 +174,97 @@ def pair(
     return out
 
 
+# --- error mining (docs/WER-Breakdown.md) --------------------------------------------------------
+
+
+def _miner() -> tuple[Any, Any] | None:
+    """`error_mining` and `error_store` from the harness copy `ftkit.harness_scorer` put on the
+    path, or None -- with a line saying so -- when the dataset's `harness/` predates them."""
+    try:
+        from app.services import error_mining, error_store
+    except ImportError as exc:
+        print(f"no error mining in the dataset's harness/ ({exc}): no error files are written")
+        return None
+    return error_mining, error_store
+
+
+def write_errors(
+    path: Path,
+    run: str,
+    rows: Sequence[dict],
+    texts: Sequence[str],
+    clips: Sequence[Any],
+    *,
+    overlap: Mapping[str, float | None] | None = None,
+    by: str | None = None,
+) -> dict[str, Any] | None:
+    """Every aligned word pair of one split or set, classified, written to `path` (its stem is
+    the set's name); returns the file's report (blocks 1-3), or None when nothing was written.
+
+    A clip's alignment is the one `score.per_clip` counted, when it kept it. `overlap` is a public
+    set's measured crosstalk by clip id; gold and val rows carry their own `overlap_share`."""
+    kit = _miner()
+    if kit is None:
+        return None
+    mining, store = kit
+    ids = mining.unique_ids(str(r["segment_id"]) for r in rows)
+    found = mining.rows(
+        run,
+        Path(path).stem,
+        [
+            {
+                "clip_id": r["segment_id"],
+                "group": r["episode_id"],
+                "ref": r["text"],
+                "hyp": text,
+                "overlap_share": overlap.get(i) if overlap is not None else r.get("overlap_share"),
+                "by": r.get(by) if by else None,
+                "alignment": c.get("alignment") if isinstance(c, Mapping) else None,
+            }
+            for r, text, c, i in zip(rows, texts, clips, ids, strict=True)
+        ],
+    )
+    if not found:
+        return None
+    mining.write(found, path)
+    return store.report(Path(path))
+
+
+def fetch_overlap(repo: str, token: str, folder: Path, names: Sequence[str] | None = None) -> Path:
+    """Each public set's measured crosstalk, `benchmarks/overlap/<set>.parquet` in `repo`, copied
+    into `folder` (scripts/measure_benchmark_overlap.py wrote them); a set without one stays
+    unmeasured."""
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import EntryNotFoundError
+
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in names or tuple(BENCHMARKS):
+        try:
+            got = hf_hub_download(repo, f"benchmarks/overlap/{name}.parquet", token=token)
+        except EntryNotFoundError:
+            print(f"{name}: no measured overlap in {repo}; its clips are unmeasured")
+            continue
+        shutil.copyfile(got, folder / f"{name}.parquet")
+    return folder
+
+
+def print_breakdown(label: str, report: Mapping[str, Any] | None) -> None:
+    """Block 1 and block 2 in two lines, under a WER line."""
+    if not report:
+        return
+    buckets = " · ".join(
+        f"{b['bucket']} {b['wer']:.2f} ({100 * b['share_of_errors']:.0f}% of errors)"
+        for b in report["overlap"]
+    )
+    n = report["numbers"]
+    print(f"    {label} crosstalk: {buckets}")
+    print(
+        f"    {label} numbers: {n['errors']} errors ({100 * n['share_of_errors']:.1f}%), "
+        f"WER without them {n['wer_without']:.2f}"
+    )
+
+
 # --- gold and val --------------------------------------------------------------------------------
 
 
@@ -176,11 +274,16 @@ def score_split(
     compute: Sequence[float],
     log: Sequence[tuple[str, str, str]],
     score: Any,
+    *,
+    errors: Path | None = None,
+    run: str = "",
 ) -> tuple[dict[str, Any], dict[str, list[int]]]:
     """One split's metrics and its per-clip counts, each clip aligned once.
 
     Metrics: the folded, raw and character error rates with S/D/I, the real-time factor, the loop
-    retries and the greedy-only score from the same decode, and every clip class (`by_class`)."""
+    retries and the greedy-only score from the same decode, and every clip class (`by_class`).
+    With `errors` (`harness/errors/<split>.parquet`), the split's error rows are written there and
+    its `breakdown` added."""
     refs = [r["text"] for r in rows]
     clips = score.per_clip(refs, texts)
     m = score.summarize(clips)
@@ -195,6 +298,8 @@ def score_split(
             greedy[i] = c
         m["greedy_only"] = score.summarize(greedy)
     m["by_class"] = distill.by_class(rows, clips, score.summarize)
+    if errors is not None:
+        m["breakdown"] = write_errors(errors, run, rows, texts, clips)
     return m, counts(rows, clips)
 
 
@@ -213,11 +318,11 @@ def evaluate_run(
     """Decode gold and val with the weights `decode` reads, score them, and write the run's files.
 
     Written under `out`: `harness/<split>.jsonl` and `harness/model_card.json` (what the Models
-    page imports, D83), `<split>_metrics.json`, `per_clip.json` (the counts another run is paired
-    against) and `result.json`, whose presence on the hub marks the run as done. `references` is
-    {name: {split: per-clip counts}}; each becomes `vs[name]`, this run minus that one. `meta`
-    (recipe, seed, stage, best epoch, ...) goes into the card and the result row, which is
-    returned."""
+    page imports, D83), `harness/errors/<split>.parquet` (its error rows), `<split>_metrics.json`,
+    `per_clip.json` (the counts another run is paired against) and `result.json`, whose presence
+    on the hub marks the run as done. `references` is {name: {split: per-clip counts}}; each
+    becomes `vs[name]`, this run minus that one. `meta` (recipe, seed, stage, best epoch, ...) goes
+    into the card and the result row, which is returned."""
     out = Path(out)
     results: dict[str, dict] = {}
     per_clip: dict[str, dict] = {}
@@ -226,7 +331,10 @@ def evaluate_run(
         with timed(f"{run} {split}: decoding {len(rows)} clips"):
             texts, compute, log = decode(rows)
         with timed(f"{run} {split}: scoring, per clip class and against the references"):
-            m, per_clip[split] = score_split(rows, texts, compute, log, score)
+            errors = out / "harness" / "errors" / f"{split}.parquet"
+            m, per_clip[split] = score_split(
+                rows, texts, compute, log, score, errors=errors, run=run
+            )
             m["vs"] = {}
             for name, ref in (references or {}).items():
                 try:
@@ -270,6 +378,7 @@ def evaluate_run(
         for name, vs in m["vs"].items():
             d, lo, hi = vs["all"]
             print(f"    minus {name}: {d:+.2f} [{lo:+.2f}, {hi:+.2f}] on {vs['clips']} clips")
+        print_breakdown(split, m.get("breakdown"))
     return row
 
 
@@ -542,13 +651,22 @@ def load_benchmark(name: str, work: Path, token: str, limit: int | None = None) 
 
 
 def score_benchmark(
-    name: str, rows: Sequence[dict], texts: Sequence[str], score: Any
+    name: str,
+    rows: Sequence[dict],
+    texts: Sequence[str],
+    score: Any,
+    *,
+    errors: Path | None = None,
+    run: str = "",
+    overlap: Mapping[str, float | None] | None = None,
 ) -> tuple[dict[str, Any], list[dict]]:
     """A public set's summary and its per-clip lines.
 
     Summary: folded WER with S/D/I, raw WER and CER from the harness's scorer, the plain WER, and
     the score per value of the set's `by` column. A line is `{id, group, ref, hyp, errors,
-    words}`: the 2026-09-27 files' fields plus the counts a paired comparison needs."""
+    words}`: the 2026-09-27 files' fields plus the counts a paired comparison needs. With
+    `errors`, the set's error rows are written there, crosstalk from `overlap` (clips missing
+    from it are unmeasured), and its `breakdown` added to the summary."""
     bench = BENCHMARKS[name]
     refs = [r["text"] for r in rows]
     clips = score.per_clip(refs, texts)
@@ -562,6 +680,10 @@ def score_benchmark(
         summary["by"] = {
             v: score.summarize([clips[i] for i in idx]) for v, idx in sorted(values.items())
         }
+    if errors is not None:
+        summary["breakdown"] = write_errors(
+            errors, run, rows, texts, clips, overlap=overlap or {}, by=bench.by
+        )
     lines = []
     for r, hyp, c in zip(rows, texts, clips, strict=True):
         line = {
@@ -591,6 +713,13 @@ def pair_benchmark(a: Sequence[dict], b: Sequence[dict], n: int = 2000) -> dict[
     )
 
 
+def _overlap(folder: Path | None, name: str) -> dict[str, float | None] | None:
+    path = Path(folder) / f"{name}.parquet" if folder is not None else None
+    if path is None or not path.exists() or (kit := _miner()) is None:
+        return None
+    return kit[0].read_overlap(path)
+
+
 def run_benchmarks(
     out: Path,
     *,
@@ -601,11 +730,16 @@ def run_benchmarks(
     names: Sequence[str] = tuple(BENCHMARKS),
     limit: int | None = None,
     done: Collection[str] = (),
+    run: str | None = None,
+    overlap_dir: Path | None = None,
 ) -> dict[str, dict]:
     """Decode and score each public set with the weights `decode` reads, one set at a time.
 
-    Writes `out/benchmarks/<name>.jsonl` (per clip) and `<name>.json` (summary) as each set
-    finishes, and skips a set named in `done`, so a lost runtime costs one set."""
+    Writes `out/benchmarks/<name>.jsonl` (per clip) and `<name>.json` (summary), and the set's
+    error rows to `out/harness/errors/<name>.parquet`, as each set finishes, and skips a set named
+    in `done`, so a lost runtime costs one set. `run` names the rows (default: `out`'s folder);
+    `overlap_dir` holds the sets' measured crosstalk (`fetch_overlap`)."""
+    run = run or Path(out).name
     folder = Path(out) / "benchmarks"
     folder.mkdir(parents=True, exist_ok=True)
     summaries = {}
@@ -618,7 +752,15 @@ def run_benchmarks(
         with timed(f"{name}: decoding {len(rows)} clips"):
             texts, compute, log = decode(rows)
         with timed(f"{name}: scoring"):
-            summary, lines = score_benchmark(name, rows, texts, score)
+            summary, lines = score_benchmark(
+                name,
+                rows,
+                texts,
+                score,
+                errors=Path(out) / "harness" / "errors" / f"{name}.parquet",
+                run=run,
+                overlap=_overlap(overlap_dir, name),
+            )
         summary["retried"] = len(log)
         summary["x_realtime"] = sum(duration(r) for r in rows) / max(sum(compute), 1e-9)
         summary["limit"] = limit
@@ -630,6 +772,7 @@ def run_benchmarks(
             f"I {summary['ins']:.2f}), plain {summary['plain_wer']:.2f}, {len(rows)} clips, "
             f"{summary['x_realtime']:.0f}x realtime"
         )
+        print_breakdown(name, summary.get("breakdown"))
         summaries[name] = summary
         del rows
     return summaries

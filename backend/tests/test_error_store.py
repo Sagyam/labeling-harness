@@ -306,3 +306,16 @@ def test_it_resamples_as_model_eval_does_without_importing_it() -> None:
     )
     assert "sqlalchemy" not in loaded.stdout
     assert "app.services.model_eval" not in loaded.stdout
+
+
+def test_a_report_is_the_breakdown_and_the_top_rows_of_each_kind(run: Path) -> None:
+    """What a notebook stores beside a WER: the page's own queries, written down."""
+    from app.services.error_store import breakdown, report
+
+    got = report(run, top=2)
+    assert {k: got[k] for k in ("wer", "overlap", "numbers")} == {
+        k: breakdown(run)[k] for k in ("wer", "overlap", "numbers")
+    }
+    assert [len(got["top"][k]) for k in ("sub", "del", "ins")] == [2, 1, 1]
+    assert got["top"]["del"][0]["ref"] == "45"
+    assert got["top"]["sub"][0]["share"] == pytest.approx(1 / 3)

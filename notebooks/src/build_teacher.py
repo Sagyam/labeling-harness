@@ -286,7 +286,7 @@ cells = [
     md("## Config"),
     code(CONFIG),
     md("## Setup"),
-    nbkit.setup("rapidfuzz", tail=SETUP_TAIL),
+    nbkit.setup("rapidfuzz duckdb", tail=SETUP_TAIL),
     *nbkit.kits("ftkit", "distill"),
     code(DATA),
     md(RATE_NOTE),

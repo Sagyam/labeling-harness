@@ -439,3 +439,96 @@ def test_error_mining_knows_every_public_set_and_its_split_column():
 
     assert ("gold", "val", *evalkit.BENCHMARKS) == error_mining.SETS
     assert {b.name: b.by for b in evalkit.BENCHMARKS.values() if b.by} == error_mining.SET_BY
+
+
+# --- error mining (docs/WER-Breakdown.md, step 7) -----------------------------------------------
+
+
+class _FoldScore(_Score):
+    """The shape of ftkit.harness_scorer, on the harness's own fold: each clip keeps the alignment
+    it was counted from, so mining aligns nothing again."""
+
+    @staticmethod
+    def per_clip(refs, hyps):
+        from app.services.fold import word_errors
+
+        out = []
+        for ref, hyp in zip(refs, hyps, strict=True):
+            a = word_errors(ref, hyp)
+            out.append(
+                {"words": a.ref_words, "errors": a.errors, "sub": a.substitutions,
+                 "del": a.deletions, "ins": a.insertions, "raw_words": a.ref_words,
+                 "raw_errors": a.errors, "chars": len(ref), "char_errors": a.errors, "loop": 0,
+                 "alignment": a}
+            )  # fmt: skip
+        return out
+
+    @staticmethod
+    def summarize(clips):
+        return _Score.summarize([{k: v for k, v in c.items() if k != "alignment"} for c in clips])
+
+
+def _sid(found):
+    errors = [r for r in found if r["kind"] in ("sub", "del", "ins")]
+    return len(errors), sum(len(r["ref"]) for r in found)
+
+
+def test_a_run_writes_error_files_whose_rows_reproduce_its_scores(tmp_path: Path):
+    from app.services import error_mining
+
+    splits = _splits()
+    splits["gold"][0]["overlap_share"] = 0.2
+    row = evalkit.evaluate_run(
+        tmp_path, "vanilla-s0", splits=splits, decode=_decoder({"g2": "one two x y"}),
+        score=_FoldScore, card={"name": "Flex FT"},
+    )  # fmt: skip
+    for split in ("gold", "val"):
+        meta, found = error_mining.read(tmp_path / "harness" / "errors" / f"{split}.parquet")
+        assert (meta["run"], meta["set"]) == ("vanilla-s0", split)
+        errors, words = _sid(found)
+        assert 100 * errors / words == pytest.approx(row[f"{split}_wer"])
+    metrics = json.loads((tmp_path / "gold_metrics.json").read_text("utf-8"))
+    breakdown = metrics["breakdown"]
+    assert breakdown["wer"] == pytest.approx(row["gold_wer"])
+    assert {b["bucket"] for b in breakdown["overlap"]} == {">15%", "unmeasured"}
+    assert breakdown["top"]["sub"][0]["count"] == 1
+    assert "alignment" not in json.dumps(metrics)
+
+
+def test_a_public_set_writes_its_error_file_with_its_measured_overlap(tmp_path: Path, monkeypatch):
+    from app.services import error_mining
+    from app.services.benchmark_overlap import write_overlap
+
+    monkeypatch.setattr(evalkit, "load_benchmark", lambda *a, **k: _bench_rows())
+    overlap = tmp_path / "overlap"
+    overlap.mkdir()
+    (overlap / "indicvoices.jsonl").write_text(
+        json.dumps({"clip_id": "iv-00001", "duration": 1.0, "overlap_share": 0.5, "spans": []})
+        + "\n"
+    )
+    write_overlap(overlap / "indicvoices.jsonl", overlap / "indicvoices.parquet")
+    hyps = {"iv-00001": "a b x y"}
+    summaries = evalkit.run_benchmarks(
+        tmp_path / "vanilla-s1", decode=_decoder(hyps), score=_FoldScore, work=tmp_path / "w",
+        token="t", names=("indicvoices",), overlap_dir=overlap,
+    )  # fmt: skip
+    path = tmp_path / "vanilla-s1" / "harness" / "errors" / "indicvoices.parquet"
+    meta, found = error_mining.read(path)
+    assert (meta["run"], meta["set"]) == ("vanilla-s1", "indicvoices")
+    errors, words = _sid(found)
+    assert 100 * errors / words == pytest.approx(summaries["indicvoices"]["wer"])
+    by_clip = {r["clip_id"]: (r["overlap_bucket"], r["by"]) for r in found}
+    assert by_clip["iv-00001"] == (">15%", "Conversation")
+    assert by_clip["iv-00000"] == ("unmeasured", "Read")
+    assert summaries["indicvoices"]["breakdown"]["by_values"] == ["Conversation", "Read"]
+
+
+def test_without_error_mining_in_the_harness_copy_a_run_still_scores(tmp_path: Path, monkeypatch):
+    """A dataset uploaded before error mining: the run is scored and says what it skipped."""
+    monkeypatch.setattr(evalkit, "_miner", lambda: None)
+    row = evalkit.evaluate_run(
+        tmp_path, "r", splits=_splits(), decode=_decoder({}), score=_FoldScore, card={"name": "x"}
+    )
+    assert row["gold_wer"] == 0.0
+    assert not (tmp_path / "harness" / "errors").exists()
+    assert json.loads((tmp_path / "gold_metrics.json").read_text("utf-8"))["breakdown"] is None

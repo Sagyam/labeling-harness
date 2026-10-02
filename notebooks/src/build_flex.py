@@ -473,6 +473,8 @@ print(f"one run is about {speed['projected_h']:.1f} h of training and gold, plus
 SETS = r'''
 SETS = tuple(evalkit.BENCHMARKS)  # every public set; name fewer to skip some
 LIMIT = 40 if SMOKE else None     # clips per set
+# Each set's crosstalk, measured once by scripts/measure_benchmark_overlap.py (WER-Breakdown.md).
+OVERLAP = evalkit.fetch_overlap(OUT_REPO, TOKEN, FT / "overlap", SETS)
 
 
 def done_sets(run):
@@ -491,9 +493,9 @@ def score_sets(run):
             print(f"{run} {name}: already in {OUT_REPO}, skipped")
             continue
         evalkit.run_benchmarks(out, decode=decode, score=score, work=FT / "benchmarks", token=TOKEN,
-                               names=[name], limit=LIMIT)
-        api.upload_folder(repo_id=OUT_REPO, folder_path=str(out / "benchmarks"),
-                          path_in_repo=f"{RUN_PREFIX}/{run}/benchmarks", allow_patterns=[f"{name}.json*"],
+                               names=[name], limit=LIMIT, run=run, overlap_dir=OVERLAP)
+        api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
+                          allow_patterns=[f"benchmarks/{name}.json*", f"harness/errors/{name}.parquet"],
                           commit_message=f"{run}: {name}")
 
 
@@ -705,7 +707,7 @@ REFERENCES = {"p00-s0 (2026-09-22)": "flex-xtalk-sweep-2026-09-22/flex-xtalk-swe
 """,
     ),
     md("## Setup"),
-    nbkit.setup("rapidfuzz"),
+    nbkit.setup("rapidfuzz duckdb"),
     *nbkit.kits("ftkit", "evalkit", "sweep", "distill"),
     load(("train", "val", "gold")),
     code(DECODE),
@@ -823,7 +825,7 @@ RUNS = ["base", "vanilla-s1"]   # "base" is Flex as released; the others are run
 """,
     ),
     md("## Setup"),
-    nbkit.setup("rapidfuzz pyarrow"),
+    nbkit.setup("rapidfuzz duckdb pyarrow"),
     *nbkit.kits("ftkit", "evalkit", "sweep", "distill"),
     load(("val", "gold")),
     code(DECODE),
@@ -1094,7 +1096,7 @@ aug_cells = [
     md("## Config"),
     config("03c_Flex_Augment", TRAIN_CONFIG, ABLATION),
     md("## Setup"),
-    nbkit.setup("rapidfuzz"),
+    nbkit.setup("rapidfuzz duckdb"),
     *nbkit.kits("ftkit", "evalkit", "sweep", "distill", "xtalk", "augment"),
     load(("train", "val", "gold"), analytics=True),
     code(DECODE),
@@ -1263,7 +1265,7 @@ TOLERANCE = 0.3             # points of val WER a blend may cost against the fin
 """,
     ),
     md("## Setup"),
-    nbkit.setup("rapidfuzz pyarrow"),
+    nbkit.setup("rapidfuzz duckdb pyarrow"),
     *nbkit.kits("ftkit", "evalkit", "sweep", "distill"),
     load(("val", "gold")),
     code(DECODE),
@@ -1484,11 +1486,13 @@ cached whatever token was there when it ran, so a secret swapped mid-session is 
 Then, in the harness checkout, the teacher goes on the Models page and into the mic playground:
 ```bash
 hf download Sagyam/nepanglish-asr-flex-ft --include "<RUN_PREFIX>/<run>/harness/*" "<RUN_PREFIX>/<run>/cpu/*" --local-dir exports/<RUN_PREFIX>
-mkdir -p data/models/asr/<run> && cp exports/<RUN_PREFIX>/<RUN_PREFIX>/<run>/harness/* data/models/asr/<run>/
+mkdir -p data/models/asr/<run> && cp -r exports/<RUN_PREFIX>/<RUN_PREFIX>/<run>/harness/. data/models/asr/<run>/
 cp -r exports/<RUN_PREFIX>/<RUN_PREFIX>/<run>/cpu data/models/asr/<run>/   # mic playground (D85)
 ```
 Press **Rescan** on the Models page. The playground sidecar starts with `docker compose up -d`.
-Any other run's `harness/` folder imports the same way, for error mining.
+Any other run's `harness/` folder imports the same way. Its `errors/` (every aligned word pair of
+gold, val and each public set, docs/WER-Breakdown.md) comes with it: the Models page's Errors
+section reads it after the rescan.
 
 **Weights no longer needed.** Once the teacher is frozen, the `best/` folders of the runs that are
 neither the teacher nor its source can be deleted from `OUT_REPO`; after a smoke run, so can the
@@ -1537,7 +1541,7 @@ MAX_WER_COST = 0.3        # points of val WER int8 may cost against bf16 (the ru
 """,
     ),
     md("## Setup"),
-    nbkit.setup("rapidfuzz"),
+    nbkit.setup("rapidfuzz duckdb"),
     *nbkit.kits("ftkit", "evalkit", "sweep", "distill", "cpukit"),
     load(("val", "gold")),
     code(DECODE),

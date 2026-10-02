@@ -220,14 +220,20 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
 
     Two layouts are accepted: the repo's (backend/app/services/, config/), and the flat one the
     2026-09-21 export uploaded (fold.py, normalize.py, normalization.yaml side by side), which
-    is laid back out here because normalize.py looks for ../../../config/."""
+    is laid back out here because normalize.py looks for ../../../config/. error_mining.py and
+    error_store.py travel with fold.py when the copy has them (docs/WER-Breakdown.md); evalkit
+    writes no error files without them.
+
+    Each `per_clip` count keeps the clip's folded `alignment`, so mining its errors aligns nothing
+    again; `summarize` adds up everything else."""
     src, dst = data / "harness", work / "harness"
     if not dst.exists():
         if (src / "fold.py").exists():
             (dst / "backend" / "app" / "services").mkdir(parents=True)
             (dst / "config").mkdir()
-            for name in ("fold.py", "normalize.py"):
-                shutil.copyfile(src / name, dst / "backend" / "app" / "services" / name)
+            for name in ("fold.py", "normalize.py", "error_mining.py", "error_store.py"):
+                if name in ("fold.py", "normalize.py") or (src / name).exists():
+                    shutil.copyfile(src / name, dst / "backend" / "app" / "services" / name)
             shutil.copyfile(src / "normalization.yaml", dst / "config" / "normalization.yaml")
         else:
             shutil.copytree(src, dst)
@@ -263,13 +269,18 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
                     "chars": len(ref_chars),
                     "char_errors": Levenshtein.distance(ref_chars, hyp_chars),
                     "loop": int(is_loop(hyp)),
+                    "alignment": folded,
                 }
             )
         return out
 
     def summarize(clips: Sequence[dict]) -> dict:
         """The score of a set of clips from their `per_clip` counts."""
-        t = {k: sum(c[k] for c in clips) for k in clips[0]} if clips else Counter()
+        t = (
+            {k: sum(c[k] for c in clips) for k in clips[0] if k != "alignment"}
+            if clips
+            else Counter()
+        )
         words = max(t["words"], 1)
         folded = t["sub"] + t["del"] + t["ins"]
         assert folded == t["errors"], "S + D + I must add up to the folded errors"
