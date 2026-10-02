@@ -653,6 +653,39 @@ class ErrorFileOut(BaseModel):
     created_at: str
 
 
+class ErrorFileScoreOut(ErrorFileOut):
+    """A stored file with the score its rows add up to."""
+
+    clips: int
+    ref_words: int
+    errors: int
+    wer: float
+    sub: float
+    #: ``del`` is a Python keyword.
+    deletions: float = Field(serialization_alias="del", validation_alias="del")
+    ins: float
+    #: The file was written under today's fold rules; otherwise its WER is not today's.
+    fold_current: bool
+    #: Gold or val: the imported run's WER, against today's labels. A file was scored against
+    #: the export's labels, so the two differ when labels moved since.
+    imported_wer: float | None
+
+
+class ErrorFilesOut(BaseModel):
+    files: list[ErrorFileScoreOut]
+    #: ``<file>: why`` for each file in ``errors/`` that cannot be read.
+    refused: list[str]
+
+
+class ErrorClipOut(BaseModel):
+    """One clip's alignment from an error file, and where to open it with its audio."""
+
+    clip_id: str
+    ops: list[AlignOpOut]
+    run_id: int | None
+    segment_id: int | None
+
+
 class ClassAxisOut(BaseModel):
     """One axis a run's clips are split by (D87): its buckets in display order, the bucket rate
     ratios compare against, and the bucket meaning "not measured"."""

@@ -204,3 +204,91 @@ def test_rescan_lists_the_error_files_a_folder_brought(
     body = client.post("/models/rescan").json()
     assert body["error_files"] == ["fresh/fleurs"]
     assert [r.split(":")[0] for r in body["error_files_refused"]] == ["fresh/val.parquet"]
+
+
+# --- reading error files (docs/WER-Breakdown.md, step 5) -----------------------------------------
+
+
+@pytest.fixture
+def mined(client, run_id: int, settings: Settings, db_session: Session, tmp_path) -> dict:
+    """flex-ft with its gold run mined and a FLEURS file; a base model with FLEURS only."""
+    from app.services import error_mining
+    from app.services.error_backfill import derive_error_files
+
+    derive_error_files(db_session, settings.models.root / "flex-ft")
+
+    def fleurs(run: str, hyp: str) -> bytes:
+        clips = [
+            {"clip_id": "f1", "group": "s1", "ref": "पाँच वटा", "hyp": hyp, "overlap_share": 0.0},
+            {"clip_id": "f2", "group": "s2", "ref": "राम्रो छ", "hyp": "राम्रो छ",
+             "overlap_share": None},
+        ]  # fmt: skip
+        path = tmp_path / f"{run}.parquet"
+        error_mining.write(error_mining.rows(run, "fleurs", clips), path)
+        return path.read_bytes()
+
+    upload = [("files", ("f.parquet", fleurs("flex-ft", "5 वटा थप")))]  # the card's run name
+    assert client.post("/models/flex-ft/errors", files=upload).status_code == 200
+    write_model(settings.models.root, "base", card=CARD | {"name": "Base"})
+    client.post("/models/rescan")
+    upload = [("files", ("f.parquet", fleurs("base", "पाँच वटा")))]
+    assert client.post("/models/base/errors", files=upload).status_code == 200
+    return {"run_id": run_id}
+
+
+def test_the_error_files_are_listed_with_their_scores(client, mined: dict) -> None:
+    body = client.get("/models/flex-ft/errors").json()
+    files = {f["set"]: f for f in body["files"]}
+    assert list(files) == ["gold", "fleurs"]
+    assert files["fleurs"]["errors"] == 1 and files["fleurs"]["ref_words"] == 4
+    assert files["fleurs"]["fold_current"] is True
+    # gold was mined from the imported run, so the two agree.
+    assert files["gold"]["imported_wer"] == pytest.approx(files["gold"]["wer"])
+    assert body["refused"] == []
+
+
+def test_a_breakdown_against_a_base(client, mined: dict) -> None:
+    body = client.get("/models/flex-ft/errors/fleurs/breakdown", params={"base": "base"}).json()
+    assert body["wer"] == pytest.approx(25.0)
+    assert body["vs_base"]["wer"][0] == pytest.approx(25.0)
+    assert [b["bucket"] for b in body["overlap"]] == ["none", "unmeasured"]
+    assert body["numbers"]["ref_clips"] == 1
+    assert body["base"] == "base"
+    gold = client.get("/models/flex-ft/errors/gold/breakdown").json()
+    assert gold["imported_wer"] == pytest.approx(gold["wer"])
+
+
+def test_breakdown_refusals(client, mined: dict) -> None:
+    assert client.get("/models/flex-ft/errors/val/breakdown").status_code == 404  # no file
+    assert client.get("/models/flex-ft/errors/librispeech/breakdown").status_code == 422
+    assert client.get("/models/flex-ft/errors/..%2Fgold/breakdown").status_code in (404, 422)
+    missing = client.get("/models/flex-ft/errors/gold/breakdown", params={"base": "base"})
+    assert missing.status_code == 404 and "base" in missing.json()["detail"]
+    assert client.get("/models/nope/errors").status_code == 404
+
+
+def test_the_confusion_table_and_its_occurrences(client, mined: dict) -> None:
+    url = "/models/flex-ft/errors/fleurs"
+    body = client.get(f"{url}/confusion", params={"kind": ["ins"], "base": "base"}).json()
+    assert body["total"] == 1
+    row = body["rows"][0]
+    assert (row["hyp"], row["count"], row["base_count"], row["change"]) == ("थप", 1, 0, 1)
+    forgiven = client.get(f"{url}/confusion", params={"forgiven": "number"}).json()
+    assert [(r["ref"], r["hyp"]) for r in forgiven["rows"]] == [("पाँच", "5")]
+    pairs = client.get(f"{url}/pairs", params={"kind": ["ins"], "hyp": "थप"}).json()
+    assert [p["clip_id"] for p in pairs["rows"]] == ["f1"]
+    assert [op["ref"] for op in pairs["rows"][0]["before"]] == [["पाँच"], ["वटा"]]
+    sampled = client.get(f"{url}/pairs", params={"sample": 1, "seed": 3}).json()
+    assert sampled["total"] == 5 and len(sampled["rows"]) == 1  # every row, matches included
+    assert client.get(f"{url}/confusion", params={"kind": ["oops"]}).status_code == 422
+
+
+def test_one_clip_and_where_its_audio_is(client, mined: dict, db_session: Session) -> None:
+    fleurs = client.get("/models/flex-ft/errors/fleurs/clips/f1").json()
+    assert [op["kind"] for op in fleurs["ops"]] == ["fold", "match", "ins"]
+    assert fleurs["segment_id"] is None and fleurs["run_id"] is None
+    gold_id = _gold(db_session)[0]
+    gold = client.get(f"/models/flex-ft/errors/gold/clips/{gold_id}").json()
+    segment = db_session.scalars(sa.select(Segment).where(Segment.external_id == gold_id)).one()
+    assert (gold["segment_id"], gold["run_id"]) == (segment.id, mined["run_id"])
+    assert client.get("/models/flex-ft/errors/fleurs/clips/nope").status_code == 404

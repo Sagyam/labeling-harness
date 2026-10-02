@@ -14,7 +14,6 @@ from app.api.deps import get_config, get_session, require_auth
 from app.api.schemas import (
     AsrModelOut,
     ClassAxisOut,
-    ErrorFileOut,
     ModelClipDetailOut,
     ModelClipPageOut,
     ModelEvalRunOut,
@@ -23,9 +22,8 @@ from app.api.schemas import (
 )
 from app.config import Settings
 from app.llm.base import LlmError
-from app.models import AsrModel, AuditLog, ModelEvalRun
+from app.models import AsrModel, ModelEvalRun
 from app.services.clip_classes import AXES, AXIS_BY_NAME
-from app.services.error_store import MAX_FILE_BYTES, ErrorFile, ErrorFileError, accept_uploads
 from app.services.model_browse import ClipFilter, ClipSort, clip_detail, list_run_clips
 from app.services.model_import import ModelImportError, scan_models
 from app.services.playground import PlaygroundError, cpu_weights
@@ -178,51 +176,6 @@ def post_rescan(
         error_files=report.error_files,
         error_files_refused=report.error_files_refused,
     )
-
-
-def _error_file_out(f: ErrorFile) -> ErrorFileOut:
-    return ErrorFileOut(
-        set=f.set,
-        run=f.run,
-        fold_version=f.fold_version,
-        miner_version=f.miner_version,
-        created_at=f.created_at,
-    )
-
-
-@router.post("/models/{slug}/errors", response_model=list[ErrorFileOut])
-async def post_errors(
-    slug: str,
-    files: list[UploadFile] = File(...),
-    session: Session = Depends(get_session),
-    settings: Settings = Depends(get_config),
-) -> list[ErrorFileOut]:
-    """Store error-mining files beside the model, as ``errors/<set>.parquet`` (WER-Breakdown.md).
-
-    All or nothing: 422 for a file that is not error rows this harness reads, an unknown set, two
-    files for one set, files from more than one run, or a file over 50 MB.
-    """
-    model = _get_model(session, slug)
-    uploads = []
-    for upload in files:
-        data = await upload.read(MAX_FILE_BYTES + 1)  # one byte over is enough to refuse it
-        uploads.append((upload.filename or "upload", data))
-    try:
-        stored = accept_uploads(settings.models.root / model.slug, uploads)
-    except ErrorFileError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    out = [_error_file_out(f) for f in stored]
-    session.add(
-        AuditLog(
-            entity_type="asr_model",
-            entity_id=model.slug,
-            action="model_errors_upload",
-            actor=settings.labels.default_annotator,
-            new_values_jsonb={"files": [f.model_dump() for f in out]},
-        )
-    )
-    session.commit()
-    return out
 
 
 @router.get("/model-runs/{run_id}/clips", response_model=ModelClipPageOut)

@@ -235,13 +235,13 @@ def test_mine_errors_script_refuses_a_model_never_imported(
 ) -> None:
     from app.config import get_settings
 
-    (tmp_path / "flex-ft").mkdir()
-    (tmp_path / "flex-ft" / "model_card.json").write_text('{"name": "x"}', encoding="utf-8")
+    (tmp_path / "never-imported").mkdir()
+    (tmp_path / "never-imported" / "model_card.json").write_text('{"name": "x"}', encoding="utf-8")
     monkeypatch.setenv("HARNESS_MODELS__ROOT", str(tmp_path))
     get_settings.cache_clear()
     try:
         script = load("mine_errors")
-        assert script.main(["flex-ft"]) == 1
+        assert script.main(["never-imported"]) == 1
         assert "not imported" in capsys.readouterr().out
         assert script.main(["absent"]) == 1
         assert "no folder" in capsys.readouterr().out

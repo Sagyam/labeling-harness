@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
         export,
         health,
         ingest,
+        model_errors,
         pots,
         queue,
         segments,
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
         costs,
         pots,
         asr_models,
+        model_errors,
         voices,
     ):
         app.include_router(module.router)
