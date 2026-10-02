@@ -134,7 +134,16 @@ _LATIN_SOUNDS = (
     (re.compile(r"dg(?=[eiy])"), "j"),
     (re.compile(r"c(?=[eiy])"), "s"),
     (re.compile(r"tion"), "shan"),
+    # fold-v4: light is लाइट, design डिजाइन, match म्याच, mix मिक्स, news न्युज.
+    (re.compile(r"igh"), "ai"),
+    (re.compile(r"gn(?=$|[eis])"), "n"),
+    (re.compile(r"tch"), "ch"),
+    (re.compile(r"x"), "ks"),
+    (re.compile(r"ew(?=$|[^aeiouy])"), "yu"),  # not eSewa, ropeway
 )
+#: English s between vowels or after a final vowel is often z, which Nepali writes ज: season is
+#: सिजन, museum म्युजियम, busy बिजी. Spelling cannot tell, so a Latin word gets both skeletons.
+_VOICED_S = re.compile(r"(?<=[aeiouy])s(?=[aeiouy]|$)")
 #: English g before e/i/y is soft in ``general`` (जनरल) and hard in ``girl`` (गर्ल), and spelling
 #: cannot tell which. A Latin word gets both skeletons and either may match.
 _SOFT_G = re.compile(r"g(?=[eiy])")
@@ -829,13 +838,16 @@ def _reduce(text: str) -> str:
 
 @lru_cache(maxsize=65536)
 def skeletons(token: str) -> frozenset[str]:
-    """Every consonant skeleton the word could have: one, or two for a Latin word with a g."""
+    """Every consonant skeleton the word could have: one, or up to four for a Latin word with a
+    g (soft or hard) or an s (voiced or not)."""
     text = _ascii(token)
     if not _LATIN.search(token):
         return frozenset({_reduce(text)})
     for pattern, sound in _LATIN_SOUNDS:
         text = pattern.sub(sound, text)
-    return frozenset({_reduce(text), _reduce(_SOFT_G.sub("j", text))})
+    readings = {text, _SOFT_G.sub("j", text)}
+    readings |= {_VOICED_S.sub("z", reading) for reading in readings}
+    return frozenset(_reduce(reading) for reading in readings)
 
 
 def skeleton(token: str) -> str:
@@ -1269,11 +1281,16 @@ RULEBOOK: tuple[FoldRule, ...] = (
         "sound-skeleton", 2, "Consonant skeleton",
         "Across scripts only: both words reduced to their consonants, confusable classes "
         "merged (v/w/b, f/p, z/j, d/t, m/n, l/r), equal or one consonant apart once long "
-        "enough. Never within one script, where it would erase grammar. Every sound rule also "
+        "enough. English spellings are read as said: light, design, match, mix, and an s "
+        "between vowels as z (season is सिजन); known to join शतबीज/service, नायडू/Night and "
+        "this/तेज (fold-v4). Never within one script, where it would erase grammar. Every "
+        "sound rule also "
         "needs a case ending on both sides or neither (नेपालमा is not Nepal), and a common Nepali "
         "function word matches only its own romanization (अनि is ani, not and).",
-        (("एक्टिभ", "active"), ("पुलिस", "police"), ("बजेट", "budget"), ("कम्प्युटर", "computer")),
-        (("एकदमै", "actually"), ("गर्नु", "गर्ने"), ("नेपालमा", "Nepal"), ("दिन", "time")),
+        (("एक्टिभ", "active"), ("पुलिस", "police"), ("बजेट", "budget"), ("कम्प्युटर", "computer"),
+         ("डिजाइन", "design"), ("सिजन", "season")),
+        (("एकदमै", "actually"), ("गर्नु", "गर्ने"), ("नेपालमा", "Nepal"), ("दिन", "time"),
+         ("बग", "box")),
     ),
     FoldRule(
         "sound-ratio", 2, "Romanized spelling",

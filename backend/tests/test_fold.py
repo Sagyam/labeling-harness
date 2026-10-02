@@ -722,3 +722,21 @@ class TestOrthographyTheAuditFound:
     @pytest.mark.parametrize(("left", "right"), [("16th", "सोह्र"), ("1000th", "हजारौं")])
     def test_a_cardinal_and_thousands_of_are_not_ordinals(self, left: str, right: str) -> None:
         assert word_errors(left, right).errors > 0
+
+
+class TestEnglishSounds:
+    """fold-v4: English spellings the skeleton read wrong (audit of 2026-10-02)."""
+
+    @pytest.mark.parametrize(
+        ("dev", "latin"),
+        [("डिजाइन", "design"), ("लाइट", "light"), ("हाइवे", "highway"), ("म्याच", "match"),
+         ("मिक्स", "mix"), ("फिक्स", "fix"), ("सिजन", "season"), ("न्युज", "news"),
+         ("म्युजियम", "museum"), ("रिलिज", "release"), ("बिजी", "busy"), ("प्लिज", "please")],
+    )  # fmt: skip
+    def test_what_english_spelling_hides_is_heard(self, dev: str, latin: str) -> None:
+        assert same_word(dev, latin)
+        assert which_rule(dev, latin) == "sound-skeleton"
+
+    @pytest.mark.parametrize(("dev", "latin"), [("सेवा", "eSewa"), ("रोपवे", "Ropeway")])
+    def test_a_w_before_a_vowel_is_not_a_yu(self, dev: str, latin: str) -> None:
+        assert same_word(dev, latin)
