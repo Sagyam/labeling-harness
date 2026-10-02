@@ -1186,29 +1186,34 @@ RULEBOOK: tuple[FoldRule, ...] = (
         "spacing", 1, "Split and joined words",
         "Two words against one match when joined they are the same word by any rule; up to "
         "three a side when the joined spelling or number is the same. An error row records "
-        "these as a merge.",
-        (("गर्नुभयो", "गर्नु भयो"), ("Facebook", "फेस बुक"), ("मिनेटपछि", "minute पछि")),
+        "these as a merge. Across scripts a merge that swallows a word is refused: one of the "
+        "two alone matches the single word as well and the other is not written inside it.",
+        (("गर्नुभयो", "गर्नु भयो"), ("Facebook", "फेस बुक"), ("मिनेटपछि", "minute पछि"),
+         ("Hong Kong", "हङकङ")),
+        (("type को", "type"), ("investment", "investment लागेको")),
     ),
     FoldRule(
         "sound-skeleton", 2, "Consonant skeleton",
         "Across scripts only: both words reduced to their consonants, confusable classes "
         "merged (v/w/b, f/p, z/j, d/t, m/n, l/r), equal or one consonant apart once long "
-        "enough. Never within one script, where it would erase grammar.",
+        "enough. Never within one script, where it would erase grammar. Every sound rule also "
+        "needs a case ending on both sides or neither (नेपालमा is not Nepal), and a common Nepali "
+        "function word matches only its own romanization (अनि is ani, not and).",
         (("एक्टिभ", "active"), ("पुलिस", "police"), ("बजेट", "budget"), ("कम्प्युटर", "computer")),
-        (("एकदमै", "actually"), ("गर्नु", "गर्ने")),
+        (("एकदमै", "actually"), ("गर्नु", "गर्ने"), ("नेपालमा", "Nepal"), ("दिन", "time")),
     ),
     FoldRule(
         "sound-ratio", 2, "Romanized spelling",
         "Across scripts, when the skeleton is too short to be evidence: the romanized words, "
         "vowels kept, at most a third apart.",
         (("मोमो", "momo"), ("यु", "you"), ("छ", "chha"), ("हो", "ho")),
-        (("ठीक", "shit"),),
+        (("ठीक", "shit"), ("अनि", "and"), ("हामीले", "family")),
     ),
     FoldRule(
         "sound-short", 2, "Short words, one letter apart",
         "Across scripts, words of up to four romanized letters one letter apart: इज and is.",
         (("टु", "to"), ("इज", "is"), ("जू", "zoo")),
-        (("the", "द"), ("म", "me")),
+        (("the", "द"), ("म", "me"), ("हो", "No"), ("अर", "or")),
     ),
     FoldRule(
         "contracted-verb", 3, "Contracted verb forms",
