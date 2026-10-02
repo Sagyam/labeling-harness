@@ -91,6 +91,23 @@ def overlap_bucket(share: float | None) -> str:
     return ">15%"
 
 
+#: ``clip_classes``'s SNR edges (D87), lowest first; at or above the last is ``45+ dB``.
+SNR_EDGES = ((15, "<15 dB"), (25, "15-25 dB"), (35, "25-35 dB"), (45, "35-45 dB"))
+#: Every SNR bucket in order, the baseline (``45+ dB``, where most of the corpus is) last but one.
+SNR_BUCKETS = (*(b for _, b in SNR_EDGES), "45+ dB", "unmeasured")
+
+
+def snr_bucket(db: float | None) -> str:
+    """``clip_classes``'s speech-to-noise bucket, repeated so this module needs nothing but
+    ``fold.py``; a test holds the two together."""
+    if db is None:
+        return "unmeasured"
+    for edge, bucket in SNR_EDGES:
+        if db < edge:
+            return bucket
+    return "45+ dB"
+
+
 def _side_script(words: Sequence[str]) -> str | None:
     """One side's script: ``dev``, ``lat``, ``mix`` (both, in one word or across a merge's
     words) or ``none`` (digits only); ``None`` for the absent side of a deletion or insertion."""
@@ -294,6 +311,16 @@ def read_overlap(path: Path | str) -> dict[str, float | None]:
     with duckdb.connect() as con:
         found = con.execute(
             f"SELECT clip_id, overlap_share FROM read_parquet({_sql_string(str(path))})"
+        ).fetchall()
+    return dict(found)
+
+
+def read_snr(path: Path | str) -> dict[str, float | None]:
+    """A public set's measured speech-to-noise ratio (``benchmarks/acoustics/<set>.parquet``,
+    written by :mod:`app.services.benchmark_overlap`) as ``{clip_id: snr_db}``."""
+    with duckdb.connect() as con:
+        found = con.execute(
+            f"SELECT clip_id, snr_db FROM read_parquet({_sql_string(str(path))})"
         ).fetchall()
     return dict(found)
 

@@ -127,6 +127,16 @@ def test_the_overlap_bucket_is_the_corpus_one(share: float | None) -> None:
     assert error_mining.overlap_bucket(share) == overlap_bucket(share)
 
 
+@pytest.mark.parametrize("db", [None, -4.5, 14.9, 15.0, 24.9, 25.0, 35.0, 44.99, 45.0, 72.0])
+def test_the_snr_bucket_is_the_corpus_one(db: float | None) -> None:
+    from app.services.clip_classes import AXES, _snr_bucket
+
+    acoustics = None if db is None else {"snr_db": db}
+    assert error_mining.snr_bucket(db) == _snr_bucket(acoustics)
+    (axis,) = [a for a in AXES if a.name == "snr"]
+    assert axis.buckets == error_mining.SNR_BUCKETS
+
+
 def test_the_sets_are_gold_val_and_the_public_benchmarks() -> None:
     assert error_mining.SETS == (
         "gold", "val", "fleurs", "slr54", "common_voice", "indicvoices", "nepali_cs",
