@@ -28,9 +28,12 @@ from typing import Any
 import duckdb
 
 from app.services.error_mining import SETS, MinedFileError, metadata
-from app.services.model_eval import BOOTSTRAP_ROUNDS, BOOTSTRAP_SEED
 
 ERRORS_DIR = "errors"
+#: ``model_eval``'s resampling, repeated so this module needs nothing of the database layer: the
+#: notebooks carry it in the dataset's ``harness/`` copy. A test holds the two together.
+BOOTSTRAP_ROUNDS = 1000
+BOOTSTRAP_SEED = 0
 #: The largest file an upload may carry. A run's biggest set is a few MB.
 MAX_FILE_BYTES = 50 * 1024 * 1024
 

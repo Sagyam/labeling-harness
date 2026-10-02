@@ -284,3 +284,25 @@ def test_one_clip_in_order(run: Path) -> None:
         {"kind": "match", "ref": ["दिन"], "hyp": ["दिन"], "similarity": 1.0},
     ]
     assert clip_ops(run, "nope") == []
+
+
+def test_it_resamples_as_model_eval_does_without_importing_it() -> None:
+    """The notebooks carry this module without the database layer model_eval pulls in."""
+    import subprocess
+    import sys
+
+    from app.services import error_store, model_eval
+
+    assert (error_store.BOOTSTRAP_ROUNDS, error_store.BOOTSTRAP_SEED) == (
+        model_eval.BOOTSTRAP_ROUNDS,
+        model_eval.BOOTSTRAP_SEED,
+    )
+    code = (
+        "import sys, app.services.error_store; "
+        "print(sorted(m for m in sys.modules if m.startswith(('sqlalchemy', 'app.'))))"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert "sqlalchemy" not in loaded.stdout
+    assert "app.services.model_eval" not in loaded.stdout
