@@ -24,6 +24,38 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## What crosstalk and noise cost, within episode and against the clean floor (2026-10-02)
+
+vanilla-s1's WER split by the attribution card (D111; fold-v3, mine-v2), points of each set's
+WER with 95% intervals from resampling its unit. SNR was measured on every public-set clip for
+this (`benchmarks/acoustics/`, about 18 s of CPU per hour).
+
+| | WER | crosstalk, within | crosstalk, floor | noise, within | noise, floor |
+|---|---|---|---|---|---|
+| gold | 10.76 | 2.36 [0.94, 3.67] | 4.53 [1.95, 7.11] | −0.24 [−1.11, 0.31] | 0.46 [−0.74, 1.57] |
+| val | 6.93 | 0.72 [0.29, 1.04] | 1.11 [0.63, 1.67] | 0.50 [−1.60, 2.26] | 1.41 [0.00, 3.37] |
+| OpenSLR 54 | 7.96 | 0.09 [0.01, 0.20] | 0.09 [0.01, 0.20] | −0.11 [−1.57, 0.91] | 1.02 [0.29, 1.69] |
+| IndicVoices | 12.59 | 0.07 [−0.07, 0.25] | 0.11 [−0.02, 0.27] | −0.15 [−2.16, 1.30] | −2.08 [−3.26, −0.93] |
+| nepali_cs | 12.00 | 1.05 [0.26, 2.71] | 2.38 [0.40, 6.77] | 0.62 [−0.43, 1.79] | 0.63 [0.01, 2.13] |
+
+- **Half of crosstalk's naive cost on gold is the shows it comes in.** Against the clean floor
+  it costs 4.53 points; compared only with clean clips of the same episode, 2.36. Over 15%
+  overlap is most of it (1.86 within).
+- **Noise explains nothing on gold, and cannot be measured there well.** No gold episode has
+  both a crosstalk-free clip under 15 dB and one at 45+ dB, so the noisiest bucket is not
+  estimable within episode, and the others' intervals straddle zero.
+- **The clean-floor noise figures on the public sets are confounded both ways.** OpenSLR 54 is
+  noisy throughout (16% of its clips at 45+ dB), and its floor charges noise 1.02 points where
+  within a speaker it is −0.11. On IndicVoices the noisy clips do better than the clean ones
+  (floor −2.08): the set's scenarios differ in both. Within the set's own unit both vanish.
+- **Crosstalk barely matters on the public sets except nepali_cs**: 0.07-0.09 points on
+  OpenSLR 54 and IndicVoices, 1.05 on the code-switched lectures.
+- **What is left on gold is mostly Nepali words**: of the 8.63 points no condition takes
+  (within), 3.13 are a different Nepali word and 1.03 a similar one (mostly a suffix), against
+  0.96 English, 0.56 across scripts and 0.39 numbers; deletions 1.66, insertions 0.90.
+
+---
+
 ## Fine-tuning fixed number formats and hid a loss behind them (2026-10-02)
 
 vanilla-s1 (03a) minus base Flex, from error mining's rows (fold-v3, mine-v1; the full table and
