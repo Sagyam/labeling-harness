@@ -76,11 +76,15 @@ def measure(name: str, detector: OverlapDetector, token: str, out: Path) -> Path
 
 
 def listen(name: str, path: Path, token: str, out: Path, n: int) -> None:
-    """Write the set's ``n`` highest-overlap clips as FLAC, named by rank, share and id."""
+    """Write the set's ``n`` highest-overlap clips as FLAC, named by rank, share and id. Only
+    clips with some overlap: a set with two such clips has two to hear."""
     import soundfile as sf
 
     shares = read_overlap(path)
-    top = sorted(shares, key=lambda c: -(shares[c] or 0.0))[:n]
+    top = sorted((c for c in shares if shares[c]), key=lambda c: -shares[c])[:n]
+    if not top:
+        print(f"{name}: no clip with any overlap, nothing to hear", flush=True)
+        return
     rank = {clip_id: k for k, clip_id in enumerate(top, 1)}
     folder = out / "listen" / name
     folder.mkdir(parents=True, exist_ok=True)
