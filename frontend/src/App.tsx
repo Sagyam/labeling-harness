@@ -9,7 +9,8 @@ import { ExportView } from '@/components/ExportView'
 import { Header, type HeaderMode } from '@/components/Header'
 import { IngestView } from '@/components/IngestView'
 import { ModelsView } from '@/components/ModelsView'
-import { KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal'
+import { KeyboardShortcutsModal, type HelpTab } from '@/components/KeyboardShortcutsModal'
+import { PageIntro } from '@/components/PageIntro'
 import { MultitrackEditor } from '@/components/MultitrackEditor'
 import { TriageView } from '@/components/TriageView'
 import { VoicesView } from '@/components/VoicesView'
@@ -77,6 +78,7 @@ export default function App() {
   // Editor state
   const [currentTask, setCurrentTask] = useState<Task | null>(null)
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false)
+  const [helpTab, setHelpTab] = useState<HelpTab>('glossary')
 
   // Load stats & health
   const refreshStats = useCallback(async () => {
@@ -506,6 +508,7 @@ export default function App() {
 
       if (e.key === '?') {
         e.preventDefault()
+        setHelpTab('shortcuts')
         setIsHelpOpen((prev) => !prev)
       } else if (e.key === '1') {
         e.preventDefault()
@@ -555,8 +558,18 @@ export default function App() {
           }
         }}
         onResume={handleResume}
-        onOpenHelp={() => setIsHelpOpen(true)}
+        onOpenHelp={() => {
+          setHelpTab('glossary')
+          setIsHelpOpen(true)
+        }}
         health={health}
+      />
+      <PageIntro
+        mode={activeMode === 'editor' && !currentTask ? 'triage' : activeMode}
+        onOpenGlossary={() => {
+          setHelpTab('glossary')
+          setIsHelpOpen(true)
+        }}
       />
 
       {/* Main View Router */}
@@ -638,7 +651,12 @@ export default function App() {
         />
       )}
 
-      <KeyboardShortcutsModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+      <KeyboardShortcutsModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        tab={helpTab}
+        onTab={setHelpTab}
+      />
     </div>
   )
 }

@@ -6,10 +6,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
+import { Glossary } from '@/components/Glossary'
+import { cn } from '@/lib/utils'
+
+export type HelpTab = 'glossary' | 'shortcuts'
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean
   onClose: () => void
+  /** Which tab is showing; the dialog is opened on one and can switch. */
+  tab: HelpTab
+  onTab: (tab: HelpTab) => void
 }
 
 type Shortcut = [description: string, keys: string[]]
@@ -85,23 +92,52 @@ function ShortcutGroup({ title, shortcuts }: { title: string; shortcuts: Shortcu
   )
 }
 
-export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsModalProps) {
+export function KeyboardShortcutsModal({ isOpen, onClose, tab, onTab }: KeyboardShortcutsModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[85vh] gap-4 overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogTitle>Help</DialogTitle>
           <DialogDescription>
-            The harness is keyboard-first — every decision and view switch has a binding.
+            What the harness's terms mean, and the keys every decision and view switch is bound to.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-6 sm:grid-cols-2">
-          <ShortcutGroup title="Global navigation" shortcuts={NAVIGATION} />
-          <ShortcutGroup title="Triage mode" shortcuts={TRIAGE} />
-          <ShortcutGroup title="Editor mode" shortcuts={EDITOR} />
-          <ShortcutGroup title="Devanagari transliteration" shortcuts={TRANSLIT} />
+        <div className="flex gap-1 border-b" role="tablist">
+          {(
+            [
+              ['glossary', 'Glossary'],
+              ['shortcuts', 'Keyboard shortcuts'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => onTab(id)}
+              className={cn(
+                '-mb-px border-b-2 px-3 py-1.5 text-sm',
+                tab === id
+                  ? 'border-primary font-semibold text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {label}
+            </button>
+          ))}
         </div>
+
+        {tab === 'glossary' ? (
+          <Glossary />
+        ) : (
+          <div className="grid gap-6 sm:grid-cols-2">
+            <ShortcutGroup title="Global navigation" shortcuts={NAVIGATION} />
+            <ShortcutGroup title="Triage mode" shortcuts={TRIAGE} />
+            <ShortcutGroup title="Editor mode" shortcuts={EDITOR} />
+            <ShortcutGroup title="Devanagari transliteration" shortcuts={TRANSLIT} />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
