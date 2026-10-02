@@ -2654,7 +2654,7 @@ run and set, written only by `error_mining.write` and read only through DuckDB
 **Reversal:** a migration for an error-row table and an importer that loads the files into it;
 `error_mining`'s classifier and `error_store`'s queries carry over, as SQL against the table.
 
-## D111 — A WER is attributed to recording conditions two ways, within the set's own unit and against its clean floor
+## D111 — A WER is attributed to recording conditions within the set's own unit
 
 Every scored clip is tested on both recording conditions the owner found behind every clip the
 crosstalk detector flagged on the public sets: crosstalk (D77) and speech-to-noise ratio
@@ -2671,16 +2671,18 @@ WER each condition costs, and splits the rest by kind of error.
   rest, which is split by kind of error (a number, a deletion, an insertion, a substitution
   across scripts, between English words, between Devanagari words at similarity 0.75 or more, or
   any other), each clip's errors weighted `1/ratio`. The rows add up to the WER exactly.
-- **Two ratios, both shown, because they tell different stories** (owner, 2026-10-02):
-  - *within*: the Mantel-Haenszel ratio over the set's own unit (an episode on gold and val, the
-    set's group on a public set), the estimator the By class panel already uses. A clip is only
-    compared with baseline clips of its own episode, so voices, microphone, room and topic are
-    held fixed. This is the estimate of what the condition itself costs. A bucket no episode can
-    compare is not estimated, and its errors stay in the rest.
-  - *floor*: the crude ratio against the set's pooled baseline rate. It also charges a condition
-    for what comes with it: on gold, crosstalk lives in podcasts and talk shows, which are harder
-    when one voice speaks too. The gap between the two is how much of the naive figure is the
-    show rather than the overlap.
+- **The ratio is taken within the set's own unit** (an episode on gold and val, the set's
+  group on a public set): Mantel-Haenszel, the estimator the By class panel already uses. A clip
+  is only compared with baseline clips of its own episode, so voices, microphone, room and topic
+  are held fixed, and what differs is mostly the condition. A bucket no episode can compare is
+  "not measurable": its errors stay in the rest, and the gap is shown rather than filled.
+- **The clean floor is quoted once, never tabled** (owner, 2026-10-02). The crude ratio against
+  the set's pooled baseline is still computed (`floor` in the card's data), and the explanation
+  gives its crosstalk and noise totals in one sentence, because it is the first thing a reader
+  asks about. It charges a condition for what comes with it -- on gold, crosstalk lives in
+  podcasts and talk shows, which are harder when one voice speaks too (4.53 points against 2.36
+  within) -- and on IndicVoices it comes out with the wrong sign. Both methods in two columns
+  were tried first and made the card unreadable.
 - **Intervals resample the set's own unit**, 1000 seeded draws, like every other interval here.
 - **It tags errors, it never forgives them** (WER-Breakdown.md): the WER is unchanged, and the
   card is an extra block beside it.

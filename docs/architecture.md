@@ -98,8 +98,8 @@ whether a number is involved, the substitution's similarity, both sides romanize
 clip's crosstalk and SNR buckets. The public sets' crosstalk and acoustics are measured once
 (`scripts/measure_benchmark_overlap.py`) and kept in the model repo's `benchmarks/overlap/` and
 `benchmarks/acoustics/`; gold and val take theirs from the segment. Each breakdown carries the
-attribution card (D111): the points of WER crosstalk and each SNR bucket cost, within episode and
-against the clean floor, and the rest split by kind of error.
+attribution card (D111): the points of WER crosstalk and each SNR bucket cost, within episode, and the
+rest split by kind of error.
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an
@@ -666,7 +666,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodesView.tsx`, `components/metadata/` | Browse episodes and segments, delete either, edit an episode's genre, topic and speakers (D102) |
-| Models | `components/ModelsView.tsx`, `components/models/` | One model at a time (full name and slug in the list), in four tabs, each stating the question it answers. **Overview**: the WER of every set it has error files for, against another model if picked, the attribution card (D111: points of WER per crosstalk and SNR bucket, within episode and against the clean floor, and the rest by kind of error, as stacked bars and a table) and the crosstalk block, whose buckets open the Errors tab filtered. **Clips**: run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the gold and val clips worst first with audio and the folded diff (D83). **Errors** (D110): the error files and their import, the number block, the confusion table with its filters, seeded samples of occurrences, and a clip. **Try it**: the playground (D85) |
+| Models | `components/ModelsView.tsx`, `components/models/` | One model at a time (full name and slug in the list), in four tabs, each stating the question it answers. **Overview**: the WER of every set it has error files for, against another model if picked, the attribution card (D111: points of WER for crosstalk and noise, within episode, each expandable to its buckets, and the rest by kind of error, as one stacked bar and a table) and the crosstalk block, whose buckets open the Errors tab filtered. **Clips**: run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the gold and val clips worst first with audio and the folded diff (D83). **Errors** (D110): the error files and their import, the number block, the confusion table with its filters, seeded samples of occurrences, and a clip. **Try it**: the playground (D85) |
 | Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One pot at a time from `/stats/inventory` (D104): the ledger, a summary of what is missing and thin beside what is overdone and plenty, a table per category in four groups (status, hours bar with the floor ticked, usable voices), the any-by-any cross-tab, and the records check |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
 

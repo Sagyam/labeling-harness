@@ -136,10 +136,10 @@ baseline (no crosstalk, 45+ dB) or unmeasured.
 
 - **Per condition:** clips, words, WER, the ratio to its baseline and the points of the set's
   WER it costs, `errors x (1 - 1/ratio)`, with intervals from resampling the set's unit.
-- **Two ratios, side by side.** *Within* compares each clip only with baseline clips of its own
-  episode (Mantel-Haenszel, as the By class panel does): the condition's own cost. *Floor*
-  compares it with the set's pooled baseline rate, so it also charges the condition for the
-  shows it comes in. Both are shown because the gap between them is itself the finding.
+- **Within episode.** Each clip is compared only with baseline clips of its own episode
+  (Mantel-Haenszel, as the By class panel does): the condition's own cost. The clean-floor
+  figure, against the set's pooled baseline, is one sentence in the card's explanation: it also
+  charges the condition for the shows it comes in.
 - **The rest**, everything no condition took, by kind of error: a number, a deletion, an
   insertion, a substitution across scripts, between English words, between Devanagari words at
   similarity 0.75 or more (mostly suffixes), and any other substitution. The rows sum to the WER.
