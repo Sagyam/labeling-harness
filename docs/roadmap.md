@@ -449,7 +449,6 @@ only the finite, low-risk rules are in scope, done when little else is left to o
 **In scope** (finite, and cannot join two different words):
 - maths symbols and their words: `+`/`plus`, `=`/`equals`/`equal to`, `×`/`into`/`times`
   (0.20 on average, 0.93 on nepali_cs);
-- Nepali ordinals: `-औँ`/`-औं` (`तेह्रौँ` = `13 औं` = `13th`), `प्रथम` = `पहिलो` = `1st`;
 - spelling variants of number words the table lacks (`छप्पन`/`छपन्न`, `उनानब्बे`/`उनान्नब्बे`),
   found by listing the corpus and benchmark vocabulary against `_NUMBER_WORDS`;
 - English number words written in Devanagari (`वान`, `टु`, `फोर्टी`, `हन्ड्रेड`, `थाउजन्ड`);
@@ -463,7 +462,9 @@ pairs (ण/न, श/ष/स, व/ब), which can join different words and would 
 the colloquial table had.
 
 **How.** A new fold version, tests first, a decision entry, and every table re-reported beside the
-plain WER, for every system alike.
+plain WER, for every system alike. Each new rule is a `RULEBOOK` entry with its examples and
+counterexamples (D112). The Nepali ordinals (`-औँ`, `प्रथम`) landed in fold-v4; the
+Devanagari spelling pairs are now tier-4 tags, still never folded.
 
 ## Retired items
 

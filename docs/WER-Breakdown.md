@@ -5,20 +5,48 @@ FLEURS, and about half of that turned out to be number formats rather than heari
 evaluation therefore reports a breakdown beside WER and its S/D/I split, and every error is kept
 for analysis rather than read once and thrown away.
 
-## Direction: smaller folding, finer breakdown
+## Direction: one rulebook, with tags for what it cannot decide (D112)
 
-The owner's direction (2026-10-01): **folding rules get smaller and the breakdown gets finer.**
+The first direction (2026-10-01) was **folding rules get smaller and the breakdown gets finer**:
+a static table always misses cases and sometimes forgives a real mistake, while the breakdown
+decides nothing. The 2026-10-02 audit kept the second half and refined the first. The fold had
+been wrong both ways, but the over-folding was bugs and rules too broad, and the under-folding a
+short list that cannot join two different words. So fold-v4 is one rulebook (D112):
 
-A folding rule decides, silently and for good, that two spellings are one word. A large static
-table of such decisions always misses cases and sometimes forgives a real mistake. The breakdown
-decides nothing: it only says what kind of error an error is, so it can be as fine as is useful
-without changing the score. Nuance belongs there.
+- **A rule folds only what cannot be two words** (tiers 1-3). Anything that may join two
+  different words -- `केस` "case" and `केश` "hair" -- is a **tag** (tier 4): it describes a charged
+  error and never forgives it. Nuance still belongs in the breakdown.
+- **Every rule is held to evidence.** Each has examples and counterexamples a test checks, each
+  forgiven row names the rule that forgave it, and the Rulebook page shows how often each fired
+  per model and set, with samples.
+- **A breakdown tags errors, it never forgives them.** Folded WER is whatever `fold.py` says.
 
-- **A breakdown tags errors, it never forgives them.** Folded WER is whatever `fold.py` says; no
-  block here changes it.
-- **Shrinking `fold.py` is a later, separate step** (a fold-v4, with a decision entry): every
-  WER moves when it lands. The breakdown comes first, so that when folding shrinks, the WER it
-  adds is already explained by kind.
+## The rulebook (fold-v4)
+
+`RULEBOOK` and `TAGS` in `backend/app/services/fold.py` are the rules; the Rulebook page
+(`GET /fold/rulebook`) is how they are read, with their evidence. In short:
+
+| tier | what | rules |
+|---|---|---|
+| 1 | orthography: one word written another way | case, contraction, apostrophe, english-variant, letter-names, digits, vowel-length, chandrabindu, doubled-sign, nukta, final-virama, visarga, nasal-cluster, number, spacing |
+| 2 | across scripts, by sound | sound-skeleton, sound-ratio, sound-short; a case ending must agree, a Nepali function word matches only its romanization, a merge may not swallow a word |
+| 3 | colloquial Nepali (D84, D89) | contracted-verb, western-participle, progressive, benefactive, first-plural, pronoun, launu, emphatic, loose, unseen, joined, other-words |
+| 4 | tags, still errors | ba-va, sibilant, inner-virama, nasal-dropped, nasal-added, au-o, repetition |
+
+How much each tier forgives, vanilla-s1, pairs per 100 reference words:
+
+| set | tier 1 | tier 2 | tier 3 | tier-4 tags (charged) | largest tags |
+|---|---|---|---|---|---|
+| gold | 3.36 | 0.70 | 0.93 | 0.46 | repetition 0.22, nasal-added 0.06 |
+| val | 2.87 | 0.30 | 1.09 | 0.36 | repetition 0.18, nasal-added 0.06 |
+| FLEURS | 6.40 | 3.80 | 0.13 | 0.81 | ba-va 0.26, sibilant 0.16 |
+| OpenSLR 54 | 5.33 | 2.54 | 0.05 | 1.20 | nasal-added 0.42, ba-va 0.27 |
+| Common Voice | 8.96 | 1.63 | 1.34 | 2.27 | nasal-added 1.28, ba-va 0.29 |
+| IndicVoices | 6.19 | 5.20 | 1.56 | 0.59 | repetition 0.26, nasal-added 0.10 |
+| nepali_cs | 10.60 | 0.51 | 1.14 | 0.39 | repetition 0.28, au-o 0.04 |
+
+Common Voice's `nasal-added` (1.28 of its 8.55) is mostly a reference that dropped a chandrabindu
+the model wrote (`हामी नेपाली हौ`/`हौँ`): read against its tag, it is the reference's error.
 
 ## Error mining
 
@@ -187,7 +215,7 @@ reading needs, each substitution's `similarity` and both sides romanized, so the
 filters by them without a threshold having been chosen. Error rows are Parquet files beside their
 model, not tables (D110).
 
-- **The classifier**, `backend/app/services/error_mining.py` (`MINER_VERSION = "mine-v2"`; v2 added each clip's SNR):
+- **The classifier**, `backend/app/services/error_mining.py` (`MINER_VERSION = "mine-v3"`; v2 added each clip's SNR, v3 `fold_rule` and `variant`):
   `pairs` turns a clip into one row per alignment step, reusing an alignment the scorer already
   made; `rows` adds the clip's columns; `write` and `read` are the only writer and reader. It
   imports only `fold.py`, the standard library and DuckDB. A clip id repeated in a set (nepali_cs
@@ -196,7 +224,8 @@ model, not tables (D110).
   `kind`, `identical`, `forgiven` (`spelling`, `script`, `number`, `merge`; a fold is `number`
   when rule 2 matched it), `ref_script`, `hyp_script` (`dev`, `lat`, `mix`, `none`; null on the
   absent side), `number` (either side), `ref_number` (the reference side: block 2's clips),
-  `similarity`, `ref_roman`, `hyp_roman`, `overlap_share`, `overlap_bucket`, `snr_db`,
+  `similarity`, `fold_rule` (the rulebook rule that forgave the pair), `variant` (the tier-4
+  tag of an error), `ref_roman`, `hyp_roman`, `overlap_share`, `overlap_bucket`, `snr_db`,
   `snr_bucket` (the corpus's SNR buckets, D87), `by`. Metadata:
   `run`, `set`, `fold_version`, `miner_version`, `created_at`.
 - **The queries**, `backend/app/services/error_store.py`: `breakdown` (WER with S/D/I and
@@ -274,7 +303,8 @@ crosstalk.
 
 ## Not in this round
 
-- **Classes 4 and 5** (convention mismatch, near miss): after reading what 1-3 surface.
+- **Class 5** (near miss). Class 4 (convention mismatch) became the rulebook's tier-4 tags and
+  its tier-1 folds in fold-v4 (D112).
 - **Notes while reading**: marking a pair as a convention or a real error from the page needs
   storage of its own, and a decision on what such a mark may change.
 - **S/D/I by language** (Nepali, English, numbers) as a reported block; the rows carry script, so

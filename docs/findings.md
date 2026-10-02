@@ -20,9 +20,67 @@ What survives:
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
-until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
+until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
+(D112) since.
 
 ---
+
+## The fold was wrong both ways, and fold-v4 (2026-10-02)
+
+An audit of the mine-v2 error rows (vanilla-s1 and base, all seven sets) for pairs graded
+unfairly and pairs forgiven too easily, then re-aligned with each candidate rule.
+
+**Forgiven too easily** (fold-v3), largest first:
+- **A two-against-one merge across scripts that swallows a word** (`type को`/`type`,
+  `investment`/`investment लागेको`, `भनेको`/`भनेको X`): 0.39 per 100 words on gold, 0.26 val,
+  0.57 nepali_cs; base benefits more (0.59 on gold).
+- **Nepali function words matched to English by sound**: `अनि`/`and`, `हो`/`No`, `दिन`/`time`,
+  `हामीले`/`family`. Under 0.1 points.
+- **Colloquial rules rewriting words they were not about**: `-ेसि` -> `-ेपछि` turned `मेसी`, `केसी`,
+  `बेसी` (264 occurrences) and `मधेसी` into `-पछि` words, so `मेसी`/`Messi` was charged; the passive
+  `-इयो` joined `हरियो` ("green") to `हर्यो` ("lost"); `-नि` rewrote `भाटभटेनी` and `स्पेनी`.
+- **A case ending on one side only** inside one cross-script match (`नेपालमा`/`Nepal`): 0.01-0.08.
+- By the owner's choice and left for listening: `नि`/`पनि` (114 forgiven pairs), the infinitive
+  `-नु`/`-न` (~150), the passive `-इयो` (~60).
+
+**Graded unfairly** (fold-v3): on gold and val only about 0.05 points; on the public sets
+0.2-0.6. Letters by name (`B`/`बी` 65, `A`/`ए` 66, `ESIC`/`इएसआइसी`; 0.40 on nepali_cs),
+`घन्टा`/`घण्टा` (50+), visarga (`प्राय`/`प्रायः` 14), `OK`/`okay` (30), ordinals (`11th`/`एघारौँ`),
+English spellings the skeleton misread (`design`, `light`, `season`). Spelling variants that can
+also be two words -- ब/व, श/ष/स, an inner virama -- are about 0.12 on gold and 0.5-0.6 on FLEURS
+and OpenSLR 54. On Common Voice and OpenSLR 54 the nasal-only substitutions run about 4:1 toward
+the model writing a chandrabindu the reference dropped (`हामी नेपाली हौ`/`हौँ`): 1.40 of Common
+Voice's 8.73 points under fold-v3, mostly the reference's error.
+
+**fold-v4 (D112)** fixes the first list, folds what in the second cannot be two words, and tags
+the rest. Folded WER, mine-v3, S / D / I per 100 words:
+
+| run | set | fold-v3 | fold-v4 | change | S / D / I |
+|---|---|---|---|---|---|
+| vanilla-s1 | gold | 10.76 | 11.12 | +0.36 | 7.06 / 2.64 / 1.42 |
+| vanilla-s1 | val | 6.93 | 7.16 | +0.23 | 4.71 / 1.36 / 1.09 |
+| vanilla-s1 | FLEURS | 12.24 | 11.89 | -0.35 | 8.55 / 1.52 / 1.81 |
+| vanilla-s1 | OpenSLR 54 | 7.96 | 7.78 | -0.18 | 6.39 / 0.51 / 0.89 |
+| vanilla-s1 | Common Voice | 8.73 | 8.55 | -0.17 | 7.27 / 0.93 / 0.35 |
+| vanilla-s1 | IndicVoices | 12.59 | 12.31 | -0.28 | 8.35 / 2.06 / 1.89 |
+| vanilla-s1 | nepali_cs | 12.00 | 11.92 | -0.08 | 6.54 / 1.42 / 3.96 |
+| base | gold | 13.40 | 13.79 | +0.39 | 7.41 / 4.92 / 1.47 |
+| base | val | 9.24 | 9.53 | +0.29 | 5.68 / 2.63 / 1.21 |
+| base | FLEURS | 11.10 | 10.67 | -0.43 | 7.80 / 1.34 / 1.53 |
+| base | OpenSLR 54 | 8.10 | 7.98 | -0.12 | 6.46 / 0.40 / 1.11 |
+| base | Common Voice | 8.73 | 8.38 | -0.35 | 6.81 / 0.81 / 0.76 |
+| base | IndicVoices | 12.73 | 12.59 | -0.14 | 7.95 / 2.66 / 1.98 |
+| base | nepali_cs | 11.05 | 11.26 | +0.22 | 6.56 / 2.09 / 2.62 |
+| flex-ft 09-16 | gold | 6.25 | 6.49 | +0.24 | 4.61 / 1.02 / 0.87 |
+| flex-ft 09-17 | gold | 6.94 | 7.19 | +0.26 | 4.74 / 1.07 / 1.39 |
+| flex-ft 09-17 | val | 5.75 | 6.11 | +0.36 | 3.59 / 1.54 / 0.97 |
+
+- **On our own sets the fold was net lenient**: tightening adds about 0.3 points, loosening gives
+  back under 0.1. On the public sets it was net unfair, by 0.1-0.4.
+- **Fine-tune minus base barely moves**: gold -2.64 -> -2.67, val -2.31 -> -2.37, FLEURS +1.14
+  -> +1.22, nepali_cs +0.95 -> +0.66. Conventions do not explain the FLEURS loss.
+- **No rule changes a ranking**, so the rulebook matters for comparing with other people's
+  numbers more than for choosing between our models.
 
 ## What crosstalk and noise cost, within episode and against the clean floor (2026-10-02)
 

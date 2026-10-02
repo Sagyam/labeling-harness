@@ -2699,3 +2699,41 @@ Brouhaha reads a public clip on its own audio and a corpus clip from its whole e
 
 **Reversal:** drop the `attribution` key from `breakdown` and delete `attribution.py`; the SNR
 column (mine-v2) and the public sets' acoustics stay useful as filters.
+
+## D112 — fold-v4: the folding rules are one rulebook, held to its evidence and shown as a page
+
+The 2026-10-02 audit of the error rows (findings.md) found the fold wrong both ways: it forgave
+real errors (a two-against-one merge swallowing a word, `type को`/`type`; a case ending on one
+side only, `नेपालमा`/`Nepal`; Nepali function words matched to English by sound, `अनि`/`and`;
+colloquial rules rewriting names, `मेसी` -> `मेपछि`) and charged one word written two ways
+(letters by name, `B`/`बी`; `घन्टा`/`घण्टा`; visarga; `OK`/`okay`; `11th`/`एघारौँ`; English
+spellings the skeleton misread, `design`/`डिजाइन`). WER-Breakdown.md's earlier direction was
+"smaller folding, finer breakdown"; the owner asked whether to keep it or write a full rulebook
+for Nepali-English code-switched ASR instead. The answer was both: the over-folding was bugs and
+rules too broad, not too many rules, so fixing it shrinks the fold; the under-folding was a
+short list that cannot join two different words; and the ambiguous middle became tags.
+
+- **Four tiers, each rule in exactly one.** 1, orthography: one word written another way,
+  nothing said differently. 2, across scripts by sound. 3, colloquial Nepali (D84, D89, the
+  owner's choice, unchanged in scope). 4, variants: tags on a charged error, never folded,
+  because each may join two different words (`ब`/`व`, `श`/`ष`/`स`, a virama inside the word, a
+  nasal dropped or added, `ौ`/`ो`, a repeated word).
+- **Admission test.** A rule enters tiers 1-3 only if it cannot join two different words in the
+  corpus vocabulary, checked on every word pair of every error file before it lands; anything
+  that can is a tag.
+- **The rulebook is data in `fold.py`** (`RULEBOOK`, `TAGS`), each rule with its id, tier,
+  description, the examples it joins and the counterexamples it keeps apart, and a test holds
+  every one of them. The spelling key is a pipeline of named stages, so `which_rule(a, b)` says
+  which rule made a pair one word; error rows carry it (`fold_rule`, mine-v3) and the tag of
+  each error (`variant`). Known false joins are written into the rule's description, not hidden.
+- **It is a page** (owner, 2026-10-02): `GET /fold/rulebook` and the Rulebook page show every
+  rule and tag with its evidence per model and set -- pairs per 100 reference words, the most
+  frequent pairs, a seeded sample in context. Read-only: a rule changes by fold version, commit
+  and decision entry, because every WER moves when it does.
+- **Reported numbers move.** fold-v3 -> fold-v4, vanilla-s1: gold 10.76 -> 11.12, val 6.93 ->
+  7.16, FLEURS 12.24 -> 11.89, nepali_cs 12.00 -> 11.92; fine-tune minus base on gold -2.64 ->
+  -2.67, on FLEURS +1.14 -> +1.22. Every number names its fold version.
+
+**Reversal:** `FOLD_VERSION` back to `fold-v3` with the stages it had (git history), and the
+error files derived again; the page and endpoint can stay, since they read whatever the
+registry holds.

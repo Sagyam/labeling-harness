@@ -146,6 +146,11 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   words, summing to the WER): error mining reads all three, because a change can move errors
   between kinds without moving WER, and on crosstalk the labels charge hearing the other voice as
   insertions.
+- **The folding rules are a rulebook** (D112): `RULEBOOK` and `TAGS` in `fold.py`, shown on the
+  Rulebook page. A new rule is a fold version, a registry entry with examples and counterexamples
+  (a test holds them), and a check on every word pair of the current error files that it joins no
+  two different words; one that can is a tier-4 tag, never a fold. Name the stage after its rule
+  so `which_rule` can attribute it, and write any known false join into its description.
 - Word spans have two sources and they must not be confused. Scribe, MAI and Gemini 3.5
   Transcribe *report* their own; Gemini Flash's are *measured* afterwards by the local CTC aligner
   in `app/services/forced_align.py`, which is what the `forced_align` flag on a route turns on.

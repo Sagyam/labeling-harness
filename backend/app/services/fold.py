@@ -50,6 +50,13 @@ any of the rules above; wider merges, up to three words a side, only when the jo
 the same spelling key or are the same number (``two thousand nine`` / `2009`). Wider merges by
 sound were tried and matched unrelated phrases.
 
+Every rule is an entry of :data:`RULEBOOK` (D112, fold-v4): its tier, what it joins, the
+examples it must join and the counterexamples it must keep apart, which a test holds it to. The
+spelling key is a pipeline of stages named after those rules, so :func:`which_rule` says which
+one made two spellings one word, and the harness shows the book with its evidence as a page.
+:data:`TAGS` are the variants that may join two different words: they describe an error and
+never forgive it.
+
 The cost, accepted deliberately: a WER computed here cannot see a wrong script. A system that
 writes ``Captain`` as `क्याप्टन` scores the same as one that follows the policy. The script policy
 is enforced where text is produced -- by the fuser -- and not in the metric. ``fold_version``

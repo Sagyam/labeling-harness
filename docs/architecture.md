@@ -93,7 +93,8 @@ set is a row in `data/models/asr/<slug>/errors/<set>.parquet`, written by `error
 (from a notebook's `evalkit`, an upload, or `scripts/mine_errors.py` over the imported runs) and
 read by `error_store` through DuckDB, one in-memory connection per request. A row carries the
 clip, its group (the unit an interval resamples), the pair as written, its kind (`match`, `fold`,
-`merge`, `sub`, `del`, `ins`), how a non-identical match was forgiven, each side's script,
+`merge`, `sub`, `del`, `ins`), how a non-identical match was forgiven and by which rule of the
+rulebook (`fold_rule`, D112), the tier-4 tag of an error (`variant`), each side's script,
 whether a number is involved, the substitution's similarity, both sides romanized, and the
 clip's crosstalk and SNR buckets. The public sets' crosstalk and acoustics are measured once
 (`scripts/measure_benchmark_overlap.py`) and kept in the model repo's `benchmarks/overlap/` and
@@ -626,7 +627,8 @@ the same inputs and filters produce byte-identical output.
 | `GET /models/{slug}/errors` | The model's error files, each with its WER and S/D/I from its rows, whether its fold is current, and on gold/val the imported run's WER; and the files it cannot read |
 | `GET /models/{slug}/errors/{set}/breakdown` | WER with S/D/I and interval, crosstalk buckets (block 1), numbers (block 2), the set's own split values; `base=<slug>` adds each against that model's file, paired, the set's group resampled |
 | `GET /models/{slug}/errors/{set}/confusion` | Block 3: counts of (reference, model) per kind with their share; filters `kind` (repeatable), `forgiven`, `ref_script`, `hyp_script`, `number`, `overlap_bucket`, `by`, `similarity_min`/`_max`; `both_ways`, `base`, `sort` (count, change), `offset`, `limit` |
-| `GET /models/{slug}/errors/{set}/pairs` | The occurrences behind the same filters or one row (`ref`, `hyp`), with five steps of context each side; `sample` + `seed` draw at random |
+| `GET /models/{slug}/errors/{set}/pairs` | The occurrences behind the same filters or one row (`ref`, `hyp`), with five steps of context each side; `sample` + `seed` draw at random; also `fold_rule` and `variant` |
+| `GET /fold/rulebook` | Every rule and tag of `fold.py`'s `RULEBOOK` and `TAGS` (D112) with tier, description, examples and counterexamples, and per model and set what each covered: pairs, per 100 reference words, most frequent pairs; a file of another fold version is marked `current: false` |
 | `GET /models/{slug}/errors/{set}/clips/{clip_id}` | One clip's steps in order; on gold/val also the imported run and segment that open it with audio |
 | `POST /models/{slug}/transcribe` | Playground (D85): a multipart `audio` recording, ≤ 30 s, transcribed on the CPU; 409 without CPU weights, 422 for bad audio, 502 when the sidecar fails |
 
@@ -667,6 +669,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodesView.tsx`, `components/metadata/` | Browse episodes and segments, delete either, edit an episode's genre, topic and speakers (D102) |
 | Models | `components/ModelsView.tsx`, `components/models/` | One model at a time (full name and slug in the list), in four tabs, each stating the question it answers. **Overview**: the WER of every set it has error files for, against another model if picked, the attribution card (D111: points of WER from nine sources -- crosstalk and noise, within episode and each expandable to its buckets, and seven kinds of error -- each its own row and colour in one stacked bar and a table) and the crosstalk block, whose buckets open the Errors tab filtered. **Clips**: run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the gold and val clips worst first with audio and the folded diff (D83). **Errors** (D110): the error files and their import, the number block, the confusion table with its filters (crosstalk and SNR bucket among them), seeded samples of occurrences, and a clip. **Try it**: the playground (D85) |
+| Rulebook | `components/RulebookView.tsx` | The folding rulebook (D112), by tier: each rule's description, examples and counterexamples, and for a chosen model its rate per set, most frequent pairs and a seeded sample of where it fired. Read-only |
 | Every page | `components/PageIntro.tsx`, `components/Glossary.tsx` | One line under the header saying what the page answers (Models states it per tab, the editor has none), with a link to the glossary: the help dialog's first tab, the harness's terms in plain words with the decision behind each. The `?` key opens the dialog on its keyboard-shortcuts tab |
 | Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One pot at a time from `/stats/inventory` (D104): the ledger, a summary of what is missing and thin beside what is overdone and plenty, a table per category in four groups (status, hours bar with the floor ticked, usable voices), the any-by-any cross-tab, and the records check |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
