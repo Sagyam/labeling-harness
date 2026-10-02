@@ -67,7 +67,7 @@ from functools import lru_cache
 from app.services.normalize import Ruleset, load_ruleset, normalize_text
 
 #: Bumped whenever a rule below changes what counts as the same word.
-FOLD_VERSION = "fold-v3"
+FOLD_VERSION = "fold-v4"
 
 #: Romanized forms (vowels kept) are accepted as one word at or below this normalized distance.
 #: The EDA notebook swept 0.25-0.6; this is the conservative end that still catches inflection.
@@ -185,7 +185,11 @@ _CONTRACTED = (
 )
 
 #: 2. The western -या participle: गर्या -> गरेको. Runs before the progressive, which only
-#: recognises गरिराख्या once it reads गरिराखेको.
+#: recognises गरिराख्या once it reads गरिराखेको. Nouns in -्या are not participles (fold-v4):
+#: समस्या, संख्या, विद्या, and every compound ending in one.
+_NOT_PARTICIPLES = (
+    "संख्या", "समस्या", "तपस्या", "व्याख्या", "हत्या", "विद्या", "कन्या", "संध्या", "चर्या", "वैश्या",
+)  # fmt: skip
 _WESTERN = (
     (r"(?<=्न)्या$", "े"),  # गर्न्या -> गर्ने
     # Two letters before it, so क्या ("what") is spared.
@@ -269,15 +273,18 @@ _LOOSE = (
     (r"नुहोस$", "नुस"),  # गर्नुहोस् -> गर्नुस्
     (r"दाखेरि?$", "दा"),  # भन्दाखेरि -> भन्दा
     (r"(?<=ा)इयो$", "यो"),  # खाइयो -> खायो
-    (rf"(?<={_C})ियो$", "्यो"),  # देखियो -> देख्यो; थियो and थ्यो meet here too
+    # देखियो -> देख्यो; थियो and थ्यो meet here too. Not the adjectives हरियो ("green", not
+    # हर्यो "lost") and बलियो ("strong", not बल्यो "burned"), nor रेडियो (fold-v4).
+    (rf"(?<!^हर)(?<!^बल)(?<!^रेड)(?<={_C})ियो$", "्यो"),
 )
 
 #: 10. Spoken forms the corpus has not yet held: जान्न, भन्नि, भनेसि, गर्चु.
 _UNSEEN_WORDS = {"जान्न": "जान्दिनँ", "भन्नि": "भन्ने", "हुन्या": "हुने"}
-_UNSEEN = (
-    (r"(?<=े)सि$", "पछि"),  # भनेसि -> भनेपछि
-    (r"(?<=्)च(?=ु$|ौं$)", "छ"),  # गर्चु -> गर्छु
-)
+_UNSEEN = ((r"(?<=्)च(?=ु$|ौं$)", "छ"),)  # गर्चु -> गर्छु
+#: भनेसि -> भनेपछि, only when the word ends in a short -ि as written: मेसी, केसी, बेसी and
+#: मधेसी end in a long one and are names (fold-v4). Read on the token, since the key has
+#: already folded vowel length.
+_UNSEEN_SHORT_I = ((r"(?<=े)सि$", "पछि"),)
 
 #: One spoken word for two written ones, so that a merge matches them: भाथ्यो / भएको थियो,
 #: गरिराछ / गरिरहेको छ, गरेनि / गरे पनि. Runs last, on the participles the groups above made.
@@ -286,8 +293,9 @@ _JOINED = (
     (r"कोथिएं$", "कोथें"),
     (r"कोथिए$", "कोथे"),
     (r"को(?=थ्यो$|थें$|थे$)", ""),
-    (r"(?<=[ेए])नि$", "पनि"),
 )
+#: गरेनि -> गरेपनि, only on a short -ि as written: भाटभटेनी and स्पेनी are not गरे पनि (fold-v4).
+_JOINED_SHORT_I = ((r"(?<=[ेए])नि$", "पनि"),)
 
 #: A nasal consonant before its own class is an anusvara: सम्पन्न -> संपन्न, घण्टा -> घंटा.
 #: Orthography rather than dialect. First, because later rules read the anusvara, and again last,
@@ -464,12 +472,26 @@ class _Stage:
     devanagari_only: bool = False
 
 
-def _regex_stage(rule: str, group: tuple[tuple[str, str], ...]) -> _Stage:
+def _regex_stage(
+    rule: str,
+    group: tuple[tuple[str, str], ...],
+    *,
+    short_i: tuple[tuple[str, str], ...] = (),
+    spare: tuple[str, ...] = (),
+) -> _Stage:
+    """A stage of rewrites, in order. ``short_i`` rewrites run only on a token written with a
+    final short -ि; a key ending in any of ``spare`` is left alone."""
     compiled = tuple((re.compile(pattern), repl) for pattern, repl in group)
+    compiled_short_i = tuple((re.compile(pattern), repl) for pattern, repl in short_i)
 
-    def apply(key: str, _token: str) -> str:
+    def apply(key: str, token: str) -> str:
+        if spare and key.endswith(spare):
+            return key
         for pattern, repl in compiled:
             key = pattern.sub(repl, key)
+        if compiled_short_i and unicodedata.normalize("NFC", token).endswith("ि"):
+            for pattern, repl in compiled_short_i:
+                key = pattern.sub(repl, key)
         return key
 
     return _Stage(rule, apply, devanagari_only=True)
@@ -485,6 +507,9 @@ def _contraction_stage(key: str, _token: str) -> str:
     return key.replace("'", "")
 
 
+#: A vowel sign or nasal mark typed twice (तपाईँं, हुुन्छ): one mark. Devanagari never repeats one.
+_DOUBLED_SIGN = re.compile(r"([ऀ-ःा-ौ])\1+")
+
 #: Orthography: folding that is about the script, not the dialect. In this order, the spelling
 #: key's first half; each stage names its rule.
 _ORTHOGRAPHY: tuple[_Stage, ...] = (
@@ -493,6 +518,7 @@ _ORTHOGRAPHY: tuple[_Stage, ...] = (
     _Stage("digits", lambda key, _t: key.translate(_DEV_DIGITS)),
     _Stage("vowel-length", lambda key, _t: key.translate(_VOWEL_LENGTH)),
     _Stage("chandrabindu", lambda key, _t: key.replace("ँ", "ं")),
+    _Stage("doubled-sign", lambda key, _t: _DOUBLED_SIGN.sub(r"\1", key)),
     _Stage("nukta", _nukta),
     _Stage("final-virama", lambda key, _t: key.removesuffix(_VIRAMA)),
 )
@@ -566,7 +592,7 @@ _DIALECT: tuple[_Stage, ...] = (
     _Stage("colloquial-table", lambda key, _t: _table_word(key), devanagari_only=True),
     _Stage("first-plural", _first_plural_stage, devanagari_only=True),
     _regex_stage("nasal-cluster", _NASAL),
-    _regex_stage("western-participle", _WESTERN),
+    _regex_stage("western-participle", _WESTERN, spare=_NOT_PARTICIPLES),
     _regex_stage("launu", _LAUNU),
     _regex_stage("contracted-verb", _CONTRACTED),
     _regex_stage("progressive", _PROGRESSIVE),
@@ -574,8 +600,8 @@ _DIALECT: tuple[_Stage, ...] = (
     _regex_stage("first-plural", _FIRST_PLURAL),
     _regex_stage("emphatic", _EMPHATIC),
     _regex_stage("loose", _LOOSE),
-    _regex_stage("unseen", _UNSEEN),
-    _regex_stage("joined", _JOINED),
+    _regex_stage("unseen", _UNSEEN, short_i=_UNSEEN_SHORT_I),
+    _regex_stage("joined", _JOINED, short_i=_JOINED_SHORT_I),
     _regex_stage("nasal-cluster", _NASAL),
     _Stage("colloquial-table", lambda key, _t: _table_word(key), devanagari_only=True),
 )
@@ -1041,6 +1067,12 @@ RULEBOOK: tuple[FoldRule, ...] = (
         "chandrabindu", 1, "Chandrabindu and anusvara",
         "ँ and ं are one nasal mark.",
         (("भनौं", "भनौँ"), ("गाउँ", "गाउं")),
+    ),
+    FoldRule(
+        "doubled-sign", 1, "A mark typed twice",
+        "A vowel sign or nasal mark typed twice is one mark: Devanagari never repeats one "
+        "(fold-v4).",
+        (("तपाईँं", "तपाईं"), ("हुुन्छ", "हुन्छ")),
     ),
     FoldRule(
         "nukta", 1, "Nukta",

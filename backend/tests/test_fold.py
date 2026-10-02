@@ -568,3 +568,41 @@ class TestRulebook:
         self, left: str, right: str
     ) -> None:
         assert (which_rule(left, right) is not None) == (same_word(left, right) and left != right)
+
+
+class TestRulesSpareWordsTheyAreNotAbout:
+    """fold-v4: colloquial rules that rewrote names and nouns (audit of 2026-10-02)."""
+
+    @pytest.mark.parametrize("word", ["मेसी", "केसी", "बेसी", "मधेसी", "भाटभटेनी", "स्पेनी", "कागबेनी"])
+    def test_a_long_i_name_is_not_a_spoken_pachhi_or_pani(self, word: str) -> None:
+        key = spelling_key(word)
+        assert not key.endswith(("पछि", "पनि"))
+
+    def test_messi_in_devanagari_is_messi(self) -> None:
+        assert same_word("मेसी", "Messi")
+
+    @pytest.mark.parametrize(
+        ("left", "right"), [("भनेपछि", "भनेसि"), ("गरे पनि", "गरेनि"), ("भए पनि", "भएनि")]
+    )
+    def test_the_short_i_spoken_forms_still_fold(self, left: str, right: str) -> None:
+        assert word_errors(left, right).errors == 0
+
+    @pytest.mark.parametrize(("left", "right"), [("हरियो", "हर्यो"), ("बलियो", "बल्यो")])
+    def test_an_adjective_in_iyo_is_not_a_passive(self, left: str, right: str) -> None:
+        assert not same_word(left, right)
+
+    @pytest.mark.parametrize(
+        "word", ["समस्या", "संख्या", "सङ्ख्या", "जनसङ्ख्या", "व्याख्या", "हत्या", "विद्या", "पञ्चकन्या"]
+    )
+    def test_a_noun_in_ya_is_not_a_western_participle(self, word: str) -> None:
+        assert not spelling_key(word).endswith("ेको")
+
+    def test_vidya_in_devanagari_is_vidya(self) -> None:
+        assert same_word("विद्या", "Vidya")
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [("तपाईँं", "तपाईं"), ("तपाईँँ", "तपाईं"), ("लडाईँँमा", "लडाइँमा"), ("हुुन्छ", "हुन्छ")],
+    )
+    def test_a_doubled_mark_is_one_mark(self, left: str, right: str) -> None:
+        assert same_word(left, right)
