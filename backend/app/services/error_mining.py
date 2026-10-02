@@ -20,7 +20,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +143,23 @@ def pairs(
     return [_row(pos, op) for pos, op in enumerate(alignment.ops)]
 
 
+def number_id(clip_id: str, seen: dict[str, int]) -> str:
+    """``clip_id``, or ``<id>#2``, ``#3``, ... when ``seen`` (updated here) already holds it.
+
+    A set whose id columns are empty on some clips (nepali_cs: three clips are ``-None``) still
+    gets one id per clip, and two runs over the same set in the same order name each alike.
+    """
+    seen[clip_id] = seen.get(clip_id, 0) + 1
+    return clip_id if seen[clip_id] == 1 else f"{clip_id}#{seen[clip_id]}"
+
+
+def unique_ids(ids: Iterable[str]) -> Iterator[str]:
+    """Every id of a set in order, numbered by :func:`number_id`."""
+    seen: dict[str, int] = {}
+    for clip_id in ids:
+        yield number_id(clip_id, seen)
+
+
 def rows(run: str, set: str, clips: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Every pair of every clip of one run on one set, with the clip's columns added.
 
@@ -152,18 +169,14 @@ def rows(run: str, set: str, clips: Iterable[Mapping[str, Any]]) -> list[dict[st
         clips: ``{clip_id, group, ref, hyp, overlap_share, by}`` each; ``by`` (the set's own
             split value) may be absent, and so may ``alignment``, an existing
             ``fold.word_errors(ref, hyp)``. ``overlap_share`` is ``None`` when never measured.
-            A ``clip_id`` seen before in ``clips`` becomes ``<id>#2``, ``#3``, ... in order, so
-            every clip's rows stay apart and two runs on one set still name each clip alike.
+            A ``clip_id`` seen before in ``clips`` is numbered by :func:`number_id`.
     """
     out: list[dict[str, Any]] = []
     seen: dict[str, int] = {}
     for clip in clips:
         share = clip.get("overlap_share")
         share = None if share is None else float(share)
-        clip_id = str(clip["clip_id"])
-        seen[clip_id] = seen.get(clip_id, 0) + 1
-        if seen[clip_id] > 1:  # a set whose id columns are empty on some clips (nepali_cs)
-            clip_id = f"{clip_id}#{seen[clip_id]}"
+        clip_id = number_id(str(clip["clip_id"]), seen)
         head = {
             "run": run,
             "set": set,
@@ -269,6 +282,16 @@ def metadata(path: Path | str) -> dict[str, str]:
     if meta["set"] not in SETS:
         raise MinedFileError(f"{Path(path).name}: unknown set {meta['set']!r}")
     return {k: meta[k] for k in METADATA}
+
+
+def read_overlap(path: Path | str) -> dict[str, float | None]:
+    """A public set's measured crosstalk (``benchmarks/overlap/<set>.parquet``, written by
+    :mod:`app.services.benchmark_overlap`) as ``{clip_id: overlap_share}``."""
+    with duckdb.connect() as con:
+        found = con.execute(
+            f"SELECT clip_id, overlap_share FROM read_parquet({_sql_string(str(path))})"
+        ).fetchall()
+    return dict(found)
 
 
 def _text(value: bytes | str) -> str:
