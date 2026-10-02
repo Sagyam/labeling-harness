@@ -31,6 +31,7 @@ from app.services.fold import (
     AlignOp,
     fold_version,
     is_number,
+    is_particle,
     romanized,
     same_number,
     script,
@@ -42,8 +43,9 @@ from app.services.fold import (
 
 #: Bump whenever a column's meaning changes: a file is only comparable with another of the same.
 #: mine-v2 added each clip's speech-to-noise ratio (``snr_db``, ``snr_bucket``); mine-v3 the rule
-#: that forgave each forgiven pair (``fold_rule``) and the tag of each error (``variant``).
-MINER_VERSION = "mine-v3"
+#: that forgave each forgiven pair (``fold_rule``) and the tag of each error (``variant``);
+#: mine-v4 tags a deleted or inserted discourse particle (``particle``, D113).
+MINER_VERSION = "mine-v4"
 
 #: What a file may hold: the corpus's two scored splits and the public sets of
 #: ``notebooks/src/evalkit.py``'s ``BENCHMARKS``, in its order.
@@ -193,8 +195,12 @@ def pairs(
         alignment = word_errors(ref_text, hyp_text)
     found = [_row(pos, op) for pos, op in enumerate(alignment.ops)]
     for pos, op in enumerate(alignment.ops):
-        if op.kind in ("del", "ins") and _repeats(alignment.ops, pos):
+        if op.kind not in ("del", "ins"):
+            continue
+        if _repeats(alignment.ops, pos):
             found[pos]["variant"] = "repetition"
+        elif is_particle((*op.ref, *op.hyp)[0]):
+            found[pos]["variant"] = "particle"
     return found
 
 

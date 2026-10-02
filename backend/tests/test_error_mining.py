@@ -286,3 +286,15 @@ def test_a_deleted_or_inserted_repeat_is_tagged_and_other_gaps_are_not() -> None
     assert inserted["variant"] == "repetition"
     (other,) = _by_kind(pairs("म घर जान्छु", "म जान्छु"), "del")
     assert other["variant"] is None
+
+
+def test_a_deleted_or_inserted_particle_is_tagged() -> None:
+    (deleted,) = _by_kind(pairs("म त जान्छु", "म जान्छु"), "del")
+    assert deleted["variant"] == "particle"
+    (inserted,) = _by_kind(pairs("म जान्छु", "म जान्छु नि"), "ins")
+    assert inserted["variant"] == "particle"
+
+
+def test_a_repeated_particle_is_a_repetition() -> None:
+    (deleted,) = _by_kind(pairs("हो हो भन्नुभयो", "हो भन्नुभयो"), "del")
+    assert deleted["variant"] == "repetition"
