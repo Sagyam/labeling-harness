@@ -43,6 +43,8 @@ MINER_VERSION = "mine-v1"
 #: What a file may hold: the corpus's two scored splits and the public sets of
 #: ``notebooks/src/evalkit.py``'s ``BENCHMARKS``, in its order.
 SETS = ("gold", "val", "fleurs", "slr54", "common_voice", "indicvoices", "nepali_cs")
+#: A public set's own split column (``evalkit.Benchmark.by``), carried in each row's ``by``.
+SET_BY = {"indicvoices": "scenario", "nepali_cs": "speech_type"}
 
 #: Every column, in file order, with its DuckDB type.
 COLUMNS: dict[str, str] = {

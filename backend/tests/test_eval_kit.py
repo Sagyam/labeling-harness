@@ -432,3 +432,10 @@ def test_a_public_set_streams_one_clip_at_a_time(tmp_path: Path, monkeypatch):
         "0.wav",
         "1.wav",
     ]
+
+
+def test_error_mining_knows_every_public_set_and_its_split_column():
+    from app.services import error_mining
+
+    assert ("gold", "val", *evalkit.BENCHMARKS) == error_mining.SETS
+    assert {b.name: b.by for b in evalkit.BENCHMARKS.values() if b.by} == error_mining.SET_BY

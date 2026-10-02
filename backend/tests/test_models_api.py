@@ -138,3 +138,69 @@ def test_the_class_axes_come_in_display_order(client) -> None:
     assert axes[0]["name"] == "overlap"
     assert axes[0]["buckets"][0] == "none" and axes[0]["baseline"] == "none"
     assert [a["name"] for a in axes if a["descriptive"]] == ["cmi"]
+
+
+# --- error files (docs/WER-Breakdown.md, step 4) -------------------------------------------------
+
+
+def _error_file(tmp_path, run: str, set_name: str) -> bytes:
+    from app.services import error_mining
+
+    path = tmp_path / f"{run}-{set_name}.parquet"
+    clips = [{"clip_id": "c1", "group": "g", "ref": "म घर", "hyp": "म घर", "overlap_share": 0.0}]
+    error_mining.write(error_mining.rows(run, set_name, clips), path)
+    return path.read_bytes()
+
+
+def test_error_files_are_uploaded_beside_the_model(
+    client, run_id: int, settings: Settings, tmp_path, db_session: Session
+) -> None:
+    from app.models import AuditLog
+
+    files = [
+        ("files", ("anything.parquet", _error_file(tmp_path, "vanilla-s1", "fleurs"))),
+        ("files", ("other.parquet", _error_file(tmp_path, "vanilla-s1", "gold"))),
+    ]
+    response = client.post("/models/flex-ft/errors", files=files)
+    assert response.status_code == 200, response.text
+    assert [(f["set"], f["run"]) for f in response.json()] == [
+        ("gold", "vanilla-s1"),
+        ("fleurs", "vanilla-s1"),
+    ]
+    stored = sorted(p.name for p in (settings.models.root / "flex-ft" / "errors").iterdir())
+    assert stored == ["fleurs.parquet", "gold.parquet"]
+    audit = db_session.scalars(
+        sa.select(AuditLog).where(AuditLog.action == "model_errors_upload")
+    ).one()
+    assert audit.entity_id == "flex-ft"
+    assert [f["set"] for f in audit.new_values_jsonb["files"]] == ["gold", "fleurs"]
+
+
+def test_an_error_upload_is_refused_whole_with_422(
+    client, run_id: int, settings: Settings, tmp_path
+) -> None:
+    files = [
+        ("files", ("a.parquet", _error_file(tmp_path, "vanilla-s1", "fleurs"))),
+        ("files", ("b.parquet", _error_file(tmp_path, "vanilla-s0", "gold"))),
+    ]
+    response = client.post("/models/flex-ft/errors", files=files)
+    assert response.status_code == 422
+    assert "one run" in response.json()["detail"]
+    assert not list((settings.models.root / "flex-ft" / "errors").glob("*.parquet"))
+
+
+def test_errors_for_an_unknown_model_are_404(client, model_corpus, tmp_path) -> None:
+    files = [("files", ("a.parquet", _error_file(tmp_path, "vanilla-s1", "fleurs")))]
+    assert client.post("/models/nope/errors", files=files).status_code == 404
+
+
+def test_rescan_lists_the_error_files_a_folder_brought(
+    client, model_corpus: dict[str, str], settings: Settings, tmp_path
+) -> None:
+    folder = write_model(settings.models.root, "fresh", card=CARD | {"name": "Fresh"})
+    (folder / "errors").mkdir()
+    (folder / "errors" / "fleurs.parquet").write_bytes(_error_file(tmp_path, "r", "fleurs"))
+    (folder / "errors" / "val.parquet").write_bytes(b"broken")
+    body = client.post("/models/rescan").json()
+    assert body["error_files"] == ["fresh/fleurs"]
+    assert [r.split(":")[0] for r in body["error_files_refused"]] == ["fresh/val.parquet"]

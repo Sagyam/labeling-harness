@@ -42,6 +42,7 @@ from app.models import (
 )
 from app.models.enums import APPROVED_DISPOSITIONS, EVAL_SPLITS
 from app.services.clip_classes import classify_segments, overlap_share
+from app.services.error_store import list_files as list_error_files
 from app.services.fold import fold_version, word_errors
 from app.services.model_eval import (
     ClipScore,
@@ -79,6 +80,11 @@ class ImportReport:
     runs_unchanged: int = 0
     #: Clips in a file that were not scored: no longer in the split, or no transcript to score.
     skipped: int = 0
+    #: ``<slug>/<set>`` for each error-mining file found in a model's ``errors/``. They need no
+    #: import: they are read where they lie (docs/WER-Breakdown.md).
+    error_files: list[str] = field(default_factory=list)
+    #: ``<slug>/<file>: why`` for each one that cannot be read.
+    error_files_refused: list[str] = field(default_factory=list)
 
 
 def _text(value: Any) -> str | None:
@@ -322,6 +328,9 @@ def import_model_dir(
 
     model = _upsert_model(session, folder.name, card)
     report.models.append(folder.name)
+    found, refused = list_error_files(folder)
+    report.error_files += [f"{folder.name}/{f.set}" for f in found]
+    report.error_files_refused += [f"{folder.name}/{name}: {why}" for name, why in refused]
     for split in EVAL_SPLITS:
         path = folder / f"{split}.jsonl"
         if not path.is_file():

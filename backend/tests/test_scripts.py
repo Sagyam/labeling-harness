@@ -228,3 +228,24 @@ def test_models_script_imports_one_folder_and_refuses_a_bad_card(
     assert "1 model(s); 0 run(s) imported" in capsys.readouterr().out
     assert script.main([str(bad)]) == 1
     assert "refused" in capsys.readouterr().out
+
+
+def test_mine_errors_script_refuses_a_model_never_imported(
+    cli, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from app.config import get_settings
+
+    (tmp_path / "flex-ft").mkdir()
+    (tmp_path / "flex-ft" / "model_card.json").write_text('{"name": "x"}', encoding="utf-8")
+    monkeypatch.setenv("HARNESS_MODELS__ROOT", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        script = load("mine_errors")
+        assert script.main(["flex-ft"]) == 1
+        assert "not imported" in capsys.readouterr().out
+        assert script.main(["absent"]) == 1
+        assert "no folder" in capsys.readouterr().out
+        with pytest.raises(SystemExit):
+            script.main([])
+    finally:
+        get_settings.cache_clear()

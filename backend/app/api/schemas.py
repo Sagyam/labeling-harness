@@ -637,6 +637,20 @@ class ModelRescanOut(BaseModel):
     runs_created: int
     runs_unchanged: int
     skipped: int
+    #: ``<slug>/<set>`` for every readable error file in a model's ``errors/``.
+    error_files: list[str] = []
+    #: ``<slug>/<file>: why`` for every one that cannot be read.
+    error_files_refused: list[str] = []
+
+
+class ErrorFileOut(BaseModel):
+    """One of a model's error-mining files (docs/WER-Breakdown.md)."""
+
+    set: str
+    run: str
+    fold_version: str
+    miner_version: str
+    created_at: str
 
 
 class ClassAxisOut(BaseModel):
