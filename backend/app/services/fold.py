@@ -1179,6 +1179,7 @@ TIERS = {
     1: "Orthography: one word written another way, nothing said differently",
     2: "Across scripts, by sound: English in Devanagari, Nepali in Latin",
     3: "Colloquial Nepali: a spoken form and its written form (D84, D89)",
+    4: "Variants: tagged on a charged error, never folded",
 }
 
 #: Every rule this module folds by, in the order a reader should meet them. The page the
@@ -1382,3 +1383,79 @@ RULEBOOK: tuple[FoldRule, ...] = (
     ),
 )
 # fmt: on
+
+
+#: Tier 4: kinds of charged error that are spellings of one sound, or a repeated word. A tag
+#: describes an error and never forgives it: each may join two different words (केस "case" and
+#: केश "hair"), so the WER keeps them and the breakdown can be read with or without them.
+#: :func:`variant` names the tag of a substitution; error mining tags a repeated word.
+TAGS: tuple[FoldRule, ...] = (
+    FoldRule(
+        "ba-va", 4, "ब and व",
+        "Nepali does not hold the ब/व distinction in speech: दावी/दाबी, बसोवास/बसोबास. Also "
+        "वन ('forest') and बन ('become').",
+        (("दावी", "दाबी"), ("बवाल", "बबाल"), ("वर्ष", "बर्ष")),
+    ),
+    FoldRule(
+        "sibilant", 4, "श, ष and स",
+        "Three letters, one sound: शहर/सहर, खुशी/खुसी, दश/दस. Also केस ('case') and केश ('hair').",
+        (("शहर", "सहर"), ("खुशी", "खुसी"), ("दश", "दस")),
+    ),
+    FoldRule(
+        "inner-virama", 4, "A virama inside the word",
+        "With or without the inherent vowel: गोरखा/गोर्खा, बागमती/बाग्मती. Also प्रवाह/पर्वाह.",
+        (("गोरखा", "गोर्खा"), ("बागमती", "बाग्मती")),
+    ),
+    FoldRule(
+        "nasal-dropped", 4, "A nasal the model left out",
+        "The reference has a chandrabindu or anusvara the model does not. Often grammar "
+        "(गरेँ 'I did' / गरे 'they did'); on Common Voice and OpenSLR 54 the reference usually "
+        "lacks the mark instead (nasal-added).",
+        (("गरेँ", "गरे"), ("त्यहीँ", "त्यही")),
+    ),
+    FoldRule(
+        "nasal-added", 4, "A nasal the model put in",
+        "The model has a chandrabindu or anusvara the reference does not: हौ/हौँ, जागर/जाँगर. "
+        "Measured 2026-10-02, mostly a reference that dropped the mark on read speech.",
+        (("हौ", "हौँ"), ("जागर", "जाँगर")),
+    ),
+    FoldRule(
+        "au-o", 4, "ौ and ो",
+        "हौ/हो, थियो/थियौ: often grammar ('you are' / 'is'), sometimes spelling (छनौट/छनोट).",
+        (("हौ", "हो"), ("छनौट", "छनोट")),
+    ),
+    FoldRule(
+        "repetition", 4, "A repeated word",
+        "A deleted or inserted word that repeats its neighbour: a disfluency one transcript "
+        "kept and the other did not (म म / म).",
+        (("म म जान्छु", "म जान्छु"),),
+    ),
+)  # fmt: skip
+
+#: Each substitution tag's test, on the two spelling keys, in the order they are tried.
+_TAG_TESTS: tuple[tuple[str, Callable[[str], str]], ...] = (
+    ("ba-va", lambda key: key.replace("व", "ब")),
+    ("sibilant", lambda key: re.sub("[शष]", "स", key)),
+    ("inner-virama", lambda key: key.replace(_VIRAMA, "")),
+    ("nasal", lambda key: key.replace("ं", "")),
+    ("au-o", lambda key: key.replace("ौ", "ो")),
+)
+
+
+def variant(ref: str, hyp: str) -> str | None:
+    """The tier-4 tag of a charged substitution between two Devanagari words, or None.
+
+    ``nasal-dropped`` and ``nasal-added`` say which side carries the mark: the reference, or
+    the model's word.
+    """
+    if script(ref) != "dev" or script(hyp) != "dev":
+        return None
+    left, right = spelling_key(ref), spelling_key(hyp)
+    if left == right:
+        return None
+    for tag, reduce in _TAG_TESTS:
+        if reduce(left) == reduce(right):
+            if tag == "nasal":
+                return "nasal-dropped" if left.count("ं") > right.count("ं") else "nasal-added"
+            return tag
+    return None

@@ -8,6 +8,7 @@ from app.services.fold import (
     _STAGES,
     FOLD_VERSION,
     RULEBOOK,
+    TAGS,
     TIERS,
     align,
     fold_tokens,
@@ -17,6 +18,7 @@ from app.services.fold import (
     similarity,
     skeleton,
     spelling_key,
+    variant,
     which_rule,
     word_errors,
 )
@@ -740,3 +742,29 @@ class TestEnglishSounds:
     @pytest.mark.parametrize(("dev", "latin"), [("सेवा", "eSewa"), ("रोपवे", "Ropeway")])
     def test_a_w_before_a_vowel_is_not_a_yu(self, dev: str, latin: str) -> None:
         assert same_word(dev, latin)
+
+
+class TestTags:
+    """Tier 4: a tag describes a charged error and never forgives it."""
+
+    @pytest.mark.parametrize(
+        ("tag", "ref", "hyp"),
+        [(t.id, a, b) for t in TAGS if t.id != "repetition" for a, b in t.examples],
+    )
+    def test_every_example_is_charged_and_tagged(self, tag: str, ref: str, hyp: str) -> None:
+        assert word_errors(ref, hyp).errors == 1
+        assert variant(ref, hyp) == tag
+
+    def test_a_repetition_example_is_charged(self) -> None:
+        (example,) = next(t for t in TAGS if t.id == "repetition").examples
+        assert word_errors(*example).errors == 1
+
+    @pytest.mark.parametrize(
+        ("ref", "hyp"), [("घर", "वन"), ("team", "टिम"), ("गर्नु", "गर्ने"), ("राम्रो", "राम्रो")]
+    )
+    def test_other_pairs_have_no_tag(self, ref: str, hyp: str) -> None:
+        assert variant(ref, hyp) is None
+
+    def test_tags_and_rules_do_not_share_an_id(self) -> None:
+        assert not {t.id for t in TAGS} & {r.id for r in RULEBOOK}
+        assert {t.tier for t in TAGS} == {4}
