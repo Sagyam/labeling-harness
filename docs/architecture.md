@@ -94,8 +94,9 @@ read by `error_store` through DuckDB, one in-memory connection per request. A ro
 clip, its group (the unit an interval resamples), the pair as written, its kind (`match`, `fold`,
 `merge`, `sub`, `del`, `ins`), how a non-identical match was forgiven, each side's script,
 whether a number is involved, the substitution's similarity, both sides romanized, and the
-clip's crosstalk bucket. The public sets' crosstalk is measured once
-(`scripts/measure_benchmark_overlap.py`) and kept in the model repo's `benchmarks/overlap/`.
+clip's crosstalk and SNR buckets. The public sets' crosstalk and acoustics are measured once
+(`scripts/measure_benchmark_overlap.py`) and kept in the model repo's `benchmarks/overlap/` and
+`benchmarks/acoustics/`; gold and val take theirs from the segment.
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an
@@ -618,7 +619,7 @@ the same inputs and filters produce byte-identical output.
 | `GET /model-classes` | The axes every run is split by, with their buckets in display order, baseline and "not measured" bucket (D87) |
 | `GET /model-runs/{id}/clips` | A run's clips; `sort` (errors, wer, deletions, insertions, substitutions, duration, overlap), `order`, `genre`, `overlap`, `class_axis` + `class_bucket`, `loops_only`, `min_errors`, `offset`, `limit` |
 | `GET /model-runs/{id}/clips/{segment_id}` | One clip with the folded alignment ops behind its counts |
-| `POST /models/{slug}/errors` | Store multipart `.parquet` error files as `errors/<set>.parquet` (D110); all or nothing, 422 for a file that is not mine-v1 rows, an unknown set, two files for one set, more than one run, or over 50 MB; writes `audit_logs` |
+| `POST /models/{slug}/errors` | Store multipart `.parquet` error files as `errors/<set>.parquet` (D110); all or nothing, 422 for a file that is not rows of the current miner version, an unknown set, two files for one set, more than one run, or over 50 MB; writes `audit_logs` |
 | `GET /models/{slug}/errors` | The model's error files, each with its WER and S/D/I from its rows, whether its fold is current, and on gold/val the imported run's WER; and the files it cannot read |
 | `GET /models/{slug}/errors/{set}/breakdown` | WER with S/D/I and interval, crosstalk buckets (block 1), numbers (block 2), the set's own split values; `base=<slug>` adds each against that model's file, paired, the set's group resampled |
 | `GET /models/{slug}/errors/{set}/confusion` | Block 3: counts of (reference, model) per kind with their share; filters `kind` (repeatable), `forgiven`, `ref_script`, `hyp_script`, `number`, `overlap_bucket`, `by`, `similarity_min`/`_max`; `both_ways`, `base`, `sort` (count, change), `offset`, `limit` |

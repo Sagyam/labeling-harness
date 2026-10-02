@@ -473,8 +473,9 @@ print(f"one run is about {speed['projected_h']:.1f} h of training and gold, plus
 SETS = r'''
 SETS = tuple(evalkit.BENCHMARKS)  # every public set; name fewer to skip some
 LIMIT = 40 if SMOKE else None     # clips per set
-# Each set's crosstalk, measured once by scripts/measure_benchmark_overlap.py (WER-Breakdown.md).
-OVERLAP = evalkit.fetch_overlap(OUT_REPO, TOKEN, FT / "overlap", SETS)
+# Each set's crosstalk and SNR, measured once by scripts/measure_benchmark_overlap.py
+# (WER-Breakdown.md).
+CONDITIONS = evalkit.fetch_conditions(OUT_REPO, TOKEN, FT / "conditions", SETS)
 
 
 def done_sets(run):
@@ -493,7 +494,7 @@ def score_sets(run):
             print(f"{run} {name}: already in {OUT_REPO}, skipped")
             continue
         evalkit.run_benchmarks(out, decode=decode, score=score, work=FT / "benchmarks", token=TOKEN,
-                               names=[name], limit=LIMIT, run=run, overlap_dir=OVERLAP)
+                               names=[name], limit=LIMIT, run=run, conditions_dir=CONDITIONS)
         api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
                           allow_patterns=[f"benchmarks/{name}.json*", f"harness/errors/{name}.parquet"],
                           commit_message=f"{run}: {name}")

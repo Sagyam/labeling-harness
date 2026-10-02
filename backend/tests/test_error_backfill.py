@@ -47,6 +47,23 @@ def test_gold_rows_reproduce_the_imported_run(db_session: Session, folder: Path)
     shares = {c.segment.external_id: c.overlap_share for c in clips}
     assert {k: by_clip[k]["overlap_share"] for k in shares} == shares
     assert {r["group"] for r in found} == {"mx_ep"}
+    snr = {c.segment.external_id: (c.segment.acoustics_jsonb or {}).get("snr_db") for c in clips}
+    assert {k: by_clip[k]["snr_db"] for k in snr} == snr
+
+
+def test_gold_rows_carry_the_segments_measured_snr(db_session: Session, folder: Path) -> None:
+    segment = db_session.scalars(
+        sa.select(Segment).where(Segment.pot == "gold").order_by(Segment.external_id).limit(1)
+    ).one()
+    segment.acoustics_jsonb = {"version": "acoustics-v2", "snr_db": 18.0, "c50_db": 50.0}
+    db_session.flush()
+    derive_error_files(db_session, folder)
+    _, found = error_mining.read(folder / "errors" / "gold.parquet")
+    by_clip = {r["clip_id"]: r for r in found}
+    assert (by_clip[segment.external_id]["snr_db"], by_clip[segment.external_id]["snr_bucket"]) == (
+        18.0,
+        "15-25 dB",
+    )
 
 
 def test_public_sets_come_from_the_folders_benchmark_lines(
@@ -62,23 +79,30 @@ def test_public_sets_come_from_the_folders_benchmark_lines(
     (folder / "benchmarks" / "nepali_cs.jsonl").write_text(
         "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines), encoding="utf-8"
     )
-    overlap = tmp_path / "overlap"
-    overlap.mkdir()
-    partial = overlap / "nepali_cs.jsonl"
+    measured = tmp_path / "benchmarks"
+    (measured / "overlap").mkdir(parents=True)
+    (measured / "acoustics").mkdir()
+    partial = measured / "overlap" / "nepali_cs.jsonl"
     partial.write_text(
         json.dumps({"clip_id": "-None#2", "duration": 2.0, "overlap_share": 0.5, "spans": []})
         + "\n"
     )
-    from app.services.benchmark_overlap import write_overlap
+    loud = measured / "acoustics" / "nepali_cs.jsonl"
+    loud.write_text(
+        json.dumps({"clip_id": "-None", "duration": 2.0, "snr_db": 8.0, "c50_db": 1.0,
+                    "bandwidth_hz": 8000.0}) + "\n"
+    )  # fmt: skip
+    from app.services.benchmark_overlap import write_acoustics, write_overlap
 
-    write_overlap(partial, overlap / "nepali_cs.parquet")
-    files = derive_error_files(db_session, folder, overlap_dirs=[overlap])
+    write_overlap(partial, measured / "overlap" / "nepali_cs.parquet")
+    write_acoustics(loud, measured / "acoustics" / "nepali_cs.parquet")
+    files = derive_error_files(db_session, folder, conditions_dirs=[measured])
     assert [f.set for f in files] == ["gold", "nepali_cs"]
     _, found = error_mining.read(folder / "errors" / "nepali_cs.parquet")
-    assert [(r["clip_id"], r["by"], r["overlap_bucket"]) for r in found] == [
-        ("-None", "cs", "unmeasured"),
-        ("-None", "cs", "unmeasured"),
-        ("-None#2", "en", ">15%"),
+    assert [(r["clip_id"], r["by"], r["overlap_bucket"], r["snr_bucket"]) for r in found] == [
+        ("-None", "cs", "unmeasured", "<15 dB"),
+        ("-None", "cs", "unmeasured", "<15 dB"),
+        ("-None#2", "en", ">15%", "unmeasured"),
     ]
 
 

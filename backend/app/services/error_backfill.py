@@ -2,9 +2,10 @@
 
 The rows are derived data, so a model that has its texts has its rows. Gold and val come from
 the imported runs -- each clip's reference snapshot and the model's text, as the run scored
-them -- and each public set from ``benchmarks/<set>.jsonl`` in the model's folder when the
-notebook's per-clip lines were copied there. The same :func:`app.services.error_mining.rows` a
-notebook calls, so a backfilled file equals what the notebook would have written.
+them, with the segment's measured SNR -- and each public set from ``benchmarks/<set>.jsonl`` in
+the model's folder when the notebook's per-clip lines were copied there. The same
+:func:`app.services.error_mining.rows` a notebook calls, so a backfilled file equals what the
+notebook would have written.
 """
 
 from __future__ import annotations
@@ -18,7 +19,15 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import AsrModel, ModelEvalClip, ModelEvalRun, Segment
 from app.models.enums import EVAL_SPLITS
-from app.services.error_mining import SET_BY, SETS, read_overlap, rows, unique_ids, write
+from app.services.error_mining import (
+    SET_BY,
+    SETS,
+    read_overlap,
+    read_snr,
+    rows,
+    unique_ids,
+    write,
+)
 from app.services.error_store import ERRORS_DIR, ErrorFile, list_files
 
 
@@ -44,22 +53,26 @@ def _split_clips(session: Session, run: ModelEvalRun) -> list[dict]:
             "ref": c.ref_text,
             "hyp": c.hyp_text,
             "overlap_share": c.overlap_share,
+            "snr_db": (c.segment.acoustics_jsonb or {}).get("snr_db"),
         }
         for c in clips
     ]
     return sorted(out, key=lambda c: c["clip_id"])
 
 
-def _overlap(name: str, places: Sequence[Path]) -> dict[str, float | None]:
+def _measured(name: str, kind: str, places: Sequence[Path]) -> dict[str, float | None]:
+    """The first ``<place>/<kind>/<name>.parquet`` found: crosstalk shares or SNR by clip id."""
+    read = read_overlap if kind == "overlap" else read_snr
     for place in places:
-        if (place / f"{name}.parquet").is_file():
-            return read_overlap(place / f"{name}.parquet")
+        if (place / kind / f"{name}.parquet").is_file():
+            return read(place / kind / f"{name}.parquet")
     return {}
 
 
 def _public_clips(lines_path: Path, name: str, places: Sequence[Path]) -> list[dict]:
     lines = [json.loads(x) for x in lines_path.read_text(encoding="utf-8").splitlines() if x]
-    shares = _overlap(name, places)
+    shares = _measured(name, "overlap", places)
+    snr = _measured(name, "acoustics", places)
     by = SET_BY.get(name)
     ids = unique_ids(str(line["id"]) for line in lines)
     return [
@@ -69,6 +82,7 @@ def _public_clips(lines_path: Path, name: str, places: Sequence[Path]) -> list[d
             "ref": line["ref"],
             "hyp": line["hyp"],
             "overlap_share": shares.get(clip_id),
+            "snr_db": snr.get(clip_id),
             "by": line.get(by) if by else None,
         }
         for line, clip_id in zip(lines, ids, strict=True)
@@ -76,15 +90,16 @@ def _public_clips(lines_path: Path, name: str, places: Sequence[Path]) -> list[d
 
 
 def derive_error_files(
-    session: Session, model_folder: Path, *, overlap_dirs: Sequence[Path] = ()
+    session: Session, model_folder: Path, *, conditions_dirs: Sequence[Path] = ()
 ) -> list[ErrorFile]:
     """Write ``errors/<set>.parquet`` for every set the model has texts for; returns the files.
 
     Args:
         session: Open session; nothing is written to it.
         model_folder: ``<models root>/<slug>`` of an imported model.
-        overlap_dirs: Where else to look for ``<set>.parquet`` overlap files, after the folder's
-            own ``benchmarks/overlap/``. A public set with none is ``unmeasured``.
+        conditions_dirs: Where else to look for a public set's measured recording conditions,
+            ``<dir>/overlap/<set>.parquet`` and ``<dir>/acoustics/<set>.parquet``, after the
+            folder's own ``benchmarks/``. A set with neither is ``unmeasured`` on both.
 
     Raises:
         ValueError: The folder's model was never imported.
@@ -99,7 +114,7 @@ def derive_error_files(
         run = _newest_run(session, model, split)
         if run is not None and (clips := _split_clips(session, run)):
             write(rows(run_name, split, clips), errors / f"{split}.parquet")
-    places = [model_folder / "benchmarks" / "overlap", *overlap_dirs]
+    places = [model_folder / "benchmarks", *conditions_dirs]
     for name in SETS:
         lines = model_folder / "benchmarks" / f"{name}.jsonl"
         if name not in EVAL_SPLITS and lines.is_file():

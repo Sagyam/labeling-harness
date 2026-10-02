@@ -166,7 +166,7 @@ reading needs, each substitution's `similarity` and both sides romanized, so the
 filters by them without a threshold having been chosen. Error rows are Parquet files beside their
 model, not tables (D110).
 
-- **The classifier**, `backend/app/services/error_mining.py` (`MINER_VERSION = "mine-v1"`):
+- **The classifier**, `backend/app/services/error_mining.py` (`MINER_VERSION = "mine-v2"`; v2 added each clip's SNR):
   `pairs` turns a clip into one row per alignment step, reusing an alignment the scorer already
   made; `rows` adds the clip's columns; `write` and `read` are the only writer and reader. It
   imports only `fold.py`, the standard library and DuckDB. A clip id repeated in a set (nepali_cs
@@ -175,7 +175,8 @@ model, not tables (D110).
   `kind`, `identical`, `forgiven` (`spelling`, `script`, `number`, `merge`; a fold is `number`
   when rule 2 matched it), `ref_script`, `hyp_script` (`dev`, `lat`, `mix`, `none`; null on the
   absent side), `number` (either side), `ref_number` (the reference side: block 2's clips),
-  `similarity`, `ref_roman`, `hyp_roman`, `overlap_share`, `overlap_bucket`, `by`. Metadata:
+  `similarity`, `ref_roman`, `hyp_roman`, `overlap_share`, `overlap_bucket`, `snr_db`,
+  `snr_bucket` (the corpus's SNR buckets, D87), `by`. Metadata:
   `run`, `set`, `fold_version`, `miner_version`, `created_at`.
 - **The queries**, `backend/app/services/error_store.py`: `breakdown` (WER with S/D/I and
   interval, blocks 1 and 2, each against a base on the clips both scored with the set's group
@@ -186,10 +187,13 @@ model, not tables (D110).
   arrive by upload (`POST /models/{slug}/errors`), with a folder copied from the hub (Rescan lists
   them), or from `scripts/mine_errors.py`, which derives them from a model's imported runs and the
   `benchmarks/<set>.jsonl` in its folder.
-- **The public sets' crosstalk**: `scripts/measure_benchmark_overlap.py` streams each set through
-  `app/services/overlap.py` and writes `data/benchmarks/overlap/<set>.parquet`; `--listen` keeps
-  the highest-overlap clips as FLAC, `--upload` puts the file in the model repo at
-  `benchmarks/overlap/<set>.parquet`, where the notebooks read it.
+- **The public sets' recording conditions**: `scripts/measure_benchmark_overlap.py` streams each
+  set through `app/services/overlap.py` into `data/benchmarks/overlap/<set>.parquet`, and through
+  the acoustic meter (Brouhaha's SNR and C50, and bandwidth; D87) into
+  `data/benchmarks/acoustics/<set>.parquet`, about 18 s of CPU per hour of audio. A public clip
+  is measured on its own audio, a corpus clip from its whole episode. `--listen` keeps the
+  highest-overlap clips as FLAC, `--upload` puts both files in the model repo under
+  `benchmarks/`, where the notebooks read them (`evalkit.fetch_conditions`).
 - **The page**: the Errors section of the Models page (import, set and base pickers, blocks 1 and
   2, the confusion table and its filters, occurrences with Sample 50 and its seed, a clip: gold
   and val with audio, a public set as its alignment). Driven with Playwright on vanilla-s1.

@@ -478,6 +478,7 @@ def test_a_run_writes_error_files_whose_rows_reproduce_its_scores(tmp_path: Path
 
     splits = _splits()
     splits["gold"][0]["overlap_share"] = 0.2
+    splits["gold"][0]["acoustics"] = {"version": "acoustics-v2", "snr_db": 30.0}
     row = evalkit.evaluate_run(
         tmp_path, "vanilla-s0", splits=splits, decode=_decoder({"g2": "one two x y"}),
         score=_FoldScore, card={"name": "Flex FT"},
@@ -491,35 +492,46 @@ def test_a_run_writes_error_files_whose_rows_reproduce_its_scores(tmp_path: Path
     breakdown = metrics["breakdown"]
     assert breakdown["wer"] == pytest.approx(row["gold_wer"])
     assert {b["bucket"] for b in breakdown["overlap"]} == {">15%", "unmeasured"}
+    _, gold = error_mining.read(tmp_path / "harness" / "errors" / "gold.parquet")
+    snr = {r["clip_id"]: r["snr_bucket"] for r in gold}
+    assert snr[splits["gold"][0]["segment_id"]] == "25-35 dB"
+    assert set(snr.values()) == {"25-35 dB", "unmeasured"}
     assert breakdown["top"]["sub"][0]["count"] == 1
     assert "alignment" not in json.dumps(metrics)
 
 
 def test_a_public_set_writes_its_error_file_with_its_measured_overlap(tmp_path: Path, monkeypatch):
     from app.services import error_mining
-    from app.services.benchmark_overlap import write_overlap
+    from app.services.benchmark_overlap import write_acoustics, write_overlap
 
     monkeypatch.setattr(evalkit, "load_benchmark", lambda *a, **k: _bench_rows())
-    overlap = tmp_path / "overlap"
-    overlap.mkdir()
+    measured = tmp_path / "conditions"
+    overlap, acoustics = measured / "overlap", measured / "acoustics"
+    overlap.mkdir(parents=True)
+    acoustics.mkdir()
     (overlap / "indicvoices.jsonl").write_text(
         json.dumps({"clip_id": "iv-00001", "duration": 1.0, "overlap_share": 0.5, "spans": []})
         + "\n"
     )
     write_overlap(overlap / "indicvoices.jsonl", overlap / "indicvoices.parquet")
+    (acoustics / "indicvoices.jsonl").write_text(
+        json.dumps({"clip_id": "iv-00000", "duration": 1.0, "snr_db": 50.0, "c50_db": 60.0,
+                    "bandwidth_hz": 8000.0}) + "\n"
+    )  # fmt: skip
+    write_acoustics(acoustics / "indicvoices.jsonl", acoustics / "indicvoices.parquet")
     hyps = {"iv-00001": "a b x y"}
     summaries = evalkit.run_benchmarks(
         tmp_path / "vanilla-s1", decode=_decoder(hyps), score=_FoldScore, work=tmp_path / "w",
-        token="t", names=("indicvoices",), overlap_dir=overlap,
+        token="t", names=("indicvoices",), conditions_dir=measured,
     )  # fmt: skip
     path = tmp_path / "vanilla-s1" / "harness" / "errors" / "indicvoices.parquet"
     meta, found = error_mining.read(path)
     assert (meta["run"], meta["set"]) == ("vanilla-s1", "indicvoices")
     errors, words = _sid(found)
     assert 100 * errors / words == pytest.approx(summaries["indicvoices"]["wer"])
-    by_clip = {r["clip_id"]: (r["overlap_bucket"], r["by"]) for r in found}
-    assert by_clip["iv-00001"] == (">15%", "Conversation")
-    assert by_clip["iv-00000"] == ("unmeasured", "Read")
+    by_clip = {r["clip_id"]: (r["overlap_bucket"], r["snr_bucket"], r["by"]) for r in found}
+    assert by_clip["iv-00001"] == (">15%", "unmeasured", "Conversation")
+    assert by_clip["iv-00000"] == ("unmeasured", "45+ dB", "Read")
     assert summaries["indicvoices"]["breakdown"]["by_values"] == ["Conversation", "Read"]
 
 

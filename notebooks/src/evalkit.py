@@ -10,7 +10,8 @@ functions here, so a number in one notebook means what it means in another:
     unit resampled (`run_benchmarks`).
 
 Every split and set also keeps its errors: each aligned word pair, classified, in
-`harness/errors/<set>.parquet`, and a `breakdown` beside its WER (crosstalk buckets, numbers, the
+`harness/errors/<set>.parquet` with each clip's crosstalk and SNR, and a `breakdown` beside its
+WER (crosstalk buckets, numbers, the
 most common substitutions, deletions and insertions; docs/WER-Breakdown.md). Both come from the
 harness's own `error_mining.py` and `error_store.py`, which the dataset's `harness/` copy carries
 beside fold.py, so the Models page reads exactly what the notebook wrote.
@@ -196,13 +197,15 @@ def write_errors(
     clips: Sequence[Any],
     *,
     overlap: Mapping[str, float | None] | None = None,
+    snr: Mapping[str, float | None] | None = None,
     by: str | None = None,
 ) -> dict[str, Any] | None:
     """Every aligned word pair of one split or set, classified, written to `path` (its stem is
     the set's name); returns the file's report (blocks 1-3), or None when nothing was written.
 
-    A clip's alignment is the one `score.per_clip` counted, when it kept it. `overlap` is a public
-    set's measured crosstalk by clip id; gold and val rows carry their own `overlap_share`."""
+    A clip's alignment is the one `score.per_clip` counted, when it kept it. `overlap` and `snr`
+    are a public set's measured crosstalk and speech-to-noise ratio by clip id; gold and val rows
+    carry their own `overlap_share` and `acoustics`."""
     kit = _miner()
     if kit is None:
         return None
@@ -218,6 +221,9 @@ def write_errors(
                 "ref": r["text"],
                 "hyp": text,
                 "overlap_share": overlap.get(i) if overlap is not None else r.get("overlap_share"),
+                "snr_db": snr.get(i)
+                if snr is not None
+                else (r.get("acoustics") or {}).get("snr_db"),
                 "by": r.get(by) if by else None,
                 "alignment": c.get("alignment") if isinstance(c, Mapping) else None,
             }
@@ -230,22 +236,29 @@ def write_errors(
     return store.report(Path(path))
 
 
-def fetch_overlap(repo: str, token: str, folder: Path, names: Sequence[str] | None = None) -> Path:
-    """Each public set's measured crosstalk, `benchmarks/overlap/<set>.parquet` in `repo`, copied
-    into `folder` (scripts/measure_benchmark_overlap.py wrote them); a set without one stays
-    unmeasured."""
+#: A public set's measured recording conditions, each `benchmarks/<kind>/<set>.parquet`.
+CONDITIONS = ("overlap", "acoustics")
+
+
+def fetch_conditions(
+    repo: str, token: str, folder: Path, names: Sequence[str] | None = None
+) -> Path:
+    """Each public set's measured crosstalk and acoustics, `benchmarks/{overlap,acoustics}/<set>
+    .parquet` in `repo`, copied into `folder/overlap/` and `folder/acoustics/`
+    (scripts/measure_benchmark_overlap.py wrote them); a set without one is unmeasured on it."""
     from huggingface_hub import hf_hub_download
     from huggingface_hub.utils import EntryNotFoundError
 
     folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    for name in names or tuple(BENCHMARKS):
-        try:
-            got = hf_hub_download(repo, f"benchmarks/overlap/{name}.parquet", token=token)
-        except EntryNotFoundError:
-            print(f"{name}: no measured overlap in {repo}; its clips are unmeasured")
-            continue
-        shutil.copyfile(got, folder / f"{name}.parquet")
+    for kind in CONDITIONS:
+        (folder / kind).mkdir(parents=True, exist_ok=True)
+        for name in names or tuple(BENCHMARKS):
+            try:
+                got = hf_hub_download(repo, f"benchmarks/{kind}/{name}.parquet", token=token)
+            except EntryNotFoundError:
+                print(f"{name}: no measured {kind} in {repo}; its clips are unmeasured on it")
+                continue
+            shutil.copyfile(got, folder / kind / f"{name}.parquet")
     return folder
 
 
@@ -659,14 +672,15 @@ def score_benchmark(
     errors: Path | None = None,
     run: str = "",
     overlap: Mapping[str, float | None] | None = None,
+    snr: Mapping[str, float | None] | None = None,
 ) -> tuple[dict[str, Any], list[dict]]:
     """A public set's summary and its per-clip lines.
 
     Summary: folded WER with S/D/I, raw WER and CER from the harness's scorer, the plain WER, and
     the score per value of the set's `by` column. A line is `{id, group, ref, hyp, errors,
     words}`: the 2026-09-27 files' fields plus the counts a paired comparison needs. With
-    `errors`, the set's error rows are written there, crosstalk from `overlap` (clips missing
-    from it are unmeasured), and its `breakdown` added to the summary."""
+    `errors`, the set's error rows are written there, crosstalk from `overlap` and SNR from `snr`
+    (clips missing from either are unmeasured on it), and its `breakdown` added to the summary."""
     bench = BENCHMARKS[name]
     refs = [r["text"] for r in rows]
     clips = score.per_clip(refs, texts)
@@ -682,7 +696,7 @@ def score_benchmark(
         }
     if errors is not None:
         summary["breakdown"] = write_errors(
-            errors, run, rows, texts, clips, overlap=overlap or {}, by=bench.by
+            errors, run, rows, texts, clips, overlap=overlap or {}, snr=snr or {}, by=bench.by
         )
     lines = []
     for r, hyp, c in zip(rows, texts, clips, strict=True):
@@ -713,11 +727,14 @@ def pair_benchmark(a: Sequence[dict], b: Sequence[dict], n: int = 2000) -> dict[
     )
 
 
-def _overlap(folder: Path | None, name: str) -> dict[str, float | None] | None:
-    path = Path(folder) / f"{name}.parquet" if folder is not None else None
+def _measured(folder: Path | None, kind: str, name: str) -> dict[str, float | None] | None:
+    """`folder/<kind>/<name>.parquet` as values by clip id, or None when absent -- or when the
+    harness copy predates the reader (SNR came with mine-v2)."""
+    path = Path(folder) / kind / f"{name}.parquet" if folder is not None else None
     if path is None or not path.exists() or (kit := _miner()) is None:
         return None
-    return kit[0].read_overlap(path)
+    read = getattr(kit[0], "read_overlap" if kind == "overlap" else "read_snr", None)
+    return read(path) if read is not None else None
 
 
 def run_benchmarks(
@@ -731,14 +748,14 @@ def run_benchmarks(
     limit: int | None = None,
     done: Collection[str] = (),
     run: str | None = None,
-    overlap_dir: Path | None = None,
+    conditions_dir: Path | None = None,
 ) -> dict[str, dict]:
     """Decode and score each public set with the weights `decode` reads, one set at a time.
 
     Writes `out/benchmarks/<name>.jsonl` (per clip) and `<name>.json` (summary), and the set's
     error rows to `out/harness/errors/<name>.parquet`, as each set finishes, and skips a set named
     in `done`, so a lost runtime costs one set. `run` names the rows (default: `out`'s folder);
-    `overlap_dir` holds the sets' measured crosstalk (`fetch_overlap`)."""
+    `conditions_dir` holds the sets' measured crosstalk and acoustics (`fetch_conditions`)."""
     run = run or Path(out).name
     folder = Path(out) / "benchmarks"
     folder.mkdir(parents=True, exist_ok=True)
@@ -759,7 +776,8 @@ def run_benchmarks(
                 score,
                 errors=Path(out) / "harness" / "errors" / f"{name}.parquet",
                 run=run,
-                overlap=_overlap(overlap_dir, name),
+                overlap=_measured(conditions_dir, "overlap", name),
+                snr=_measured(conditions_dir, "acoustics", name),
             )
         summary["retried"] = len(log)
         summary["x_realtime"] = sum(duration(r) for r in rows) / max(sum(compute), 1e-9)

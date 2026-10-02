@@ -6,8 +6,9 @@ python scripts/mine_errors.py --all                          # every imported mo
 
 Gold and val come from the model's imported runs; each public set from
 data/models/asr/<slug>/benchmarks/<set>.jsonl when the notebook's per-clip lines were copied
-there, with its crosstalk from data/benchmarks/overlap/<set>.parquet when that was measured
-(scripts/measure_benchmark_overlap.py). Files land in data/models/asr/<slug>/errors/.
+there, with its crosstalk and SNR from data/benchmarks/{overlap,acoustics}/<set>.parquet when
+they were measured (scripts/measure_benchmark_overlap.py). Files land in
+data/models/asr/<slug>/errors/.
 """
 
 from __future__ import annotations
@@ -27,10 +28,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("slugs", nargs="*", help="model folder names under models.root")
     parser.add_argument("--all", action="store_true", help="every model folder")
     parser.add_argument(
-        "--overlap",
+        "--conditions",
         type=Path,
-        default=REPO_ROOT / "data" / "benchmarks" / "overlap",
-        help="where the public sets' measured crosstalk is",
+        default=REPO_ROOT / "data" / "benchmarks",
+        help="where the public sets' measured overlap/ and acoustics/ are",
     )
     args = parser.parse_args(argv)
     settings = bootstrap()
@@ -47,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{slug}: no folder {folder}")
                 return 1
             try:
-                files = derive_error_files(session, folder, overlap_dirs=[args.overlap])
+                files = derive_error_files(session, folder, conditions_dirs=[args.conditions])
             except ValueError as exc:
                 print(f"refused: {exc}")
                 return 1

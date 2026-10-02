@@ -38,7 +38,8 @@ from app.services.fold import (
 )
 
 #: Bump whenever a column's meaning changes: a file is only comparable with another of the same.
-MINER_VERSION = "mine-v1"
+#: mine-v2 added each clip's speech-to-noise ratio (``snr_db``, ``snr_bucket``).
+MINER_VERSION = "mine-v2"
 
 #: What a file may hold: the corpus's two scored splits and the public sets of
 #: ``notebooks/src/evalkit.py``'s ``BENCHMARKS``, in its order.
@@ -67,6 +68,8 @@ COLUMNS: dict[str, str] = {
     "hyp_roman": "VARCHAR",
     "overlap_share": "DOUBLE",
     "overlap_bucket": "VARCHAR",
+    "snr_db": "DOUBLE",
+    "snr_bucket": "VARCHAR",
     "by": "VARCHAR",
 }
 #: The key-value metadata every file carries.
@@ -187,9 +190,10 @@ def rows(run: str, set: str, clips: Iterable[Mapping[str, Any]]) -> list[dict[st
     Args:
         run: The run's name (``vanilla-s1``).
         set: ``gold``, ``val`` or a public set's name (:data:`SETS`).
-        clips: ``{clip_id, group, ref, hyp, overlap_share, by}`` each; ``by`` (the set's own
-            split value) may be absent, and so may ``alignment``, an existing
-            ``fold.word_errors(ref, hyp)``. ``overlap_share`` is ``None`` when never measured.
+        clips: ``{clip_id, group, ref, hyp, overlap_share, snr_db, by}`` each; ``by`` (the
+            set's own split value) and ``snr_db`` may be absent, and so may ``alignment``, an
+            existing ``fold.word_errors(ref, hyp)``. ``overlap_share`` and ``snr_db`` are
+            ``None`` when never measured.
             A ``clip_id`` seen before in ``clips`` is numbered by :func:`number_id`.
     """
     out: list[dict[str, Any]] = []
@@ -197,6 +201,8 @@ def rows(run: str, set: str, clips: Iterable[Mapping[str, Any]]) -> list[dict[st
     for clip in clips:
         share = clip.get("overlap_share")
         share = None if share is None else float(share)
+        snr = clip.get("snr_db")
+        snr = None if snr is None else float(snr)
         clip_id = number_id(str(clip["clip_id"]), seen)
         head = {
             "run": run,
@@ -207,6 +213,8 @@ def rows(run: str, set: str, clips: Iterable[Mapping[str, Any]]) -> list[dict[st
         tail = {
             "overlap_share": share,
             "overlap_bucket": overlap_bucket(share),
+            "snr_db": snr,
+            "snr_bucket": snr_bucket(snr),
             "by": None if clip.get("by") is None else str(clip["by"]),
         }
         for pair in pairs(clip["ref"], clip["hyp"], alignment=clip.get("alignment")):

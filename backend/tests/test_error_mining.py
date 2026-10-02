@@ -108,7 +108,8 @@ def test_number_similarity_and_romanization() -> None:
 
 def test_rows_add_the_clip_columns() -> None:
     clips = [
-        {"clip_id": "c1", "group": "ep1", "ref": "म घर", "hyp": "म घर", "overlap_share": 0.2},
+        {"clip_id": "c1", "group": "ep1", "ref": "म घर", "hyp": "म घर", "overlap_share": 0.2,
+         "snr_db": 12.5},
         {"clip_id": "c2", "group": "ep2", "ref": "म", "hyp": "म", "overlap_share": None,
          "by": "read"},
     ]  # fmt: skip
@@ -117,7 +118,9 @@ def test_rows_add_the_clip_columns() -> None:
     first, last = found[0], found[-1]
     assert (first["run"], first["set"], first["group"]) == ("vanilla-s1", "fleurs", "ep1")
     assert (first["overlap_share"], first["overlap_bucket"], first["by"]) == (0.2, ">15%", None)
+    assert (first["snr_db"], first["snr_bucket"]) == (12.5, "<15 dB")
     assert (last["overlap_share"], last["overlap_bucket"]) == (None, "unmeasured")
+    assert (last["snr_db"], last["snr_bucket"]) == (None, "unmeasured")
     assert last["by"] == "read"
     assert list(first) == list(error_mining.COLUMNS)
 
