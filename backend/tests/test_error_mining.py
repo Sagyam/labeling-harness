@@ -94,7 +94,9 @@ def test_a_side_of_two_scripts_is_mixed_and_an_absent_side_has_none() -> None:
 def test_number_similarity_and_romanization() -> None:
     (row,) = pairs("छत्तीस", "06")
     assert row["kind"] == "sub"
-    assert row["number"] is True
+    assert (row["number"], row["ref_number"]) == (True, True)
+    (row,) = pairs("राम्रो", "5")
+    assert (row["number"], row["ref_number"]) == (True, False)  # only the model wrote a number
     (row,) = pairs("cache", "cage")
     assert row["number"] is False
     assert 0 < row["similarity"] < 1
