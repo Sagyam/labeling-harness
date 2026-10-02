@@ -584,9 +584,51 @@ def _number(key: str) -> tuple[frozenset[int], str, bool, bool] | None:
     return (frozenset(values), key[position:], digits, False) if values else None
 
 
+#: Number words that are far more often something else: छ is "is" before it is "six", एक is "a"
+#: before it is "one", छौँ is "we are". Tagging them would make the number class mostly copulas
+#: and articles.
+_NOT_NUMBERS = frozenset(spelling_key(word) for word in ("छ", "एक", "छौँ"))
+#: तिन with a short i and a case ending is "their/them" (तिनको, तिनले). Bare तिन is three as
+#: often as not, and a counter (तिनजना) makes it three.
+_PRONOUN_TIN = "तिन"
+_CASE_ENDINGS = tuple(spelling_key(s) for s in _TABLE_SUFFIXES)
+#: What may follow a number word in one token: a counter (दुईटा, सातजना), the ordinal or
+#: "-fold" ending (पाँचौँ, हजारौं), a case or plural ending, or an English plural. Anything else
+#: means the word only started like a number (तिनीहरूका, एकदम, ElevenLabs).
+_NUMBER_SUFFIXES = tuple(
+    sorted(
+        {spelling_key(s) for s in ("वटा", "ओटा", "टा", "जना", "ौँ", *_TABLE_SUFFIXES)} | {"s"},
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def _number_suffix(rest: str) -> bool:
+    """Whether ``rest`` is a chain of :data:`_NUMBER_SUFFIXES` (``वटाको``), or nothing."""
+    while rest:
+        suffix = next((s for s in _NUMBER_SUFFIXES if rest.startswith(s)), None)
+        if suffix is None:
+            return False
+        rest = rest[len(suffix) :]
+    return True
+
+
 def is_number(token: str) -> bool:
-    """Whether a word reads as a number -- digits, a number word, an ordinal -- by rule 2."""
-    return _number(spelling_key(token)) is not None
+    """Whether a word is a number: led by digits (``45``, ``2007मा``, ``4Ghz``), or a number word
+    or ordinal with nothing after it but a counter or an ending (``तीनवटाको``, ``लाखमा``).
+
+    A tag only: no fold reads it, so tightening it moves no WER. Rule 2 matches on :func:`_number`,
+    which is deliberately looser -- a suffix there must agree on both sides.
+    """
+    key = spelling_key(token)
+    parsed = _number(key)
+    if parsed is None or key in _NOT_NUMBERS:
+        return False
+    pronoun = unicodedata.normalize("NFC", token).startswith(_PRONOUN_TIN)
+    if pronoun and parsed[1].startswith(_CASE_ENDINGS):
+        return False
+    return parsed[2] or _number_suffix(parsed[1])
 
 
 def _same_number(a: str, b: str) -> bool:

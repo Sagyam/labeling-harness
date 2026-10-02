@@ -9,6 +9,7 @@ from app.services.fold import (
     align,
     fold_tokens,
     fold_version,
+    is_number,
     same_word,
     similarity,
     skeleton,
@@ -242,6 +243,58 @@ class TestNumbers:
     ) -> None:
         assert word_errors(reference, hypothesis, ruleset=ruleset).errors == 0
         assert word_errors(hypothesis, reference, ruleset=ruleset).errors == 0
+
+
+class TestIsNumber:
+    """The number tag (WER-Breakdown.md, step 2). It decides no fold, so it moves no WER."""
+
+    @pytest.mark.parametrize(
+        "word",
+        [
+            "45",
+            "2007",
+            "06:30",
+            "2.4",
+            "4Ghz",  # 2.4Ghz, split at the point
+            "2007मा",  # digits lead a number whatever follows
+            "पैंतालीस",
+            "forty",
+            "तेस्रो",
+            "1st",
+            "दुईटा",
+            "तीनवटा",
+            "तीनवटाको",
+            "लाखमा",  # 45 लाखमा
+            "पाँचौँ",
+            "हजारौं",
+            "सातजना",
+            "तिन",  # three, with a short i: दुई तिन दिन
+            "तिनजना",
+            "तीनको",
+        ],
+    )
+    def test_numbers(self, word: str) -> None:
+        assert is_number(word)
+
+    @pytest.mark.parametrize(
+        "word",
+        [
+            "तिनीहरूका",  # "their": तिन is three only up to the vowel sign
+            "छो",
+            "ElevenLabs",
+            "tennis",
+            "एकदम",  # "very"
+            "छन्",  # "are"
+            "नौलो",  # "new"
+            "छ",  # "is" far more often than "six"
+            "एक",  # "a" far more often than "one"
+            "छौँ",  # "we are"
+            "तिनको",  # "their": the short-i pronoun with a case ending
+            "तिनले",
+        ],
+    )
+    def test_words_that_start_like_a_number_are_not_one(self, word: str) -> None:
+        assert not is_number(word)
 
 
 class TestContractions:

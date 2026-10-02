@@ -49,9 +49,6 @@ _LATIN = re.compile(r"[A-Za-z]")
 
 #: Word classes, in display order. A word can be in several.
 WORD_CLASSES = ("devanagari", "latin", "mixed_script", "number", "switch", "edge")
-#: Number words that are far more often something else: छ is "is" before it is "six", एक is "a"
-#: before it is "one". Counting them would make the number class mostly copulas and articles.
-_NOT_NUMBERS = frozenset({"छ", "एक"})
 
 
 @dataclass(frozen=True)
@@ -175,7 +172,7 @@ def word_class_counts(alignment: Alignment) -> dict[str, WordCounts]:
 
     def classes(i: int) -> list[str]:
         out = [scripts[i]] if scripts[i] else []
-        if ref[i] not in _NOT_NUMBERS and is_number(ref[i]):
+        if is_number(ref[i]):
             out.append("number")
         if scripts[i] in ("devanagari", "latin") and any(
             0 <= j < len(ref) and scripts[j] in ("devanagari", "latin") and scripts[j] != scripts[i]
