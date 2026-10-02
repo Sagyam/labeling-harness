@@ -39,6 +39,7 @@ import type {
   OccurrencePage,
   OverlapBucket,
   ScriptName,
+  SnrBucket,
   VsBase,
 } from '@/types'
 
@@ -69,6 +70,7 @@ const SET_LABEL: Record<string, string> = {
   indicvoices: 'IndicVoices',
   nepali_cs: 'nepali-cs',
 }
+const SNR_BUCKETS: SnrBucket[] = ['<15 dB', '15-25 dB', '25-35 dB', '35-45 dB', '45+ dB', 'unmeasured']
 const CONFUSION_PAGE = 25
 const SAMPLE = 50
 
@@ -353,6 +355,7 @@ function Filters({
     onQuery({ kind: kinds.includes(kind) ? kinds.filter((k) => k !== kind) : [...kinds, kind] })
   const chips: [string, () => void][] = []
   if (query.overlap_bucket) chips.push([`overlap: ${bucketLabel(query.overlap_bucket)}`, () => onQuery({ overlap_bucket: undefined })])
+  if (query.snr_bucket) chips.push([`SNR: ${query.snr_bucket}`, () => onQuery({ snr_bucket: undefined })])
   if (query.number !== undefined) chips.push([query.number ? 'numbers only' : 'no numbers', () => onQuery({ number: undefined })])
   return (
     <div className="space-y-1.5">
@@ -402,6 +405,20 @@ function Filters({
           <option value="">numbers: either</option>
           <option value="true">numbers only</option>
           <option value="false">no numbers</option>
+        </select>
+        <select
+          aria-label="Speech-to-noise ratio"
+          className={SELECT}
+          value={query.snr_bucket ?? ''}
+          onChange={(e) => onQuery({ snr_bucket: (e.target.value || undefined) as SnrBucket | undefined })}
+          title="The clip's speech-to-noise ratio, measured by Brouhaha (D87): low is noisy"
+        >
+          <option value="">SNR: any</option>
+          {SNR_BUCKETS.map((b) => (
+            <option key={b} value={b}>
+              SNR: {b}
+            </option>
+          ))}
         </select>
         {byValues.length > 0 && (
           <select
@@ -572,6 +589,7 @@ function OccurrenceRow({ occ, active, onOpen }: { occ: Occurrence; active: boole
           {occ.clip_id}
         </button>
         <span>{bucketLabel(occ.overlap_bucket)}</span>
+        <span title="Speech-to-noise ratio of the clip">SNR {occ.snr_bucket}</span>
         {occ.by && <span>{humanize(occ.by)}</span>}
         <span>group {occ.group || '—'}</span>
       </div>

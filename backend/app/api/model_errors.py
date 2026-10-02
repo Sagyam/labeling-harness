@@ -34,6 +34,7 @@ Kind = Literal["match", "fold", "merge", "sub", "del", "ins"]
 Forgiven = Literal["spelling", "script", "number", "merge"]
 Script = Literal["dev", "lat", "mix", "none"]
 Bucket = Literal["none", "0-5%", "5-15%", ">15%", "unmeasured"]
+SnrBucket = Literal["<15 dB", "15-25 dB", "25-35 dB", "35-45 dB", "45+ dB", "unmeasured"]
 
 
 def _model(session: Session, slug: str) -> AsrModel:
@@ -168,6 +169,7 @@ def _filter(
     hyp_script: Script | None = None,
     number: bool | None = None,
     overlap_bucket: Bucket | None = None,
+    snr_bucket: SnrBucket | None = None,
     by: str | None = None,
     similarity_min: float | None = Query(default=None, ge=0, le=1),
     similarity_max: float | None = Query(default=None, ge=0, le=1),
@@ -179,6 +181,7 @@ def _filter(
         hyp_script=hyp_script,
         number=number,
         overlap_bucket=overlap_bucket,
+        snr_bucket=snr_bucket,
         by=by,
         similarity_min=similarity_min,
         similarity_max=similarity_max,

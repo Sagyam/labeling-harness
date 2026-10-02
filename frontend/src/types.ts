@@ -1069,6 +1069,8 @@ export interface ModelRescanOut {
 }
 
 export type OverlapBucket = 'none' | '0-5%' | '5-15%' | '>15%' | 'unmeasured'
+/** Speech-to-noise ratio buckets (D87), carried by every error row since mine-v2. */
+export type SnrBucket = '<15 dB' | '15-25 dB' | '25-35 dB' | '35-45 dB' | '45+ dB' | 'unmeasured'
 
 export type ClipSort =
   | 'errors'
@@ -1304,6 +1306,7 @@ export interface Occurrence extends AlignOp {
   group: string
   pos: number
   overlap_bucket: OverlapBucket
+  snr_bucket: SnrBucket
   by: string | null
   before: AlignOp[]
   after: AlignOp[]
@@ -1329,6 +1332,7 @@ export interface ErrorQuery {
   hyp_script?: ScriptName
   number?: boolean
   overlap_bucket?: OverlapBucket
+  snr_bucket?: SnrBucket
   by?: string
   similarity_min?: number
   similarity_max?: number

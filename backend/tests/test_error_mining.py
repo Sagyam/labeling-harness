@@ -138,6 +138,11 @@ def test_the_snr_bucket_is_the_corpus_one(db: float | None) -> None:
     assert error_mining.snr_bucket(db) == _snr_bucket(acoustics)
     (axis,) = [a for a in AXES if a.name == "snr"]
     assert axis.buckets == error_mining.SNR_BUCKETS
+    from typing import get_args
+
+    from app.api.model_errors import SnrBucket
+
+    assert get_args(SnrBucket) == error_mining.SNR_BUCKETS
 
 
 def test_the_sets_are_gold_val_and_the_public_benchmarks() -> None:

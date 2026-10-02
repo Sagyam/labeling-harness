@@ -11,6 +11,7 @@ from app.services import error_mining
 from app.services.error_store import (
     MAX_FILE_BYTES,
     ErrorFileError,
+    ErrorFilter,
     accept_uploads,
     list_files,
 )
@@ -258,6 +259,23 @@ def test_filters(run: Path, flt: dict, clips: set[str]) -> None:
 
     found = occurrences(run, ErrorFilter(**({"kind": ["sub", "del", "ins"]} | flt)))
     assert {r["clip_id"] for r in found["rows"]} == clips
+
+
+def test_rows_filter_by_their_clips_snr_bucket(tmp_path: Path) -> None:
+    from app.services.error_store import confusion, occurrences
+
+    clips = [
+        _clip("loud", "म घर", "म") | {"snr_db": 50.0},
+        _clip("noisy", "म घर", "म") | {"snr_db": 9.0},
+        _clip("unknown", "म घर", "म"),
+    ]
+    path = tmp_path / "gold.parquet"
+    error_mining.write(error_mining.rows("run", "gold", clips), path)
+    noisy = occurrences(path, ErrorFilter(kind=["del"], snr_bucket="<15 dB"))
+    assert [(r["clip_id"], r["snr_bucket"]) for r in noisy["rows"]] == [("noisy", "<15 dB")]
+    table = confusion(path, ErrorFilter(kind=["del"], snr_bucket="45+ dB"))
+    assert (table["total"], table["rows"][0]["count"]) == (1, 1)
+    assert occurrences(path, ErrorFilter(snr_bucket="unmeasured"))["total"] == 2
 
 
 def test_occurrences_carry_their_context_and_sample_by_seed(run: Path) -> None:

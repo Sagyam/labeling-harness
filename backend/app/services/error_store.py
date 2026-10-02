@@ -176,6 +176,7 @@ class ErrorFilter:
     hyp_script: str | None = None
     number: bool | None = None
     overlap_bucket: str | None = None
+    snr_bucket: str | None = None
     by: str | None = None
     similarity_min: float | None = None
     similarity_max: float | None = None
@@ -186,7 +187,14 @@ class ErrorFilter:
         if self.kind:
             terms.append(f"kind IN ({', '.join('?' for _ in self.kind)})")
             params += list(self.kind)
-        for column in ("forgiven", "ref_script", "hyp_script", "overlap_bucket", "by"):
+        for column in (
+            "forgiven",
+            "ref_script",
+            "hyp_script",
+            "overlap_bucket",
+            "snr_bucket",
+            "by",
+        ):
             value = getattr(self, column)
             if value is not None:
                 terms.append(f'"{column}" = ?')
@@ -576,7 +584,7 @@ def occurrences(
         order, take = "clip_id, pos", [limit, offset]
     found = _query(
         f"""
-        SELECT clip_id, "group", pos, kind, ref, hyp, similarity, overlap_bucket, "by",
+        SELECT clip_id, "group", pos, kind, ref, hyp, similarity, overlap_bucket, snr_bucket, "by",
                count(*) OVER () AS total
         FROM {_source(path)} WHERE {where}
         ORDER BY {order} LIMIT ? OFFSET ?
@@ -597,6 +605,7 @@ def occurrences(
                 "group": r["group"],
                 "pos": r["pos"],
                 "overlap_bucket": r["overlap_bucket"],
+                "snr_bucket": r["snr_bucket"],
                 "by": r["by"],
                 "before": [
                     steps[p] for p in range(r["pos"] - CONTEXT_STEPS, r["pos"]) if p in steps

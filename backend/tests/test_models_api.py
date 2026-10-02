@@ -281,6 +281,10 @@ def test_the_confusion_table_and_its_occurrences(client, mined: dict) -> None:
     sampled = client.get(f"{url}/pairs", params={"sample": 1, "seed": 3}).json()
     assert sampled["total"] == 5 and len(sampled["rows"]) == 1  # every row, matches included
     assert client.get(f"{url}/confusion", params={"kind": ["oops"]}).status_code == 422
+    unmeasured = client.get(f"{url}/pairs", params={"snr_bucket": "unmeasured"}).json()
+    assert unmeasured["total"] == 5 and unmeasured["rows"][0]["snr_bucket"] == "unmeasured"
+    assert client.get(f"{url}/confusion", params={"snr_bucket": "<15 dB"}).json()["total"] == 0
+    assert client.get(f"{url}/confusion", params={"snr_bucket": "loud"}).status_code == 422
 
 
 def test_one_clip_and_where_its_audio_is(client, mined: dict, db_session: Session) -> None:
