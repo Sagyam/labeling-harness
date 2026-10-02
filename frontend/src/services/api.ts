@@ -47,6 +47,13 @@ import {
   VoicePage,
   VoiceVerdict,
   VoiceVerdictOut,
+  ConfusionPage,
+  ErrorBreakdown,
+  ErrorClip,
+  ErrorFileMeta,
+  ErrorFiles,
+  ErrorQuery,
+  OccurrencePage,
 } from '../types'
 
 export const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -60,6 +67,40 @@ export function resolveUrl(path?: string | null): string {
     return path
   }
   return `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
+}
+
+function errorsPath(slug: string, set: string): string {
+  return `/models/${encodeURIComponent(slug)}/errors/${encodeURIComponent(set)}`
+}
+
+/** A query string; arrays repeat their key (`kind=sub&kind=del`), unset values are left out. */
+function queryString(query: object): string {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === '') continue
+    for (const item of Array.isArray(value) ? value : [value]) params.append(key, String(item))
+  }
+  const qStr = params.toString()
+  return qStr ? `?${qStr}` : ''
+}
+
+/** A multipart POST: `request` would set a JSON content type over the form's boundary. */
+async function postForm<T>(endpoint: string, form: FormData): Promise<T> {
+  const res = await fetch(resolveUrl(endpoint), { method: 'POST', body: form })
+  if (!res.ok) {
+    let detail = res.statusText
+    try {
+      const errJson = await res.json()
+      detail = errJson.detail || JSON.stringify(errJson)
+    } catch {
+      // ignore
+    }
+    const error = new Error(`API error ${res.status}: ${detail}`) as Error & { status: number; detail: string }
+    error.status = res.status
+    error.detail = detail
+    throw error
+  }
+  return res.json()
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -491,27 +532,48 @@ export const api = {
     return request<ModelClipDetail>(`/model-runs/${runId}/clips/${segmentId}`)
   },
 
-  /** Transcribe a recording with a model on the CPU (D85). Multipart, so not `request`. */
-  transcribeWithModel: async (slug: string, audio: Blob, filename: string): Promise<PlaygroundResult> => {
+  /** Transcribe a recording with a model on the CPU (D85). */
+  transcribeWithModel: (slug: string, audio: Blob, filename: string): Promise<PlaygroundResult> => {
     const form = new FormData()
     form.append('audio', audio, filename)
-    const res = await fetch(resolveUrl(`/models/${encodeURIComponent(slug)}/transcribe`), {
-      method: 'POST',
-      body: form,
-    })
-    if (!res.ok) {
-      let detail = res.statusText
-      try {
-        const errJson = await res.json()
-        detail = errJson.detail || JSON.stringify(errJson)
-      } catch {
-        // ignore
-      }
-      const error = new Error(`API error ${res.status}: ${detail}`) as Error & { status: number; detail: string }
-      error.status = res.status
-      error.detail = detail
-      throw error
-    }
-    return res.json()
+    return postForm<PlaygroundResult>(`/models/${encodeURIComponent(slug)}/transcribe`, form)
+  },
+
+  // --- error mining (docs/WER-Breakdown.md) ---
+
+  getModelErrors: (slug: string): Promise<ErrorFiles> => {
+    return request<ErrorFiles>(`/models/${encodeURIComponent(slug)}/errors`)
+  },
+
+  /** Store `.parquet` error files beside the model, all or none. */
+  uploadModelErrors: (slug: string, files: File[]): Promise<ErrorFileMeta[]> => {
+    const form = new FormData()
+    for (const file of files) form.append('files', file, file.name)
+    return postForm<ErrorFileMeta[]>(`/models/${encodeURIComponent(slug)}/errors`, form)
+  },
+
+  getErrorBreakdown: (slug: string, set: string, base?: string | null): Promise<ErrorBreakdown> => {
+    const qStr = base ? `?${new URLSearchParams({ base })}` : ''
+    return request<ErrorBreakdown>(`${errorsPath(slug, set)}/breakdown${qStr}`)
+  },
+
+  getErrorConfusion: (
+    slug: string,
+    set: string,
+    query: ErrorQuery & { both_ways?: boolean; base?: string | null; sort?: 'count' | 'change'; offset?: number; limit?: number },
+  ): Promise<ConfusionPage> => {
+    return request<ConfusionPage>(`${errorsPath(slug, set)}/confusion${queryString(query)}`)
+  },
+
+  getErrorPairs: (
+    slug: string,
+    set: string,
+    query: ErrorQuery & { ref?: string; hyp?: string; sample?: number; seed?: number; offset?: number; limit?: number },
+  ): Promise<OccurrencePage> => {
+    return request<OccurrencePage>(`${errorsPath(slug, set)}/pairs${queryString(query)}`)
+  },
+
+  getErrorClip: (slug: string, set: string, clipId: string): Promise<ErrorClip> => {
+    return request<ErrorClip>(`${errorsPath(slug, set)}/clips/${encodeURIComponent(clipId)}`)
   },
 }

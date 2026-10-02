@@ -8,7 +8,8 @@
  * recording of the owner's own voice, transcribed on the CPU and never scored.
  * The page then reads top to bottom as the error hunt goes: which model, how good, where the
  * errors live (click a bar to filter), and the clips themselves -- listen, read the diff, `j`/`k`
- * to the next one.
+ * to the next one. Below them, the Errors section reads the model's error files across clips and
+ * sets (docs/WER-Breakdown.md).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -19,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ClipPanel } from '@/components/models/ClipPanel'
 import { ClipTable, type ClipFilters } from '@/components/models/ClipTable'
+import { ErrorsSection } from '@/components/models/ErrorsSection'
 import { Playground } from '@/components/models/Playground'
 import { RunSummary, fmtWer } from '@/components/models/RunSummary'
 import { cn } from '@/lib/utils'
@@ -250,9 +252,11 @@ export function ModelsView() {
     try {
       const report = await api.rescanModels()
       const skipped = report.skipped ? `, ${report.skipped} clips skipped` : ''
+      const errors = report.error_files.length ? `, ${report.error_files.length} error file(s)` : ''
       toast.success(
-        `${report.models.length} model(s): ${report.runs_created} new run(s), ${report.runs_unchanged} unchanged${skipped}`,
+        `${report.models.length} model(s): ${report.runs_created} new run(s), ${report.runs_unchanged} unchanged${skipped}${errors}`,
       )
+      for (const why of report.error_files_refused) toast.warning(`Cannot read ${why}`, { duration: 10000 })
       await loadModels()
     } catch (err: any) {
       toast.error(err.detail || 'Rescan failed', { duration: 10000 })
@@ -362,6 +366,8 @@ export function ModelsView() {
             </div>
           </>
         )}
+
+        {model && <ErrorsSection key={`errors-${model.slug}`} model={model} models={models} />}
       </main>
     </div>
   )

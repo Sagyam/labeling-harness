@@ -1062,6 +1062,10 @@ export interface ModelRescanOut {
   runs_created: number
   runs_unchanged: number
   skipped: number
+  /** `<slug>/<set>` for each error file a model folder holds. */
+  error_files: string[]
+  /** `<slug>/<file>: why` for each one that cannot be read. */
+  error_files_refused: string[]
 }
 
 export type OverlapBucket = 'none' | '0-5%' | '5-15%' | '>15%' | 'unmeasured'
@@ -1134,4 +1138,145 @@ export interface ClipQuery {
   class_bucket?: string
   offset?: number
   limit?: number
+}
+
+// --- error mining (docs/WER-Breakdown.md) ---------------------------------------------------------
+
+export type ErrorKind = AlignOp['kind']
+export type Forgiven = 'spelling' | 'script' | 'number' | 'merge'
+export type ScriptName = 'dev' | 'lat' | 'mix' | 'none'
+
+/** What an error file's metadata says. */
+export interface ErrorFileMeta {
+  set: string
+  run: string
+  fold_version: string
+  miner_version: string
+  created_at: string
+}
+
+/** One of a model's error files, with the score its rows add up to. */
+export interface ErrorFile extends ErrorFileMeta {
+  clips: number
+  ref_words: number
+  errors: number
+  wer: number
+  sub: number
+  del: number
+  ins: number
+  /** Written under today's fold rules. */
+  fold_current: boolean
+  /** Gold or val: the imported run's WER, against today's labels. */
+  imported_wer: number | null
+}
+
+export interface ErrorFiles {
+  files: ErrorFile[]
+  refused: string[]
+}
+
+/** This run minus the base, in points, with its 95% interval (null with one group). */
+export interface VsBase {
+  wer: [number, number | null, number | null]
+  clips: number
+}
+
+export interface ErrorCounts {
+  clips: number
+  ref_words: number
+  errors: number
+  wer: number
+  sub: number
+  del: number
+  ins: number
+}
+
+export interface ErrorBucket extends ErrorCounts {
+  bucket: OverlapBucket
+  share_of_words: number
+  share_of_errors: number
+  wer_ci: [number, number] | null
+  vs_base?: VsBase | null
+}
+
+export interface NumberBlock {
+  errors: number
+  sub: number
+  del: number
+  ins: number
+  share_of_errors: number
+  wer_without: number
+  ref_clips: number
+  ref_clip_words: number
+  ref_clip_wer: number
+  vs_base?: {
+    errors: number
+    share_of_errors: number
+    wer_without: number
+    wer_without_paired: VsBase | null
+    ref_clip_wer: VsBase | null
+  }
+}
+
+export interface ErrorBreakdown extends ErrorCounts {
+  set: string
+  base: string | null
+  wer_ci: [number, number] | null
+  vs_base?: VsBase | null
+  imported_wer: number | null
+  overlap: ErrorBucket[]
+  numbers: NumberBlock
+  by_values: string[]
+}
+
+export interface ConfusionRow {
+  kind: ErrorKind
+  ref: string
+  hyp: string
+  count: number
+  share: number
+  forward?: number
+  backward?: number
+  base_count?: number
+  change?: number
+}
+
+export interface ConfusionPage {
+  total: number
+  rows: ConfusionRow[]
+}
+
+export interface Occurrence extends AlignOp {
+  clip_id: string
+  group: string
+  pos: number
+  overlap_bucket: OverlapBucket
+  by: string | null
+  before: AlignOp[]
+  after: AlignOp[]
+}
+
+export interface OccurrencePage {
+  total: number
+  rows: Occurrence[]
+}
+
+export interface ErrorClip {
+  clip_id: string
+  ops: AlignOp[]
+  run_id: number | null
+  segment_id: number | null
+}
+
+/** The filters of the confusion table and the occurrence list; unset is no condition. */
+export interface ErrorQuery {
+  kind?: ErrorKind[]
+  forgiven?: Forgiven
+  ref_script?: ScriptName
+  hyp_script?: ScriptName
+  number?: boolean
+  overlap_bucket?: OverlapBucket
+  by?: string
+  similarity_min?: number
+  similarity_max?: number
 }
