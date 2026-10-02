@@ -230,6 +230,15 @@ wanting a browser build that is not installed. Snapshots and console logs land i
   earlier cell defines. That is all the suite can check: nothing in a notebook is known to work
   on a GPU until its `SMOKE` run has passed. `01_EDA` and `02_Sociolinguistics` are written by
   hand.
+- **Error rows are derived** (D110). `data/models/asr/<slug>/errors/<set>.parquet` is rebuilt from
+  the transcripts, never edited: change the classifier, bump `MINER_VERSION` in
+  `app/services/error_mining.py` and derive the files again (`scripts/mine_errors.py`, or the
+  notebook). A file is only comparable with another of the same `fold_version` and
+  `miner_version`, and `error_store` refuses one from another miner version. A breakdown tags
+  errors, it never forgives them: nothing in error mining may change a WER. `error_mining.py` and
+  `error_store.py` import only `fold.py`, the standard library and DuckDB, because the dataset's
+  `harness/` copy carries them to the notebooks (`scripts/upload_harness_copy.py`); after editing
+  either, or `fold.py`, upload the copy.
 - **One evaluation, one export, one teacher** (D105). Score a model only through
   `notebooks/src/evalkit.py`, or its numbers cannot sit beside the others'. Every notebook refuses
   a dataset that is not its `DATASET_EXPORT`. The teacher is whatever `teacher.json` in the Flex

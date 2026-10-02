@@ -2626,3 +2626,30 @@ stage goes into the combined run, into the teacher and into every student's reci
 
 **Reversal:** cheap before 03c's results exist: set `MIN_NOISE` to 0. After them, a reversal
 re-decides which stages were kept and would have to retrain the combined run.
+
+## D110 — Error rows are Parquet files beside their model, read by DuckDB, not Postgres tables
+
+Error mining (docs/WER-Breakdown.md) keeps every aligned word pair of every evaluation,
+classified: one row per pair, matches included, about 225k rows a run across gold, val and the
+five public sets. They are stored as `data/models/asr/<slug>/errors/<set>.parquet`, one file per
+run and set, written only by `error_mining.write` and read only through DuckDB
+(`error_mining.read`, `error_store`).
+
+- **They are derived.** A row is recomputed from the stored reference and model text in seconds
+  of CPU, so losing a file costs nothing that Postgres's guarantees would protect. Every file
+  names the `fold_version` and `miner_version` it came from; a file from another miner version is
+  refused, not read.
+- **They are written once and only ever grouped.** Every question asked of them (a bucket's WER,
+  a confusion table, a sample of one class) is a group-by. DuckDB answers them over a few-MB file
+  in milliseconds, with no migration, no importer and no index to keep in step.
+- **The notebooks write the same files.** `evalkit` writes them through the harness's own
+  `error_mining.py`, which the dataset's `harness/` copy carries beside `fold.py`
+  (`scripts/upload_harness_copy.py`), so the Models page reads exactly what a notebook wrote and
+  the two cannot drift.
+- **A file's name comes from its metadata, never from an upload.** The upload stores each file
+  under the set it names, and refuses a folder that would hold files from more than one run.
+- **No Postgres row points at them.** A model's files are found by listing its folder; Rescan
+  reports what a copied folder brought.
+
+**Reversal:** a migration for an error-row table and an importer that loads the files into it;
+`error_mining`'s classifier and `error_store`'s queries carry over, as SQL against the table.

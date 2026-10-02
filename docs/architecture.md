@@ -21,7 +21,9 @@ backend/app/
   schemas/         JSON Schema for the manifest (episode.schema.json, segment.schema.json)
   services/        ingest pipeline (audio, silero_vad, analysis, youtube), importer, peaks,
                    scoring, queue builder, labeling, corpus, export, reporting,
-                   model_eval / model_import / model_browse (fine-tuned models, D83)
+                   model_eval / model_import / model_browse (fine-tuned models, D83),
+                   error_mining / error_store / error_backfill / benchmark_overlap
+                   (every aligned word pair of an evaluation, D110)
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
   llm/             base (retry, dry-run, request log), openrouter, elevenlabs, and the
@@ -84,6 +86,16 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 The model's text never enters `asr_hypotheses`, so it cannot reach disagreement, the queue or an
 export. The harness never runs a model to score it: the notebook transcribes on a GPU and the page
 scores the text with `fold.py`, exactly as the notebook does.
+
+**Error mining (D110, docs/WER-Breakdown.md).** No table: every aligned word pair of a run on a
+set is a row in `data/models/asr/<slug>/errors/<set>.parquet`, written by `error_mining.write`
+(from a notebook's `evalkit`, an upload, or `scripts/mine_errors.py` over the imported runs) and
+read by `error_store` through DuckDB, one in-memory connection per request. A row carries the
+clip, its group (the unit an interval resamples), the pair as written, its kind (`match`, `fold`,
+`merge`, `sub`, `del`, `ins`), how a non-identical match was forgiven, each side's script,
+whether a number is involved, the substitution's similarity, both sides romanized, and the
+clip's crosstalk bucket. The public sets' crosstalk is measured once
+(`scripts/measure_benchmark_overlap.py`) and kept in the model repo's `benchmarks/overlap/`.
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an
@@ -606,6 +618,12 @@ the same inputs and filters produce byte-identical output.
 | `GET /model-classes` | The axes every run is split by, with their buckets in display order, baseline and "not measured" bucket (D87) |
 | `GET /model-runs/{id}/clips` | A run's clips; `sort` (errors, wer, deletions, insertions, substitutions, duration, overlap), `order`, `genre`, `overlap`, `class_axis` + `class_bucket`, `loops_only`, `min_errors`, `offset`, `limit` |
 | `GET /model-runs/{id}/clips/{segment_id}` | One clip with the folded alignment ops behind its counts |
+| `POST /models/{slug}/errors` | Store multipart `.parquet` error files as `errors/<set>.parquet` (D110); all or nothing, 422 for a file that is not mine-v1 rows, an unknown set, two files for one set, more than one run, or over 50 MB; writes `audit_logs` |
+| `GET /models/{slug}/errors` | The model's error files, each with its WER and S/D/I from its rows, whether its fold is current, and on gold/val the imported run's WER; and the files it cannot read |
+| `GET /models/{slug}/errors/{set}/breakdown` | WER with S/D/I and interval, crosstalk buckets (block 1), numbers (block 2), the set's own split values; `base=<slug>` adds each against that model's file, paired, the set's group resampled |
+| `GET /models/{slug}/errors/{set}/confusion` | Block 3: counts of (reference, model) per kind with their share; filters `kind` (repeatable), `forgiven`, `ref_script`, `hyp_script`, `number`, `overlap_bucket`, `by`, `similarity_min`/`_max`; `both_ways`, `base`, `sort` (count, change), `offset`, `limit` |
+| `GET /models/{slug}/errors/{set}/pairs` | The occurrences behind the same filters or one row (`ref`, `hyp`), with five steps of context each side; `sample` + `seed` draw at random |
+| `GET /models/{slug}/errors/{set}/clips/{clip_id}` | One clip's steps in order; on gold/val also the imported run and segment that open it with audio |
 | `POST /models/{slug}/transcribe` | Playground (D85): a multipart `audio` recording, ≤ 30 s, transcribed on the CPU; 409 without CPU weights, 422 for bad audio, 502 when the sidecar fails |
 
 Every decision writes three rows in one transaction: an append-only `segment_labels` row, an
@@ -644,7 +662,7 @@ active, triage or editor mode, the focused row, the multi-select set and the ope
 | Transliteration | `components/TranslitEditor.tsx` | Inline Latin → Devanagari candidate popup over `/translit` |
 | Ingest | `components/IngestModal.tsx` | Upload, 5-stage stepper, progress bar, live SSE log console |
 | Episodes | `components/EpisodesView.tsx`, `components/metadata/` | Browse episodes and segments, delete either, edit an episode's genre, topic and speakers (D102) |
-| Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the clips worst first with audio and the folded diff (D83) |
+| Models | `components/ModelsView.tsx`, `components/models/` | Fine-tuned models, their run metrics and breakdowns (genre, and every clip class with its within-episode rate ratio and a splits / ruled-out verdict per axis, D87), and the clips worst first with audio and the folded diff (D83); below them the Errors section (D110): a model's error files by set, crosstalk and number blocks against a base, the confusion table with its filters, seeded samples of occurrences, and a clip |
 | Corpus | `components/AnalyticsView.tsx`, `components/analytics/` | One pot at a time from `/stats/inventory` (D104): the ledger, a summary of what is missing and thin beside what is overdone and plenty, a table per category in four groups (status, hours bar with the floor ticked, usable voices), the any-by-any cross-tab, and the records check |
 | Progress | `components/Header.tsx` | Polls `/stats`: completed, accept rate, throughput, projected finish |
 

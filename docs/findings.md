@@ -24,6 +24,27 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) since.
 
 ---
 
+## Fine-tuning fixed number formats and hid a loss behind them (2026-10-02)
+
+vanilla-s1 (03a) minus base Flex, from error mining's rows (fold-v3, mine-v1; the full table and
+the method are in [WER-Breakdown.md](WER-Breakdown.md)). "Without numbers" is the WER over every
+aligned pair that involves no number, resampled by each set's own unit:
+
+| | minus base | number errors, minus base | without numbers, minus base |
+|---|---|---|---|
+| gold | −2.64 [−3.28, −2.01] | −284 | −2.04 [−2.66, −1.45] |
+| FLEURS | +1.14 [+0.47, +1.81] | +14 | +1.02 [+0.48, +1.56] |
+| OpenSLR 54 | −0.14 [−0.42, +0.13] | −218 | +0.34 [+0.07, +0.60] |
+| IndicVoices | −0.13 [−0.69, +0.36] | −501 | +1.26 [+0.93, +1.57] |
+
+- **On OpenSLR 54 and IndicVoices the tie is two effects cancelling.** The fine-tune writes
+  numbers the way those references do, and loses 0.3 and 1.3 points on everything else. 03b's
+  public mean (10.70 against base's 10.34) understates what fine-tuning cost outside our domain.
+- **FLEURS's +1.14 is not numbers.** Number rows are about 0.1 point of it; clips that hold a
+  number carry about half of it, through their other words.
+- **On gold the gain grows with crosstalk**: −1.91 on clean clips to −4.98 [−9.00, −2.82] over
+  15% overlap.
+
 ## Same voice or not: similarity decides most pairs, the ear settles a narrow band (2026-09-28)
 
 Can voiceprints settle *who* a diarizer cluster is (a split speaker inside an episode, one voice
