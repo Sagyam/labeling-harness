@@ -245,3 +245,44 @@ def test_the_dataset_copy_carries_error_mining_beside_fold() -> None:
         "harness/fold.py", "harness/normalization.yaml", "harness/normalize.py",
     ]  # fmt: skip
     assert all(path.is_file() for path in files.values())
+
+
+@pytest.mark.parametrize(
+    ("ref", "hyp", "rule"),
+    [
+        ("तीन", "तिन", "vowel-length"),
+        ("टिम", "team", "sound-skeleton"),
+        ("45", "पैँतालीस", "number"),
+        ("B", "बी", "letter-names"),
+        ("होइन", "हैन", "contracted-verb"),
+        ("गर्नुभयो", "गर्नु भयो", "spacing"),
+        ("राम्रो", "राम्रो", None),
+        ("राम्रो", "नराम्रो", None),
+    ],
+)
+def test_a_forgiven_pair_names_the_rule_that_forgave_it(
+    ref: str, hyp: str, rule: str | None
+) -> None:
+    (row,) = pairs(ref, hyp)
+    assert row["fold_rule"] == rule
+
+
+@pytest.mark.parametrize(
+    ("ref", "hyp", "tag"),
+    [("दावी", "दाबी", "ba-va"), ("गरेँ", "गरे", "nasal-dropped"), ("हौ", "हौँ", "nasal-added"),
+     ("घर", "वन", None), ("टिम", "team", None)],
+)  # fmt: skip
+def test_a_charged_substitution_carries_its_variant_tag(
+    ref: str, hyp: str, tag: str | None
+) -> None:
+    (row,) = pairs(ref, hyp)
+    assert row["variant"] == tag
+
+
+def test_a_deleted_or_inserted_repeat_is_tagged_and_other_gaps_are_not() -> None:
+    (deleted,) = _by_kind(pairs("म म जान्छु", "म जान्छु"), "del")
+    assert deleted["variant"] == "repetition"
+    (inserted,) = _by_kind(pairs("म जान्छु", "म जान्छु जान्छु"), "ins")
+    assert inserted["variant"] == "repetition"
+    (other,) = _by_kind(pairs("म घर जान्छु", "म जान्छु"), "del")
+    assert other["variant"] is None

@@ -34,12 +34,16 @@ from app.services.fold import (
     romanized,
     same_number,
     script,
+    spelling_key,
+    variant,
+    which_rule,
     word_errors,
 )
 
 #: Bump whenever a column's meaning changes: a file is only comparable with another of the same.
-#: mine-v2 added each clip's speech-to-noise ratio (``snr_db``, ``snr_bucket``).
-MINER_VERSION = "mine-v2"
+#: mine-v2 added each clip's speech-to-noise ratio (``snr_db``, ``snr_bucket``); mine-v3 the rule
+#: that forgave each forgiven pair (``fold_rule``) and the tag of each error (``variant``).
+MINER_VERSION = "mine-v3"
 
 #: What a file may hold: the corpus's two scored splits and the public sets of
 #: ``notebooks/src/evalkit.py``'s ``BENCHMARKS``, in its order.
@@ -64,6 +68,8 @@ COLUMNS: dict[str, str] = {
     "number": "BOOLEAN",
     "ref_number": "BOOLEAN",
     "similarity": "DOUBLE",
+    "fold_rule": "VARCHAR",
+    "variant": "VARCHAR",
     "ref_roman": "VARCHAR",
     "hyp_roman": "VARCHAR",
     "overlap_share": "DOUBLE",
@@ -132,6 +138,25 @@ def _forgiven(op: AlignOp, identical: bool) -> str | None:
     return None
 
 
+def _fold_rule(op: AlignOp, identical: bool) -> str | None:
+    """The :data:`app.services.fold.RULEBOOK` id that forgave the pair; None for an identical
+    match and for an error."""
+    if op.kind == "merge":
+        return "spacing"
+    if op.kind in ("match", "fold") and not identical:
+        return which_rule(op.ref[0], op.hyp[0])
+    return None
+
+
+def _repeats(ops: Sequence[AlignOp], at: int) -> bool:
+    """Whether the word a deletion or insertion holds repeats the word beside it on its side."""
+    side = "ref" if ops[at].kind == "del" else "hyp"
+    (word,) = getattr(ops[at], side)
+    before = getattr(ops[at - 1], side)[-1:] if at > 0 else ()
+    after = getattr(ops[at + 1], side)[:1] if at + 1 < len(ops) else ()
+    return any(spelling_key(word) == spelling_key(near) for near in (*before, *after))
+
+
 def _row(pos: int, op: AlignOp) -> dict[str, Any]:
     identical = op.kind == "match" and op.ref == op.hyp
     return {
@@ -146,6 +171,8 @@ def _row(pos: int, op: AlignOp) -> dict[str, Any]:
         "number": any(is_number(w) for w in (*op.ref, *op.hyp)),
         "ref_number": any(is_number(w) for w in op.ref),
         "similarity": float(op.similarity),
+        "fold_rule": _fold_rule(op, identical),
+        "variant": variant(op.ref[0], op.hyp[0]) if op.kind == "sub" else None,
         "ref_roman": " ".join(romanized(w) for w in op.ref),
         "hyp_roman": " ".join(romanized(w) for w in op.hyp),
     }
@@ -164,7 +191,11 @@ def pairs(
     """
     if alignment is None:
         alignment = word_errors(ref_text, hyp_text)
-    return [_row(pos, op) for pos, op in enumerate(alignment.ops)]
+    found = [_row(pos, op) for pos, op in enumerate(alignment.ops)]
+    for pos, op in enumerate(alignment.ops):
+        if op.kind in ("del", "ins") and _repeats(alignment.ops, pos):
+            found[pos]["variant"] = "repetition"
+    return found
 
 
 def number_id(clip_id: str, seen: dict[str, int]) -> str:
