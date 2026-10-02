@@ -33,10 +33,17 @@
     --chart-3: oklch(0.666 0.179 58.318);
     --chart-4: oklch(0.555 0.163 48.998);
     --chart-5: oklch(0.473 0.137 46.201);
-    /* The attribution card's two conditions (D111): categorical slots 1-2 of the dataviz
-       reference palette, validated for CVD and contrast on both surfaces. */
-    --viz-crosstalk: #2a78d6;
-    --viz-snr: #eb6834;
+    /* The attribution card's series (D111), in stack order: the dataviz reference palette's
+       eight categorical slots, validated for colour-blindness on both surfaces. Three light
+       slots sit under 3:1 contrast, so the card always carries its table and legend. */
+    --viz-1: #2a78d6;
+    --viz-2: #eb6834;
+    --viz-3: #1baf7a;
+    --viz-4: #eda100;
+    --viz-5: #e87ba4;
+    --viz-6: #008300;
+    --viz-7: #4a3aa7;
+    --viz-8: #e34948;
     --radius: 0.875rem;
     --sidebar: oklch(0.986 0.002 67.8);
     --sidebar-foreground: oklch(0.147 0.004 49.3);
@@ -72,8 +79,14 @@
     --chart-3: oklch(0.666 0.179 58.318);
     --chart-4: oklch(0.555 0.163 48.998);
     --chart-5: oklch(0.473 0.137 46.201);
-    --viz-crosstalk: #3987e5;
-    --viz-snr: #d95926;
+    --viz-1: #3987e5;
+    --viz-2: #d95926;
+    --viz-3: #199e70;
+    --viz-4: #c98500;
+    --viz-5: #d55181;
+    --viz-6: #008300;
+    --viz-7: #9085e9;
+    --viz-8: #e66767;
     --sidebar: oklch(0.214 0.009 43.1);
     --sidebar-foreground: oklch(0.986 0.002 67.8);
     --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -203,4 +216,15 @@
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
     }
+}
+/* Slot 8 hatched: the second of two series that share a hue because they are one family (a
+   similar and a different Nepali word on the attribution card). Lines at 45 degrees, inked a
+   darker step of the same hue. */
+.viz-hatch-8 {
+    background-color: var(--viz-8);
+    background-image: repeating-linear-gradient(
+        45deg,
+        transparent 0 3px,
+        color-mix(in oklab, var(--viz-8) 55%, black) 3px 5px
+    );
 }

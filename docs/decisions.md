@@ -2671,6 +2671,8 @@ WER each condition costs, and splits the rest by kind of error.
   rest, which is split by kind of error (a number, a deletion, an insertion, a substitution
   across scripts, between English words, between Devanagari words at similarity 0.75 or more, or
   any other), each clip's errors weighted `1/ratio`. The rows add up to the WER exactly.
+  On the card the seven kinds stand beside the two conditions as rows of their own, each with
+  its own colour (owner, 2026-10-02): one "everything else" bucket hid where most of the WER is.
 - **The ratio is taken within the set's own unit** (an episode on gold and val, the set's
   group on a public set): Mantel-Haenszel, the estimator the By class panel already uses. A clip
   is only compared with baseline clips of its own episode, so voices, microphone, room and topic
