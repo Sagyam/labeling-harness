@@ -25,6 +25,43 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## What gold still charges after fold-v4, and how far its labels can be trusted (2026-10-02)
+
+**Fast accepts.** Of the 966 current gold labels, 130 (13%) were submitted faster than the clip
+plays at the editor's top speed of 1.25x, 12 of them in under 3 s; 414 (43%) faster than the clip
+plays at 1x. All 130 are `accepted_unchanged`, and most were decided on two days (2026-09-16 and
+2026-09-29). The 22% of 2026-09-12 was on the old gold, emptied on 2026-09-16. vanilla-s1 makes
+304 errors on these clips, 130 of them on the clips without crosstalk: if every one were the
+label's fault, clean gold would fall from 6.41 to about 5.9, so that is the most an audit of them
+can move.
+
+**What the owner heard** (15 of the 130, played against the label and the model's text): a few
+label errors, some only audible on a second or third slow replay, where the speaker slipped and
+the model wrote the slip. The owner was unsure of their own "wrong" verdicts, so no label was
+changed. Also heard: English said so differently that it sounds like another word, which a
+listener, and the fuser, resolve from context and an acoustic model cannot. Which of the two the
+label should write, the word meant or the word said, is not yet a written rule.
+
+**What is still charged that might not be the model's fault** (vanilla-s1, points per 100
+reference words on gold, 11.12; clean gold is the 674 clips without crosstalk, 6.41):
+
+| pattern | gold | clean gold | outcome |
+|---|---|---|---|
+| a discourse particle dropped or added | 0.57 | 0.20 | tagged `particle` (D113) |
+| a repeated word one side kept | 0.22 | | already tagged `repetition` |
+| an English ending swallowed (parent/parents, start/started) | ~0.07 | | charged, no tag (owner) |
+| Hindi क्या against Nepali के | 0.06 | 0.005 | charged: they sound different, and it is crosstalk |
+| sound rules missing a loanword (cake, laughing) | ~0.02 | | not worth a rule |
+| English plural before -हरू (parents-/parent-हरू) | 1 error | | 16 on val |
+| British against American spelling | 1 error | | |
+
+Everything else charged is the model's: English substitutions are mishearings of rare words and
+brands (firm/form, Anthropic/entropy), and same-skeleton Nepali pairs are mostly grammar
+(-का/-को, -ले/-लाई). The tagged spelling variants (ba-va, sibilant, inner-virama, nasal) are 0.29
+points of clean gold, the most any further rule could still forgive cleanly there. The rulebook
+is done for this corpus: what remains of the 6.41 is mostly real errors, the largest share rare
+words (a different Nepali word 2.02, a different English word 1.09).
+
 ## The fold was wrong both ways, and fold-v4 (2026-10-02)
 
 An audit of the mine-v2 error rows (vanilla-s1 and base, all seven sets) for pairs graded

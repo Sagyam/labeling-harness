@@ -2737,3 +2737,23 @@ short list that cannot join two different words; and the ambiguous middle became
 **Reversal:** `FOLD_VERSION` back to `fold-v3` with the stages it had (git history), and the
 error files derived again; the page and endpoint can stay, since they read whatever the
 registry holds.
+
+## D113 — Discourse particles are a tag, not a fold
+
+A last pass over what gold still charges (findings.md, *What gold still charges after fold-v4*)
+found one sizable pattern no rule names: a dropped or added discourse particle (हो, त, पनि,
+चाहिँ, हजुर, होइन, अब, है, नि, रे, नै), 0.57 points on gold and 0.20 on its clips without
+crosstalk. Most are a listener's backchannel in crosstalk, which the labels keep on purpose
+(D100: everything said). The owner chose to tag them, not fold them.
+
+- **A tier-4 tag, `particle`** (`fold.PARTICLES`, `fold.is_particle`), put on a charged deletion
+  or insertion by error mining (mine-v4); a repeated particle stays `repetition`. No WER moves.
+- **Not a fold**, because each is also a word: हो is "is", पनि "also". Forgiving them would
+  forgive the model for dropping real words, and undo D100 for backchannels.
+- **ए is left out** (owner, 2026-10-02): it is a vocative or a hesitation, and which one is not
+  known. Making it a filler would be a fold version.
+- **English endings a speaker swallows** (parent/parents, start/started, ~0.07 points on gold)
+  stay charged with no tag (owner): too small, and a real grammatical difference.
+
+**Reversal:** delete the tag and `PARTICLES`, set `MINER_VERSION` back, and derive the error
+files again. Nothing else reads it.

@@ -31,19 +31,19 @@ short list that cannot join two different words. So fold-v4 is one rulebook (D11
 | 1 | orthography: one word written another way | case, contraction, apostrophe, english-variant, letter-names, digits, vowel-length, chandrabindu, doubled-sign, nukta, final-virama, visarga, nasal-cluster, number, spacing |
 | 2 | across scripts, by sound | sound-skeleton, sound-ratio, sound-short; a case ending must agree, a Nepali function word matches only its romanization, a merge may not swallow a word |
 | 3 | colloquial Nepali (D84, D89) | contracted-verb, western-participle, progressive, benefactive, first-plural, pronoun, launu, emphatic, loose, unseen, joined, other-words |
-| 4 | tags, still errors | ba-va, sibilant, inner-virama, nasal-dropped, nasal-added, au-o, repetition |
+| 4 | tags, still errors | ba-va, sibilant, inner-virama, nasal-dropped, nasal-added, au-o, repetition, particle (D113) |
 
-How much each tier forgives, vanilla-s1, pairs per 100 reference words:
+How much each tier forgives, vanilla-s1, pairs per 100 reference words (tags from mine-v4):
 
 | set | tier 1 | tier 2 | tier 3 | tier-4 tags (charged) | largest tags |
 |---|---|---|---|---|---|
-| gold | 3.36 | 0.70 | 0.93 | 0.46 | repetition 0.22, nasal-added 0.06 |
-| val | 2.87 | 0.30 | 1.09 | 0.36 | repetition 0.18, nasal-added 0.06 |
-| FLEURS | 6.40 | 3.80 | 0.13 | 0.81 | ba-va 0.26, sibilant 0.16 |
-| OpenSLR 54 | 5.33 | 2.54 | 0.05 | 1.20 | nasal-added 0.42, ba-va 0.27 |
-| Common Voice | 8.96 | 1.63 | 1.34 | 2.27 | nasal-added 1.28, ba-va 0.29 |
-| IndicVoices | 6.19 | 5.20 | 1.56 | 0.59 | repetition 0.26, nasal-added 0.10 |
-| nepali_cs | 10.60 | 0.51 | 1.14 | 0.39 | repetition 0.28, au-o 0.04 |
+| gold | 3.36 | 0.70 | 0.93 | 1.03 | particle 0.57, repetition 0.22 |
+| val | 2.87 | 0.30 | 1.09 | 0.66 | particle 0.30, repetition 0.18 |
+| FLEURS | 6.40 | 3.80 | 0.13 | 0.85 | ba-va 0.26, sibilant 0.16 |
+| OpenSLR 54 | 5.33 | 2.54 | 0.05 | 1.31 | nasal-added 0.42, ba-va 0.27 |
+| Common Voice | 8.96 | 1.63 | 1.34 | 2.33 | nasal-added 1.28, ba-va 0.29 |
+| IndicVoices | 6.19 | 5.20 | 1.56 | 1.36 | particle 0.77, repetition 0.26 |
+| nepali_cs | 10.60 | 0.51 | 1.14 | 0.71 | particle 0.32, repetition 0.28 |
 
 Common Voice's `nasal-added` (1.28 of its 8.55) is mostly a reference that dropped a chandrabindu
 the model wrote (`हामी नेपाली हौ`/`हौँ`): read against its tag, it is the reference's error.
@@ -215,7 +215,7 @@ reading needs, each substitution's `similarity` and both sides romanized, so the
 filters by them without a threshold having been chosen. Error rows are Parquet files beside their
 model, not tables (D110).
 
-- **The classifier**, `backend/app/services/error_mining.py` (`MINER_VERSION = "mine-v3"`; v2 added each clip's SNR, v3 `fold_rule` and `variant`):
+- **The classifier**, `backend/app/services/error_mining.py` (`MINER_VERSION = "mine-v4"`; v2 added each clip's SNR, v3 `fold_rule` and `variant`, v4 the `particle` tag):
   `pairs` turns a clip into one row per alignment step, reusing an alignment the scorer already
   made; `rows` adds the clip's columns; `write` and `read` are the only writer and reader. It
   imports only `fold.py`, the standard library and DuckDB. A clip id repeated in a set (nepali_cs
