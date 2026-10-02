@@ -11,6 +11,7 @@ import { IngestView } from '@/components/IngestView'
 import { ModelsView } from '@/components/ModelsView'
 import { KeyboardShortcutsModal, type HelpTab } from '@/components/KeyboardShortcutsModal'
 import { PageIntro } from '@/components/PageIntro'
+import { RulebookView } from '@/components/RulebookView'
 import { MultitrackEditor } from '@/components/MultitrackEditor'
 import { TriageView } from '@/components/TriageView'
 import { VoicesView } from '@/components/VoicesView'
@@ -41,7 +42,18 @@ export default function App() {
     const hash = window.location.hash.replace('#', '')
     const target = modeParam || hash
     if (
-      ['triage', 'editor', 'episodes', 'analytics', 'voices', 'export', 'costs', 'ingest', 'models'].includes(
+      [
+        'triage',
+        'editor',
+        'episodes',
+        'analytics',
+        'voices',
+        'export',
+        'costs',
+        'ingest',
+        'models',
+        'rulebook',
+      ].includes(
         target,
       )
     ) {
@@ -595,6 +607,8 @@ export default function App() {
         <IngestView onComplete={handleIngestComplete} />
       ) : activeMode === 'models' ? (
         <ModelsView />
+      ) : activeMode === 'rulebook' ? (
+        <RulebookView />
       ) : activeMode === 'editor' && currentTask?.queue === SPEAKERS_QUEUE && currentTask.lanes ? (
         <MultitrackEditor
           task={{ ...currentTask, lanes: currentTask.lanes }}

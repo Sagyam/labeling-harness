@@ -38,6 +38,7 @@ import {
   IngestQueueResponse,
   AsrModel,
   ClassAxis,
+  Rulebook,
   ClipQuery,
   ModelClipDetail,
   ModelClipPage,
@@ -575,5 +576,10 @@ export const api = {
 
   getErrorClip: (slug: string, set: string, clipId: string): Promise<ErrorClip> => {
     return request<ErrorClip>(`${errorsPath(slug, set)}/clips/${encodeURIComponent(clipId)}`)
+  },
+
+  /** Every folding rule and tag, with what each did in every model's error files. */
+  getRulebook: (): Promise<Rulebook> => {
+    return request<Rulebook>('/fold/rulebook')
   },
 }

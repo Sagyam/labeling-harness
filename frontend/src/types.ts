@@ -1351,4 +1351,50 @@ export interface ErrorQuery {
   by?: string
   similarity_min?: number
   similarity_max?: number
+  /** The rulebook rule that forgave the pair (mine-v3). */
+  fold_rule?: string
+  /** The tier-4 tag of the error (mine-v3). */
+  variant?: string
+}
+
+// --- the folding rulebook (fold-v4) ---
+
+/** One rule of `fold.py`'s RULEBOOK, or one tier-4 tag of its TAGS. */
+export interface RulebookRule {
+  id: string
+  tier: number
+  title: string
+  description: string
+  /** Pairs the rule makes one word; for a tag, pairs it tags and still charges. */
+  examples: [string, string][]
+  /** Pairs it must keep apart. */
+  counterexamples: [string, string][]
+  /** `fold` forgives, `tag` only describes an error. */
+  action: 'fold' | 'tag'
+}
+
+export interface RuleEvidence {
+  pairs: number
+  per_100: number
+  top: { ref: string; hyp: string; count: number }[]
+}
+
+/** What each rule did in one model's error file for one set. */
+export interface RulebookEvidence {
+  model: string
+  model_name: string
+  run: string
+  set: string
+  fold_version: string
+  /** False when the file was derived under another fold version than the harness's. */
+  current: boolean
+  words: number
+  rules: Record<string, RuleEvidence>
+}
+
+export interface Rulebook {
+  fold_version: string
+  tiers: { tier: number; title: string }[]
+  rules: RulebookRule[]
+  evidence: RulebookEvidence[]
 }

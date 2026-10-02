@@ -19,6 +19,8 @@ const INTRO: Partial<Record<HeaderMode, string>> = {
     'Every anonymous voice, followed across episodes: hear it, give it a gender and an age by ear, and see where it speaks.',
   export: 'Build the dataset models are trained and scored on (train, val, and gold as the test set), and check what it holds.',
   costs: 'What every paid transcription call cost, by vendor and model, from the log every inference call writes.',
+  rulebook:
+    'How a transcript is compared with its reference: every rule that counts two spellings as one word, every tag that only describes an error, and how often each fired.',
   ingest:
     'Add a recording, from a YouTube link or an audio file: it is cut into clips, transcribed by three recognisers and fused into a seed.',
 }

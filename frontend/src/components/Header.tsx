@@ -1,5 +1,6 @@
 import {
   RiBarChartBoxLine,
+  RiBook2Line,
   RiCpuLine,
   RiEditLine,
   RiFolderDownloadLine,
@@ -30,6 +31,7 @@ export type HeaderMode =
   | 'costs'
   | 'ingest'
   | 'models'
+  | 'rulebook'
 
 interface HeaderProps {
   stats: StatsResponse | null
@@ -92,6 +94,7 @@ export function Header({
     { id: 'export', label: 'Export', icon: RiFolderDownloadLine },
     { id: 'costs', label: 'Cost Tracker', icon: RiMoneyDollarCircleLine },
     { id: 'models', label: 'Models', icon: RiCpuLine },
+    { id: 'rulebook', label: 'Rulebook', icon: RiBook2Line },
   ]
 
   return (

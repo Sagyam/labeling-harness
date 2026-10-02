@@ -74,7 +74,7 @@ const SNR_BUCKETS: SnrBucket[] = ['<15 dB', '15-25 dB', '25-35 dB', '35-45 dB', 
 const CONFUSION_PAGE = 25
 const SAMPLE = 50
 
-function setLabel(set: string): string {
+export function setLabel(set: string): string {
   return SET_LABEL[set] ?? set
 }
 
@@ -581,7 +581,7 @@ function ConfusionTable({
   )
 }
 
-function OccurrenceRow({ occ, active, onOpen }: { occ: Occurrence; active: boolean; onOpen: () => void }) {
+export function OccurrenceRow({ occ, active, onOpen }: { occ: Occurrence; active: boolean; onOpen: () => void }) {
   return (
     <div className={cn('rounded-md border px-2 py-1.5', active && 'border-primary/60 bg-muted')}>
       <div className="mb-1 flex flex-wrap items-baseline gap-x-2 text-[10px] text-muted-foreground">
