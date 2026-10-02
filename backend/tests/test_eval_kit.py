@@ -410,3 +410,25 @@ def test_encoded_audio_becomes_sixteen_kilohertz_mono_int16():
     audio = evalkit._audio(buffer.getvalue())
     assert audio.dtype == np.int16 and audio.shape == (1600,)
     assert int(audio[0]) == round(0.125 * 32767)  # the two channels averaged
+
+
+def test_a_public_set_streams_one_clip_at_a_time(tmp_path: Path, monkeypatch):
+    """iter_benchmark decodes a record only when it is asked for: the overlap pass holds one
+    clip in RAM. load_benchmark is that iterator collected, cut at `limit`."""
+    buffer = io.BytesIO()
+    sf.write(buffer, np.zeros(1600, dtype=np.float32), 16_000, format="WAV")
+    pulled = []
+
+    def records(bench, work, token):
+        for k in range(5):
+            pulled.append(k)
+            yield {"path": f"a/{k}.wav", "raw_transcription": "x", "id": k}, buffer.getvalue()
+
+    monkeypatch.setattr(evalkit, "_parquet_records", records)
+    clips = evalkit.iter_benchmark("fleurs", tmp_path, "t")
+    first = next(clips)
+    assert (first["segment_id"], first["episode_id"], pulled) == ("0.wav", "0", [0])
+    assert [r["segment_id"] for r in evalkit.load_benchmark("fleurs", tmp_path, "t", limit=2)] == [
+        "0.wav",
+        "1.wav",
+    ]

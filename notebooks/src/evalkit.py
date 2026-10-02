@@ -513,11 +513,9 @@ def _tar_records(bench: Benchmark, token: str) -> Iterator[tuple[dict, bytes]]:
         yield record, clips[record[bench.audio]]
 
 
-def load_benchmark(name: str, work: Path, token: str, limit: int | None = None) -> list[dict]:
-    """A public set's clips as rows with their audio in RAM (16 kHz mono int16), in file order.
-
-    `limit` keeps the first clips only, for a smoke run. Nothing here is cached beyond the
-    downloaded files: a set is loaded, decoded, scored and dropped."""
+def iter_benchmark(name: str, work: Path, token: str) -> Iterator[dict]:
+    """A public set's clips one at a time, in file order, each a row with its audio (16 kHz mono
+    int16): for a pass that must not hold the whole set in RAM."""
     bench = BENCHMARKS[name]
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
@@ -526,11 +524,20 @@ def load_benchmark(name: str, work: Path, token: str, limit: int | None = None) 
         if bench.layout == "tar"
         else _parquet_records(bench, work, token)
     )
-    rows = []
     for index, (record, data) in enumerate(records):
-        if limit is not None and index >= limit:
+        yield benchmark_row(bench, record, index, _audio(data))
+
+
+def load_benchmark(name: str, work: Path, token: str, limit: int | None = None) -> list[dict]:
+    """A public set's clips as rows with their audio in RAM (16 kHz mono int16), in file order.
+
+    `limit` keeps the first clips only, for a smoke run. Nothing here is cached beyond the
+    downloaded files: a set is loaded, decoded, scored and dropped."""
+    rows = []
+    for row in iter_benchmark(name, work, token):
+        if limit is not None and len(rows) >= limit:
             break
-        rows.append(benchmark_row(bench, record, index, _audio(data)))
+        rows.append(row)
     return rows
 
 
