@@ -260,10 +260,48 @@ else:
     print("\nbase Flex has no public-set scores under this prefix: run 03b_Flex_Benchmarks.ipynb")
 """
 
+BREAKDOWN_NOTE = """
+## Where the errors are
+
+Blocks 1 and 2 of docs/WER-Breakdown.md, per run and set, as each run's notebook wrote them beside
+its WER (nothing is recomputed here): the WER of each crosstalk bucket with its share of the
+errors, then the number errors' share and the WER over everything that is not a number. A run
+scored before error mining has no breakdown and is left out of these tables. The rows behind them
+are in each run's `harness/errors/`, which the Models page reads.
+"""
+
+BREAKDOWN = r"""
+BUCKET_COLUMNS = (*evalkit.BUCKETS, "unmeasured")
+breakdowns = {}
+for m in models:
+    got = {}
+    for split in ("gold", "val"):
+        metrics = fetch_json(m["repo"], f"{m['prefix']}/{m['run']}/{split}_metrics.json") or {}
+        if metrics.get("breakdown"):
+            got[split] = metrics["breakdown"]
+    for name, (summary, _) in public[m["run"]].items():
+        if summary.get("breakdown"):
+            got[name] = summary["breakdown"]
+    breakdowns[m["run"]] = got
+for set_name in ("gold", "val", *SETS):
+    have = {run: b[set_name] for run, b in breakdowns.items() if set_name in b}
+    if not have:
+        print(f"\n{set_name}: no run has a breakdown (scored before error mining)")
+        continue
+    print(f"\n{set_name}: WER by crosstalk bucket (share of errors) | numbers: share of errors, WER without them")
+    print(f"{'model':<28}{'WER':>8}" + "".join(f"{b:>16}" for b in BUCKET_COLUMNS) + f"{'numbers':>9}{'without':>9}")
+    for run, b in have.items():
+        buckets = {x["bucket"]: x for x in b["overlap"]}
+        cells = "".join(f"{buckets[k]['wer']:>9.2f} ({100 * buckets[k]['share_of_errors']:>3.0f}%)" if k in buckets
+                        else f"{'-':>16}" for k in BUCKET_COLUMNS)
+        n = b["numbers"]
+        print(f"{label(by_run[run]):<28}{b['wer']:>8.2f}{cells}{100 * n['share_of_errors']:>8.1f}%{n['wer_without']:>9.2f}")
+"""
+
 WRITE_NOTE = """
 ## Write the report
 
-`report.json` holds every number above; `report.md` is the three main tables as Markdown, to paste
+`report.json` holds every number above, the breakdowns included; `report.md` is the three main tables as Markdown, to paste
 into `docs/findings.md`.
 """
 
@@ -298,7 +336,7 @@ report = {
                 "architecture": m["card"].get("architecture"), "row": m["row"]} for m in models],
     "left_out": left_out, "vs_teacher": paired, "stage_steps": steps,
     "public": {run: {name: got[name][0] for name in got} for run, got in public.items()},
-    "public_mean": means, "public_vs_base": vs_base,
+    "public_mean": means, "public_vs_base": vs_base, "breakdowns": breakdowns,
 }
 out = FT / "report"
 out.mkdir(exist_ok=True)
@@ -327,6 +365,8 @@ cells = nbkit.cpu(
         code(STAGES),
         md(PUBLIC_NOTE),
         code(PUBLIC),
+        md(BREAKDOWN_NOTE),
+        code(BREAKDOWN),
         md(WRITE_NOTE),
         code(WRITE),
     ]
