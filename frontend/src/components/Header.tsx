@@ -155,9 +155,9 @@ export function Header({
                 )}
               >
                 <Icon className="size-3.5" />
-                {/* Eight views do not fit beside the stats on a narrower screen, so there the
-                    inactive ones show only their icon; the label is still the tooltip. */}
-                <span className={isActive ? '' : 'hidden min-[1760px]:inline'}>{item.label}</span>
+                {/* A newcomer needs every view's name, so labels show from 1400 px, where the stats
+                    pill gives up its place; below that only the active one is named. */}
+                <span className={isActive ? '' : 'hidden min-[1400px]:inline'}>{item.label}</span>
                 {item.count !== undefined && item.count > 0 && (
                   <span
                     className={cn(
@@ -180,7 +180,7 @@ export function Header({
           {/* Live Progress Pill */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="hidden xl:flex items-center gap-2.5 rounded-full border bg-muted/30 px-3 py-1 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted/60 cursor-default">
+              <div className="hidden min-[1760px]:flex items-center gap-2.5 rounded-full border bg-muted/30 px-3 py-1 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted/60 cursor-default">
                 <span className="flex items-center gap-1.5">
                   <span className="size-1.5 rounded-full bg-emerald-500" />
                   <span className="text-foreground font-semibold">{acceptRate}</span> accept
