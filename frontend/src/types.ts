@@ -1218,6 +1218,57 @@ export interface NumberBlock {
   }
 }
 
+/** One way of turning a condition's rate ratio into points of WER (D111). */
+export type AttributionMethod = 'within' | 'floor'
+
+export interface AttributionEstimate {
+  /** The condition's error rate over its baseline's; null when it cannot be estimated. */
+  ratio: number | null
+  ratio_ci: [number, number] | null
+  /** Points of the set's WER the condition costs: errors x (1 - 1/ratio) per 100 words. */
+  points: number | null
+  points_ci: [number, number] | null
+  /** Within only: how many episodes (or a public set's groups) could compare. */
+  groups?: number
+}
+
+export interface AttributionCondition {
+  factor: 'crosstalk' | 'snr'
+  bucket: string
+  clips: number
+  ref_words: number
+  errors: number
+  wer: number
+  within: AttributionEstimate
+  floor: AttributionEstimate
+}
+
+export type AttributionKind =
+  | 'number'
+  | 'deletion'
+  | 'insertion'
+  | 'script'
+  | 'english'
+  | 'nepali_similar'
+  | 'nepali_other'
+
+export interface AttributionRest {
+  points: number
+  points_ci: [number, number] | null
+  kinds: { kind: AttributionKind; points: number; points_ci: [number, number] | null }[]
+}
+
+export interface Attribution {
+  ref_words: number
+  errors: number
+  wer: number
+  baseline: { crosstalk: string; snr: string }
+  conditions: AttributionCondition[]
+  factors: Partial<Record<'crosstalk' | 'snr', Record<AttributionMethod, { points: number; points_ci: [number, number] | null }>>>
+  rest: Record<AttributionMethod, AttributionRest>
+  unmeasured: { clips: number; ref_words: number; errors: number }
+}
+
 export interface ErrorBreakdown extends ErrorCounts {
   set: string
   base: string | null
@@ -1226,6 +1277,8 @@ export interface ErrorBreakdown extends ErrorCounts {
   imported_wer: number | null
   overlap: ErrorBucket[]
   numbers: NumberBlock
+  /** What each recording condition costs, and the rest by kind of error (D111). */
+  attribution: Attribution
   by_values: string[]
 }
 

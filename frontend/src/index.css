@@ -33,6 +33,10 @@
     --chart-3: oklch(0.666 0.179 58.318);
     --chart-4: oklch(0.555 0.163 48.998);
     --chart-5: oklch(0.473 0.137 46.201);
+    /* The attribution card's two conditions (D111): categorical slots 1-2 of the dataviz
+       reference palette, validated for CVD and contrast on both surfaces. */
+    --viz-crosstalk: #2a78d6;
+    --viz-snr: #eb6834;
     --radius: 0.875rem;
     --sidebar: oklch(0.986 0.002 67.8);
     --sidebar-foreground: oklch(0.147 0.004 49.3);
@@ -68,6 +72,8 @@
     --chart-3: oklch(0.666 0.179 58.318);
     --chart-4: oklch(0.555 0.163 48.998);
     --chart-5: oklch(0.473 0.137 46.201);
+    --viz-crosstalk: #3987e5;
+    --viz-snr: #d95926;
     --sidebar: oklch(0.214 0.009 43.1);
     --sidebar-foreground: oklch(0.986 0.002 67.8);
     --sidebar-primary: oklch(0.488 0.243 264.376);

@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Panel, PanelHeading, humanize, percent } from '@/components/analytics/primitives'
 import { AlignedDiff, DiffLegend } from '@/components/models/AlignedDiff'
+import { AttributionCard } from '@/components/models/AttributionCard'
 import { ClipPanel } from '@/components/models/ClipPanel'
 import { bucketLabel, fmtWer } from '@/components/models/RunSummary'
 import { cn } from '@/lib/utils'
@@ -794,6 +795,7 @@ export function ErrorsSection({ model, models }: { model: AsrModel; models: AsrM
           {breakdown ? (
             <>
               <Headline b={breakdown} />
+              {breakdown.attribution && <AttributionCard a={breakdown.attribution} setName={setLabel(set ?? '')} />}
               <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
                 <OverlapBlock
                   b={breakdown}
