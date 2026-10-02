@@ -631,7 +631,7 @@ def is_number(token: str) -> bool:
     return parsed[2] or _number_suffix(parsed[1])
 
 
-def _same_number(a: str, b: str) -> bool:
+def same_number(a: str, b: str) -> bool:
     """Rule 2: one number, digits on at least one side, and the same suffix."""
     left, right = _number(spelling_key(a)), _number(spelling_key(b))
     if not left or not right or not (left[2] or right[2]):
@@ -640,7 +640,8 @@ def _same_number(a: str, b: str) -> bool:
     return same_kind and bool(left[0] & right[0])
 
 
-def _script(token: str) -> str:
+def script(token: str) -> str:
+    """A word's script: ``dev``, ``lat``, ``mix`` (both in one word, ``queriesहरू``) or ``none``."""
     dev, lat = bool(_DEV.search(token)), bool(_LATIN.search(token))
     if dev and lat:
         return "mix"
@@ -738,9 +739,9 @@ def similarity(a: str, b: str) -> float:
 @lru_cache(maxsize=262144)
 def same_word(a: str, b: str) -> bool:
     """Whether two words are one word written two ways. See the module docstring for the rules."""
-    if spelling_key(a) == spelling_key(b) or _same_number(a, b):
+    if spelling_key(a) == spelling_key(b) or same_number(a, b):
         return True
-    sa, sb = _script(a), _script(b)
+    sa, sb = script(a), script(b)
     if sa == sb or "none" in (sa, sb):
         return False
     if any(_skeletons_close(ka, kb) for ka in skeletons(a) for kb in skeletons(b)):
@@ -825,7 +826,7 @@ def _merges(ref: list[str], hyp: list[str]) -> bool:
     left, right = "".join(ref), "".join(hyp)
     if len(ref) + len(hyp) == 3:
         return same_word(left, right)
-    return spelling_key(left) == spelling_key(right) or _same_number(left, right)
+    return spelling_key(left) == spelling_key(right) or same_number(left, right)
 
 
 def word_errors(
