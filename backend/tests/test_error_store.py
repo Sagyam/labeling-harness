@@ -181,6 +181,16 @@ def test_the_overlap_block_by_hand(run: Path) -> None:
     assert buckets[">15%"]["del"] == pytest.approx(100 / 3)
     assert buckets["0-5%"]["ins"] == pytest.approx(50.0)
     assert "vs_base" not in none
+    assert got["by_values"] == []  # FLEURS has no split column of its own
+
+
+def test_a_sets_own_split_values_are_offered(tmp_path: Path) -> None:
+    from app.services.error_store import breakdown
+
+    clips = [_clip("a", "म", "म") | {"by": "read"}, _clip("b", "म", "म") | {"by": "conversation"}]
+    path = tmp_path / "iv.parquet"
+    error_mining.write(error_mining.rows("run", "indicvoices", clips), path)
+    assert breakdown(path)["by_values"] == ["conversation", "read"]
 
 
 def test_the_numbers_block_by_hand(run: Path) -> None:

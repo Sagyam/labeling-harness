@@ -217,6 +217,7 @@ class _Clip:
     clip_id: str
     group: str
     bucket: str
+    by_value: str | None
     words: int
     sub: int
     dele: int
@@ -239,7 +240,7 @@ class _Clip:
 def _clips(path: Path) -> dict[str, _Clip]:
     rows = _query(
         f"""
-        SELECT clip_id, "group", any_value(overlap_bucket) AS bucket,
+        SELECT clip_id, "group", any_value(overlap_bucket) AS bucket, any_value("by") AS by_value,
                sum(len(ref)) AS words,
                count_if(kind = 'sub') AS sub, count_if(kind = 'del') AS dele,
                count_if(kind = 'ins') AS ins,
@@ -393,6 +394,7 @@ def breakdown(path: Path, *, base: Path | None = None) -> dict[str, Any]:
         buckets.append(entry)
     out["overlap"] = buckets
     out["numbers"] = _numbers(clips, theirs)
+    out["by_values"] = sorted({c.by_value for c in clips if c.by_value is not None})
     return out
 
 
