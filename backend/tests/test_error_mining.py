@@ -236,7 +236,7 @@ def test_the_dataset_copy_carries_error_mining_beside_fold() -> None:
     spec.loader.exec_module(script)
     files = script.harness_files()
     assert sorted(files) == [
-        "harness/error_mining.py", "harness/error_store.py", "harness/fold.py",
-        "harness/normalization.yaml", "harness/normalize.py",
+        "harness/attribution.py", "harness/error_mining.py", "harness/error_store.py",
+        "harness/fold.py", "harness/normalization.yaml", "harness/normalize.py",
     ]  # fmt: skip
     assert all(path.is_file() for path in files.values())

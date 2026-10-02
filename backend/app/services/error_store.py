@@ -27,6 +27,7 @@ from typing import Any
 
 import duckdb
 
+from app.services import attribution
 from app.services.error_mining import SETS, MinedFileError, metadata
 
 ERRORS_DIR = "errors"
@@ -220,6 +221,7 @@ class _Clip:
     clip_id: str
     group: str
     bucket: str
+    snr_bucket: str
     by_value: str | None
     words: int
     sub: int
@@ -230,6 +232,7 @@ class _Clip:
     number_ins: int
     number_words: int
     ref_number: bool
+    kinds: tuple[int, ...]
 
     @property
     def errors(self) -> int:
@@ -240,10 +243,36 @@ class _Clip:
         return self.number_sub + self.number_del + self.number_ins
 
 
+#: A substitution between two Devanagari words this alike is a "similar Nepali word": mostly a
+#: suffix (``रहेको``/``रहेका``), the line WER-Breakdown.md's table of 2026-10-01 drew. A tag on
+#: the card, never a judgment that the model heard it.
+SIMILAR = 0.75
+#: Each error's kind for the card (``attribution.KINDS``), as SQL over one row; the first that
+#: holds wins, so the kinds partition the errors.
+_KIND_SQL = {
+    "number": "number",
+    "deletion": "kind = 'del'",
+    "insertion": "kind = 'ins'",
+    "english": "ref_script = 'lat' AND hyp_script = 'lat'",
+    "nepali_similar": f"ref_script = 'dev' AND hyp_script = 'dev' AND similarity >= {SIMILAR}",
+    "nepali_other": "ref_script = 'dev' AND hyp_script = 'dev'",
+    "script": "TRUE",
+}
+
+
+def _kind_case() -> str:
+    whens = " ".join(f"WHEN {cond} THEN '{kind}'" for kind, cond in _KIND_SQL.items())
+    return f"CASE {whens} END"
+
+
 def _clips(path: Path) -> dict[str, _Clip]:
+    counts = ", ".join(
+        f"count(*) FILTER (WHERE error_kind = '{kind}') AS k_{kind}" for kind in attribution.KINDS
+    )
     rows = _query(
         f"""
-        SELECT clip_id, "group", any_value(overlap_bucket) AS bucket, any_value("by") AS by_value,
+        SELECT clip_id, "group", any_value(overlap_bucket) AS bucket,
+               any_value(snr_bucket) AS snr_bucket, any_value("by") AS by_value,
                sum(len(ref)) AS words,
                count_if(kind = 'sub') AS sub, count_if(kind = 'del') AS dele,
                count_if(kind = 'ins') AS ins,
@@ -251,11 +280,35 @@ def _clips(path: Path) -> dict[str, _Clip]:
                count_if(number AND kind = 'del') AS number_del,
                count_if(number AND kind = 'ins') AS number_ins,
                coalesce(sum(len(ref)) FILTER (WHERE number), 0) AS number_words,
-               bool_or(ref_number) AS ref_number
-        FROM {_source(path)} GROUP BY clip_id, "group" ORDER BY clip_id
+               bool_or(ref_number) AS ref_number, {counts}
+        FROM (
+            SELECT *, CASE WHEN kind IN ('sub', 'del', 'ins') THEN {_kind_case()} END
+                      AS error_kind
+            FROM {_source(path)}
+        )
+        GROUP BY clip_id, "group" ORDER BY clip_id
         """
     )
-    return {r["clip_id"]: _Clip(**r) for r in rows}
+    out = {}
+    for r in rows:
+        kinds = tuple(r.pop(f"k_{kind}") for kind in attribution.KINDS)
+        out[r["clip_id"]] = _Clip(**r, kinds=kinds)
+    return out
+
+
+def _card(clips: Sequence[_Clip]) -> dict[str, Any]:
+    """The attribution card (D111): points of WER per recording condition, and the rest by
+    kind of error."""
+    return attribution.card(
+        attribution.ClipCounts(
+            c.group,
+            c.bucket,
+            c.snr_bucket,
+            c.words,
+            dict(zip(attribution.KINDS, c.kinds, strict=True)),
+        )
+        for c in clips
+    )
 
 
 def _rate(errors: float, words: float) -> float:
@@ -371,7 +424,8 @@ def _numbers(clips: Sequence[_Clip], base: Mapping[str, _Clip] | None) -> dict[s
 
 
 def breakdown(path: Path, *, base: Path | None = None) -> dict[str, Any]:
-    """The file's WER with S/D/I, and blocks 1 (crosstalk buckets) and 2 (numbers).
+    """The file's WER with S/D/I, blocks 1 (crosstalk buckets) and 2 (numbers), and the
+    attribution card (``attribution``: what each recording condition costs, D111).
 
     With ``base`` (the base model's file for the same set), the run's WER, each bucket's and the
     number block's carry the difference against it, on the clips both scored, with an interval
@@ -397,6 +451,7 @@ def breakdown(path: Path, *, base: Path | None = None) -> dict[str, Any]:
         buckets.append(entry)
     out["overlap"] = buckets
     out["numbers"] = _numbers(clips, theirs)
+    out["attribution"] = _card(clips)
     out["by_values"] = sorted({c.by_value for c in clips if c.by_value is not None})
     return out
 

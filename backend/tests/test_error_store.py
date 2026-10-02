@@ -319,3 +319,43 @@ def test_a_report_is_the_breakdown_and_the_top_rows_of_each_kind(run: Path) -> N
     assert [len(got["top"][k]) for k in ("sub", "del", "ins")] == [2, 1, 1]
     assert got["top"]["del"][0]["ref"] == "45"
     assert got["top"]["sub"][0]["share"] == pytest.approx(1 / 3)
+
+
+# --- the attribution card (D111) -----------------------------------------------------------------
+
+
+def test_each_error_is_one_kind_and_the_card_reads_both_conditions(tmp_path: Path) -> None:
+    from app.services.error_store import breakdown
+
+    def clip(cid, ref, hyp, share=0.0, snr=50.0):
+        return _clip(cid, ref, hyp, share=share) | {"snr_db": snr}
+
+    clips = [
+        clip("en", "cache", "cage"),
+        clip("similar", "रहेको", "रहेका"),
+        clip("other", "घर", "कुकुर"),
+        clip("script", "Captain", "क्याट्रिना"),
+        clip("number", "45", "46"),
+        clip("del", "म घर", "म"),
+        clip("ins", "म", "म थप"),
+        clip("noisy", "म घर", "म घर", snr=10.0),
+        clip("talk", "म घर", "म", share=0.5, snr=10.0),  # crosstalk wins over SNR
+    ]
+    path = tmp_path / "gold.parquet"
+    error_mining.write(error_mining.rows("run", "gold", clips), path)
+    got = breakdown(path)["attribution"]
+    assert got["wer"] == pytest.approx(breakdown(path)["wer"])
+    assert [(c["factor"], c["bucket"], c["clips"]) for c in got["conditions"]] == [
+        ("crosstalk", ">15%", 1),
+        ("snr", "<15 dB", 1),
+    ]
+    # Every clip is in group g1, so the noisy clip's 0 errors give SNR a ratio of 0: no cost.
+    noisy = got["conditions"][1]
+    assert noisy["within"]["points"] == 0.0
+    # The crosstalk clip's deletion is attributed by its ratio; the rest, one error per kind.
+    xt = got["conditions"][0]
+    ratio = xt["within"]["ratio"]
+    kinds = {k["kind"]: k["points"] for k in got["rest"]["within"]["kinds"]}
+    words = got["ref_words"]
+    expected = dict.fromkeys(kinds, 100 / words) | {"deletion": 100 * (1 + 1 / ratio) / words}
+    assert kinds == pytest.approx(expected)

@@ -23,7 +23,8 @@ backend/app/
                    scoring, queue builder, labeling, corpus, export, reporting,
                    model_eval / model_import / model_browse (fine-tuned models, D83),
                    error_mining / error_store / error_backfill / benchmark_overlap
-                   (every aligned word pair of an evaluation, D110)
+                   (every aligned word pair of an evaluation, D110), attribution
+                   (points of WER per recording condition, D111)
   storage/         ObjectStorage interface + local filesystem and MinIO implementations
   translit/        Latin -> Devanagari providers and the cache
   llm/             base (retry, dry-run, request log), openrouter, elevenlabs, and the
@@ -96,7 +97,9 @@ clip, its group (the unit an interval resamples), the pair as written, its kind 
 whether a number is involved, the substitution's similarity, both sides romanized, and the
 clip's crosstalk and SNR buckets. The public sets' crosstalk and acoustics are measured once
 (`scripts/measure_benchmark_overlap.py`) and kept in the model repo's `benchmarks/overlap/` and
-`benchmarks/acoustics/`; gold and val take theirs from the segment.
+`benchmarks/acoustics/`; gold and val take theirs from the segment. Each breakdown carries the
+attribution card (D111): the points of WER crosstalk and each SNR bucket cost, within episode and
+against the clean floor, and the rest split by kind of error.
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an

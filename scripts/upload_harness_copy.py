@@ -24,7 +24,13 @@ def harness_files(root: Path = REPO_ROOT) -> dict[str, Path]:
     services = root / "backend" / "app" / "services"
     files = {
         name: services / name
-        for name in ("fold.py", "normalize.py", "error_mining.py", "error_store.py")
+        for name in (
+            "fold.py",
+            "normalize.py",
+            "error_mining.py",
+            "error_store.py",
+            "attribution.py",
+        )
     }
     files["normalization.yaml"] = root / "config" / "normalization.yaml"
     return {f"harness/{name}": path for name, path in files.items()}

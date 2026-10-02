@@ -125,6 +125,25 @@ inserted words, each with its count and share of its kind, and the rows that gre
 base. Short words dominate these lists without dominating the errors (particles were 13% of
 vanilla-s1's gold errors), so a row is read beside its share.
 
+### 4. What each recording condition costs (D111)
+
+Every clip that counts toward a WER is tested on two fronts, crosstalk and speech-to-noise ratio:
+every public-set clip the owner heard on the crosstalk detector's word was one or the other.
+Crosstalk alone cannot tell them apart (OpenSLR 54 is read speech, and its "crosstalk" clips
+measure 4.6-16.6 dB), so both are measured on every clip, and the card puts each clip in one
+cell: its crosstalk bucket if it has any, else its SNR bucket (the corpus's own, D87), else the
+baseline (no crosstalk, 45+ dB) or unmeasured.
+
+- **Per condition:** clips, words, WER, the ratio to its baseline and the points of the set's
+  WER it costs, `errors x (1 - 1/ratio)`, with intervals from resampling the set's unit.
+- **Two ratios, side by side.** *Within* compares each clip only with baseline clips of its own
+  episode (Mantel-Haenszel, as the By class panel does): the condition's own cost. *Floor*
+  compares it with the set's pooled baseline rate, so it also charges the condition for the
+  shows it comes in. Both are shown because the gap between them is itself the finding.
+- **The rest**, everything no condition took, by kind of error: a number, a deletion, an
+  insertion, a substitution across scripts, between English words, between Devanagari words at
+  similarity 0.75 or more (mostly suffixes), and any other substitution. The rows sum to the WER.
+
 ## The subcases as measured (2026-10-01)
 
 vanilla-s1, per 100 reference words, on gold (ours), FLEURS (English written in Devanagari) and

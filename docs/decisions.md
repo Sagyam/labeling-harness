@@ -2653,3 +2653,41 @@ run and set, written only by `error_mining.write` and read only through DuckDB
 
 **Reversal:** a migration for an error-row table and an importer that loads the files into it;
 `error_mining`'s classifier and `error_store`'s queries carry over, as SQL against the table.
+
+## D111 — A WER is attributed to recording conditions two ways, within the set's own unit and against its clean floor
+
+Every scored clip is tested on both recording conditions the owner found behind every clip the
+crosstalk detector flagged on the public sets: crosstalk (D77) and speech-to-noise ratio
+(Brouhaha, D87), measured on every public-set clip too. The attribution card
+(`app/services/attribution.py`, read by `error_store.breakdown`) says how many points of a run's
+WER each condition costs, and splits the rest by kind of error.
+
+- **One cell per clip, so nothing is charged twice.** Any measured crosstalk puts a clip in its
+  crosstalk bucket; a crosstalk-free clip goes in its SNR bucket. Crosstalk is compared with
+  every crosstalk-free clip, SNR with crosstalk-free clips at 45+ dB. The buckets are the corpus's
+  own (D87); no cutoff was chosen for the card.
+- **A condition's cost is its attributable errors**, `errors x (1 - 1/ratio)`, in points of the
+  set's WER. Its clips' remaining errors join the baseline's and the unmeasured clips' in the
+  rest, which is split by kind of error (a number, a deletion, an insertion, a substitution
+  across scripts, between English words, between Devanagari words at similarity 0.75 or more, or
+  any other), each clip's errors weighted `1/ratio`. The rows add up to the WER exactly.
+- **Two ratios, both shown, because they tell different stories** (owner, 2026-10-02):
+  - *within*: the Mantel-Haenszel ratio over the set's own unit (an episode on gold and val, the
+    set's group on a public set), the estimator the By class panel already uses. A clip is only
+    compared with baseline clips of its own episode, so voices, microphone, room and topic are
+    held fixed. This is the estimate of what the condition itself costs. A bucket no episode can
+    compare is not estimated, and its errors stay in the rest.
+  - *floor*: the crude ratio against the set's pooled baseline rate. It also charges a condition
+    for what comes with it: on gold, crosstalk lives in podcasts and talk shows, which are harder
+    when one voice speaks too. The gap between the two is how much of the naive figure is the
+    show rather than the overlap.
+- **Intervals resample the set's own unit**, 1000 seeded draws, like every other interval here.
+- **It tags errors, it never forgives them** (WER-Breakdown.md): the WER is unchanged, and the
+  card is an extra block beside it.
+
+The rest's split assumes a condition adds errors in the mix its clips already show; a kind whose
+rate a condition changes more than others is misplaced between the condition's row and the rest.
+Brouhaha reads a public clip on its own audio and a corpus clip from its whole episode.
+
+**Reversal:** drop the `attribution` key from `breakdown` and delete `attribution.py`; the SNR
+column (mine-v2) and the public sets' acoustics stay useful as filters.

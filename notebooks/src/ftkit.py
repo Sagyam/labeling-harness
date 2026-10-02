@@ -220,9 +220,9 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
 
     Two layouts are accepted: the repo's (backend/app/services/, config/), and the flat one the
     2026-09-21 export uploaded (fold.py, normalize.py, normalization.yaml side by side), which
-    is laid back out here because normalize.py looks for ../../../config/. error_mining.py and
-    error_store.py travel with fold.py when the copy has them (docs/WER-Breakdown.md); evalkit
-    writes no error files without them.
+    is laid back out here because normalize.py looks for ../../../config/. error_mining.py,
+    error_store.py and attribution.py travel with fold.py when the copy has them
+    (docs/WER-Breakdown.md); evalkit writes no error files without them.
 
     Each `per_clip` count keeps the clip's folded `alignment`, so mining its errors aligns nothing
     again; `summarize` adds up everything else."""
@@ -231,7 +231,13 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
         if (src / "fold.py").exists():
             (dst / "backend" / "app" / "services").mkdir(parents=True)
             (dst / "config").mkdir()
-            for name in ("fold.py", "normalize.py", "error_mining.py", "error_store.py"):
+            for name in (
+                "fold.py",
+                "normalize.py",
+                "error_mining.py",
+                "error_store.py",
+                "attribution.py",
+            ):
                 if name in ("fold.py", "normalize.py") or (src / name).exists():
                     shutil.copyfile(src / name, dst / "backend" / "app" / "services" / name)
             shutil.copyfile(src / "normalization.yaml", dst / "config" / "normalization.yaml")
