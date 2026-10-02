@@ -37,6 +37,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.attribution import mh_rate_ratio
 from app.services.clip_classes import AXES, Axis
 from app.services.fold import Alignment, Ruleset, fold_tokens, is_number, word_errors
 
@@ -269,29 +270,6 @@ def _totals(clips: Iterable[ScoredClip]) -> _Totals:
         out[clip.episode][0] += clip.score.errors
         out[clip.episode][1] += clip.score.ref_words
     return {episode: (e, w) for episode, (e, w) in out.items()}
-
-
-def mh_rate_ratio(
-    exposed: _Totals, baseline: _Totals, episodes: Iterable[str]
-) -> tuple[float | None, int]:
-    """Mantel-Haenszel error-rate ratio of ``exposed`` to ``baseline``, pooled over episodes.
-
-    Returns:
-        The ratio -- ``None`` when no episode holds words in both, or the baseline has no errors
-        where it can be compared -- and how many episodes could compare. An episode repeated in
-        ``episodes`` (a bootstrap draw) counts each time.
-    """
-    numerator = denominator = 0.0
-    informative = 0
-    for episode in episodes:
-        a, t1 = exposed.get(episode, (0, 0))
-        b, t0 = baseline.get(episode, (0, 0))
-        if not t1 or not t0:
-            continue
-        informative += 1
-        numerator += a * t0 / (t0 + t1)
-        denominator += b * t1 / (t0 + t1)
-    return (numerator / denominator if denominator > 0 else None), informative
 
 
 def _ratio_interval(
