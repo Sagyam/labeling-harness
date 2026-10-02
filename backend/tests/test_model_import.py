@@ -19,11 +19,13 @@ from app.models import (
     SpeakerTurn,
 )
 from app.models import Segment as SegmentRow
+from app.services.fold import fold_version
 from app.services.model_import import (
     ModelImportError,
     import_model_dir,
     read_card,
     reclassify_runs,
+    rescore_runs,
     scan_models,
 )
 from tests.model_support import CARD, write_model
@@ -267,3 +269,80 @@ def test_reclassifying_a_run_picks_up_an_edited_genre(
     reclassify_runs(db_session, actor="test")
 
     assert list(run.metrics_jsonb["by_genre"]) == ["advert"]
+
+
+def _import_gold_run(db_session: Session, tmp_path: Path, model_corpus: dict[str, str]):
+    gold = _gold_ids(db_session)
+    rows = [{"segment_id": gold[0], "text": "एक दुई तीन"}] + [
+        {"segment_id": sid, "text": model_corpus[sid]} for sid in gold[1:]
+    ]
+    import_model_dir(
+        db_session, write_model(tmp_path / "models", "flex-ft", gold=rows), actor="test"
+    )
+    return db_session.scalars(sa.select(ModelEvalRun)).one()
+
+
+@pytest.mark.db
+def test_rescoring_scores_a_run_s_stored_texts_under_today_s_fold(
+    db_session: Session, tmp_path: Path, model_corpus: dict[str, str]
+) -> None:
+    run = _import_gold_run(db_session, tmp_path, model_corpus)
+    right = dict(run.metrics_jsonb)
+    counts = {c.id: (c.errors, c.deletions, c.raw_errors) for c in run.clips}
+    # As an older fold left it: other counts, another version.
+    run.fold_version = "fold-v0+norm-v3"
+    run.metrics_jsonb = right | {"wer": 99.0, "errors": 99}
+    for clip in run.clips:
+        clip.errors, clip.deletions, clip.raw_errors = 9, 9, 9
+    db_session.flush()
+
+    report = rescore_runs(db_session, actor="test")
+
+    assert (report.runs, report.clips, report.unchanged) == (1, 3, 0)
+    assert run.fold_version == fold_version()
+    assert run.metrics_jsonb == right  # skipped counts and every breakdown included
+    assert {c.id: (c.errors, c.deletions, c.raw_errors) for c in run.clips} == counts
+    audit = db_session.scalars(
+        sa.select(AuditLog).where(AuditLog.action == "model_eval_rescore")
+    ).one()
+    assert audit.old_values_jsonb == {"fold_version": "fold-v0+norm-v3", "wer": 99.0}
+    assert audit.new_values_jsonb["wer"] == right["wer"]
+
+
+@pytest.mark.db
+def test_rescoring_keeps_the_reference_the_run_was_scored_against(
+    db_session: Session, tmp_path: Path, model_corpus: dict[str, str]
+) -> None:
+    run = _import_gold_run(db_session, tmp_path, model_corpus)
+    clip = run.clips[0]
+    db_session.add(
+        SegmentLabel(
+            segment_id=clip.segment_id,
+            label_version_id=db_session.get(SegmentLabel, clip.ref_label_id).label_version_id,
+            final_text="नयाँ",
+            disposition="edited",
+            verification_tier="verified",
+            annotator="test",
+        )
+    )
+    run.fold_version = "fold-v0+norm-v3"
+    db_session.flush()
+    before = clip.ref_text
+
+    rescore_runs(db_session, actor="test")
+
+    assert clip.ref_text == before and clip.ref_text != "नयाँ"
+
+
+@pytest.mark.db
+def test_a_run_already_under_today_s_fold_is_left_alone(
+    db_session: Session, tmp_path: Path, model_corpus: dict[str, str]
+) -> None:
+    _import_gold_run(db_session, tmp_path, model_corpus)
+
+    report = rescore_runs(db_session, actor="test")
+
+    assert (report.runs, report.clips, report.unchanged) == (0, 0, 1)
+    assert not db_session.scalars(
+        sa.select(AuditLog).where(AuditLog.action == "model_eval_rescore")
+    ).all()

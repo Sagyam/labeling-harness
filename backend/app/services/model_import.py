@@ -419,6 +419,81 @@ def reclassify_runs(
     return report
 
 
+@dataclass
+class RescoreReport:
+    runs: int = 0
+    clips: int = 0
+    unchanged: int = 0
+
+
+def rescore_runs(
+    session: Session, *, actor: str, run_ids: list[int] | None = None
+) -> RescoreReport:
+    """Score every run made under older fold rules again, under today's (D113).
+
+    A transcript is scored by the rules of its day, so a fold version leaves every earlier run
+    on its own ruler. Each clip is scored again from what the run stored: its hypothesis and the
+    reference snapshot it was imported against, never today's label, which would be a new import
+    rather than a new ruler. Counts, every breakdown and ``fold_version`` are replaced in place;
+    the ``audit_logs`` row keeps the old WER and version. A run already under today's rules is
+    left alone.
+
+    Args:
+        session: Open session; the caller commits.
+        actor: Recorded on each run's ``audit_logs`` row.
+        run_ids: Restrict to these runs; every run when omitted.
+    """
+    query = sa.select(ModelEvalRun).options(
+        selectinload(ModelEvalRun.clips)
+        .selectinload(ModelEvalClip.segment)
+        .selectinload(Segment.episode)
+    )
+    if run_ids:
+        query = query.where(ModelEvalRun.id.in_(run_ids))
+    current = fold_version()
+    report = RescoreReport()
+    for run in session.scalars(query.order_by(ModelEvalRun.id)):
+        if run.fold_version == current:
+            report.unchanged += 1
+            continue
+        old = {"fold_version": run.fold_version, "wer": run.metrics_jsonb.get("wer")}
+        scored = []
+        for clip in run.clips:
+            score = score_clip(clip.ref_text, clip.hyp_text)
+            for name, value in vars(score).items():
+                setattr(clip, name, value)
+            scored.append(
+                ScoredClip(
+                    episode=clip.segment.episode.external_id,
+                    genre=(clip.segment.episode.metadata_jsonb or {}).get("genre"),
+                    classes=clip.classes_jsonb or {},
+                    score=score,
+                    words=word_class_counts(word_errors(clip.ref_text, clip.hyp_text)),
+                )
+            )
+        kept = {k: v for k, v in run.metrics_jsonb.items() if k == "skipped"}
+        run.metrics_jsonb = summarize(scored) | kept
+        run.fold_version = current
+        session.add(
+            AuditLog(
+                entity_type="asr_model",
+                entity_id=run.model.slug,
+                action="model_eval_rescore",
+                actor=actor,
+                old_values_jsonb=old,
+                new_values_jsonb={
+                    "run_id": run.id,
+                    "fold_version": current,
+                    "wer": run.metrics_jsonb["wer"],
+                },
+            )
+        )
+        report.runs += 1
+        report.clips += len(scored)
+    session.flush()
+    return report
+
+
 def scan_models(
     session: Session, root: Path, *, settings: Settings | None = None, actor: str
 ) -> ImportReport:

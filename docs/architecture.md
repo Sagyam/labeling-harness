@@ -495,7 +495,10 @@ A run is also split by **word class** (`metrics_jsonb.by_word_class`). Each refe
 tagged by script (Devanagari, Latin or mixed), as a number, as sitting at a code-switch, or as the
 clip's first or last word, and a class's WER counts its words' substitutions and deletions.
 Insertions have no reference word. Reclassification re-aligns the stored texts only when the run
-was scored under the current `fold_version()`.
+was scored under the current `fold_version()`. A fold version changes the scores instead:
+`scripts/rescore_runs.py` scores every run made under older rules again from its stored
+transcripts and its reference snapshot (never today's label), replaces its counts, breakdowns and
+`fold_version`, and keeps the old WER and version in `audit_logs` (D113).
 
 ### Known gaps
 
