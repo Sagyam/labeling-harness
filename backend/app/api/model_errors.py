@@ -173,6 +173,8 @@ def _filter(
     by: str | None = None,
     similarity_min: float | None = Query(default=None, ge=0, le=1),
     similarity_max: float | None = Query(default=None, ge=0, le=1),
+    fold_rule: str | None = Query(default=None, max_length=64),
+    variant: str | None = Query(default=None, max_length=64),
 ) -> ErrorFilter:
     return ErrorFilter(
         kind=kind,
@@ -185,6 +187,8 @@ def _filter(
         by=by,
         similarity_min=similarity_min,
         similarity_max=similarity_max,
+        fold_rule=fold_rule,
+        variant=variant,
     )
 
 

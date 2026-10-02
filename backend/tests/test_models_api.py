@@ -296,3 +296,27 @@ def test_one_clip_and_where_its_audio_is(client, mined: dict, db_session: Sessio
     segment = db_session.scalars(sa.select(Segment).where(Segment.external_id == gold_id)).one()
     assert (gold["segment_id"], gold["run_id"]) == (segment.id, mined["run_id"])
     assert client.get("/models/flex-ft/errors/fleurs/clips/nope").status_code == 404
+
+
+# --- the rulebook (fold-v4) ----------------------------------------------------------------------
+
+
+def test_the_rulebook_lists_every_rule_and_tag_with_its_evidence(client, mined: dict) -> None:
+    from app.services.fold import RULEBOOK, TAGS, fold_version
+
+    body = client.get("/fold/rulebook").json()
+    assert body["fold_version"] == fold_version()
+    assert [r["id"] for r in body["rules"]] == [r.id for r in (*RULEBOOK, *TAGS)]
+    number = next(r for r in body["rules"] if r["id"] == "number")
+    assert number["action"] == "fold" and number["examples"][0] == ["15", "पन्ध्र"]
+    assert {t["tier"] for t in body["tiers"]} == {1, 2, 3, 4}
+    fleurs = next(e for e in body["evidence"] if (e["model"], e["set"]) == ("flex-ft", "fleurs"))
+    assert fleurs["current"] is True and fleurs["words"] == 4
+    assert fleurs["rules"]["number"]["top"] == [{"ref": "पाँच", "hyp": "5", "count": 1}]
+
+
+def test_occurrences_filter_by_the_rule_that_forgave_them(client, mined: dict) -> None:
+    url = "/models/flex-ft/errors/fleurs/pairs"
+    rows = client.get(url, params={"fold_rule": "number"}).json()["rows"]
+    assert [(r["ref"], r["hyp"]) for r in rows] == [(["पाँच"], ["5"])]
+    assert client.get(url, params={"variant": "ba-va"}).json()["total"] == 0

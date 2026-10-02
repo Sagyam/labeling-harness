@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
         model_errors,
         pots,
         queue,
+        rulebook,
         segments,
         tasks,
         translit,
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
         pots,
         asr_models,
         model_errors,
+        rulebook,
         voices,
     ):
         app.include_router(module.router)

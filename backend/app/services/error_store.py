@@ -180,6 +180,8 @@ class ErrorFilter:
     by: str | None = None
     similarity_min: float | None = None
     similarity_max: float | None = None
+    fold_rule: str | None = None
+    variant: str | None = None
 
     def where(self) -> tuple[str, list[Any]]:
         """The SQL condition and its parameters."""
@@ -194,6 +196,8 @@ class ErrorFilter:
             "overlap_bucket",
             "snr_bucket",
             "by",
+            "fold_rule",
+            "variant",
         ):
             value = getattr(self, column)
             if value is not None:
@@ -627,6 +631,40 @@ def occurrences(
             }
         )
     return {"total": found[0]["total"], "rows": rows}
+
+
+def rule_evidence(path: Path, *, top: int = 5) -> dict[str, Any]:
+    """What each rule of the rulebook forgave, and each tag tagged, in one file (mine-v3).
+
+    Returns:
+        ``{words, rules}``: the file's reference words, and per rule or tag id that occurs
+        ``{pairs, per_100, top}`` -- how many pairs it covers, per 100 reference words, and its
+        ``top`` most frequent ``{ref, hyp, count}``.
+    """
+    source = _source(path)
+    words = _query(f"SELECT coalesce(sum(len(ref)), 0) AS n FROM {source}")[0]["n"]
+    found = _query(
+        f"""
+        WITH tagged AS (
+            SELECT coalesce(fold_rule, variant) AS id, {_side("ref")} AS ref, {_side("hyp")} AS hyp
+            FROM {source} WHERE fold_rule IS NOT NULL OR variant IS NOT NULL
+        ), pairs AS (
+            SELECT id, ref, hyp, count(*) AS n FROM tagged GROUP BY id, ref, hyp
+        )
+        SELECT id, ref, hyp, n, sum(n) OVER (PARTITION BY id) AS total,
+               row_number() OVER (PARTITION BY id ORDER BY n DESC, ref, hyp) AS rank
+        FROM pairs QUALIFY rank <= ?
+        ORDER BY id, rank
+        """,
+        [top],
+    )
+    rules: dict[str, dict[str, Any]] = {}
+    for r in found:
+        entry = rules.setdefault(
+            r["id"], {"pairs": int(r["total"]), "per_100": _rate(r["total"], words), "top": []}
+        )
+        entry["top"].append({"ref": r["ref"], "hyp": r["hyp"], "count": int(r["n"])})
+    return {"words": int(words), "rules": rules}
 
 
 def _context(path: Path, at: Sequence[tuple[str, int]]) -> dict[str, dict[int, dict[str, Any]]]:

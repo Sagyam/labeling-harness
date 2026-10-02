@@ -390,3 +390,37 @@ def test_against_a_base_the_card_says_which_rows_moved(run: Path, base: Path) ->
     conditions = sum(v[0] or 0.0 for v in vs["factors"].values() if v[0] is not None)
     assert kinds + conditions == pytest.approx(vs["wer"][0])
     assert "vs_base" not in breakdown(run)["attribution"]
+
+
+# --- the rulebook's evidence (fold-v4) -----------------------------------------------------------
+
+
+def test_each_rule_and_tag_counts_the_pairs_it_forgave_or_tagged(tmp_path: Path) -> None:
+    from app.services.error_store import rule_evidence
+
+    clips = [
+        _clip("c1", "होइन B दावी अनि म म जान्छु", "हैन बी दाबी अनि म जान्छु"),
+        _clip("c2", "होइन राम्रो", "हैन नराम्रो"),
+    ]
+    _file(tmp_path, "r", "gold", clips, name="gold.parquet")
+    found = rule_evidence(tmp_path / "gold.parquet")
+    assert found["words"] == 9
+    rules = found["rules"]
+    assert rules["contracted-verb"]["pairs"] == 2
+    assert rules["contracted-verb"]["per_100"] == pytest.approx(200 / 9)
+    assert rules["contracted-verb"]["top"] == [{"ref": "होइन", "hyp": "हैन", "count": 2}]
+    assert rules["letter-names"]["pairs"] == 1
+    assert rules["ba-va"]["pairs"] == 1 and rules["repetition"]["pairs"] == 1
+    assert set(rules) == {"contracted-verb", "letter-names", "ba-va", "repetition"}
+
+
+def test_occurrences_filter_by_rule_and_tag(tmp_path: Path) -> None:
+    from app.services.error_store import occurrences
+
+    clips = [_clip("c1", "होइन B दावी", "हैन बी दाबी")]
+    _file(tmp_path, "r", "gold", clips, name="gold.parquet")
+    path = tmp_path / "gold.parquet"
+    by_rule = occurrences(path, ErrorFilter(fold_rule="letter-names"))
+    assert [(r["ref"], r["hyp"]) for r in by_rule["rows"]] == [(["B"], ["बी"])]
+    by_tag = occurrences(path, ErrorFilter(variant="ba-va"))
+    assert [(r["ref"], r["hyp"]) for r in by_tag["rows"]] == [(["दावी"], ["दाबी"])]
