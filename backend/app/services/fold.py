@@ -1442,7 +1442,30 @@ TAGS: tuple[FoldRule, ...] = (
         "kept and the other did not (म म / म).",
         (("म म जान्छु", "म जान्छु"),),
     ),
+    FoldRule(
+        "particle", 4, "A discourse particle",
+        "A deleted or inserted particle (:data:`PARTICLES`: हो, त, पनि, चाहिँ, हजुर, होइन, अब, है, "
+        "नि, रे, नै), often a listener's backchannel in crosstalk that the labels keep because they "
+        "write everything said (D100). Also a real word: हो is 'is', पनि 'also' (D113).",
+        (("म त जान्छु", "म जान्छु"), ("हो भन्नुभयो", "भन्नुभयो")),
+    ),
 )  # fmt: skip
+
+#: The discourse particles the ``particle`` tag names, compared by spelling key, so चाहिँ,
+#: चाहीं and चाहिं are one. के, यो and त्यो are words, and ए is left out by the owner's choice
+#: (D113): it is a vocative or a hesitation, and which one is not known.
+PARTICLES = ("हो", "त", "पनि", "चाहिँ", "हजुर", "होइन", "अब", "है", "नि", "रे", "नै")
+
+
+@lru_cache(maxsize=1)
+def _particle_keys() -> frozenset[str]:
+    return frozenset(spelling_key(word) for word in PARTICLES)
+
+
+def is_particle(token: str) -> bool:
+    """Whether a Devanagari token is one of :data:`PARTICLES` in any spelling."""
+    return script(token) == "dev" and spelling_key(token) in _particle_keys()
+
 
 #: Each substitution tag's test, on the two spelling keys, in the order they are tried.
 _TAG_TESTS: tuple[tuple[str, Callable[[str], str]], ...] = (

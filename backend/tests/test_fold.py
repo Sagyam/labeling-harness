@@ -14,6 +14,7 @@ from app.services.fold import (
     fold_tokens,
     fold_version,
     is_number,
+    is_particle,
     same_word,
     similarity,
     skeleton,
@@ -744,20 +745,35 @@ class TestEnglishSounds:
         assert same_word(dev, latin)
 
 
+#: Tags error mining puts on a deletion or insertion, not on a substitution.
+_GAP_TAGS = {"repetition", "particle"}
+
+
 class TestTags:
     """Tier 4: a tag describes a charged error and never forgives it."""
 
     @pytest.mark.parametrize(
         ("tag", "ref", "hyp"),
-        [(t.id, a, b) for t in TAGS if t.id != "repetition" for a, b in t.examples],
+        [(t.id, a, b) for t in TAGS if t.id not in _GAP_TAGS for a, b in t.examples],
     )
     def test_every_example_is_charged_and_tagged(self, tag: str, ref: str, hyp: str) -> None:
         assert word_errors(ref, hyp).errors == 1
         assert variant(ref, hyp) == tag
 
-    def test_a_repetition_example_is_charged(self) -> None:
-        (example,) = next(t for t in TAGS if t.id == "repetition").examples
-        assert word_errors(*example).errors == 1
+    @pytest.mark.parametrize("tag", sorted(_GAP_TAGS))
+    def test_a_deletion_tag_example_is_charged(self, tag: str) -> None:
+        for example in next(t for t in TAGS if t.id == tag).examples:
+            assert word_errors(*example).errors == 1
+
+    @pytest.mark.parametrize(
+        "word", ["हो", "त", "पनि", "चाहिँ", "चाहीं", "हजुर", "होइन", "अब", "है", "नि", "रे", "नै"]
+    )
+    def test_a_discourse_particle_is_a_particle_in_any_spelling(self, word: str) -> None:
+        assert is_particle(word)
+
+    @pytest.mark.parametrize("word", ["के", "यो", "त्यो", "ए", "कि", "घर", "ta", "ho"])
+    def test_a_content_word_pronoun_or_latin_word_is_not_a_particle(self, word: str) -> None:
+        assert not is_particle(word)
 
     @pytest.mark.parametrize(
         ("ref", "hyp"), [("घर", "वन"), ("team", "टिम"), ("गर्नु", "गर्ने"), ("राम्रो", "राम्रो")]
