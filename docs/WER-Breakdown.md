@@ -277,29 +277,30 @@ and all ten of nepali_cs's highest-overlap clips (77-99%) are from one video, wh
 or echo. Until they are heard, read the public sets' buckets as "the detector fired", not as
 crosstalk.
 
-**vanilla-s1 minus base Flex**, folded, with each set's own unit resampled:
+**vanilla-s1 minus base Flex**, folded (fold-v4, mine-v4; both runs scored again on 2026-10-02, D113), with each set's own unit resampled:
 
 | | WER | minus base | number errors, minus base | without numbers, minus base |
 |---|---|---|---|---|
-| gold | 10.76 | −2.64 [−3.28, −2.01] | −284 | −2.04 [−2.66, −1.45] |
-| val | 6.93 | −2.31 [−3.10, −1.42] | −283 | −1.89 [−2.73, −1.00] |
-| FLEURS | 12.24 | +1.14 [+0.47, +1.81] | +14 | +1.02 [+0.48, +1.56] |
-| OpenSLR 54 | 7.96 | −0.14 [−0.42, +0.13] | −218 | +0.34 [+0.07, +0.60] |
-| Common Voice | 8.73 | +0.00 [−1.16, +1.05] | −10 | +0.55 [−0.39, +1.23] |
-| IndicVoices | 12.59 | −0.13 [−0.69, +0.36] | −501 | +1.26 [+0.93, +1.57] |
-| nepali_cs | 12.00 | +0.95 [−0.43, +2.45] | +42 | +0.95 [−0.41, +2.67] |
+| gold | 11.12 | −2.67 [−3.30, −2.07] | −296 | −2.04 [−2.63, −1.47] |
+| val | 7.16 | −2.37 [−3.19, −1.47] | −290 | −1.94 [−2.79, −1.01] |
+| FLEURS | 11.89 | +1.22 [+0.56, +1.87] | +18 | +1.07 [+0.53, +1.61] |
+| OpenSLR 54 | 7.78 | −0.20 [−0.48, +0.08] | −199 | +0.23 [−0.03, +0.51] |
+| Common Voice | 8.55 | +0.17 [−0.90, +1.08] | −8 | +0.61 [−0.28, +1.23] |
+| IndicVoices | 12.31 | −0.28 [−0.87, +0.24] | −508 | +1.13 [+0.81, +1.46] |
+| nepali_cs | 11.92 | +0.66 [−0.49, +2.34] | +39 | +0.64 [−0.48, +2.49] |
 
 - **Fine-tuning taught the model to write numbers the way these references do, and that gain
   hides a loss elsewhere.** On OpenSLR 54 and IndicVoices the headline difference is a tie, but
-  only because number errors fell by 218 and 501; everything else got worse, by 0.34 and 1.26
-  points with intervals clear of zero.
-- **FLEURS's +1.14 is mostly not numbers.** Number rows account for about 0.1 point of it; the WER
-  over everything else is still +1.02. Clips whose reference holds a number carry +1.54
-  [+0.15, +3.27] on a third of the words, which is about half the gap, so "half of it is numbers"
+  only because number errors fell by 199 and 508; everything else got worse, by 1.13 points on
+  IndicVoices with an interval clear of zero, and by 0.23 [−0.03, +0.51] on OpenSLR 54, which
+  under fold-v3 (+0.34 [+0.07, +0.60]) was clear of zero too.
+- **FLEURS's +1.22 is mostly not numbers.** Number rows account for about 0.15 point of it; the
+  WER over everything else is still +1.07. Clips whose reference holds a number carry +1.63
+  [+0.17, +3.36] on a third of the words, which is about half the gap, so "half of it is numbers"
   was the clips, not the numbers themselves. Its top new substitutions are spelling variants
   (`छनौट`/`छनोट`, `सामान्यतया`/`सामान्यतः`) and `802.11` read out as words.
-- **On gold the gain grows with crosstalk**: −1.91 on clips with none, −2.95, −4.01, then −4.98
-  [−9.00, −2.82] over 15%.
+- **On gold the gain grows with crosstalk**: −1.91 on clips with none, −3.07, −4.29, then −4.91
+  [−8.56, −2.88] over 15%.
 
 ## Not in this round
 

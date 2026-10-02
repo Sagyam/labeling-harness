@@ -62,6 +62,22 @@ points of clean gold, the most any further rule could still forgive cleanly ther
 is done for this corpus: what remains of the 6.41 is mostly real errors, the largest share rare
 words (a different Nepali word 2.02, a different English word 1.09).
 
+**Every stored score moved to fold-v4** (D113), from the stored transcripts, nothing decoded
+again. Gold / val, fold-v3 (fold-v2 for 09-16) -> fold-v4:
+
+| run | gold | val |
+|---|---|---|
+| flex-2026-09-30 vanilla-s1 | 10.76 -> 11.12 | 6.93 -> 7.16 |
+| flex-2026-09-30 vanilla-s0 (hub only) | 10.68 -> 11.04 | 6.95 -> 7.19 |
+| flex-2026-09-30 base | 13.40 -> 13.79 | 9.24 -> 9.53 |
+| indic-transcribe-flex-ft-2026-09-17 (harness) | 6.94 -> 7.19 | 5.75 -> 6.11 |
+| indic-transcribe-flex-ft-2026-09-16 (harness) | 6.58 -> 6.49 | 12.59 -> 12.92 |
+
+The public sets, base / vanilla-s1: FLEURS 10.67 / 11.89, OpenSLR 54 7.98 / 7.78, Common Voice
+8.38 / 8.55, IndicVoices 12.59 / 12.31, nepali_cs 11.26 / 11.92. The seeds' val gap is now 0.03
+(D109's bar stays at its 0.15 floor). The notebooks' gold and val error rows had never measured
+crosstalk (the export carries spans, not a share); fixed, and the hub's files now carry it.
+
 ## The fold was wrong both ways, and fold-v4 (2026-10-02)
 
 An audit of the mine-v2 error rows (vanilla-s1 and base, all seven sets) for pairs graded

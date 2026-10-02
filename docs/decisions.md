@@ -2755,5 +2755,15 @@ crosstalk. Most are a listener's backchannel in crosstalk, which the labels keep
 - **English endings a speaker swallows** (parent/parents, start/started, ~0.07 points on gold)
   stay charged with no tag (owner): too small, and a real grammatical difference.
 
+- **A fold version re-scores what is stored, not what is decoded** (owner, 2026-10-02). Every
+  stored score is moved to today's rules in place: the harness's imported runs by
+  `scripts/rescore_runs.py`, from each clip's transcript and the reference snapshot it was
+  imported against (never today's label), the old WER kept in `audit_logs`; the hub's runs by
+  `evalkit.rescore_run` and `rescore_benchmark`, from their stored transcripts, keeping the
+  recipe and `created_at` and adding `rescored_at`. No GPU decode is repeated for a ruler change.
+  Older hub folders made from exports that no longer exist (the 2026-09-22 sweep, the 2026-09-17
+  model, the 2026-09-27 benchmarks) stay as written: their rows cannot be rebuilt.
+
 **Reversal:** delete the tag and `PARTICLES`, set `MINER_VERSION` back, and derive the error
-files again. Nothing else reads it.
+files again. Nothing else reads it. Re-scoring is undone by re-scoring under the older rules; the
+old WERs are in `audit_logs` and the hub's history.
