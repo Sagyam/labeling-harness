@@ -6,10 +6,11 @@
  * the owner copies the model's folder to `data/models/asr/<slug>/`, and Rescan scores it against
  * the current labels. The one place a model does run is the playground at the top (D85): a
  * recording of the owner's own voice, transcribed on the CPU and never scored.
- * The page then reads top to bottom as the error hunt goes: which model, how good, where the
- * errors live (click a bar to filter), and the clips themselves -- listen, read the diff, `j`/`k`
- * to the next one. Below them, the Errors section reads the model's error files across clips and
- * sets (docs/WER-Breakdown.md).
+ * One model at a time, in four tabs, each answering one question for someone who did not build
+ * the harness: Overview (how good is it, set by set, and where do its errors come from -- the
+ * attribution card, D111), Clips (which gold and val clips did it get wrong; listen, read the
+ * diff, `j`/`k` to the next), Errors (which word became which, across clips and sets, from the
+ * model's error files: docs/WER-Breakdown.md) and Try it (the playground).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -20,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ClipPanel } from '@/components/models/ClipPanel'
 import { ClipTable, type ClipFilters } from '@/components/models/ClipTable'
-import { ErrorsSection } from '@/components/models/ErrorsSection'
+import { ErrorsSection, type ErrorsView } from '@/components/models/ErrorsSection'
 import { Playground } from '@/components/models/Playground'
 import { RunSummary, fmtWer } from '@/components/models/RunSummary'
 import { cn } from '@/lib/utils'
@@ -28,6 +29,30 @@ import { api } from '@/services/api'
 import type { AsrModel, ClassAxis, ModelClip, ModelClipPage, ModelEvalRun } from '@/types'
 
 const PAGE_SIZE = 50
+
+type Tab = 'overview' | 'clips' | 'errors' | 'try'
+const TABS: { id: Tab; label: string; question: string }[] = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    question: 'How good is this model on each set, and how much of its WER do crosstalk and noise explain?',
+  },
+  {
+    id: 'clips',
+    label: 'Clips',
+    question: 'Which gold and val clips did it get wrong? Worst first, with the audio and an aligned diff.',
+  },
+  {
+    id: 'errors',
+    label: 'Errors',
+    question: 'Which word did it write as which, how often, and where? Every aligned word pair, filterable and sampled.',
+  },
+  {
+    id: 'try',
+    label: 'Try it',
+    question: 'What does it write for your own voice? A recording transcribed on this machine, never scored.',
+  },
+]
 const CARD_SHOWN = new Set(['name', 'description', 'architecture', 'created_at', 'decoder'])
 const DEFAULT_FILTERS: ClipFilters = {
   sort: 'errors',
@@ -75,10 +100,13 @@ function ModelList({
             )}
           >
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-semibold">{model.name}</span>
+              <span className="text-sm font-semibold break-words">{model.name}</span>
               <span className="shrink-0 font-mono text-xs font-bold text-rose-600 tabular-nums dark:text-rose-400">
                 {run ? fmtWer(run.metrics.wer) : '--'}
               </span>
+            </div>
+            <div className="truncate font-mono text-[10px] text-muted-foreground" title={model.slug}>
+              {model.slug}
             </div>
             <div className="flex items-baseline justify-between gap-2 text-[10px] text-muted-foreground">
               <span className="truncate">{fmtDate(model.trained_at)}</span>
@@ -162,6 +190,7 @@ export function ModelsView() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [axes, setAxes] = useState<ClassAxis[]>([])
   const [shownAxis, setShownAxis] = useState('overlap')
+  const [tab, setTab] = useState<Tab>('overview')
 
   const model = useMemo(() => models?.find((m) => m.slug === slug) ?? null, [models, slug])
   const run = useMemo(() => model?.runs.find((r) => r.id === runId) ?? null, [model, runId])
@@ -299,9 +328,33 @@ export function ModelsView() {
 
       <main className="min-w-0 flex-1 space-y-4 overflow-y-auto p-4">
         {model && <ModelHeader model={model} />}
-        {model && <Playground key={model.slug} model={model} />}
 
-        {model && model.runs.length > 1 && (
+        <div className="space-y-1">
+          <div className="flex flex-wrap gap-1 border-b" role="tablist" aria-label="Model views">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.id}
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  '-mb-px border-b-2 px-3 py-1.5 text-sm',
+                  tab === t.id
+                    ? 'border-primary font-semibold text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">{TABS.find((t) => t.id === tab)?.question}</p>
+        </div>
+
+        {model && tab === 'try' && <Playground key={model.slug} model={model} />}
+
+        {tab === 'clips' && model && model.runs.length > 1 && (
           <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
             {model.runs.map((r) => (
               <button
@@ -320,14 +373,14 @@ export function ModelsView() {
           </div>
         )}
 
-        {model && !run && (
+        {tab === 'clips' && model && !run && (
           <p className="text-sm text-muted-foreground">
             This model has a card but no transcripts yet. Add <code className="font-mono">gold.jsonl</code> to
             its folder and rescan.
           </p>
         )}
 
-        {run && (
+        {tab === 'clips' && run && (
           <>
             <RunSummary
               run={run}
@@ -367,7 +420,15 @@ export function ModelsView() {
           </>
         )}
 
-        {model && <ErrorsSection key={`errors-${model.slug}`} model={model} models={models} />}
+        {model && (
+          <ErrorsSection
+            key={`errors-${model.slug}`}
+            model={model}
+            models={models}
+            view={(tab === 'overview' || tab === 'errors' ? tab : 'hidden') as ErrorsView}
+            onShowErrors={() => setTab('errors')}
+          />
+        )}
       </main>
     </div>
   )

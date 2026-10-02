@@ -621,7 +621,22 @@ function ClipView({ slug, set, clipId }: { slug: string; set: string; clipId: st
 
 // --- the section ---------------------------------------------------------------------------------
 
-export function ErrorsSection({ model, models }: { model: AsrModel; models: AsrModel[] }) {
+/** Which tab of the Models page the section is drawn for: the overview (the WER per set and
+ * where it comes from) or the errors (which word became which). It stays mounted across tabs,
+ * so the set and base picked on one are the ones the other opens on. */
+export type ErrorsView = 'overview' | 'errors' | 'hidden'
+
+export function ErrorsSection({
+  model,
+  models,
+  view,
+  onShowErrors,
+}: {
+  model: AsrModel
+  models: AsrModel[]
+  view: ErrorsView
+  onShowErrors: () => void
+}) {
   const slug = model.slug
   const [files, setFiles] = useState<ErrorFiles | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -743,11 +758,72 @@ export function ErrorsSection({ model, models }: { model: AsrModel; models: AsrM
 
   const updateQuery = (next: Partial<ErrorQuery>) => setQuery((current) => ({ ...current, ...next }))
 
+  if (view === 'hidden') return null
   if (!files) {
     return (
       <Panel>
-        <PanelHeading title="Errors" />
         <Spinner className="size-4" />
+      </Panel>
+    )
+  }
+
+  const pickers = (
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap gap-0.5 rounded-lg border bg-muted/40 p-0.5" role="group" aria-label="Set">
+        {files.files.map((f) => (
+          <Toggle key={f.set} on={f.set === set} onClick={() => setSet(f.set)}>
+            {setLabel(f.set)} <span className="font-mono tabular-nums opacity-70">{fmtWer(f.wer)}</span>
+          </Toggle>
+        ))}
+      </div>
+      <select
+        aria-label="Base model"
+        className={cn(SELECT, 'max-w-sm')}
+        value={base ?? ''}
+        onChange={(e) => setBase(e.target.value || null)}
+        disabled={bases.length === 0}
+        title={bases.length ? 'Compare against another model on the same set' : 'No other model has a file for this set'}
+      >
+        <option value="">{bases.length ? 'compare with: nothing' : 'no other model has this set'}</option>
+        {bases.map((s) => (
+          <option key={s} value={s}>
+            compare with: {models.find((m) => m.slug === s)?.name ?? s} ({s})
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+
+  if (view === 'overview') {
+    return (
+      <Panel className="space-y-4">
+        {files.files.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No error files for this model yet, so there is nothing to break down. The Errors tab imports them.
+          </p>
+        ) : (
+          <>
+            {pickers}
+            {breakdown ? (
+              <>
+                <Headline b={breakdown} />
+                {breakdown.attribution && (
+                  <AttributionCard a={breakdown.attribution} setName={setLabel(set ?? '')} />
+                )}
+                <OverlapBlock
+                  b={breakdown}
+                  active={query.overlap_bucket}
+                  onPick={(bucket) => {
+                    updateQuery({ overlap_bucket: bucket })
+                    if (bucket) onShowErrors()
+                  }}
+                />
+              </>
+            ) : (
+              <Spinner className="size-4" />
+            )}
+          </>
+        )}
       </Panel>
     )
   }
@@ -755,7 +831,7 @@ export function ErrorsSection({ model, models }: { model: AsrModel; models: AsrM
   return (
     <Panel className="space-y-4">
       <PanelHeading
-        title="Errors"
+        title="Error files"
         note="every aligned word pair, classified · a breakdown tags errors, it never forgives them"
       />
       <FileList files={files} onImport={importFiles} busy={uploading} />
@@ -767,47 +843,16 @@ export function ErrorsSection({ model, models }: { model: AsrModel; models: AsrM
         </p>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap gap-0.5 rounded-lg border bg-muted/40 p-0.5">
-              {files.files.map((f) => (
-                <Toggle key={f.set} on={f.set === set} onClick={() => setSet(f.set)}>
-                  {setLabel(f.set)}
-                </Toggle>
-              ))}
-            </div>
-            <select
-              aria-label="Base model"
-              className={SELECT}
-              value={base ?? ''}
-              onChange={(e) => setBase(e.target.value || null)}
-              disabled={bases.length === 0}
-              title={bases.length ? 'Compare against another model on the same set' : 'No other model has a file for this set'}
-            >
-              <option value="">{bases.length ? 'against: nothing' : 'no base for this set'}</option>
-              {bases.map((s) => (
-                <option key={s} value={s}>
-                  against: {models.find((m) => m.slug === s)?.name ?? s} ({s})
-                </option>
-              ))}
-            </select>
-          </div>
+          {pickers}
 
           {breakdown ? (
             <>
               <Headline b={breakdown} />
-              {breakdown.attribution && <AttributionCard a={breakdown.attribution} setName={setLabel(set ?? '')} />}
-              <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
-                <OverlapBlock
-                  b={breakdown}
-                  active={query.overlap_bucket}
-                  onPick={(bucket) => updateQuery({ overlap_bucket: bucket })}
-                />
-                <NumbersBlock
-                  b={breakdown}
-                  active={query.number === true}
-                  onPick={() => updateQuery({ number: query.number === true ? undefined : true })}
-                />
-              </div>
+              <NumbersBlock
+                b={breakdown}
+                active={query.number === true}
+                onPick={() => updateQuery({ number: query.number === true ? undefined : true })}
+              />
             </>
           ) : (
             <Spinner className="size-4" />
