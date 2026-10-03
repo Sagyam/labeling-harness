@@ -2768,3 +2768,40 @@ crosstalk. Most are a listener's backchannel in crosstalk, which the labels keep
 **Reversal:** delete the tag and `PARTICLES`, set `MINER_VERSION` back, and derive the error
 files again. Nothing else reads it. Re-scoring is undone by re-scoring under the older rules; the
 old WERs are in `audit_logs` and the hub's history.
+
+## D114 — A labelled clip can be reopened into triage, and accepting the seed never undoes an edit
+
+On 2026-10-03, after the crosstalk augmentation run (findings.md, *Augmentation on Flex*), the gold
+clips over 15% overlapped turned out to have mostly pre-D100 labels: 118 of 128, and 116 of
+those were the seed accepted as it stood. Under D95 they were allowed to keep only the audible
+voice. Two or more recognisers agree on words missing from 101 of them. The owner wants those
+clips back in triage, to add the second voice where it can be heard.
+
+- **`reopen_for_relabel`** (`app/services/labeling.py`), run by `scripts/reopen_labels.py` from a
+  JSON list, all of it or none. It opens a `review` task for a clip whose current label is
+  approved, seeded with the hypothesis that label was made from. It writes a `reopen` event and
+  an audit row. Nothing is deleted or superseded until the new decision lands as one more row
+  (invariant 2), and the clip keeps its pot and stays `labeled`.
+- **The task carries a `relabel` hazard**, with the suspect words as its detail. It therefore
+  cannot be screened, and triage shows what to listen for.
+- **The editor starts from the current label**, not the seed, so an earlier correction is
+  re-read, not lost.
+- **Accepting the seed is refused (409) while the clip's current label is `edited`**, for
+  `accept` and `bulk-accept` alike, at `record_decision`. Accepting means "the seed is right", so
+  on a reopened edited clip it would quietly undo the edit. Saving the text records it as edited
+  again. No ordinary task is affected, since a first decision has no earlier label.
+- **No new queue and no new status.** A reopened clip is a `review` task, so invariant 3's
+  three status fields are untouched.
+
+- **Outcome, the same day: the 101 clips were put back unchanged** (owner). Their crosstalk is
+  fast, the voices are equally loud, and a slip of the tongue cannot be told apart, so a second
+  listen found only a word or two and the owner judged it not worth a new label version. All 101
+  tasks were skipped with no label written. The mechanism stays for clips that are worth a
+  second listen.
+- **Product position (owner, 2026-10-03): in heavy crosstalk, an ASR that misses a few words is
+  acceptable.** Without a separate microphone feed, nobody can say for sure what was said there.
+  Gold's >15% bucket therefore stays as labelled. A model is not judged on writing a second voice
+  that the label leaves out, and its errors in that bucket are not chased word by word.
+
+**Reversal:** cheap. Skip the open `relabel` tasks; any label already written stays as history
+under invariant 2. Removing the guard and the editor change is a code revert.

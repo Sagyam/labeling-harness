@@ -25,7 +25,15 @@ from app.models import (
     Segment,
     SegmentLabel,
 )
-from app.models.enums import APPROVED_DISPOSITIONS, SPEAKERS_QUEUE, VERIFICATION_TIERS
+from app.models.enums import (
+    ACTIVE_TASK_STATUSES,
+    APPROVED_DISPOSITIONS,
+    SPEAKERS_QUEUE,
+    VERIFICATION_TIERS,
+)
+
+#: The hazard a reopened clip carries: it must be listened to, never screened (D114).
+RELABEL_HAZARD = "relabel"
 
 
 class LabelingError(RuntimeError):
@@ -167,6 +175,14 @@ def record_decision(
 
     final_text = decision.final_text
     if decision.disposition == "accepted_unchanged" and not per_speaker:
+        # Accepting means "the seed is right". On a reopened clip whose current label was edited,
+        # that would silently put the seed back over the annotator's correction (D114).
+        current = latest_label(session, task.segment_id)
+        if current is not None and current.disposition == "edited":
+            raise LabelingError(
+                f"task {task.id}: the clip's current label was edited, so accepting the seed"
+                " would undo that edit; save the text instead"
+            )
         if final_text is None and task.seed_hypothesis is not None:
             final_text = task.seed_hypothesis.text_raw
         if final_text is None:
@@ -360,3 +376,89 @@ def latest_label(
     return session.scalars(
         query.order_by(SegmentLabel.created_at.desc(), SegmentLabel.id.desc()).limit(1)
     ).first()
+
+
+def reopen_for_relabel(
+    session: Session,
+    segment: Segment,
+    *,
+    actor: str,
+    priority: float = 0.0,
+    details: str | None = None,
+    note: str | None = None,
+) -> AnnotationTask:
+    """Put a labelled clip back in triage for a second listen (D114).
+
+    Nothing is deleted or superseded: the current label stays current until the new decision is
+    recorded as one more row (invariant 2). The task carries the ``relabel`` hazard, so it cannot
+    be screened and triage shows ``details`` (what to listen for) beside it; its seed is the
+    hypothesis the current label was made from. Writes an ``annotation_events`` row with the
+    ``reopen`` action and an audit row.
+
+    Args:
+        session: Open session; the caller commits.
+        segment: The clip to reopen.
+        actor: Who reopened it, for the event and the audit row.
+        priority: Where it sorts in triage.
+        details: Shown in the triage tooltip; the suspect words, say.
+        note: Why the clip was reopened, kept on the task.
+
+    Raises:
+        LabelingError: The clip has no approved single-stream label, or already has an open
+            task.
+    """
+    from app.services.queue_builder import select_seed_hypothesis
+
+    label = latest_label(session, segment.id)
+    if label is None:
+        raise LabelingError(f"{segment.external_id} has no label to reopen")
+    if label.disposition not in APPROVED_DISPOSITIONS:
+        raise LabelingError(
+            f"{segment.external_id} is {label.disposition}; only an approved label is reopened"
+        )
+    active = session.scalar(
+        sa.select(AnnotationTask.id).where(
+            AnnotationTask.segment_id == segment.id,
+            AnnotationTask.status.in_(ACTIVE_TASK_STATUSES),
+        )
+    )
+    if active is not None:
+        raise LabelingError(f"{segment.external_id} already has an open task ({active})")
+    seed_id = label.seed_hypothesis_id
+    if seed_id is None:
+        seed = select_seed_hypothesis(list(segment.hypotheses))
+        seed_id = seed.id if seed else None
+    task = AnnotationTask(
+        segment_id=segment.id,
+        queue="review",
+        priority_score=priority,
+        seed_hypothesis_id=seed_id,
+        reason_jsonb={
+            "hazards": [RELABEL_HAZARD],
+            "hazard_details": {RELABEL_HAZARD: details} if details else {},
+            "relabel": {"label_id": label.id, "disposition": label.disposition, "note": note},
+        },
+        status="pending",
+    )
+    session.add(task)
+    session.flush()
+    session.add(
+        AnnotationEvent(task_id=task.id, segment_id=segment.id, annotator=actor, action="reopen")
+    )
+    session.add(
+        AuditLog(
+            entity_type="annotation_tasks",
+            entity_id=str(task.id),
+            action="reopen",
+            actor=actor,
+            old_values_jsonb={"label_id": label.id, "disposition": label.disposition},
+            new_values_jsonb={
+                "segment_id": segment.id,
+                "queue": "review",
+                "priority_score": priority,
+                "note": note,
+            },
+        )
+    )
+    session.flush()
+    return task

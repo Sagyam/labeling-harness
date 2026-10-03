@@ -107,6 +107,25 @@ def test_queue_speakers_script_reports_an_unknown_clip_to_reopen(
     assert "no clip" in capsys.readouterr().out
 
 
+def test_reopen_labels_script_refuses_a_list_naming_an_unknown_clip(
+    cli, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    listing = tmp_path / "suspects.json"
+    listing.write_text(json.dumps([{"segment_id": "no-such-clip", "priority": 1.0}]))
+    assert load("reopen_labels").main([str(listing)]) == 1
+    out = capsys.readouterr().out
+    assert "no clip 'no-such-clip'" in out
+    assert "nothing reopened" in out
+
+
+def test_reopen_labels_script_rejects_a_list_that_is_not_one(
+    cli, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    listing = tmp_path / "suspects.json"
+    listing.write_text(json.dumps({"segment_id": "x"}))
+    assert load("reopen_labels").main([str(listing)]) == 2
+
+
 def test_voiceprint_report_script_runs_on_an_empty_corpus(
     cli, capsys: pytest.CaptureFixture[str]
 ) -> None:

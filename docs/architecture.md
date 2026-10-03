@@ -269,6 +269,12 @@ Its tasks open in the multitrack editor, and their decisions go to the `speakers
 version without touching the clip's pot, pipeline status or single-stream label.
 The queue was closed on 2026-09-24 (D100): its open tasks were skipped. The editor is kept for roadmap F.
 
+A labelled clip can be sent back to triage for a second listen (D114): `scripts/reopen_labels.py`
+takes a JSON list of clips, each with a priority and what to listen for. It opens a `review` task
+carrying the `relabel` hazard, seeded with the hypothesis the current label was made from. The
+editor starts from the current label, and `record_decision` refuses to accept the seed over an
+edited label, so a reopened correction cannot be undone by a stray accept.
+
 ## Ingestion and Cloud ASR
 
 Ingestion runs inside the app, not in an upstream notebook: the annotator uploads an episode in the

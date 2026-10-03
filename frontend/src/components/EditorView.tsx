@@ -65,7 +65,10 @@ export function EditorView({
 }: EditorViewProps) {
   const segment = task.segment
   const seedHypothesis = segment.hypotheses.find((h) => h.id === task.seed_hypothesis_id)
-  const seedText = seedHypothesis?.text || segment.hypotheses[0]?.text || ''
+  // A reopened clip (D114) starts from its current label, so an earlier correction is what gets
+  // re-read, not thrown away for the seed.
+  const reopenedText = task.reason?.relabel ? segment.latest_label?.final_text : null
+  const seedText = reopenedText || seedHypothesis?.text || segment.hypotheses[0]?.text || ''
   // The karaoke line follows the hypothesis the annotator is editing, so the words lighting up
   // are the words in the box -- not another system's.
   const seedWords = seedHypothesis?.words ?? segment.hypotheses[0]?.words ?? []

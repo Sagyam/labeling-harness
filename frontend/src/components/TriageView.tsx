@@ -90,6 +90,7 @@ const HAZARD_LABEL: Record<string, string> = {
   speech_over_silence: 'text where nothing was heard',
   unaligned: 'text does not fit the audio',
   fuser_uncertain: 'the fuser said it was unsure',
+  relabel: 'reopened for a second listen; listen for',
 }
 
 /** Rows a screen may not touch: gold, and any clip whose fused seed tripped a gate. */

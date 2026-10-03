@@ -146,6 +146,8 @@ export interface QueueReason {
   hazard_details?: Record<string, string>
   /** Components with no measurement behind them -- shown as `--`, never as a confident 0. */
   unmeasured?: string[]
+  /** Set on a labelled clip reopened for a second listen (D114): the label it starts from. */
+  relabel?: { label_id: number; disposition: string; note: string | null }
 }
 
 export interface QueueRow {
