@@ -228,7 +228,7 @@ def harness_scorer(data: Path, work: Path) -> Callable[[Sequence[str], Sequence[
     2026-09-21 export uploaded (fold.py, normalize.py, normalization.yaml side by side), which
     is laid back out here because normalize.py looks for ../../../config/. error_mining.py,
     error_store.py and attribution.py travel with fold.py when the copy has them
-    (docs/WER-Breakdown.md); evalkit writes no error files without them.
+    (D110); evalkit writes no error files without them.
 
     Each `per_clip` count keeps the clip's folded `alignment`, so mining its errors aligns nothing
     again; `summarize` adds up everything else."""

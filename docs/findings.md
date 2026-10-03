@@ -281,11 +281,40 @@ the rest. Folded WER, mine-v3, S / D / I per 100 words:
 - **No rule changes a ranking**, so the rulebook matters for comparing with other people's
   numbers more than for choosing between our models.
 
+How much each tier forgives, vanilla-s1, pairs per 100 reference words (tags from mine-v4):
+
+| set | tier 1 | tier 2 | tier 3 | tier-4 tags (charged) | largest tags |
+|---|---|---|---|---|---|
+| gold | 3.36 | 0.70 | 0.93 | 1.03 | particle 0.57, repetition 0.22 |
+| val | 2.87 | 0.30 | 1.09 | 0.66 | particle 0.30, repetition 0.18 |
+| FLEURS | 6.40 | 3.80 | 0.13 | 0.85 | ba-va 0.26, sibilant 0.16 |
+| OpenSLR 54 | 5.33 | 2.54 | 0.05 | 1.31 | nasal-added 0.42, ba-va 0.27 |
+| Common Voice | 8.96 | 1.63 | 1.34 | 2.33 | nasal-added 1.28, ba-va 0.29 |
+| IndicVoices | 6.19 | 5.20 | 1.56 | 1.36 | particle 0.77, repetition 0.26 |
+| nepali_cs | 10.60 | 0.51 | 1.14 | 0.71 | particle 0.32, repetition 0.28 |
+
+Common Voice's `nasal-added` (1.28 of its 8.55) is mostly a reference that dropped a chandrabindu
+the model wrote: read against its tag, it is the reference's error.
+
 ## What crosstalk and noise cost, within episode and against the clean floor (2026-10-02)
 
 vanilla-s1's WER split by the attribution card (D111; fold-v3, mine-v2), points of each set's
 WER with 95% intervals from resampling its unit. SNR was measured on every public-set clip for
 this (`benchmarks/acoustics/`, about 18 s of CPU per hour).
+
+The crosstalk detector (D77) was run on every public-set clip first, clips per bucket:
+
+| | none | 0-5% | 5-15% | >15% |
+|---|---|---|---|---|
+| FLEURS | 724 | 2 | 0 | 0 |
+| Common Voice | 283 | 0 | 4 | 0 |
+| OpenSLR 54 | 13,339 | 48 | 65 | 157 |
+| IndicVoices | 2,634 | 63 | 42 | 90 |
+| nepali_cs | 1,446 | 81 | 106 | 132 |
+
+OpenSLR 54 is read speech, and all ten of nepali_cs's highest-overlap clips (77-99%) are from one
+video. Every flagged clip the owner heard was a second voice or noise, which is why SNR is
+measured beside crosstalk and the card puts each clip in one cell (D111).
 
 | | WER | crosstalk, within | crosstalk, floor | noise, within | noise, floor |
 |---|---|---|---|---|---|
@@ -322,24 +351,63 @@ this (`benchmarks/acoustics/`, about 18 s of CPU per hour).
 
 ## Fine-tuning fixed number formats and hid a loss behind them (2026-10-02)
 
-vanilla-s1 (03a) minus base Flex, from error mining's rows (fold-v3, mine-v1; the full table and
-the method are in [WER-Breakdown.md](WER-Breakdown.md)). "Without numbers" is the WER over every
-aligned pair that involves no number, resampled by each set's own unit:
+vanilla-s1 (03a) minus base Flex, from error mining's rows (D110; fold-v4, mine-v4, both runs
+scored again under D113). "Without numbers" is the WER over every aligned pair that involves no
+number, its reference words left out with it; each set's own unit resampled:
 
-| | minus base | number errors, minus base | without numbers, minus base |
-|---|---|---|---|
-| gold | −2.64 [−3.28, −2.01] | −284 | −2.04 [−2.66, −1.45] |
-| FLEURS | +1.14 [+0.47, +1.81] | +14 | +1.02 [+0.48, +1.56] |
-| OpenSLR 54 | −0.14 [−0.42, +0.13] | −218 | +0.34 [+0.07, +0.60] |
-| IndicVoices | −0.13 [−0.69, +0.36] | −501 | +1.26 [+0.93, +1.57] |
+| | WER | minus base | number errors, minus base | without numbers, minus base |
+|---|---|---|---|---|
+| gold | 11.12 | −2.67 [−3.30, −2.07] | −296 | −2.04 [−2.63, −1.47] |
+| val | 7.16 | −2.37 [−3.19, −1.47] | −290 | −1.94 [−2.79, −1.01] |
+| FLEURS | 11.89 | +1.22 [+0.56, +1.87] | +18 | +1.07 [+0.53, +1.61] |
+| OpenSLR 54 | 7.78 | −0.20 [−0.48, +0.08] | −199 | +0.23 [−0.03, +0.51] |
+| Common Voice | 8.55 | +0.17 [−0.90, +1.08] | −8 | +0.61 [−0.28, +1.23] |
+| IndicVoices | 12.31 | −0.28 [−0.87, +0.24] | −508 | +1.13 [+0.81, +1.46] |
+| nepali_cs | 11.92 | +0.66 [−0.49, +2.34] | +39 | +0.64 [−0.48, +2.49] |
 
 - **On OpenSLR 54 and IndicVoices the tie is two effects cancelling.** The fine-tune writes
-  numbers the way those references do, and loses 0.3 and 1.3 points on everything else. 03b's
-  public mean (10.70 against base's 10.34) understates what fine-tuning cost outside our domain.
-- **FLEURS's +1.14 is not numbers.** Number rows are about 0.1 point of it; clips that hold a
-  number carry about half of it, through their other words.
-- **On gold the gain grows with crosstalk**: −1.91 on clean clips to −4.98 [−9.00, −2.82] over
-  15% overlap.
+  numbers the way those references do (199 and 508 fewer number errors) and loses on everything
+  else: 1.13 points on IndicVoices, clear of zero, and 0.23 [−0.03, +0.51] on OpenSLR 54, which
+  under fold-v3 (+0.34 [+0.07, +0.60]) was clear of zero too. 03b's public mean (10.70 against
+  base's 10.34) understates what fine-tuning cost outside our domain.
+- **FLEURS's +1.22 is mostly not numbers.** Number rows are about 0.15 point of it. Clips whose
+  reference holds a number carry +1.63 [+0.17, +3.36] on a third of the words, about half the
+  gap, through their other words. Its top new substitutions are spelling variants
+  (`छनौट`/`छनोट`, `सामान्यतया`/`सामान्यतः`) and `802.11` read out as words.
+- **On gold the gain grows with crosstalk**: −1.91 on clips with none, −3.07, −4.29, then −4.91
+  [−8.56, −2.88] over 15%.
+- **Size.** vanilla-s1's rows over gold, val and the five public sets are 224,274 pairs, about
+  70 s of CPU to derive, each file under 1 MB; a breakdown with its bootstrap reads in well under
+  a second. The public sets' 13,732 errors are 9,567 distinct pairs, 8,137 of them seen once,
+  the top 500 covering 27%: errors are read by sampling within a class, not down a list.
+- **The number tag's false positives**, read off every word it tagged: `छ`, `एक`, `छौँ` ("we
+  are", 445 times) and `तिन` with a case ending (`तिनको`, "their", about 70). `fold.is_number`
+  was tightened to leave them out; bare `तिन` (`दुई तिन दिन`) stays three.
+
+## What folding forgave and charged, by subcase (2026-10-01)
+
+The first look at the aligned pairs, which led to error mining (D110) and fold-v4 (D112).
+vanilla-s1, fold-v3, per 100 reference words:
+
+| | gold | FLEURS | nepali_cs |
+|---|---|---|---|
+| forgiven: another script | 0.70 | 3.49 | 0.55 |
+| forgiven: spelling | 1.68 | 1.81 | 2.20 |
+| forgiven: split or joined words | 2.09 | 4.14 | 3.10 |
+| forgiven: number | 0.32 | 0.43 | 3.05 |
+| charged: number | 0.61 | 0.78 | 1.17 |
+| charged: cross-script, similar (>= 0.5) | 0.10 | 0.23 | 0.23 |
+| charged: cross-script, unlike | 0.58 | 0.58 | 0.68 |
+| charged: same script, similarity >= 0.75 | 1.39 | 3.85 | 1.20 |
+
+- **Each dataset's convention shows in its forgiven pairs**, so none has to be known in advance:
+  FLEURS writes English in Devanagari (`स्पेनिश`/``Spanish``).
+- **A similar Nepali word is usually grammar, not sound**: most close same-script substitutions
+  differ by a suffix (`भाषाहरूमा`/`भाषाहरू`, `रहेको`/`रहेका`). They are real errors, and a
+  near-miss class built on similarity alone would mislabel them as hearing. This is the 0.75 line
+  the attribution card's "similar Nepali word" uses.
+- The leaks both ways (letters by name charged, two-against-one merges forgiven) are the audit
+  above (*The fold was wrong both ways*), fixed by fold-v4.
 
 ## Same voice or not: similarity decides most pairs, the ear settles a narrow band (2026-09-28)
 

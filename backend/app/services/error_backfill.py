@@ -1,4 +1,4 @@
-"""Error files for a model imported before error mining existed (docs/WER-Breakdown.md, step 4).
+"""Error files for a model imported before error mining existed (D110).
 
 The rows are derived data, so a model that has its texts has its rows. Gold and val come from
 the imported runs -- each clip's reference snapshot and the model's text, as the run scored

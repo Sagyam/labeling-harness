@@ -1,4 +1,4 @@
-"""Error files derived for a model already imported (docs/WER-Breakdown.md, step 4)."""
+"""Error files derived for a model already imported (D110)."""
 
 from __future__ import annotations
 

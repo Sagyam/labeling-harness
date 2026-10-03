@@ -644,7 +644,7 @@ class ModelRescanOut(BaseModel):
 
 
 class ErrorFileOut(BaseModel):
-    """One of a model's error-mining files (docs/WER-Breakdown.md)."""
+    """One of a model's error-mining files (D110)."""
 
     set: str
     run: str

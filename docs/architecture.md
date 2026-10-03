@@ -88,7 +88,7 @@ The model's text never enters `asr_hypotheses`, so it cannot reach disagreement,
 export. The harness never runs a model to score it: the notebook transcribes on a GPU and the page
 scores the text with `fold.py`, exactly as the notebook does.
 
-**Error mining (D110, docs/WER-Breakdown.md).** No table: every aligned word pair of a run on a
+**Error mining (D110).** No table: every aligned word pair of a run on a
 set is a row in `data/models/asr/<slug>/errors/<set>.parquet`, written by `error_mining.write`
 (from a notebook's `evalkit`, an upload, or `scripts/mine_errors.py` over the imported runs) and
 read by `error_store` through DuckDB, one in-memory connection per request. A row carries the
@@ -101,6 +101,29 @@ clip's crosstalk and SNR buckets. The public sets' crosstalk and acoustics are m
 `benchmarks/acoustics/`; gold and val take theirs from the segment. Each breakdown carries the
 attribution card (D111): the points of WER crosstalk and each SNR bucket cost, within episode, and the
 rest split by kind of error.
+
+Identical matches and forgiven pairs are rows too: matches are every bucket's denominator, and a
+forgiveness can only be audited if it is kept. A pair is classified in three steps, each one
+question: its kind (S, D, I, or forgiven, and by which rule), each side's script, and whether a
+number is involved (`fold.is_number`: a token led by digits, or a number word followed only by a
+counter, the ordinal ending or a case ending; no finer split into dates or times, which would
+only add rules to maintain). A breakdown tags errors and never forgives them: folded WER is
+whatever `fold.py` says. Every block is reported beside the WER with its S/D/I split, and against
+a base model on the clips both scored, the set's own unit resampled:
+
+- **Crosstalk buckets** (`clip_classes.overlap_bucket`: none, 0-5%, 5-15%, >15%), measured on
+  every clip whatever a dataset claims about itself; per bucket clips, share of words and of
+  errors, and WER.
+- **Numbers.** Number formats are classified, never normalised beyond plain whole numbers (D84):
+  `छत्तीस` for `06:30` is misheard, not differently written. Number errors with their share, and
+  the WER over every pair that involves no number, as an extra column, never a replacement.
+- **The confusion table** (`error_store.confusion`): which reference word was written as which,
+  deletions and insertions, each with its share of its kind, optionally both ways or sorted by
+  growth against base. Short words top it without dominating the errors, so a row is read beside
+  its share.
+- **The attribution card** (D111).
+
+`07_Report` prints the first two per run and set; the Models page shows all four.
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an

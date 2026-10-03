@@ -1,5 +1,5 @@
 /**
- * Errors: every aligned word pair of a model's evaluations, classified (docs/WER-Breakdown.md).
+ * Errors: every aligned word pair of a model's evaluations, classified (D110).
  *
  * The clip table above answers "what went wrong here". This section answers it across clips, from
  * the model's error files (`errors/<set>.parquet`, written by the notebook or by

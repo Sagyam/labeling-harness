@@ -474,7 +474,7 @@ SETS = r'''
 SETS = tuple(evalkit.BENCHMARKS)  # every public set; name fewer to skip some
 LIMIT = 40 if SMOKE else None     # clips per set
 # Each set's crosstalk and SNR, measured once by scripts/measure_benchmark_overlap.py
-# (WER-Breakdown.md).
+# (D111).
 CONDITIONS = evalkit.fetch_conditions(OUT_REPO, TOKEN, FT / "conditions", SETS)
 
 
@@ -1460,7 +1460,7 @@ cp -r exports/<RUN_PREFIX>/<RUN_PREFIX>/<run>/cpu data/models/asr/<run>/   # mic
 ```
 Press **Rescan** on the Models page. The playground sidecar starts with `docker compose up -d`.
 Any other run's `harness/` folder imports the same way. Its `errors/` (every aligned word pair of
-gold, val and each public set, docs/WER-Breakdown.md) comes with it: the Models page's Errors
+gold, val and each public set, D110) comes with it: the Models page's Errors
 section reads it after the rescan.
 
 **Weights no longer needed.** Once the teacher is frozen, the `best/` folders of the runs that are

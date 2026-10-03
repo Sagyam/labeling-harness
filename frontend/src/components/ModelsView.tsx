@@ -10,7 +10,7 @@
  * the harness: Overview (how good is it, set by set, and where do its errors come from -- the
  * attribution card, D111), Clips (which gold and val clips did it get wrong; listen, read the
  * diff, `j`/`k` to the next), Errors (which word became which, across clips and sets, from the
- * model's error files: docs/WER-Breakdown.md) and Try it (the playground).
+ * model's error files: D110) and Try it (the playground).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'

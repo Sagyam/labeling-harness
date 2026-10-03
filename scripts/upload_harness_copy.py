@@ -5,7 +5,7 @@
 
 The notebooks never import the harness from GitHub: `ftkit.harness_scorer` lays out the flat
 copy in the HF dataset's `harness/` -- fold.py with its normalizer and table, and error mining
-(docs/WER-Breakdown.md) -- so a score is always made by the code the dataset was exported with.
+(D110) -- so a score is always made by the code the dataset was exported with.
 Run this after changing any of those files. It changes nothing else in the dataset, so
 `exported_at` and every notebook's `check_export` stay as they were.
 """

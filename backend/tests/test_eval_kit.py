@@ -533,7 +533,7 @@ def test_error_mining_knows_every_public_set_and_its_split_column():
     assert {b.name: b.by for b in evalkit.BENCHMARKS.values() if b.by} == error_mining.SET_BY
 
 
-# --- error mining (docs/WER-Breakdown.md, step 7) -----------------------------------------------
+# --- error mining (D110) ------------------------------------------------------------------------
 
 
 class _FoldScore(_Score):

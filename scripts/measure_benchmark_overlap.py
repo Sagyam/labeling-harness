@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Measure each public set's recording conditions once, for the WER breakdown (WER-Breakdown.md).
+"""Measure each public set's recording conditions once, for the WER breakdown (D111).
 
 Every clip goes through ingest's overlap detector (D77) and its acoustic meter (Brouhaha's SNR
 and C50, and bandwidth; D87). A set's crosstalk lands in data/benchmarks/overlap/<set>.parquet

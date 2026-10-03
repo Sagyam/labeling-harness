@@ -1,4 +1,4 @@
-"""How many points of a WER each recording condition costs (docs/WER-Breakdown.md, D111).
+"""How many points of a WER each recording condition costs (D111).
 
 A condition's cost is its attributable errors: the errors on its clips beyond what the same clips
 would have made without it, ``errors x (1 - 1/ratio)`` for the ratio of its error rate to a

@@ -253,7 +253,7 @@ class TestNumbers:
 
 
 class TestIsNumber:
-    """The number tag (WER-Breakdown.md, step 2). It decides no fold, so it moves no WER."""
+    """The number tag (error mining's class 3, D110). It decides no fold, so it moves no WER."""
 
     @pytest.mark.parametrize(
         "word",

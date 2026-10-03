@@ -263,7 +263,7 @@ else:
 BREAKDOWN_NOTE = """
 ## Where the errors are
 
-Blocks 1 and 2 of docs/WER-Breakdown.md, per run and set, as each run's notebook wrote them beside
+Blocks 1 and 2 of the breakdown (docs/architecture.md), per run and set, as each run's notebook wrote them beside
 its WER (nothing is recomputed here): the WER of each crosstalk bucket with its share of the
 errors, then the number errors' share and the WER over everything that is not a number. A run
 scored before error mining has no breakdown and is left out of these tables. The rows behind them

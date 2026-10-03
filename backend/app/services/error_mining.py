@@ -1,4 +1,4 @@
-"""Error mining: every aligned word pair of an evaluation, classified and kept (WER-Breakdown.md).
+"""Error mining: every aligned word pair of an evaluation, classified and kept (D110).
 
 A WER is read once; the pairs behind it are what explain it. This module turns a clip's
 reference and model text into one row per step of :func:`app.services.fold.align` -- matches

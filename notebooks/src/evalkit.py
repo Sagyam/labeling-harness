@@ -12,7 +12,7 @@ functions here, so a number in one notebook means what it means in another:
 Every split and set also keeps its errors: each aligned word pair, classified, in
 `harness/errors/<set>.parquet` with each clip's crosstalk and SNR, and a `breakdown` beside its
 WER (crosstalk buckets, numbers, the
-most common substitutions, deletions and insertions; docs/WER-Breakdown.md). Both come from the
+most common substitutions, deletions and insertions; D110). Both come from the
 harness's own `error_mining.py` and `error_store.py`, which the dataset's `harness/` copy carries
 beside fold.py, so the Models page reads exactly what the notebook wrote.
 
@@ -175,7 +175,7 @@ def pair(
     return out
 
 
-# --- error mining (docs/WER-Breakdown.md) --------------------------------------------------------
+# --- error mining (D110) -------------------------------------------------------------------------
 
 
 def _miner() -> tuple[Any, Any] | None:

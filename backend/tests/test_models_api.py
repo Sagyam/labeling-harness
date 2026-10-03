@@ -140,7 +140,7 @@ def test_the_class_axes_come_in_display_order(client) -> None:
     assert [a["name"] for a in axes if a["descriptive"]] == ["cmi"]
 
 
-# --- error files (docs/WER-Breakdown.md, step 4) -------------------------------------------------
+# --- error files (D110) --------------------------------------------------------------------------
 
 
 def _error_file(tmp_path, run: str, set_name: str) -> bytes:
@@ -206,7 +206,7 @@ def test_rescan_lists_the_error_files_a_folder_brought(
     assert [r.split(":")[0] for r in body["error_files_refused"]] == ["fresh/val.parquet"]
 
 
-# --- reading error files (docs/WER-Breakdown.md, step 5) -----------------------------------------
+# --- reading error files (D110) ------------------------------------------------------------------
 
 
 @pytest.fixture

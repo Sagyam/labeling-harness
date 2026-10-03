@@ -1144,7 +1144,7 @@ export interface ClipQuery {
   limit?: number
 }
 
-// --- error mining (docs/WER-Breakdown.md) ---------------------------------------------------------
+// --- error mining (D110) --------------------------------------------------------------------------
 
 export type ErrorKind = AlignOp['kind']
 export type Forgiven = 'spelling' | 'script' | 'number' | 'merge'

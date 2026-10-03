@@ -135,7 +135,7 @@ genre or crosstalk bar to filter; `j`/`k` walk the clips, `Space` plays and `r` 
 Below the clips, **Errors** reads the run's `errors/` folder (it comes with `harness/`; copy it
 with `cp -r`): every aligned word pair of gold, val and each public set, as WER by crosstalk
 bucket and by numbers against any other model, a confusion table of which word became which,
-and random samples of any class with their context (docs/WER-Breakdown.md). For a model imported
+and random samples of any class with their context (D110). For a model imported
 before error mining, `scripts/mine_errors.py <slug>` derives the files from its runs.
 
 ### Keyboard

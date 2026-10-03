@@ -1,4 +1,4 @@
-"""A model's error files, and the breakdown read from them (docs/WER-Breakdown.md).
+"""A model's error files, and the breakdown read from them (D110).
 
 Error-mining rows (:mod:`app.services.error_mining`) live beside the model they describe, in the
 folder the Models page already reads (D83)::
@@ -256,7 +256,7 @@ class _Clip:
 
 
 #: A substitution between two Devanagari words this alike is a "similar Nepali word": mostly a
-#: suffix (``रहेको``/``रहेका``), the line WER-Breakdown.md's table of 2026-10-01 drew. A tag on
+#: suffix (``रहेको``/``रहेका``), the line findings.md's subcases of 2026-10-01 drew. A tag on
 #: the card, never a judgment that the model heard it.
 SIMILAR = 0.75
 #: Each error's kind for the card (``attribution.KINDS``), as SQL over one row; the first that

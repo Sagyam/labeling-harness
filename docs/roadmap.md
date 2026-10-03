@@ -354,6 +354,20 @@ against the single-stream gold, and attribution by grading the model's output by
   on val is chosen on clean speech.
 - **A cost term** (latency, GPU, CPU inference, paid calls) in every decision rule. A small gain
   does not buy a large cost.
+- **Error mining, not yet built** (D110):
+  - *Near miss or different word*, for a substitution: did the model hear something close
+    (`cache`/`cage`) or unrelated? The rows carry `similarity` and both sides romanized, but the
+    threshold must be calibrated on pairs the owner judges by ear, and similarity alone mostly
+    finds grammar (findings.md, 2026-10-01).
+  - *Notes while reading*: marking a pair as convention or real error from the page needs its
+    own storage, and a decision on what a mark may change.
+  - *S/D/I by language* (Nepali, English, numbers) as a reported block; the rows carry script,
+    so it is a query.
+  - *Reference audit*: public-set clips where the models agree with each other and not with the
+    reference, top of the list heard. FLEURS, OpenSLR 54 and Common Voice references are the
+    prompt the speaker read, not what was said.
+  - `07_Report` prints the crosstalk and number blocks only; the confusion table and the
+    attribution card are on the Models page.
 
 ## F. Fiddling with the diarizer (priority 4, after B, C and G)
 

@@ -2629,7 +2629,7 @@ re-decides which stages were kept and would have to retrain the combined run.
 
 ## D110 — Error rows are Parquet files beside their model, read by DuckDB, not Postgres tables
 
-Error mining (docs/WER-Breakdown.md) keeps every aligned word pair of every evaluation,
+Error mining (architecture.md) keeps every aligned word pair of every evaluation,
 classified: one row per pair, matches included, about 225k rows a run across gold, val and the
 five public sets. They are stored as `data/models/asr/<slug>/errors/<set>.parquet`, one file per
 run and set, written only by `error_mining.write` and read only through DuckDB
@@ -2690,7 +2690,7 @@ WER each condition costs, and splits the rest by kind of error.
   model's within-episode points minus the other's, on the clips both scored, both resampled with
   the same draws of episodes. A clip's cell is its audio's, so only the errors differ. A row
   either model cannot measure is left blank, not zero.
-- **It tags errors, it never forgives them** (WER-Breakdown.md): the WER is unchanged, and the
+- **It tags errors, it never forgives them**, as all of error mining does: the WER is unchanged, and the
   card is an extra block beside it.
 
 The rest's split assumes a condition adds errors in the mix its clips already show; a kind whose
@@ -2707,9 +2707,9 @@ real errors (a two-against-one merge swallowing a word, `type को`/`type`; a 
 side only, `नेपालमा`/`Nepal`; Nepali function words matched to English by sound, `अनि`/`and`;
 colloquial rules rewriting names, `मेसी` -> `मेपछि`) and charged one word written two ways
 (letters by name, `B`/`बी`; `घन्टा`/`घण्टा`; visarga; `OK`/`okay`; `11th`/`एघारौँ`; English
-spellings the skeleton misread, `design`/`डिजाइन`). WER-Breakdown.md's earlier direction was
-"smaller folding, finer breakdown"; the owner asked whether to keep it or write a full rulebook
-for Nepali-English code-switched ASR instead. The answer was both: the over-folding was bugs and
+spellings the skeleton misread, `design`/`डिजाइन`). Error mining's first design (2026-10-01)
+had the direction "smaller folding, finer breakdown"; the owner asked whether to keep it or write
+a full rulebook for Nepali-English code-switched ASR instead. The answer was both: the over-folding was bugs and
 rules too broad, not too many rules, so fixing it shrinks the fold; the under-folding was a
 short list that cannot join two different words; and the ambiguous middle became tags.
 

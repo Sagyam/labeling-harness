@@ -1,4 +1,4 @@
-"""Error files beside a model, and the breakdown read from them (docs/WER-Breakdown.md, 4-5)."""
+"""Error files beside a model, and the breakdown read from them (D110)."""
 
 from __future__ import annotations
 

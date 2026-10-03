@@ -1,4 +1,4 @@
-"""Error mining's rows (docs/WER-Breakdown.md, step 1): one per aligned word pair, classified.
+"""Error mining's rows (D110): one per aligned word pair, classified.
 
 Everything the breakdown and the Errors panel report is a sum over these rows, so the test the
 rest rests on is the first one: the rows give back the score, clip by clip, on real transcripts.

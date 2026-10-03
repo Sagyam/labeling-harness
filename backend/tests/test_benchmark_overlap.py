@@ -1,4 +1,4 @@
-"""Crosstalk, SNR and room echo measured once on each public set (docs/WER-Breakdown.md)."""
+"""Crosstalk, SNR and room echo measured once on each public set (D111)."""
 
 from __future__ import annotations
 

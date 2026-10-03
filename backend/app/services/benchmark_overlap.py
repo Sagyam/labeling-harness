@@ -1,4 +1,4 @@
-"""Recording conditions on the public sets, measured once (docs/WER-Breakdown.md).
+"""Recording conditions on the public sets, measured once (D111).
 
 A set described as single-speaker read speech is checked, not assumed. Every clip goes through
 the crosstalk detector ingest uses (:mod:`app.services.overlap`, D77), and through the acoustic

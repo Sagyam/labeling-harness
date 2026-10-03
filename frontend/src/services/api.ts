@@ -540,7 +540,7 @@ export const api = {
     return postForm<PlaygroundResult>(`/models/${encodeURIComponent(slug)}/transcribe`, form)
   },
 
-  // --- error mining (docs/WER-Breakdown.md) ---
+  // --- error mining (D110) ---
 
   getModelErrors: (slug: string): Promise<ErrorFiles> => {
     return request<ErrorFiles>(`/models/${encodeURIComponent(slug)}/errors`)

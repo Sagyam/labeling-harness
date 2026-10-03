@@ -81,7 +81,7 @@ class ImportReport:
     #: Clips in a file that were not scored: no longer in the split, or no transcript to score.
     skipped: int = 0
     #: ``<slug>/<set>`` for each error-mining file found in a model's ``errors/``. They need no
-    #: import: they are read where they lie (docs/WER-Breakdown.md).
+    #: import: they are read where they lie (D110).
     error_files: list[str] = field(default_factory=list)
     #: ``<slug>/<file>: why`` for each one that cannot be read.
     error_files_refused: list[str] = field(default_factory=list)

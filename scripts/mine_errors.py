@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Derive a model's error-mining files from what the harness already holds (WER-Breakdown.md).
+"""Derive a model's error-mining files from what the harness already holds (D110).
 
 python scripts/mine_errors.py flex-2026-09-30-vanilla-s1     # one model
 python scripts/mine_errors.py --all                          # every imported model folder

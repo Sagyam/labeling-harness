@@ -1,5 +1,5 @@
 """The Models page's Errors section: a model's error-mining files and what they say
-(docs/WER-Breakdown.md).
+(D110).
 
 Every path read here is built from a model slug found in the database and a set name checked
 against :data:`app.services.error_mining.SETS`; every filter reaches DuckDB as a parameter.
