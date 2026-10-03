@@ -234,6 +234,14 @@ The defaults reproduce D96 exactly. Since 2026-09-30 it is wired into `03c_Flex_
 ablates one stage per run on Flex, and into every student's third stage, which switches on the
 recipe that won there (D105). The strengths in `ABLATION` are first guesses.
 
+**Status, 2026-10-03.** 03c ran speed, reverb, codec, gain, channel and crosstalk on Flex, and none
+cleared D109's bar. Speed came closest, at −0.07 on val. Noise was not run. Flex is already robust
+to the acoustic conditions, and what remains on gold is mostly vocabulary. The crosstalk stage's
+label interleaved two sentences with no speaker marker, and most heavy-crosstalk gold labels
+predate D100 (findings.md, *Augmentation on Flex: six stages, nothing kept, and why*). Noise is
+worth running only as insurance, judged on the noisy no-crosstalk gold bucket with a threshold set
+beforehand.
+
 **What the label says** (`CrosstalkConfig.label`, 2026-09-26). D96 kept the clip's own text, which
 teaches a model to leave the other voice out; since D100, gold writes everything said, so a
 single-stream model trained that way is charged a deletion for every word it was taught to drop.

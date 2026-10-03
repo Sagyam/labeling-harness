@@ -29,6 +29,148 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## Augmentation on Flex: six stages, nothing kept, and why (2026-10-03)
+
+`03c_Flex_Augment` on the 2026-09-30 export (14,835 train, 1,792 val, 965 gold clips), fold-v4.
+Each run is one stage on top of vanilla (SpecAugment included), on seed 0, from the same base
+weights, at LR 1e-5 for up to 6 epochs, on an A100. The keep rule (D109) needed val below 7.01:
+vanilla's better seed, 7.16, minus 0.15. The stage strengths in `ABLATION` were first guesses, so a
+stage that fails here has failed at one strength. WER is shown with S/D/I per 100 reference words.
+
+| run | stage | best epoch | val | gold |
+|---|---|---|---|---|
+| vanilla-s0 | — | 6 | 7.19 (4.74/1.35/1.09) | 11.04 (7.18/2.39/1.48) |
+| vanilla-s1 | — | 6 | 7.16 (4.71/1.36/1.09) | 11.12 (7.06/2.64/1.42) |
+| aug-speed-s0 | 0.9x/1.1x, p 0.5 | 5 | **7.09** (4.64/1.37/1.08) | **10.97** (7.07/2.42/1.48) |
+| aug-reverb-s0 | synthetic room, p 0.3 | 4 | 7.14 (4.72/1.35/1.07) | 11.18 (7.25/2.38/1.55) |
+| aug-codec-s0 | MP3/Opus/AAC/mu-law, p 0.3 | 5 | 7.19 (4.75/1.35/1.10) | 11.14 (7.19/2.46/1.49) |
+| aug-gain-s0 | ±6 dB, p 0.5 | 4 | 7.19 (4.71/1.41/1.07) | 11.20 (7.13/2.52/1.55) |
+| aug-channel-s0 | microphone response, p 0.3 | 5 | 7.22 (4.71/1.41/1.10) | 11.24 (7.28/2.53/1.43) |
+| aug-crosstalk-s0 | whole 2–6 s clip, both voices labelled, p 0.3 | 6 | 7.25 (4.80/1.29/1.15) | 11.31 (7.43/2.04/1.85) |
+
+**None was kept**, so no weights were uploaded. The combined run needs two kept stages and was
+skipped. The noise stage never ran: the Colab runtime stopped first. Every run's metrics, per-clip
+counts and gold and val transcripts are in `Sagyam/nepanglish-asr-flex-ft/flex-2026-09-30/aug-*-s0/`.
+
+**Gold holds the conditions these stages target, and the stages did not help on them.** Gold is
+acoustically harder than train, by share of audio: SNR below 15 dB is 25% of gold against 9% of
+train, and C50 below 40 dB is 29% against 11%. Below, each stage is scored on the clips it should
+help, paired against vanilla-s1, with 95% intervals from resampling episodes:
+
+| gold clips | clips (episodes) | base | vanilla-s0 / s1 | stage − vanilla-s1 |
+|---|---|---|---|---|
+| clean: no crosstalk, SNR 25+ dB, C50 55+ dB, 6.5+ kHz | 115 (43) | 7.12 | 4.70 / 4.74 | speed −0.18 [−0.40, −0.02], the only interval clear of zero in its favour |
+| reverberant, C50 below 40 dB, no crosstalk | 118 (37) | 10.69 | 8.68 / 8.43 | reverb +0.25 [−0.13, +0.70] |
+| noisy, SNR below 15 dB, no crosstalk | 159 (48) | 9.64 | 8.82 / 8.60 | channel +0.56 [+0.24, +1.00], codec +0.49 [+0.13, +0.93], reverb +0.40 [+0.04, +0.76] |
+| narrowband, below 4.5 kHz, no crosstalk | 33 (13) | 6.48 | 5.00 / 5.33 | codec −0.25 [−0.81, +0.34], channel −0.08 [−0.62, +0.29] |
+| crosstalk above 15% | 128 (28) | 34.14 | 28.29 / 29.24 | crosstalk +0.37 [−1.33, +1.99] |
+
+- **In the acoustic buckets, gold resolves changes of about half a point.** Reverb did nothing
+  for reverberant clips, and channel, codec and reverb made the noisy clips slightly worse. The
+  dose was one first-guess strength, but at that strength these stages are not a fix the corpus
+  needs.
+- **Gold is blind in two places.** Narrowband has 33 clips. The crosstalk bucket's two vanilla
+  seeds differ by 0.95 points, and its intervals span 2–3 points: the five other stages all land
+  between −1.11 and −0.26 there, which is within seed noise.
+- **Speed is the only stage with a sign of life**, −0.07 on val and −0.18 on clean gold. That is
+  about 1% relative, below D109's bar.
+
+**Why acoustic augmentation has little to fix.**
+- **The base model is already robust.** Flex is built on NVIDIA's
+  [canary-1b-v2](https://huggingface.co/nvidia/canary-1b-v2), trained on 1.7 M hours, including
+  web-video corpora (YTC, YODAS in Granary) and 36,000 h of non-speech audio. NVIDIA reports its
+  robustness to MUSAN noise. Bodhan AI's
+  [model card](https://huggingface.co/bodhan-ai/indic-transcribe-flex) does not say what the
+  Indic fine-tune added.
+- **Train already holds real versions of these conditions**: about 4.6 h below 15 dB SNR and
+  5.6 h below 40 dB C50. A synthetic copy adds little to the real thing.
+- **What is left on gold is mostly words.** The attribution card (*What crosstalk and noise cost*,
+  2026-10-02) charged noise −0.24 [−1.11, 0.31] points on gold within episodes. Of the 8.63 points
+  no condition explains, most are a different Nepali word. Augmenting the audio cannot teach
+  vocabulary.
+- **Not tested: whether SpecAugment is what makes the stages redundant.** Vanilla masks roughly a
+  quarter of the frames (10 time masks of up to 5%) and 2 frequency bands of up to 27 bins. The
+  frequency masks overlap with what channel and codec do, but nothing in SpecAugment resembles
+  additive noise or a room, so it cannot explain the reverb null. Settling it would take one run
+  with SpecAugment off (about 1.1 A100 hours); pretraining already explains the result.
+- **This is in line with the literature.** Augmentation pays most when training from scratch, on
+  little data, or for a condition missing from train. Speed perturbation's classic gain (Ko et
+  al., 2015) is a few percent relative, on hybrid systems trained from scratch.
+
+**What the crosstalk stage actually trained on.** The mixer was run over the whole train split
+with the run's settings, and examples were remade locally and heard by the owner.
+- **Clips mixed:** 10,245 of 14,835 train clips (69%) qualify: no measured overlap, diarized, and
+  with label words that spell the label. At p 0.3, about 21% of the clips in an epoch are mixed.
+  This adds no clips or hours: a mixed clip replaces its clean version for that epoch.
+- **The donors:** 86% of mixed clips got one donor, the rest two to four. Only 34% of donors came
+  from the target's episode.
+- **The overlap was sustained, not bursts.** The shortest donor allowed is 2 s, so the first donor
+  overshoots the drawn share, and with `overshoot: None` only the 60% cap applies. The median
+  share was 35% (10th–90th percentile 17–56%), against real overlap windows with a median of
+  0.42 s.
+- **The two voices were about equally loud,** within ±3 dB.
+- **The label interleaves the two clips' words by start time, with no marker between speakers.**
+  Two simultaneous sentences become one, with neither left intact. Token-level serialized output
+  training ([t-SOT](https://arxiv.org/abs/2202.00842)) interleaves the same way but adds a
+  channel-change token, so the streams can be separated again.
+- **The mixing was naive.** Random mixing like this underperforms overlap simulated from real
+  conversations' turn-taking ([2210.15715](https://arxiv.org/abs/2210.15715); roadmap C2).
+- **What the owner heard:** hard to follow, but intelligible after a few replays.
+
+**The crosstalk model tried to write the second voice and got it wrong.** In the >15% gold
+bucket, against the mean of the two vanilla seeds:
+
+| | vanilla mean | crosstalk-trained |
+|---|---|---|
+| substitutions | 16.1 | 17.8 |
+| deletions | 9.0 | 6.2 |
+| insertions | 3.8 | 5.6 |
+
+Deletions fell, as training on both voices asks, but the words it added were mostly wrong. The
+same shift shows at 5–15%. The architecture is not ruled out: Flex is an attention
+encoder-decoder, the family serialized output training was built for. What failed was the target
+format, the amount of simulated data, and the simulation.
+
+**The gold labels in heavy crosstalk are partly incomplete, and that cannot change the verdict.**
+- **When they were written:** 118 of the 128 clips above 15% have labels from before D100, 116 of
+  them the seed accepted unchanged.
+- **What they miss:** 183 distinct words that two or more recognisers wrote never appear in their
+  labels, against 5,688 label words.
+- **Whether the insertions were real:** each inserted word was checked against the three
+  recognisers' transcripts of the same clip.
+
+| run | insertions | a recogniser also wrote it | no recogniser did |
+|---|---|---|---|
+| vanilla-s0 | 228 | 67% | 33% |
+| vanilla-s1 | 201 | 67% | 33% |
+| aug-crosstalk-s0 | 318 | 60% | 40% |
+
+About half of the ~100 extra insertions are words a recogniser also heard, so possibly the
+second voice the label left out, and half are words none heard. Crediting every heard insertion
+to every run moves the crosstalk run about 0.8 points more than vanilla, which is still a tie.
+The 101 clips with suspect words were reopened for a second listen and put back unchanged the
+same day (D114). The crosstalk in them is fast and equally loud, a second listen found only a word
+or two, and without a separate microphone feed nobody can say for sure what was said. The owner's
+position: missing a few words in heavy crosstalk is acceptable.
+
+**Two fixes made along the way.**
+- **Speed ran out of GPU memory.** Batches were sized by the speed factor alone, ignoring padding to
+  whole seconds, so a batch of short slowed clips reached 1.2x the memory budget. Since
+  b053683, batches are sized by each clip's slowed, padded length.
+- **Codec is CPU-bound.** It spawns ffmpeg for each clip, which left the GPU about 58% busy, at
+  405x realtime against vanilla's 637x. In-process PyAV would fix that, if codec is ever run
+  again.
+
+**Verdict.** On Flex, acoustic augmentation at these strengths is not a lever for this corpus, and
+noise is expected to be null for the same reasons. It is worth running only as insurance for audio
+the corpus does not have yet, such as reels over music, and judged on the noisy no-crosstalk
+bucket (159 clips) with its threshold set before the run. Crosstalk would need a target format and a
+realistic simulation, which is roadmap D work, not an augmentation stage; and since missing a few
+words in heavy crosstalk is acceptable for the product (D114), it is not a priority.
+The lever for WER is vocabulary.
+
+---
+
 ## What gold still charges after fold-v4, and how far its labels can be trusted (2026-10-02)
 
 **Fast accepts.** Of the 966 current gold labels, 130 (13%) were submitted faster than the clip
