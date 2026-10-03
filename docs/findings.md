@@ -15,7 +15,8 @@ longer be re-derived from those files.
 What survives:
 - **The current models.** The 2026-09-30 runs (base, vanilla-s0, vanilla-s1) in
   `Sagyam/nepanglish-asr-flex-ft` under `flex-2026-09-30/`: bf16 weights for both vanilla seeds,
-  and every run's transcripts, metrics and error rows. Base and vanilla-s1 are also imported into
+  and every run's transcripts, metrics and error rows (the 03c stages and 03d blends without
+  weights). Base and vanilla-s1 are also imported into
   the harness. Every model before them was deleted on 2026-10-03, from the harness and the hub
   (the 2026-09-22 sweep, the 2026-09-17 model, the 2026-09-27 public-set runs, the 2026-09-24
   step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
@@ -26,6 +27,57 @@ What survives:
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## Blending vanilla with base: a = 0.75 chosen (2026-10-03)
+
+`03d_Flex_Blend` on the 2026-09-30 export, fold-v4. The source is vanilla-s1. 03c kept no stage,
+and its report never ran, so no `ablation.json` exists; the owner named vanilla the winner, and
+`SOURCE` was set to `vanilla-s1` for the run. The grid (0.25 / 0.5 / 0.75) and the rule were the
+ones fixed on 2026-09-27: choose on val the blend closest to base whose val WER is within 0.3
+points of the fine-tune's. Gold and the public sets were reported, never used to choose. The
+recipe check passed: at a = 1, all 1,891 float tensors matched vanilla-s1 exactly.
+
+| model | a | val | gold (965) | FLEURS | SLR54 | CV | IndicVoices | nepali_cs | public mean |
+|---|---|---|---|---|---|---|---|---|---|
+| base | 0 | 9.53 (5.68/2.63/1.21) | 13.79 (7.41/4.92/1.47) | 10.67 | 7.98 | 8.38 | 12.59 | 11.26 | 10.18 |
+| blend-025 | 0.25 | 8.19 (5.17/1.83/1.19) | 12.07 (7.19/3.40/1.48) | 10.56 | 7.96 | 8.61 | 12.43 | 10.86 | 10.08 |
+| blend-050 | 0.5 | 7.56 (4.87/1.51/1.18) | 11.35 (7.03/2.79/1.52) | 10.59 | 7.49 | 8.49 | 12.65 | 10.78 | 10.00 |
+| **blend-075 (chosen)** | **0.75** | **7.06** (4.61/1.39/1.06) | **10.96** (7.01/2.50/1.45) | 11.06 | **7.41** | **7.85** | **12.29** | 11.32 | **9.99** |
+| vanilla-s1 | 1 | 7.16 (4.71/1.36/1.09) | 11.12 (7.06/2.64/1.42) | 11.89 | 7.78 | 8.55 | 12.31 | 11.92 | 10.49 |
+
+Val and gold show S/D/I per 100 reference words.
+
+- **Only a = 0.75 qualified.** a = 0.5 costs +0.40 [+0.11, +0.71] on val against vanilla-s1, and
+  a = 0.25 costs +1.02 [+0.53, +1.57].
+- **On our data, blend-075 is not distinguishable from vanilla-s1:** val −0.10 [−0.30, +0.10],
+  gold −0.16 [−0.45, +0.15]. On no-crosstalk gold (674 clips) it is +0.05 [−0.14, +0.24]. The
+  largest bucket difference, −1.30 [−2.59, +0.33] above 15% crosstalk, is within that bucket's
+  seed noise (the two vanilla seeds differ by 0.95 there).
+- **On the public sets it takes back most of what fine-tuning lost.** Against base, vanilla-s1 is
+  +1.22 [+0.59, +1.95] on FLEURS and +0.68 [−0.46, +2.27] on nepali_cs; blend-075 is +0.39
+  [−0.10, +0.88] and +0.07 [−1.00, +1.50]. It is below base on SLR54 (−0.56 [−0.81, −0.32]),
+  Common Voice (−0.52 [−1.68, +0.51]) and IndicVoices (−0.30 [−0.77, +0.13]). Its public mean,
+  9.99, is the lowest of the five rows, though blend-050's 10.00 ties it.
+- **Lower a would recover more of FLEURS, but the rule does not allow it.** a = 0.5 gets FLEURS
+  and nepali_cs below base, at +0.40 on val.
+
+**Against 2026-09-27.** Then, the rule chose a = 0.5, which was within +0.05 of that fine-tune on
+val, and a = 0.75 beat it on val and gold. This time a = 0.5 is outside the tolerance, and
+a = 0.75 only ties. The numbers are not directly comparable: that fine-tune was the 2026-09-17
+model, trained on a smaller export and scored with fold-v3 on a different val and gold. One likely
+reason is that the larger export takes the fine-tune further from base (val 2.37 points below base
+now, 2.13 then), so going halfway back costs more. Not tested.
+
+**What was written.** Scores and transcripts of each blend, without weights, are in
+`Sagyam/nepanglish-asr-flex-ft/flex-2026-09-30/blend-0{25,50,75}/`, and `blend.json` names
+blend-075. 03e rebuilds its weights from base and vanilla-s1 and freezes it as the teacher.
+
+**One operational note.** The first attempt lost its Colab VM while it was downloading the 181
+gold and val recordings: `/content` was wiped, and the kernel log showed no out-of-memory kill.
+A plain rerun downloaded them in 15 s. The 2026-10-03 03c session was lost the same way, during
+the MUSAN download.
 
 ---
 
