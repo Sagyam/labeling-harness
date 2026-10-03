@@ -47,10 +47,10 @@ the notebooks are numbered in the order they run, and that order is the protocol
 | 7 | `07_Report` | E: every model in one table |
 
 Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
-val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-03:**
-03a–03d have run on the 2026-09-30 export. 03c kept no stage, so vanilla-s1 went into 03d, which
-chose blend-075 (findings.md, *Blending vanilla with base*). **Next:** 03e freezes blend-075 as the
-teacher, then 04 onward.
+val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
+03a–03e have run on the 2026-09-30 export. 03c kept no stage, so vanilla-s1 went into 03d, which
+chose blend-075, and 03e froze it as the teacher with an int8 CPU export (findings.md, *The
+teacher frozen*). **Next:** 04 onward.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 

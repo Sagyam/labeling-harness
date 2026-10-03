@@ -14,10 +14,11 @@ longer be re-derived from those files.
 
 What survives:
 - **The current models.** The 2026-09-30 runs (base, vanilla-s0, vanilla-s1) in
-  `Sagyam/nepanglish-asr-flex-ft` under `flex-2026-09-30/`: bf16 weights for both vanilla seeds,
-  and every run's transcripts, metrics and error rows (the 03c stages and 03d blends without
-  weights). Base and vanilla-s1 are also imported into
-  the harness. Every model before them was deleted on 2026-10-03, from the harness and the hub
+  `Sagyam/nepanglish-asr-flex-ft` under `flex-2026-09-30/`: bf16 weights for both vanilla seeds
+  and for the teacher, blend-075 (with its int8 CPU export), and every run's transcripts, metrics
+  and error rows (the 03c stages and the other 03d blends without weights). Base and vanilla-s1
+  are also imported into the harness, and blend-075's files are staged in
+  `data/models/asr/` for import. Every model before them was deleted on 2026-10-03, from the harness and the hub
   (the 2026-09-22 sweep, the 2026-09-17 model, the 2026-09-27 public-set runs, the 2026-09-24
   step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
   their only record.
@@ -27,6 +28,33 @@ What survives:
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## The teacher frozen: blend-075, int8 for the CPU (2026-10-04)
+
+`03e_Flex_Ship` on the 2026-09-30 export, fold-v4, Colab A100. It rebuilt blend-075 from base
+and vanilla-s1 (1,891 tensors at a = 0.75), wrote it as bf16, and scored the weights as written.
+`teacher.json` at the root of `Sagyam/nepanglish-asr-flex-ft` now names
+`flex-2026-09-30/blend-075` (commit 5954ba3). There was no smoke run: 03e's smoke mode needs a
+`blend.json` under `flex-2026-09-30-smoke/`, which no earlier smoke run left, and nothing is
+uploaded before the notebook's last cell.
+
+| weights | val (1,792) | gold (965) | loops |
+|---|---|---|---|
+| fp32, in 03d | 7.06 (4.61/1.39/1.06) | 10.96 (7.01/2.50/1.45) | |
+| **bf16, as shipped** | **7.08** (4.61/1.38/1.09) | **10.85** (6.99/2.42/1.44) | 0 / 0 |
+| int8 weight-only | 7.11 (4.63/1.40/1.08) | 10.86 (7.00/2.41/1.45) | 0 / 0 |
+
+- **bf16 changes nothing that matters.** Raw WER is 10.84 on val and 16.08 on gold. Against
+  vanilla-s1 the shipped weights are val −0.08 [−0.29, +0.12] and gold −0.27 [−0.60, +0.07], and
+  against base −2.45 and −2.94. Gold by crosstalk: none 6.42, 0–5% 10.33, 5–15% 17.26,
+  above 15% 27.60, the last holding 36% of gold's errors.
+- **int8 passed its rule** (val within +0.3 of bf16, no more loops) at +0.03 on val. Its text is
+  identical to bf16's on 1,535 of 1,792 val clips. It is the CPU export (`cpu/`, 1.3 GB).
+- **Speed, on Colab's CPU** (Xeon 2.2 GHz, 12 threads, no bf16 instructions; 8 val clips,
+  86.7 s): bf16 RTF 0.565 (83.1 ms/token), int8 RTF 0.395 (58.5 ms/token), so int8 is 1.43× faster,
+  close to the 1.5× measured locally on 2026-09-15. Only the ratio carries to the owner's machine.
 
 ---
 
