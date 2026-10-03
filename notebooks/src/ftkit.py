@@ -134,10 +134,16 @@ def bucket_batches(
     pad_to_s: float,
     shuffle: bool,
     seed: int = 0,
+    stretch: float = 1.0,
 ) -> list[list[int]]:
     """Index batches whose padded size (items x longest clip, rounded up to `pad_to_s`) fits
     `budget_s`. Sorting by duration keeps padding low; shuffling reorders whole batches and
-    jitters lengths slightly so the same clips do not always share a batch."""
+    jitters lengths slightly so the same clips do not always share a batch.
+
+    `stretch` sizes every clip as if it were that many times longer, as a clip slowed by speed
+    perturbation is, so the batch still fits after it. It is applied before the padding: a 2.9 s
+    clip slowed to 0.9x pads to 4 s, not 3 s, which is why shrinking the budget by the speed
+    factor is not enough (03c's speed run ran out of memory that way on 2026-10-03)."""
     rng = random.Random(seed)
     jitter = [rng.uniform(-0.3, 0.3) if shuffle else 0.0 for _ in rows]
     order = sorted(range(len(rows)), key=lambda i: duration(rows[i]) + jitter[i])
@@ -145,7 +151,7 @@ def bucket_batches(
     cur: list[int] = []
     longest = 0.0
     for i in order:
-        d = math.ceil(duration(rows[i]) / pad_to_s) * pad_to_s
+        d = math.ceil(duration(rows[i]) * stretch / pad_to_s) * pad_to_s
         if cur and ((len(cur) + 1) * max(longest, d) > budget_s or len(cur) >= max_items):
             batches.append(cur)
             cur, longest = [], 0.0

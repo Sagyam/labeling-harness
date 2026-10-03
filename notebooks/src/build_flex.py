@@ -317,7 +317,7 @@ print(f"largest micro-batch at {max_len / ftkit.SR:.0f} s x {max_t} tokens: {max
 N_PROMPT = len(PROMPT)
 SEED = 0
 AUG = None          # an augment.Augmenter, set per run by 03c; None trains on the clips as they are
-SPEED_MARGIN = 1.0  # 03c lowers it when speed perturbation can lengthen a clip past its batch's budget
+STRETCH = 1.0  # 03c raises it when speed perturbation lengthens clips: batches are sized as if slowed
 
 
 def make_augmenter(stages):
@@ -379,8 +379,8 @@ def evaluate(model, rows=None):
 
 def make_batches(epoch):
     # seed 0 keeps the order every earlier run used; another seed also reorders the batches
-    return ftkit.bucket_batches(splits["train"], budget_s=BUDGET_S * SPEED_MARGIN, max_items=256,
-                                pad_to_s=PAD_TO_S, shuffle=True, seed=epoch + 1000 * SEED)
+    return ftkit.bucket_batches(splits["train"], budget_s=BUDGET_S, max_items=256, pad_to_s=PAD_TO_S,
+                                shuffle=True, seed=epoch + 1000 * SEED, stretch=STRETCH)
 
 
 def train_run(recipe, seed, *, stages=None, references=None, baseline=None):
@@ -392,7 +392,7 @@ def train_run(recipe, seed, *, stages=None, references=None, baseline=None):
     is judged as it finishes and its weights are uploaded only if it clears the rule; without, the
     weights always go up, as soon as training ends. A failure frees the GPU before it is raised, so
     the next run's cell can start."""
-    global OUT, SEED, AUG, SPEED_MARGIN, optimizer
+    global OUT, SEED, AUG, STRETCH, optimizer
     run = f"{recipe}-s{seed}"
     if (row := uploaded(run)) is not None:
         print(f"{run}: already in {OUT_REPO}, skipped")
@@ -410,7 +410,7 @@ def train_run(recipe, seed, *, stages=None, references=None, baseline=None):
             history = fetch_json(f"{RUN_PREFIX}/{run}/history.json") or []
         else:
             SEED = seed
-            AUG, SPEED_MARGIN = make_augmenter(stages) if stages else (None, 1.0)
+            AUG, STRETCH = make_augmenter(stages) if stages else (None, 1.0)
             free_model()  # the probe's weights and optimizer, or an interrupted run's
             load_model(FLEX_DIR).train()
             optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.0, fused=True)
@@ -438,7 +438,7 @@ def train_run(recipe, seed, *, stages=None, references=None, baseline=None):
     except BaseException as e:
         failure, stopped = traceback.format_exc(), isinstance(e, KeyboardInterrupt)
     finally:
-        AUG, SPEED_MARGIN = None, 1.0
+        AUG, STRETCH = None, 1.0
         free_model()
     if stopped:
         raise KeyboardInterrupt(f"{run} stopped by hand outside training; the GPU is freed")
@@ -903,15 +903,15 @@ def noise_bank():
 
 
 def make_augmenter(stages):
-    """The run's `augment.Augmenter`, and how much a micro-batch's budget shrinks so that a clip
-    slowed to 0.9x still fits the batch the probe measured."""
+    """The run's `augment.Augmenter`, and how much longer its slowest clip can be (1 / 0.9 for
+    speed), which `make_batches` sizes every clip by so a slowed clip still fits the probe's budget."""
     cfg = augment.AugmentConfig.from_dict(stages)
     donors = None
     if cfg.crosstalk.p:
         pool = xtalk.ClipDonorPool if cfg.crosstalk.donor == "clip" else xtalk.DonorPool
         donors = pool(splits["train"])
     aug = augment.Augmenter(cfg, noise=noise_bank() if cfg.noise.p else None, donors=donors, fetch=fetch)
-    return aug, (min(cfg.speed.factors) if cfg.speed.p else 1.0)
+    return aug, (1 / min(cfg.speed.factors) if cfg.speed.p else 1.0)
 '''
 
 AUG_BASELINE = r"""

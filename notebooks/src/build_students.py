@@ -173,7 +173,7 @@ scored and paired, then the public sets.
 
 STAGES = r'''
 OUT = OUT_ROOT
-AUG, SPEED_MARGIN = None, 1.0  # stage 3's augmenter, and the budget's margin for a clip slowed to 0.9x
+AUG, STRETCH = None, 1.0  # stage 3's augmenter, and how much longer a slowed clip can be (batch sizing)
 monitor = ftkit.GpuMonitor().start()
 STAGE_NOTE = {
     "human": "fine-tuned on the verified train labels",
@@ -288,7 +288,7 @@ def winning_recipe():
 
 def train_stage(stage, run, recipe):
     """Train one stage and upload its best weights. Returns what `trained.json` records."""
-    global AUG, SPEED_MARGIN, optimizer
+    global AUG, STRETCH, optimizer
     load_student(None if stage == "human" else download_weights(f"{STUDENT}-human"))
     weights, pseudo_hours = None, 0.0
     if stage == "human":
@@ -302,16 +302,16 @@ def train_stage(stage, run, recipe):
     optimizer = make_optimizer(model)
     budget, items = probe(model, optimizer, rows)
     if recipe:
-        AUG, SPEED_MARGIN = make_augmenter(recipe)
+        AUG, STRETCH = make_augmenter(recipe)
 
     def make_batches(epoch):
         if weights is None:
-            return ftkit.bucket_batches(rows, budget_s=budget * SPEED_MARGIN, max_items=items,
-                                        pad_to_s=PAD_TO_S, shuffle=True, seed=epoch)
+            return ftkit.bucket_batches(rows, budget_s=budget, max_items=items, pad_to_s=PAD_TO_S,
+                                        shuffle=True, seed=epoch, stretch=STRETCH)
         # an epoch of the mixture: as many draws as it has clips, by weight, repeatable from the epoch
         drawn = distill.draw_epoch(weights, len(rows), seed=epoch)
-        batches = ftkit.bucket_batches([rows[i] for i in drawn], budget_s=budget * SPEED_MARGIN,
-                                       max_items=items, pad_to_s=PAD_TO_S, shuffle=True, seed=epoch)
+        batches = ftkit.bucket_batches([rows[i] for i in drawn], budget_s=budget, max_items=items,
+                                       pad_to_s=PAD_TO_S, shuffle=True, seed=epoch, stretch=STRETCH)
         return [[drawn[j] for j in b] for b in batches]
 
     epochs = 1 if SMOKE else EPOCHS["human" if stage == "human" else "distill"]
@@ -332,7 +332,7 @@ def train_stage(stage, run, recipe):
     result = ftkit.train(model, cfg=cfg, rows=rows, make_batches=make_batches, collate=collate,
                          loss_fn=loss_fn, evaluate=evaluate, save_best=lambda m: save_weights(m, OUT / "best"),
                          optimizer=optimizer, monitor=monitor, resume=resume)
-    AUG, SPEED_MARGIN = None, 1.0
+    AUG, STRETCH = None, 1.0
     evals = [h for h in result["history"] if "val_wer" in h]
     trained = {"best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None,
                "epochs": epochs, "stopped_by_hand": result["stopped_by_hand"], "train_clips": len(rows),
@@ -347,7 +347,7 @@ def run_stage(stage):
     """Train (unless already trained), score and upload one stage, then score it on the public
     sets. A stage that is wholly in OUT_REPO is skipped. A failure frees the GPU before it is
     raised, so another cell can run."""
-    global OUT, AUG, SPEED_MARGIN
+    global OUT, AUG, STRETCH
     run = f"{STUDENT}-{stage}"
     if uploaded(run) is not None and done_sets(run) >= set(SETS):
         print(f"{run}: already in {OUT_REPO}, skipped")
@@ -388,7 +388,7 @@ def run_stage(stage):
     except BaseException as e:
         failure, stopped = traceback.format_exc(), isinstance(e, KeyboardInterrupt)
     finally:
-        AUG, SPEED_MARGIN = None, 1.0
+        AUG, STRETCH = None, 1.0
         free_model()
     if stopped:
         raise KeyboardInterrupt(f"{run} stopped by hand outside training; the GPU is freed")
