@@ -50,7 +50,9 @@ Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every 
 val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
 03a–03e have run on the 2026-09-30 export. 03c kept no stage, so vanilla-s1 went into 03d, which
 chose blend-075, and 03e froze it as the teacher with an int8 CPU export (findings.md, *The
-teacher frozen*). **Next:** 04 onward.
+teacher frozen*). 04's overlap pass and 05 have labelled the first tranche: 79.5 h kept of 102.1 h
+at `MAX_OVERLAP_SHARE` 0.05 (findings.md, *The teacher labels the unlabelled corpus*). **Next:** the
+students' 100 h point, 06a–06f.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
@@ -198,7 +200,7 @@ step 4's curve says how much audio closes the gap.
      weights and counters to a scratch model repo after every epoch and continues from them.
    - **Order of the first run:** `04_PreDistill` (its overlap pass, on the corpus already cut),
      then `05_Teacher` with `SMOKE` (its log-prob masking and `output_scores` memory have never run
-     on a GPU), then the whole corpus, then the students.
+     on a GPU), then the whole corpus, then the students. Done up to the students, 2026-10-04.
 
 **Success bar.** The student's gold and val WER falls within Flex's episode-bootstrap CI, per clip
 class, folded and raw, split into S/D/I. Only then are its extras (streaming, timestamps,

@@ -31,6 +31,52 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## The teacher labels the unlabelled corpus: 79.5 h kept of 102.1 h (2026-10-04)
+
+`04_PreDistill`'s overlap pass, then `05_Teacher`, on the corpus cut on 2026-09-26 (183
+recordings, 27,961 clips, 102.1 h of speech). Teacher: blend-075, greedy, per-token log-probs.
+
+**Overlap** (the harness's detector, every recording): 76.1 h of speech has none, 14.1 h is
+0–5% overlapped, 8.7 h is 5–15% and 3.3 h is above 15%. Almost all of it is in the round tables:
+a `MAX_OVERLAP_SHARE` of 0.05 drops 22% of What_s_With, 15% of Setopati and 14% of The_Doers,
+and nothing of Sudheer_Sharma or TechPana. **The owner chose 0.05** (12.0 h), over the 0.15 that
+was recommended (3.3 h): blend-075's gold WER is 17.3% at 5–15% overlap against 6.4% on clean clips.
+
+**Decode.** 27,961 clips in about 27 minutes on an A100 (102 h, about 225× realtime), 95 looped.
+The 500-clip smoke run passed first (the log-prob masking and `output_scores` memory had never run
+on a GPU). Mean log-prob falls from about −0.03 on the solo channels to −0.15 on the films.
+
+**Filter**, cheapest rule first: 2,789 clips dropped for overlap, 33 for looping (the other loops
+were already gone with the overlap), 0 empty, 1 for rate, and 3,770 as the least confident 15%
+(log-prob cut −0.112). **Kept: 21,368 clips, 79.5 h**, in
+`Sagyam/nepanglish-asr/distill/pseudo/flex-2026-09-30--blend-075/`.
+
+| channel | speech h | kept h | kept |
+|---|---|---|---|
+| Sudheer_Sharma | 24.0 | 24.0 | 100% |
+| What_s_With | 34.6 | 22.9 | 66% |
+| NepalShow | 12.9 | 11.2 | 87% |
+| The_Doers | 11.7 | 8.4 | 73% |
+| Setopati | 10.3 | 7.7 | 75% |
+| TechPana | 2.7 | 2.7 | 99% |
+| movies (5) | 5.9 | 2.6 | 34–53% |
+
+- **The solo commentator is now 30% of the kept hours** (24.0 of 79.5), against 24% of the
+  speech. Every filter costs the round tables and nothing of him.
+- **The confidence cut does not punish code-switching.** Kept share by English share of words:
+  0% English 83%, under 15% 80%, 15–30% 73%, above 30% 73%. (The smoke run's 0% at above 30%
+  was 13 clips of one show.)
+- **The films lose half or more**, all to confidence. That is where the owner's worry about songs
+  and background music was; no music filter was added (2026-10-04), so the confidence cut is the
+  only one.
+- **The rate rule does almost nothing, and fixing it would not change that.** Train holds one empty
+  label, so the range's lower end is 0 and only too-fast output can fail it. A range of the
+  0.5th–99.5th percentiles of train's non-empty labels (2.02–10.05 tokens/s) would drop 72
+  more clips (0.16 h) after the confidence cut, and the ones inspected were slow, plausible speech
+  rather than skipped words. Left as built.
+
+---
+
 ## The teacher frozen: blend-075, int8 for the CPU (2026-10-04)
 
 `03e_Flex_Ship` on the 2026-09-30 export, fold-v4, Colab A100. It rebuilt blend-075 from base
