@@ -664,6 +664,19 @@ def plain_wer(refs: Sequence[str], hyps: Sequence[str]) -> float:
     return 100 * errors / max(words, 1)
 
 
+def plain_cer(refs: Sequence[str], hyps: Sequence[str]) -> float:
+    """Pooled plain CER in percent, over the characters of the plain text with its spaces.
+
+    Published Nepali results report it beside WER. A word split differently costs a plain WER
+    two words but a CER one space, so the two together tell hearing from spacing."""
+    errors = chars = 0
+    for ref, hyp in zip(refs, hyps, strict=True):
+        r = " ".join(plain_tokens(ref))
+        errors += edit_distance(r, " ".join(plain_tokens(hyp)))
+        chars += len(r)
+    return 100 * errors / max(chars, 1)
+
+
 def _audio(data: bytes) -> Any:
     """Any encoded clip as 16 kHz mono int16: libsndfile first, ffmpeg for what it cannot read."""
     import numpy as np
@@ -819,8 +832,8 @@ def score_benchmark(
 ) -> tuple[dict[str, Any], list[dict]]:
     """A public set's summary and its per-clip lines.
 
-    Summary: folded WER with S/D/I, raw WER and CER from the harness's scorer, the plain WER, and
-    the score per value of the set's `by` column. A line is `{id, group, ref, hyp, errors,
+    Summary: folded WER with S/D/I, raw WER and CER from the harness's scorer, plain WER and CER,
+    and the score per value of the set's `by` column. A line is `{id, group, ref, hyp, errors,
     words}`: the 2026-09-27 files' fields plus the counts a paired comparison needs. With
     `errors`, the set's error rows are written there, crosstalk from `overlap` and SNR from `snr`
     (clips missing from either are unmeasured on it), and its `breakdown` added to the summary."""
@@ -829,6 +842,7 @@ def score_benchmark(
     clips = score.per_clip(refs, texts)
     summary = score.summarize(clips)
     summary["plain_wer"] = plain_wer(refs, texts)
+    summary["plain_cer"] = plain_cer(refs, texts)
     summary["hours"] = sum(duration(r) for r in rows) / 3600
     if bench.by:
         values: dict[str, list[int]] = {}
@@ -930,8 +944,8 @@ def run_benchmarks(
         (folder / f"{name}.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
         print(
             f"{name}: WER {summary['wer']:.2f} (S {summary['sub']:.2f}  D {summary['del']:.2f}  "
-            f"I {summary['ins']:.2f}), plain {summary['plain_wer']:.2f}, {len(rows)} clips, "
-            f"{summary['x_realtime']:.0f}x realtime"
+            f"I {summary['ins']:.2f}), plain {summary['plain_wer']:.2f} / CER "
+            f"{summary['plain_cer']:.2f}, {len(rows)} clips, {summary['x_realtime']:.0f}x realtime"
         )
         print_breakdown(name, summary.get("breakdown"))
         summaries[name] = summary

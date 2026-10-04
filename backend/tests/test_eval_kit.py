@@ -371,6 +371,18 @@ def test_plain_wer_is_pooled_over_the_clips():
     assert evalkit.plain_wer(["Team, गयो।"], ["team गयो"]) == 0.0
 
 
+def test_plain_cer_counts_characters_of_the_plain_text_with_its_spaces():
+    # "ab cd" is 5 characters; "abcd" drops the space: one deletion, where plain WER charges 2
+    assert evalkit.plain_cer(["ab cd"], ["abcd"]) == pytest.approx(100 * 1 / 5)
+    assert evalkit.plain_wer(["ab cd"], ["abcd"]) == pytest.approx(100 * 2 / 2)
+    assert evalkit.plain_cer(["Team, गयो।"], ["team गयो"]) == 0.0
+
+
+def test_plain_cer_is_pooled_over_the_clips():
+    assert evalkit.plain_cer(["abc", "d"], ["abc", "x"]) == pytest.approx(100 * 1 / 4)
+    assert evalkit.plain_cer([""], ["a"]) == 100.0  # no reference characters: never a division by 0
+
+
 # --- the public sets ------------------------------------------------------------------------------
 
 
@@ -450,6 +462,7 @@ def test_a_public_set_is_scored_folded_plain_and_by_its_own_column():
     )
     assert summary["clips"] == 3 and summary["hours"] == pytest.approx(3 / 3600)
     assert summary["plain_wer"] == pytest.approx(100 * 2 / 11)
+    assert summary["plain_cer"] == pytest.approx(100 * 2 / 25)  # 7 + 7 + 11 characters
     assert summary["by"]["Conversation"]["wer"] == pytest.approx(50.0)
     assert set(summary["by"]) == {"Read", "Conversation"}
     assert lines[1] == {"id": "iv-00001", "group": "s1", "ref": "a b c d", "hyp": "a b x y",

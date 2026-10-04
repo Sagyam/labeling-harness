@@ -522,8 +522,10 @@ def public_table(runs, against="base"):
                 continue
             m, lines = got
             entry = {k: m[k] for k in ("wer", "raw_wer", "plain_wer", "sub", "del", "ins", "clips")}
+            entry["plain_cer"] = m.get("plain_cer")  # absent from a set scored before 2026-10-04
             entry["by"] = {k: v["wer"] for k, v in (m.get("by") or {}).items()}
-            text = f"  {run:<14} {line(m)}  plain {m['plain_wer']:.2f}"
+            cer = "" if entry["plain_cer"] is None else f" / CER {entry['plain_cer']:.2f}"
+            text = f"  {run:<14} {line(m)}  plain {m['plain_wer']:.2f}{cer}"
             if ref is not None and run != against:
                 entry["vs"] = evalkit.pair_benchmark(ref[1], lines)
                 d, lo, hi = entry["vs"]["all"]
@@ -727,8 +729,9 @@ and 03d pairs every blend against it.
 beside those numbers; a gap of more than a few tenths means a set is being read differently
 (another reference column, another resampler), and the comparison with findings.md is off.
 
-**Three numbers per set.** Folded WER with S/D/I (fold.py, as gold), raw WER, and plain WER (NFC,
-punctuation stripped, Latin lowercased: the normalisation published Nepali results use).
+**Three numbers per set.** Folded WER with S/D/I (fold.py, as gold), raw WER, and plain WER and
+CER (NFC, punctuation stripped, Latin lowercased: the normalisation published Nepali results use).
+A word split differently costs plain WER two words and CER one space, so read the two together.
 
 **Outputs**: `OUT_REPO/<RUN_PREFIX>/<run>/benchmarks/<set>.jsonl` (per clip) and `<set>.json`,
 uploaded as each set finishes, and `OUT_REPO/<RUN_PREFIX>/benchmarks.json`. A set already there is
