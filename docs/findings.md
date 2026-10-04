@@ -23,13 +23,92 @@ What survives:
   step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
   their only record.
 - **The students.** `Sagyam/nepanglish-asr-students` under `students-2026-09-30/`: 06a's two
-  Whisper stages (weights, transcripts, metrics, error rows), from 2026-10-04.
+  Whisper stages and 06c's two IndicConformer stages (weights, transcripts, metrics, error rows),
+  from 2026-10-04.
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## IndicConformer's 100 h point: a tie with Whisper at a seventh of its size (2026-10-04)
+
+`06c_Student_IndicConformer` on the 2026-09-30 export, A100 40 GB, the kit built at b423244, after
+a smoke run. The same three stages, mixture and teacher as 06a: stage 1 (*human*) from the `ne`
+checkpoint's encoder with fresh 1,024-token heads on the 14,834 verified train clips; stage 2
+(*distill*) from stage 1 on those plus blend-075's 21,368 pseudo-labels (79.5 h), half of each
+epoch's draws human; stage 3 skipped itself. One seed. Weights, transcripts and error rows are in
+`Sagyam/nepanglish-asr-students` under `students-2026-09-30/indicconformer-{human,distill}/`.
+Folded WER is fold-v4.
+
+**Training.** Stage 1, val by epoch: 99.20 (blank), 68.74, 34.64, 27.24, 22.11, 19.82, 18.20, 17.26,
+15.92, 15.57, 14.99, 14.88, 14.34, 14.30, 14.00, 13.98, 13.88, 13.67, **13.65**, 13.67: all 20
+epochs, best at 19, flat for the last five as the learning rate decayed (about 1.6 h). Stage 2:
+13.75, 12.47, 12.39, 11.99, 11.68, 11.59, 11.35, 11.23, 10.97, 10.98, 10.91, **10.88**: all 12
+epochs, 0.09 over the last three (about 2.5 h). Both ran at about 800× realtime. The fresh heads
+spent one epoch emitting only blanks, against two to three in step 0. No loops in the final
+scores.
+
+| | val | gold | gold, no crosstalk | gold, >15% crosstalk |
+|---|---|---|---|---|
+| teacher (blend-075) | 7.08 | 10.85 | | |
+| IndicConformer, stage 1 | 13.65 (9.13 / 3.75 / 0.78) | 18.42 (11.65 / 5.92 / 0.84) | 14.12 | 35.48 |
+| IndicConformer, stage 2 | **10.88** (7.41 / 2.56 / 0.92) | **15.64** (10.04 / 4.57 / 1.03) | 11.40 | 32.26 |
+| Whisper, stage 2 (06a) | 9.43 (6.67 / 1.50 / 1.25) | 15.02 (10.53 / 2.67 / 1.82) | 10.57 | 31.56 |
+
+- **Stage 2 minus stage 1: val −2.77 [−3.50, −2.14], gold −2.77 [−3.11, −2.43]**, below zero in
+  every clip class. Whisper's was −1.26 and −2.30.
+- **It closed 37% of the gap to the teacher on gold** (+7.57 → +4.79 [+4.29, +5.30]) and 42% on
+  val (+6.57 → +3.80). Whisper's was 36% and 35%.
+- **Against Whisper's stage 2, paired on the same clips: gold +0.62 [−0.32, +1.58] on 965 clips
+  (158 episodes), val +1.45 [−0.86, +3.27] on 1,792 (23 episodes).** Both intervals contain zero.
+  Computed from the two runs' `per_clip.json` with episodes resampled, outside `evalkit`, which
+  pairs a stage only with the teacher and its own earlier stages.
+- **Its gain is largest where there is most English**: gold CMI 30+ −3.30 [−4.39, −2.31] against
+  CMI 0 −1.97 [−2.83, −0.85], the reverse of Whisper's. Each student gained most where it was
+  weakest: Whisper's encoder is weak on Nepali, this one's has heard little English.
+- **What separates it from Whisper is deletions, and they are in crosstalk.** Gold deletions 4.57
+  against 2.67, while its substitutions (10.04 against 10.53) and insertions (1.03 against 1.82)
+  are lower. By overlap bucket its deletions are 2.23 against 1.37 on clips without crosstalk and
+  13.84 against 7.65 above 15%: where two people talk, the transducer drops the words Whisper
+  attempts.
+- **Val flatters it less than Whisper**: val to gold +4.8 against +5.6 (stage 2), as step 0 found
+  (+5 against +8).
+- **Gold RTF 0.0013 for 121M parameters**, against Whisper-turbo's 809M.
+
+**Public sets**, folded WER, then plain WER and plain CER as in 06a:
+
+| set | stage 1 folded | stage 2 folded | difference [95% CI] | plain WER, 1 → 2 | plain CER, 1 → 2 | Whisper stage 2 folded |
+|---|---|---|---|---|---|---|
+| FLEURS | 17.56 | **15.02** | −2.54 [−3.09, −1.98] | 29.89 → 29.08 | 13.48 → 13.76 | 21.59 |
+| SLR54 | 8.30 | **6.23** | −2.07 [−2.31, −1.83] | 15.59 → 14.55 | 5.33 → 5.47 | 20.36 |
+| Common Voice | 13.03 | **11.46** | −1.57 [−2.53, −0.55] | 27.05 → 27.28 | 9.45 → 9.34 | 15.36 |
+| IndicVoices | 17.86 | **15.04** | −2.82 [−3.18, −2.47] | 33.73 → 30.89 | 19.51 → 17.72 | 22.96 |
+| nepali_cs | 22.37 | 18.85 | −3.51 [−4.04, −3.11] | 35.33 → 32.02 | 18.92 → 17.21 | **16.48** |
+
+Public mean, folded: 15.82 → 13.32 (Whisper's stage 2: 19.35; the teacher's: 9.99).
+
+- **The same CER pattern as Whisper's.** On FLEURS, SLR54 and Common Voice the folded WER fell
+  1.6–2.5 points and CER did not move: segmentation and spelling conventions from the teacher's
+  labels. On IndicVoices and nepali_cs CER fell 1.7–1.8 points, so there it heard better too.
+- **It beats Whisper on four of five public sets, by 4–14 points, and loses on nepali_cs**, the
+  code-switched lectures, again the English its encoder has barely heard.
+- **The four wins are not clean evidence.** AI4Bharat's pretraining data for the `ne` checkpoint
+  may include the training splits of these sets (IndicVoices especially; SLR54 is Nepali read
+  speech of the same kind); this was not checked. A 14-point lead on SLR54 reads more like
+  familiarity with the set than better hearing. Gold, which no pretraining has seen, is the
+  comparison to quote.
+
+**What this does not show.**
+- The same learning-rate-restart confound as 06a: stage 2 adds the pseudo-labels and twelve more
+  epochs from a re-warmed schedule. Stage 1 had plateaued for five epochs, so the restart is an
+  unlikely explanation for −2.77 on gold, but the control was not run.
+- One seed, as for Whisper.
+- Whether the crosstalk deletions are a transducer property or this run's: they were not examined
+  clip by clip.
 
 ---
 
