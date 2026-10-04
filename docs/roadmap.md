@@ -465,6 +465,29 @@ Nepali TTS reads aloud. Either way the deployed model stays one file with a gree
 our labelling convention: keep λ modest and our labels in the text. Scoring Flex's word-pieces from
 a word-level model is the fiddly part.
 
+**A twist, if the formal text disappoints.** Let step 2 compare two text sets: (a) our train labels
+alone, and (b) those plus news and Wikipedia. If (b) gains little over (a), or drags towards formal
+spelling, the likely cause is register: people do not talk like the news. Then try (c): the same
+formal paragraphs rewritten by an LLM into colloquial Nepanglish, steered by what
+`docs/sociolinguistics.md` measured, and rescored the same way.
+
+- **One rewrite, not random swaps.** A word that switches is mostly an everyday noun whose formal
+  Nepali nobody says (`दूरभाष` → *phone*); 68% of switches are one word; the English keeps its
+  Nepali frame (`मा`, `को`, `हरू` after it, a form of `गर्नु` to make it a verb: `use गर्नुभयो`,
+  never *used*); *so* opens 19% of sentences that open in English. A random word-for-word swap
+  breaks all of these, so making the text colloquial and switching it are one step, given those
+  rates and a few train labels (never gold or val) in our spelling.
+- **The analytics check the output as well as steer it.** English share, single words against
+  long runs, suffixed English stems, the `गर्नु` rate and sentence openers, measured on the
+  synthetic text against the labels; reject a batch that drifts, and any Hindi (`है`, `में`,
+  `नहीं`), which LLMs mix into Nepali.
+- **The English comes from the source's topics**, not from the 7,059 English words the corpus
+  already switches to: Flex's gap is rare English it has never heard, and a list it already has
+  teaches it nothing.
+- The rewrite is an inference call: a route and an `llm_requests` row if it runs in the harness,
+  otherwise the prompt and model kept with the text so the set can be rebuilt. (c) goes through
+  the same 8-gram decontamination as (a) and (b).
+
 ### G2. Low-risk fold rules
 
 **Why.** On the public sets about 0.65 of the fine-tuned model's 1.18 points of number errors are
