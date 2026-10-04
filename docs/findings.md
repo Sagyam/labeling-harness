@@ -22,12 +22,103 @@ What survives:
   (the 2026-09-22 sweep, the 2026-09-17 model, the 2026-09-27 public-set runs, the 2026-09-24
   step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
   their only record.
+- **The students.** `Sagyam/nepanglish-asr-students` under `students-2026-09-30/`: 06a's two
+  Whisper stages (weights, transcripts, metrics, error rows), from 2026-10-04.
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## Whisper's 100 h point: teacher labels cut gold by 2.3, and CER says where (2026-10-04)
+
+`06a_Student_Whisper` on the 2026-09-30 export, A100 40 GB, the kit built at 5d8a768. Stage 1
+(*human*): Whisper-large-v3-turbo on the 14,817 verified train clips. Stage 2 (*distill*): stage
+1's weights on those clips plus blend-075's 21,368 kept pseudo-labels (79.5 h, 11 channels), half
+of each epoch's draws human. Stage 3 skipped itself, since 03c kept no augmentation. One seed.
+Weights, transcripts and error rows are in `Sagyam/nepanglish-asr-students` under
+`students-2026-09-30/whisper-{human,distill}/`. Folded WER is fold-v4.
+
+**Training.** Stage 1, val by epoch: 15.86, 12.98, 11.51, 10.89, 10.81, **10.69**, 10.70, stopped
+by D109's rule after epoch 7 (about 2.4 h). Stage 2: 11.53, 10.50, 10.20, 9.78, 9.51, **9.43**,
+ending at its 6-epoch cap while still falling (about 3.2 h). Its first epoch was worse than stage 1
+because the learning rate warms up to its peak again; it recovered by epoch 2. No loops anywhere.
+
+| | val | gold | gold, no crosstalk | gold, >15% crosstalk |
+|---|---|---|---|---|
+| teacher (blend-075) | 7.08 | 10.85 | | |
+| Whisper, stage 1 | 10.69 (7.76 / 1.54 / 1.39) | 17.32 (12.42 / 2.88 / 2.03) | 12.54 | 34.53 |
+| Whisper, stage 2 | **9.43** (6.67 / 1.50 / 1.25) | **15.02** (10.53 / 2.67 / 1.82) | 10.57 | 31.56 |
+
+- **Stage 2 minus stage 1: val −1.26 [−1.70, −0.90], gold −2.30 [−2.87, −1.75].** The gain is
+  larger on gold, whose voices are held out, than on val, which shares voices with train: the
+  teacher's audio brings new voices, and that is where it pays.
+- **It closed 36% of the gap to the teacher on gold** (+6.47 → +4.17 [+3.34, +5.01]) and 35% on
+  val (+3.61 → +2.35).
+- **Most of it is substitutions** (gold 12.42 → 10.53): vocabulary.
+- **On gold it is largest where the speech is pure Nepali**: CMI 0 −4.04 [−5.38, −2.32] against
+  CMI 30+ −1.53. Step 0 found Whisper's gap to Flex was largest there.
+- **Two-speaker clips gain −3.63**, single-speaker clips −1.89. Clips under 5 s gain nothing
+  (+0.73 [−1.83, +3.46]).
+- **Crosstalk is a larger share of what is left**: clips above 15% overlap carry 30% of gold's
+  errors.
+
+**Public sets.** Folded WER, then plain WER and plain CER (NFC, punctuation removed, Latin
+lowercased; the CER is over that text with its spaces, `evalkit.plain_cer`, 53a1ffa):
+
+| set | stage 1 folded | stage 2 folded | difference [95% CI] | plain WER, 1 → 2 | plain CER, 1 → 2 |
+|---|---|---|---|---|---|
+| FLEURS | 26.21 | 21.59 | −4.62 [−5.28, −3.98] | 37.56 → 34.53 | 14.21 → 14.45 |
+| SLR54 | 25.58 | 20.36 | −5.21 [−5.60, −4.82] | 35.97 → 30.77 | 11.17 → 9.97 |
+| Common Voice | 19.43 | 15.36 | −4.07 [−5.86, −2.36] | 31.70 → 29.73 | 9.71 → 9.78 |
+| IndicVoices | 27.03 | 22.96 | −4.07 [−4.54, −3.63] | 42.27 → 38.54 | 21.50 → 20.41 |
+| nepali_cs | 16.85 | 16.48 | −0.37 [−1.37, +1.11] | 29.20 → 28.64 | 16.19 → 15.91 |
+
+Public mean, folded: 23.02 → 19.35 (the teacher's, measured in fp32 in 03d, is 9.99).
+
+- **On FLEURS and Common Voice the WER gain is not a hearing gain.** Folded WER fell 4–5 points
+  and CER did not move. The student learned to segment and spell words as these references do,
+  conventions the teacher's labels carried, not to get more characters right. **On SLR54 and
+  IndicVoices CER fell as well** (about 1.1–1.2 points), so there it heard better too.
+- **The public sets gained more than gold**, against the expectation that conversational
+  pseudo-labels would help formal read speech least. The CER column is what explains it.
+
+**Against published fine-tunes**, plain WER / plain CER, scored here with the same function on
+the outputs `sumanpaudel1997/nepali-asr-benchmark` publishes (FLEURS 724 clips, Common Voice 289):
+
+| model | FLEURS | Common Voice |
+|---|---|---|
+| Whisper, stage 1 | 37.56 / 14.21 | 31.70 / 9.71 |
+| Whisper, stage 2 | **34.53** / 14.45 | **29.73** / 9.78 |
+| published Whisper-turbo | 34.99 / 12.95 | 38.95 / 9.93 |
+| published Whisper-medium | 34.41 / 12.14 | 39.76 / 9.90 |
+| published MMS-1B | 34.40 / 9.69 | 52.97 / 11.81 |
+
+- **Level on FLEURS WER, about 2 CER points behind** the published Whispers and 4.8 behind MMS-1B.
+- **Far ahead on Common Voice WER, level on CER.** Their word errors there are mostly spacing
+  (`बोल्नता` for `बोल्न त`, *bolnata* for *bolna ta*): plain WER charges a join two words, CER one
+  space. A plain-WER comparison of Nepali systems partly measures segmentation conventions;
+  report CER beside it.
+- Their SLR54 split (8,894 clips) is not ours, and they trained on SLR54, so it is left out.
+
+**What this does not show.**
+- Stage 2 adds the pseudo-labels *and* restarts the learning-rate schedule for six more epochs, so
+  the gain is not attributed to the labels alone. Stage 1 had plateaued (10.81, 10.69, 10.70),
+  which makes the restart an unlikely explanation for −2.3 on gold, but the control (stage 1's
+  weights, human labels only, the same restart) was not run.
+- One seed. The seed gap was measured on Flex only (val 0.02).
+- Stage 2 was still improving at its cap, so 100 h of pseudo-labels is not Whisper's ceiling.
+
+**Operational notes.**
+- A full val pass took 82–89 s; the speed check's projection of 20.7 min decodes with the untrained
+  model and is far too high (as step 0 found).
+- After epoch 1's resume upload in stage 2, the GPU monitor printed `nan` for one epoch, then
+  recovered. Training was unaffected.
+- The report prints classes holding one or two clips (`snr=unmeasured`, `speakers=none`) as ±60 or
+  ±100; they should be hidden below a minimum size.
 
 ---
 

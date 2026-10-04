@@ -51,8 +51,11 @@ val by a rule fixed before the result. Each notebook has a smoke switch. **Statu
 03a–03e have run on the 2026-09-30 export. 03c kept no stage, so vanilla-s1 went into 03d, which
 chose blend-075, and 03e froze it as the teacher with an int8 CPU export (findings.md, *The
 teacher frozen*). 04's overlap pass and 05 have labelled the first tranche: 79.5 h kept of 102.1 h
-at `MAX_OVERLAP_SHARE` 0.05 (findings.md, *The teacher labels the unlabelled corpus*). **Next:** the
-students' 100 h point, 06a–06f.
+at `MAX_OVERLAP_SHARE` 0.05 (findings.md, *The teacher labels the unlabelled corpus*). 06a has run
+its 100 h point: Whisper's gold fell from 17.32 to 15.02 with the pseudo-labels (findings.md,
+*Whisper's 100 h point*). **Next:** 06c, IndicConformer, when there is GPU time: upload the kit
+built at 53a1ffa or later (plain CER) and smoke it first. Before it, hide report classes with one
+or two clips.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
