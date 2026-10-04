@@ -441,6 +441,31 @@ and the two scores are added: `Flex + λ · text model + a per-word bonus`. Noth
 changes. It needs beam search (4–8 hypotheses), because greedy decoding leaves the text model
 nothing to re-rank.
 
+**Pilot first: can a small LLM judge pick a better transcript?** (owner, 2026-10-04.) Before
+building any text model, ask the cheapest question: beam search writes 8 transcripts, and a local
+LLM that fits in 40 GB picks one. It picks, it never rewrites, so it cannot invent words that
+were not said. It runs once, after the students (B), on Flex and every student alike: the teacher
+and its labels stay as they are, so no student is judged against a moved target. Fusion (step 3)
+is tried only if the pilot shows promise.
+- **Measure the headroom first.** On val, the oracle WER of the 8 (always picking the candidate
+  closest to the reference) bounds what any judge can gain. If the oracle is less than about a
+  point better than the top candidate, stop: no judge can help.
+- **Zero-shot first, no fine-tuning.** Shuffle the candidates for each clip (LLMs favour the first
+  one shown), ask for the number only, and compare against two baselines: the top beam
+  candidate, and a word n-gram model (KenLM) on the train labels picking from the same 8. An LLM
+  that does not beat the n-gram model is not worth its cost.
+- **Choose on val, report on gold and the public sets**, folded and plain, with S/D/I, the
+  unseen-word error rate, decode time and judge time.
+- **Fine-tune the judge only if zero-shot shows promise.** The hard part is data, not compute.
+  A judge must learn from candidates the ASR wrote on audio it was not trained on, and Flex's
+  beams on its own train clips are far too good to teach that. Val and gold cannot be used, so
+  it needs held-out decodes, for example a model trained on half the episodes decoding the other
+  half. A LoRA fine-tune of a 7–8B model on ~15k such clips fits one A100 in a few hours.
+- **The synthetic Nepanglish text** (the twist below, set (c)) enters as text for the judge or the
+  n-gram model, never as decoder training. Training an ASR's decoder on text with no audio teaches
+  it to write without listening, the failure that shows up as hallucination on noisy and
+  overlapped clips. That waits until the text has proved useful here.
+
 **Steps.**
 1. **Build the text.** Nepali news and Wikipedia plus our own train labels, so the colloquial
    register and our spelling are represented. Remove every benchmark reference (FLEURS comes from
@@ -469,7 +494,11 @@ a word-level model is the fiddly part.
 alone, and (b) those plus news and Wikipedia. If (b) gains little over (a), or drags towards formal
 spelling, the likely cause is register: people do not talk like the news. Then try (c): the same
 formal paragraphs rewritten by an LLM into colloquial Nepanglish, steered by what
-`docs/sociolinguistics.md` measured, and rescored the same way.
+`docs/sociolinguistics.md` measured, and rescored the same way. An LLM can also write such text
+from a topic alone; a sample explaining a Conformer block read well (owner, 2026-10-04), lacking
+only fillers, which the fold drops anyway, and with some word pairings a native speaker would
+rarely use. Those pairings are the risk: a model trained on them prefers them, so keep λ tuned on
+val.
 
 - **One rewrite, not random swaps.** A word that switches is mostly an everyday noun whose formal
   Nepali nobody says (`दूरभाष` → *phone*); 68% of switches are one word; the English keeps its
