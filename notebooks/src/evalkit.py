@@ -47,6 +47,9 @@ SPLITS = ("gold", "val")
 BUCKETS = ("none", "0-5%", "5-15%", ">15%")
 #: The clip classes every paired difference is also split by (D87).
 REPORT_KEYS = ("overlap", "snr", "speakers", "cmi", "duration")
+#: A class with fewer clips is left out of a paired difference: resampling one or two clips
+#: prints an interval of +-60 or +-100, which is noise, not a finding.
+MIN_CLASS_CLIPS = 10
 #: What a result row keeps of a split's metrics.
 KEEP = ("wer", "raw_wer", "cer", "sub", "del", "ins", "loops", "clips", "rtf", "vs")
 
@@ -137,12 +140,14 @@ def pair(
     keys: Sequence[str] = REPORT_KEYS,
     group: str = "episode_id",
     n: int = 2000,
+    min_clips: int = MIN_CLASS_CLIPS,
 ) -> dict[str, Any]:
     """WER(b) - WER(a) in points with a 95% interval, on the clips both runs scored.
 
     `group` names the unit resampled: a clip's episode on gold and val, a speaker, sentence or
     video on a public set. Returns `clips` (how many were shared), `all`, and one entry per value
-    of each clip class in `keys`, as `[difference, low, high]`. Raises when no clip is shared."""
+    of each clip class in `keys` holding at least `min_clips` shared clips, as
+    `[difference, low, high]`. Raises when no clip is shared."""
     idx = [i for i, r in enumerate(rows) if r["segment_id"] in a and r["segment_id"] in b]
     if not idx:
         raise ValueError("the two runs share no clip")
@@ -171,7 +176,8 @@ def pair(
             if value is not None:
                 values.setdefault(str(value), []).append(i)
         for value, which in sorted(values.items()):
-            out[f"{key}={value}"] = diff(which)
+            if len(which) >= min_clips:
+                out[f"{key}={value}"] = diff(which)
     return out
 
 

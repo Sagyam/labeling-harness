@@ -54,8 +54,7 @@ teacher frozen*). 04's overlap pass and 05 have labelled the first tranche: 79.5
 at `MAX_OVERLAP_SHARE` 0.05 (findings.md, *The teacher labels the unlabelled corpus*). 06a has run
 its 100 h point: Whisper's gold fell from 17.32 to 15.02 with the pseudo-labels (findings.md,
 *Whisper's 100 h point*). **Next:** 06c, IndicConformer, when there is GPU time: upload the kit
-built at 53a1ffa or later (plain CER) and smoke it first. Before it, hide report classes with one
-or two clips.
+built at 53a1ffa or later (plain CER) and smoke it first.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 

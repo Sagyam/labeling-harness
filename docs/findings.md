@@ -117,8 +117,9 @@ the outputs `sumanpaudel1997/nepali-asr-benchmark` publishes (FLEURS 724 clips, 
   model and is far too high (as step 0 found).
 - After epoch 1's resume upload in stage 2, the GPU monitor printed `nan` for one epoch, then
   recovered. Training was unaffected.
-- The report prints classes holding one or two clips (`snr=unmeasured`, `speakers=none`) as ±60 or
-  ±100; they should be hidden below a minimum size.
+- The report printed classes holding one or two clips (`snr=unmeasured`, `speakers=none`) as ±60 or
+  ±100. A paired difference now leaves out any class with fewer than 10 shared clips
+  (`evalkit.MIN_CLASS_CLIPS`).
 
 ---
 

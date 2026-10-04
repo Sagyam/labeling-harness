@@ -160,12 +160,30 @@ def test_a_pair_is_taken_on_the_clips_both_runs_scored():
     rows = _splits()["gold"]
     a = {"g1": [0, 4], "g2": [0, 4]}
     b = {"g1": [2, 4], "g2": [0, 4], "g3": [4, 4]}
-    out = evalkit.pair(rows, a, b, keys=("overlap",), n=200)
+    out = evalkit.pair(rows, a, b, keys=("overlap",), n=200, min_clips=1)
     assert out["clips"] == 2
     assert out["all"][0] == pytest.approx(25.0)  # 2 errors more over 8 words; g3 is not shared
     assert out["overlap=none"][0] == pytest.approx(50.0)
     assert out["overlap=>15%"][0] == pytest.approx(0.0)
     assert all(lo <= d <= hi for d, lo, hi in (out["all"], out["overlap=none"]))
+
+
+def test_a_class_too_small_to_resample_is_left_out_of_a_pair():
+    rows = [_row(f"c{i}", "a b", f"e{i}", overlap="none") for i in range(5)]
+    rows += [_row("x1", "a b", "e9", overlap=">15%")]
+    a = {r["segment_id"]: [0, 2] for r in rows}
+    b = {r["segment_id"]: [1, 2] for r in rows}
+    out = evalkit.pair(rows, a, b, keys=("overlap",), n=200, min_clips=5)
+    assert "overlap=none" in out
+    assert "overlap=>15%" not in out  # one clip: its interval would be +-100, not a finding
+    assert out["clips"] == 6  # the whole-split difference still counts every shared clip
+
+
+def test_a_pair_hides_one_and_two_clip_classes_by_default():
+    rows = _splits()["gold"]
+    out = evalkit.pair(rows, {"g1": [0, 4], "g2": [0, 4]}, {"g1": [2, 4], "g2": [0, 4]}, n=200)
+    assert evalkit.MIN_CLASS_CLIPS > 2
+    assert set(out) == {"clips", "all"}
 
 
 def test_runs_that_share_no_clip_cannot_be_paired():
