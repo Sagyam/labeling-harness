@@ -43,7 +43,8 @@ round-table channels leaves a corpus of few voices.
 **Small blast radius.** Labels go to `DATASET_REPO/<LABELS>/shards/` every `SHARD_CLIPS` clips, and
 a rerun skips every clip already in a shard, so a lost runtime costs at most one shard.
 
-**Smoke run first.** `SMOKE = True` reads `teacher-smoke.json`, decodes the first 500 clips and
+**Smoke run first.** `SMOKE = True` reads `teacher-smoke.json` (or `teacher.json` when no smoke
+03e has run), decodes the first 500 clips and
 writes under `distill/pseudo-smoke/`. The log-prob masking and the memory that `output_scores`
 takes have not run on a GPU until it has.
 """
@@ -53,7 +54,7 @@ DATASET_REPO = "Sagyam/nepanglish-asr"     # 04_PreDistill.ipynb wrote the corpu
 PREFIX = "distill"
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"   # its teacher.json names the model (03e_Flex_Ship.ipynb)
 LANG, MODE = "ne", "mixed"
-SMOKE = False              # True: teacher-smoke.json, the first 500 clips, labels under pseudo-smoke/
+SMOKE = False              # True: teacher-smoke.json if any, the first 500 clips, labels under pseudo-smoke/
 LIMIT = None               # decode only the first N clips; None for the whole corpus
 SHARD_CLIPS = 2000         # clips per uploaded shard: a lost runtime loses at most one
 DECODE_BUDGET_S, DECODE_ITEMS = 1200.0, 64
@@ -83,8 +84,11 @@ ftkit.fast_cuda()
 TOKEN = os.environ["HF_TOKEN"]
 api = HfApi(token=TOKEN)
 
-teacher = json.loads(Path(hf_hub_download(FLEX_REPO, "teacher-smoke.json" if SMOKE else "teacher.json",
-                                          token=TOKEN)).read_text("utf-8"))
+# A smoke run reads teacher-smoke.json if a smoke 03e wrote one, else the real teacher; its labels
+# still go under pseudo-smoke/.
+TEACHER_FILE = distill.smoke_source(SMOKE, "teacher-smoke.json", "teacher.json",
+                                    lambda path: api.file_exists(FLEX_REPO, path))
+teacher = json.loads(Path(hf_hub_download(FLEX_REPO, TEACHER_FILE, token=TOKEN)).read_text("utf-8"))
 TEACHER = teacher["run"]
 LABELS = f"{PREFIX}/{'pseudo-smoke' if SMOKE else 'pseudo'}/{TEACHER.replace('/', '--')}"
 if SMOKE:

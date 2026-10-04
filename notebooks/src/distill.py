@@ -12,6 +12,19 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 
+def smoke_source(
+    smoke: bool, smoke_path: str, real_path: str, exists: Callable[[str], bool]
+) -> str:
+    """The output a notebook reads from its predecessor: the smoke one if it exists, else the real.
+
+    A smoke run only reads what came before it and writes under its own smoke names, so reading a
+    real output is safe; it is what lets a smoke run follow a predecessor that ran for real
+    without one. A real run never reads a smoke output."""
+    if smoke and exists(smoke_path):
+        return smoke_path
+    return real_path
+
+
 def tokenizer_texts(splits: Mapping[str, Sequence[dict]]) -> list[str]:
     """The labels the shared student tokenizer is trained on: train only.
 

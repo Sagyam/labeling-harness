@@ -121,11 +121,16 @@ print({k: len(v) for k, v in splits.items()}, f"| audio in RAM: {store.gib:.1f} 
       export["exported_at"][:10], "|", score.fold_version)
 
 # The teacher: the model 03e froze. Its per-clip counts are what every stage is paired against.
-teacher = json.loads(Path(hf_hub_download(FLEX_REPO, "teacher-smoke.json" if SMOKE else "teacher.json",
-                                          token=TOKEN)).read_text("utf-8"))
+# A smoke run reads a smoke 03e's and 05's outputs when they exist, else the real ones: it only reads them.
+TEACHER_FILE = distill.smoke_source(SMOKE, "teacher-smoke.json", "teacher.json",
+                                    lambda path: api.file_exists(FLEX_REPO, path))
+teacher = json.loads(Path(hf_hub_download(FLEX_REPO, TEACHER_FILE, token=TOKEN)).read_text("utf-8"))
 teacher_counts = json.loads(Path(hf_hub_download(FLEX_REPO, f"{teacher['run']}/per_clip.json",
                                                  token=TOKEN)).read_text("utf-8"))
-LABELS = f"distill/{'pseudo-smoke' if SMOKE else 'pseudo'}/{teacher['run'].replace('/', '--')}"
+_labels = teacher["run"].replace("/", "--")
+LABELS = distill.smoke_source(SMOKE, f"distill/pseudo-smoke/{_labels}", f"distill/pseudo/{_labels}",
+                              lambda path: api.file_exists(DATASET_REPO, f"{path}/labels.jsonl",
+                                                           repo_type="dataset"))
 print("teacher:", teacher["run"], f"(val {teacher['val_wer']:.2f}, gold {teacher['gold_wer']:.2f})",
       "| its labels:", LABELS)
 if teacher["dataset_export"] != export["exported_at"]:

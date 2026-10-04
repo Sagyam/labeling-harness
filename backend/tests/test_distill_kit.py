@@ -349,3 +349,24 @@ def test_an_epoch_is_drawn_by_weight_and_is_repeatable_from_its_seed():
     assert draw == distill.draw_epoch(weights, 4000, seed=3)
     assert draw != distill.draw_epoch(weights, 4000, seed=4)
     assert 0 not in draw and draw.count(1) / 4000 == pytest.approx(0.75, abs=0.03)
+
+
+def test_smoke_reads_its_own_predecessor_when_there_is_one() -> None:
+    present = {"teacher-smoke.json", "teacher.json"}
+    chosen = distill.smoke_source(True, "teacher-smoke.json", "teacher.json", present.__contains__)
+    assert chosen == "teacher-smoke.json"
+
+
+def test_smoke_falls_back_to_the_real_predecessor() -> None:
+    # 03e and 05 ran for real without smoke runs first, so no smoke output exists to read.
+    present = {"teacher.json"}
+    chosen = distill.smoke_source(True, "teacher-smoke.json", "teacher.json", present.__contains__)
+    assert chosen == "teacher.json"
+
+
+def test_a_real_run_never_reads_a_smoke_output() -> None:
+    def exists(path: str) -> bool:
+        raise AssertionError("a real run does not look for a smoke output")
+
+    chosen = distill.smoke_source(False, "teacher-smoke.json", "teacher.json", exists)
+    assert chosen == "teacher.json"

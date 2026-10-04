@@ -2511,7 +2511,9 @@ now on a model is trained and evaluated by running the notebooks in the order of
   September 2026), when a cell does not parse, or when a cell uses a name no earlier cell defines.
 - **A smoke run first.** `SMOKE = True` runs a notebook end to end on a few hundred clips for one
   epoch under `<RUN_PREFIX>-smoke`. No notebook is known to work on a GPU until its smoke run has
-  passed; the test suite cannot reach that.
+  passed; the test suite cannot reach that. A smoke run reads its predecessor's smoke output
+  when there is one and the real output otherwise (`distill.smoke_source`), so 05, 06 and 07 can
+  be smoke-tested after a predecessor that ran for real; it never writes outside its smoke names.
 - **Names in older entries.** "04c" is the fine-tuning notebook that is now 03a–03e, "04a" and
   "04b" the Whisper and Omnilingual ones that are now 06a and 06e.
 

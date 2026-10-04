@@ -47,7 +47,7 @@ DATASET_EXPORT = "2026-09-30"        # runs scored on another export are left ou
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"      # teacher.json names the Flex runs' folder
 STUDENTS_REPO = "Sagyam/nepanglish-asr-students"
 STUDENTS_PREFIX = "students-2026-09-30"
-SMOKE = False             # True reads teacher-smoke.json and the -smoke folders
+SMOKE = False             # True reads the -smoke folders, and teacher-smoke.json if there is one
 CLASSES = ("overlap", "cmi")   # the clip classes every pairing is also split by
 """
 
@@ -59,6 +59,7 @@ if SMOKE:
 LOAD = r"""
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
+import distill
 import evalkit
 
 TOKEN = os.environ["HF_TOKEN"]
@@ -72,7 +73,8 @@ def fetch_json(repo, remote):
     return json.loads(Path(hf_hub_download(repo, remote, token=TOKEN)).read_text("utf-8"))
 
 
-teacher = fetch_json(FLEX_REPO, "teacher-smoke.json" if SMOKE else "teacher.json")
+teacher = fetch_json(FLEX_REPO, distill.smoke_source(SMOKE, "teacher-smoke.json", "teacher.json",
+                                                     lambda path: api.file_exists(FLEX_REPO, path)))
 if teacher is None:
     raise RuntimeError(f"{FLEX_REPO} has no teacher.json: run 03e_Flex_Ship.ipynb first")
 FLEX_PREFIX, TEACHER = teacher["run"].rsplit("/", 1)
