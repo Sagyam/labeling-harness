@@ -75,7 +75,7 @@ SMOKE = False             # True: a few hundred clips, one epoch, under <RUN_PRE
 PATIENCE, WARMUP = 3, 0.1
 MIN_DELTA = 0.2           # val WER points PATIENCE epochs must gain between them, or training stops
 HUMAN_SHARE = 0.5         # of each distillation epoch's draws that are human-labelled clips
-EFFECTIVE_S = 720.0       # ~12 min of audio per optimizer step
+EFFECTIVE_S = __EFFECTIVE_S__  # audio seconds per optimizer step: ~12 min, or 2 for a model from scratch (D116)
 PAD_TO_S = 1.0
 PROBE_FRACTION = 0.9
 EVAL_BUDGET_S, EVAL_ITEMS = 1200.0, 96
@@ -302,6 +302,13 @@ def stage3_recipe():
     return STAGE3_RECIPE or winning_recipe()
 
 
+def micro_budget(budget):
+    """The probe's budget in seconds, capped at one optimizer step's audio: steps are whole
+    micro-batches, so a bigger one makes every step that size (D116). A clip-count budget (inf
+    seconds) is left alone."""
+    return budget if budget == float("inf") else min(budget, EFFECTIVE_S)
+
+
 def train_stage(stage, run, recipe):
     """Train one stage and upload its best weights. Returns what `trained.json` records."""
     global AUG, STRETCH, optimizer
@@ -317,6 +324,9 @@ def train_stage(stage, run, recipe):
     print(f"{run}: {len(rows)} clips the student can train on, {pseudo_hours:.1f} h of them pseudo-labelled")
     optimizer = make_optimizer(model)
     budget, items = probe(model, optimizer, rows)
+    if micro_budget(budget) < budget:
+        print(f"micro-batch capped at one optimizer step: {EFFECTIVE_S:.0f} s of audio, not {budget:.0f} s")
+    budget = micro_budget(budget)
     if recipe:
         AUG, STRETCH = make_augmenter(recipe)
 
@@ -1322,6 +1332,7 @@ class Student:
     base_model: str  # a Python expression, read in the notebook
     settings: dict
     stage3_recipe: dict | None = None  # its own stage 3 augmentation (D115); None: Flex's winner
+    effective_s: float = 720.0  # audio seconds per optimizer step; 06f takes smaller ones (D116)
 
 
 STUDENTS = (
@@ -1488,9 +1499,13 @@ its config alone.
 **Choices, first guesses fixed before any run.** Peak LR 1e-3 for the whole model (nothing is
 pretrained, so there is no slower group), linear decay after 10% warmup, up to 40 epochs on the
 human labels and 30 on the mixture, stopping once val WER has gained less than 0.2 points over 3
-epochs. ~12 min of audio per optimizer step, NeMo's own SpecAugment. A model trained from scratch
-usually wants a longer schedule than a fine-tune; if the curve is still falling when the epochs
-run out, raise `EPOCHS`.
+epochs. NeMo's own SpecAugment. A model trained from scratch usually wants a longer schedule than
+a fine-tune; if the curve is still falling when the epochs run out, raise `EPOCHS`.
+
+**Smaller optimizer steps** (D116, 2026-10-05). At the other students' ~12 min of audio per step
+(about 130 steps an epoch), this model wrote nothing at all for 14 epochs while its loss crawled
+from 6.2 to 3.7. A transducer from random weights needs many updates before it emits a token, so
+it takes 2 min per step instead (`EFFECTIVE_S`): about 6x the steps for the same audio.
 
 **Its own stage 3** (D115, the owner, 2026-10-05). Flex's ablation kept no augmentation, but Flex
 was pretrained on 1.7 M hours; a model from random weights on ~130 h is where augmentation is
@@ -1508,6 +1523,7 @@ still undertrained: read stage 1's and 2's train loss against their val WER befo
             "__LR_ENCODER__": "1e-3",
             "__LR_HEADS__": "1e-3",
         },
+        effective_s=120.0,
         stage3_recipe={
             "speed": {"p": 0.5},
             "reverb": {"p": 0.3},
@@ -1529,6 +1545,7 @@ def fill(template: str, student: Student, **extra: str) -> str:
         "__EXTRA_LOADERS__": CONFORMER_LOADER if scratch else "",
         "__EXTRA_LOADER_NAMES__": ', "conformer": load_conformer' if scratch else "",
         "__STAGE3_RECIPE__": repr(student.stage3_recipe),
+        "__EFFECTIVE_S__": repr(student.effective_s),
         **student.settings,
         **extra,
     }

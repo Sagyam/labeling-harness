@@ -185,3 +185,26 @@ def test_stage3_prefers_the_students_own_recipe_to_flexs_winner() -> None:
     assert ns["stage3_recipe"]() == {"speed": {"p": 0.5}}
     ns["STAGE3_RECIPE"] = {"gain": {"p": 0.5}}
     assert ns["stage3_recipe"]() == {"gain": {"p": 0.5}}
+
+
+def test_only_the_scratch_conformer_takes_smaller_optimizer_steps() -> None:
+    """06f sat on all-blank output for 14 epochs at ~12 min of audio per step, about 130 steps an
+    epoch (2026-10-05): a model from random weights needs many updates, not big ones (D116). The
+    pretrained students keep the recipe they ran with."""
+    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+        effective_s = _config(path.name)["EFFECTIVE_S"]
+        assert effective_s == (120.0 if path.name == "06f_Student_Conformer.ipynb" else 720.0)
+
+
+def test_a_micro_batch_never_holds_more_audio_than_an_optimizer_step() -> None:
+    """Steps are built from whole micro-batches, so a probe budget above EFFECTIVE_S made every step
+    one micro-batch: on the 96 GB G4, ~1,400 s of audio instead of 720 (06f, 2026-10-05, D116). A
+    clip-count budget (inf seconds, the HF students) is left alone."""
+    students = importlib.import_module("build_students")
+    tree = ast.parse(students.STAGES)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "micro_budget")
+    ns: dict = {"EFFECTIVE_S": 120.0}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<STAGES>", "exec"), ns)
+    assert ns["micro_budget"](1493.0) == 120.0
+    assert ns["micro_budget"](90.0) == 90.0
+    assert ns["micro_budget"](float("inf")) == float("inf")

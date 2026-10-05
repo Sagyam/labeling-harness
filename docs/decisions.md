@@ -2833,3 +2833,25 @@ reason 03c gave for augmentation having little to fix, and a 33 M model from ran
 
 **Reversal:** cheap: set `STAGE3_RECIPE` back to `None` in `build_students.py` and rebuild. A
 trained stage 3 stays in the students repo as a result, under `conformer-distill-aug`.
+
+## D116 — A micro-batch never holds more audio than an optimizer step, and 06f takes 2-minute steps
+
+2026-10-05, after 06f's second full run. The Conformer from random weights wrote nothing at all
+(val WER 100.00, all deletions) for 14 epochs while its train loss crawled from 6.2 to 3.7, and
+the owner stopped it.
+
+- **The recipe's step size was not what it said.** `ftkit.group_steps` builds a step from whole
+  micro-batches, and the batch probe sizes a micro-batch to the GPU. On the 96 GB G4 that was
+  ~1,490 s of padded audio, so every step was one micro-batch of ~1,400 s, about 130 steps an
+  epoch, not the ~12 min `EFFECTIVE_S` claims. `micro_budget` now caps a seconds budget at
+  `EFFECTIVE_S`; a clip-count budget (the HF students') is left alone. The probe budgets of
+  06a–06e on the A100 were not recorded, so whether any of them ran steps above 12 minutes is
+  unknown; a rerun of theirs now gets the documented size.
+- **06f takes 2-minute steps** (`EFFECTIVE_S = 120`, `Student.effective_s`), about 6x the
+  optimizer steps for the same audio. A transducer from random weights needs many updates before
+  it emits a token; the pretrained students only had to adjust. The other students keep 720 s.
+- **What it costs the comparison.** 06f's stages 1 and 2 no longer share 06c's and 06d's step
+  size, on top of their weights. Its question (does pretraining matter at ~150 h?) is answered by
+  its own curve against theirs, not by an identical recipe, which random weights never allowed.
+
+**Reversal:** cheap: `effective_s` back to 720 for 06f; the cap is a bug fix and stays.
