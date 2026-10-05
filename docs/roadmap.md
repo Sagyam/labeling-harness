@@ -183,7 +183,8 @@ step 4's curve says how much audio closes the gap.
    - **Each student continues its human-label fine-tune (D106, the owner, 2026-09-30).** Three
      stages: *human* (the pretrained weights on the verified labels), *distill* (those weights on
      the mixture of pseudo-labels and human labels) and *distill-aug* (distill again, from the
-     human stage's weights, with the recipe that won Flex's ablation). This reverses the rule of
+     human stage's weights, with the recipe that won Flex's ablation; the Conformer from scratch
+     runs 03c's six acoustic stages instead, D115). This reverses the rule of
      2026-09-26, fresh weights for every point: the difference between the first two stages is now
      the pseudo-labels together with the extra training. The human labels take half of every
      epoch's draws, so a student does not end on the teacher's errors alone.

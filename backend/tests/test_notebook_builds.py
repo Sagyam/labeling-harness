@@ -145,3 +145,43 @@ def test_every_student_scores_with_error_mining() -> None:
             if re.match(r"\s*[%!].*pip install", line)
         ]
         assert any(re.search(r"\bduckdb\b", line) for line in installs), path.name
+
+
+def _config(name: str) -> dict:
+    """The names a notebook's Config cell (its first code cell) assigns: plain assignments only."""
+    cells = json.loads((_NOTEBOOKS / name).read_text(encoding="utf-8"))["cells"]
+    namespace: dict = {}
+    exec(next("".join(c["source"]) for c in cells if c["cell_type"] == "code"), namespace)
+    return namespace
+
+
+def test_only_the_scratch_conformer_names_its_own_stage3_recipe() -> None:
+    """Stage 3 runs the augmentation that won Flex's ablation (D106), except where a student names
+    its own (D115): the Conformer from scratch, with 03c's six acoustic stages at their tested
+    strengths and crosstalk left out."""
+    augment = importlib.import_module("augment")
+    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+        recipe = _config(path.name)["STAGE3_RECIPE"]
+        if path.name != "06f_Student_Conformer.ipynb":
+            assert recipe is None, path.name
+            continue
+        assert recipe == {
+            "speed": {"p": 0.5},
+            "reverb": {"p": 0.3},
+            "channel": {"p": 0.3},
+            "noise": {"p": 0.5},
+            "gain": {"p": 0.5},
+            "codec": {"p": 0.3},
+        }
+        assert augment.AugmentConfig.from_dict(recipe).crosstalk.p == 0
+
+
+def test_stage3_prefers_the_students_own_recipe_to_flexs_winner() -> None:
+    students = importlib.import_module("build_students")
+    tree = ast.parse(students.STAGES)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "stage3_recipe")
+    ns: dict = {"winning_recipe": lambda: {"speed": {"p": 0.5}}, "STAGE3_RECIPE": None}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<STAGES>", "exec"), ns)
+    assert ns["stage3_recipe"]() == {"speed": {"p": 0.5}}
+    ns["STAGE3_RECIPE"] = {"gain": {"p": 0.5}}
+    assert ns["stage3_recipe"]() == {"gain": {"p": 0.5}}

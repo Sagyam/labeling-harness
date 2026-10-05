@@ -34,7 +34,8 @@ PROTOCOL = """
    and gold is never trained on.
 3. **distill-aug.** Stage 2 again, from stage 1's weights, with the augmentation recipe that won
    Flex's ablation (`03c_Flex_Augment.ipynb`) switched on. When vanilla won there, or the ablation
-   was not run, there is nothing to switch on and the stage is skipped.
+   was not run, there is nothing to switch on and the stage is skipped. A student can name its own
+   recipe instead (`STAGE3_RECIPE` in Config, D115); only the Conformer from scratch does.
 
 **Why stage 2 continues stage 1** (D106, the owner's choice on 2026-09-30, reversing the
 fresh-weights rule of 2026-09-26). Each student is trained once on the human labels and carried
@@ -82,6 +83,9 @@ DEVICE = "cuda"
 DATA_LOCAL = None         # a local export in the HF layout instead of the download
 MUSAN_URL = "https://www.openslr.org/resources/17/musan.tar.gz"   # stage 3, if the recipe adds noise
 NOISE_SECONDS = 60        # of each MUSAN file
+# Stage 3's augmentation stages, as augment.AugmentConfig.from_dict reads them. None: the stages that
+# won Flex's ablation (D106). A dict: this student's own (D115).
+STAGE3_RECIPE = __STAGE3_RECIPE__
 """
 
 DATA = r"""
@@ -183,7 +187,8 @@ monitor = ftkit.GpuMonitor().start()
 STAGE_NOTE = {
     "human": "fine-tuned on the verified train labels",
     "distill": "stage 1 continued on the teacher's pseudo-labels mixed with the human labels",
-    "distill-aug": "stage 2 from stage 1's weights, with the augmentation that won Flex's ablation",
+    "distill-aug": "stage 2 from stage 1's weights, with "
+                   + ("this student's own augmentation (D115)" if STAGE3_RECIPE else "the augmentation that won Flex's ablation"),
 }
 
 
@@ -291,6 +296,12 @@ def winning_recipe():
     return winner.get("stages") or {}
 
 
+def stage3_recipe():
+    """Stage 3's augmentation stages: the student's own `STAGE3_RECIPE` when Config names one (D115),
+    otherwise those of Flex's ablation winner."""
+    return STAGE3_RECIPE or winning_recipe()
+
+
 def train_stage(stage, run, recipe):
     """Train one stage and upload its best weights. Returns what `trained.json` records."""
     global AUG, STRETCH, optimizer
@@ -359,7 +370,7 @@ def run_stage(stage):
         return
     recipe = {}
     if stage == "distill-aug":
-        recipe = winning_recipe()
+        recipe = stage3_recipe()
         if not recipe:
             print("Flex's ablation kept vanilla, or 03c was not run: no augmentation to switch on, no stage 3")
             return
@@ -415,10 +426,10 @@ Stage 1's weights, continued on the mixture. It needs `05_Teacher.ipynb`'s filte
 frozen teacher.
 """,
     "distill-aug": """
-### Stage 3 — the same, with Flex's winning augmentation
+### Stage 3 — the same, with augmentation
 
-From stage 1's weights again, so its difference to stage 2 is the augmentation alone. Skipped when
-vanilla won Flex's ablation.
+From stage 1's weights again, so its difference to stage 2 is the augmentation alone: the stages
+that won Flex's ablation, or the student's own `STAGE3_RECIPE` (D115). Skipped when there are none.
 """,
 }
 
@@ -1310,6 +1321,7 @@ class Student:
     architecture: str
     base_model: str  # a Python expression, read in the notebook
     settings: dict
+    stage3_recipe: dict | None = None  # its own stage 3 augmentation (D115); None: Flex's winner
 
 
 STUDENTS = (
@@ -1479,6 +1491,14 @@ human labels and 30 on the mixture, stopping once val WER has gained less than 0
 epochs. ~12 min of audio per optimizer step, NeMo's own SpecAugment. A model trained from scratch
 usually wants a longer schedule than a fine-tune; if the curve is still falling when the epochs
 run out, raise `EPOCHS`.
+
+**Its own stage 3** (D115, the owner, 2026-10-05). Flex's ablation kept no augmentation, but Flex
+was pretrained on 1.7 M hours; a model from random weights on ~130 h is where augmentation is
+expected to pay. Stage 3 therefore runs 03c's six acoustic stages together, at the strengths 03c
+tested them at: speed 0.9x/1.1x (p 0.5), reverb (p 0.3), channel (p 0.3), MUSAN noise (p 0.5), gain
+(p 0.5) and codec (p 0.3). Crosstalk is left out: its mixing and labels were flawed (03c, D100).
+Stage 3 minus stage 2 is the augmentation alone. It helps a model that overfits, not one that is
+still undertrained: read stage 1's and 2's train loss against their val WER before trusting it.
 """,
         architecture="Conformer hybrid RNN-T/CTC from random weights; 1,024-token heads",
         base_model=repr("none: random weights, IndicConformer's config resized"),
@@ -1487,6 +1507,14 @@ run out, raise `EPOCHS`.
             "__DISTILL_EPOCHS__": "30",
             "__LR_ENCODER__": "1e-3",
             "__LR_HEADS__": "1e-3",
+        },
+        stage3_recipe={
+            "speed": {"p": 0.5},
+            "reverb": {"p": 0.3},
+            "channel": {"p": 0.3},
+            "noise": {"p": 0.5},
+            "gain": {"p": 0.5},
+            "codec": {"p": 0.3},
         },
     ),
 )
@@ -1500,6 +1528,7 @@ def fill(template: str, student: Student, **extra: str) -> str:
         "__BASE_MODEL__": student.base_model,
         "__EXTRA_LOADERS__": CONFORMER_LOADER if scratch else "",
         "__EXTRA_LOADER_NAMES__": ', "conformer": load_conformer' if scratch else "",
+        "__STAGE3_RECIPE__": repr(student.stage3_recipe),
         **student.settings,
         **extra,
     }
@@ -1523,7 +1552,7 @@ def student_cells(student: Student) -> list[dict]:
     if student.family == "omni":
         return omni_cells(student, intro, head)
     if student.family == "nemo":
-        config = [head, COMMON_CONFIG, fill(NEMO_CONFIG, student)]
+        config = [head, fill(COMMON_CONFIG, student), fill(NEMO_CONFIG, student)]
         if student.key == "conformer":
             config.append(CONFORMER_CONFIG)
         setup = nbkit.setup(
@@ -1537,7 +1566,7 @@ def student_cells(student: Student) -> list[dict]:
             code(fill(NEMO_STUDENT, student)),
         ]
     else:
-        config = [head, COMMON_CONFIG, fill(HF_CONFIG, student)]
+        config = [head, fill(COMMON_CONFIG, student), fill(HF_CONFIG, student)]
         setup = nbkit.setup('rapidfuzz duckdb pyarrow "qwen-asr=={QWEN_ASR_VERSION}"')
         model_cells = [md(STUDENT_NOTE), code(fill(HF_STUDENT, student))]
     return [
@@ -1561,7 +1590,7 @@ def student_cells(student: Student) -> list[dict]:
 
 
 def omni_cells(student: Student, intro: str, head: str) -> list[dict]:
-    config = [head, COMMON_CONFIG, OMNI_CONFIG]
+    config = [head, fill(COMMON_CONFIG, student), OMNI_CONFIG]
     names = config_names(*config)
     out = [
         md(intro + "\n" + student.intro + PROTOCOL + SMOKE_NOTE + GPU_NOTE),

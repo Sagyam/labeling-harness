@@ -2807,3 +2807,29 @@ clips back in triage, to add the second voice where it can be heard.
 
 **Reversal:** cheap. Skip the open `relabel` tasks; any label already written stays as history
 under invariant 2. Removing the guard and the editor change is a code revert.
+
+## D115 — The Conformer from scratch runs its own stage 3 augmentation
+
+The owner's choice (2026-10-05), narrowing D106's stage 3 for one student. Stage 3 runs the
+augmentation that won Flex's ablation, and since 03c kept none, every student so far skipped it.
+The Conformer from scratch (06f) is the exception: Flex was pretrained on 1.7 M hours, which is the
+reason 03c gave for augmentation having little to fix, and a 33 M model from random weights on
+~130 h is the case where the literature says augmentation pays.
+
+- **`STAGE3_RECIPE` in a student's Config.** `None` keeps D106's rule (Flex's winner, or no stage
+  3). A dict, as `augment.AugmentConfig.from_dict` reads it, is that student's own recipe. Only
+  06f sets one; a test holds every other student at `None`.
+- **06f's recipe is 03c's six acoustic stages together, at the strengths 03c tested them at**:
+  speed 0.9x/1.1x (p 0.5), reverb (p 0.3), channel (p 0.3), MUSAN noise (p 0.5), gain (p 0.5),
+  codec (p 0.3). Not tuned for this model, and none of them won on Flex.
+- **Crosstalk is left out** (owner): its mixing and labels were flawed (findings.md, *Augmentation
+  on Flex*), and heavy crosstalk is not chased word by word (D100, D114).
+- **What the comparison says.** Stage 3 minus stage 2 is the augmentation alone, as D106 already
+  provides, since both start from stage 1's weights. It can say nothing about another student,
+  and 06f's stages 1 and 2 stay comparable with 06c and 06d, which ran without augmentation.
+- **Augmentation is the remedy for overfitting, not undertraining.** If 06f's train loss and val
+  WER are both still falling when its epochs run out, the answer is more epochs, and stage 3 will
+  read worse than it should.
+
+**Reversal:** cheap: set `STAGE3_RECIPE` back to `None` in `build_students.py` and rebuild. A
+trained stage 3 stays in the students repo as a result, under `conformer-distill-aug`.
