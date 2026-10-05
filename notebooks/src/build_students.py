@@ -302,6 +302,15 @@ def stage3_recipe():
     return STAGE3_RECIPE or winning_recipe()
 
 
+def clear_dir(folder):
+    """Empty `folder` and keep it. A stage's upload sends its whole local folder, so a fresh start
+    must not inherit an earlier attempt's scores or weights (06f, 2026-10-05)."""
+    import shutil
+
+    for p in Path(folder).iterdir():
+        shutil.rmtree(p) if p.is_dir() else p.unlink()
+
+
 def micro_budget(budget):
     """The probe's budget in seconds, capped at one optimizer step's audio: steps are whole
     micro-batches, so a bigger one makes every step that size (D116). A clip-count budget (inf
@@ -343,6 +352,7 @@ def train_stage(stage, run, recipe):
     epochs = 1 if SMOKE else EPOCHS["human" if stage == "human" else "distill"]
     resume = ftkit.HubResume(api, RESUME_REPO, f"{RUN_PREFIX}/{run}", FT / "resume" / run)
     if not api.file_exists(RESUME_REPO, resume.remote):
+        clear_dir(OUT)  # a fresh start: nothing from an earlier attempt rides along in the uploads
         # Val before training on every 12th val clip: with fresh heads it is gibberish, and only its
         # timing matters. The projection's val passes are for that sample, so the full-val time follows.
         sample = splits["val"][::12]

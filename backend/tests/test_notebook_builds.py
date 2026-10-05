@@ -208,3 +208,20 @@ def test_a_micro_batch_never_holds_more_audio_than_an_optimizer_step() -> None:
     assert ns["micro_budget"](1493.0) == 120.0
     assert ns["micro_budget"](90.0) == 90.0
     assert ns["micro_budget"](float("inf")) == float("inf")
+
+
+def test_a_fresh_stage_starts_from_an_empty_output_folder(tmp_path: Path) -> None:
+    """A stage's best-weights upload sends its whole local folder. On 2026-10-05 the third 06f
+    attempt uploaded the first attempt's scores beside its own weights, because the folder on the
+    Colab disk was never emptied between attempts."""
+    students = importlib.import_module("build_students")
+    tree = ast.parse(students.STAGES)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "clear_dir")
+    ns: dict = {"Path": Path}  # a notebook global
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<STAGES>", "exec"), ns)
+    (tmp_path / "harness" / "errors").mkdir(parents=True)
+    (tmp_path / "harness" / "errors" / "val.parquet").write_text("old")
+    (tmp_path / "result.json").write_text("old")
+    ns["clear_dir"](tmp_path)
+    assert tmp_path.is_dir() and not any(tmp_path.iterdir())
+    assert "clear_dir(OUT)" in students.STAGES
