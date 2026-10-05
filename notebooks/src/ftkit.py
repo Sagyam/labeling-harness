@@ -546,6 +546,19 @@ def sid(m: dict) -> str:
     return f"S {m['sub']:.2f}  D {m['del']:.2f}  I {m['ins']:.2f}"
 
 
+def patience_step(wer: float, counted: float, bad: int, min_delta: float) -> tuple[float, int]:
+    """Early stopping after one evaluation: the val WER that last reset the count, and the
+    evaluations since. An evaluation at 100 or more counts for nothing: a model that writes only
+    blanks, or more garbage than the references hold, has not started transcribing. From random
+    weights that can last several epochs while the loss falls (06f, 2026-10-05), and patience
+    used to stop it there."""
+    if wer >= 100.0:
+        return counted, bad
+    if wer < counted - min_delta:  # at 0: the old rule, any strict gain
+        return wer, 0
+    return counted, bad + 1
+
+
 def retry_note(val: dict) -> str:
     """For an `evaluate` that wraps its decode in RetryLoops and reports the greedy score too."""
     if "retried" not in val:
@@ -858,10 +871,7 @@ def train(
                 }
             if improved:
                 best_state, best = current, val["wer"]
-            if val["wer"] < counted - cfg.min_delta:  # at 0: the old rule, any strict gain
-                counted, bad = val["wer"], 0
-            else:
-                bad += 1
+            counted, bad = patience_step(val["wer"], counted, bad, cfg.min_delta)
             finished = bad >= cfg.patience
             if resume is not None:
                 resume.save(
