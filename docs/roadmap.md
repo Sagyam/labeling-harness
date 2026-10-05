@@ -55,8 +55,10 @@ at `MAX_OVERLAP_SHARE` 0.05 (findings.md, *The teacher labels the unlabelled cor
 its 100 h point: Whisper's gold fell from 17.32 to 15.02 with the pseudo-labels (findings.md,
 *Whisper's 100 h point*). 06c followed: IndicConformer's gold fell from 18.42 to 15.64, a tie with
 Whisper's 15.02 at a seventh of its size, its extra errors deletions in crosstalk (findings.md,
-*IndicConformer's 100 h point*). **Next:** the remaining students (06b, 06d–06f) when there is GPU
-time, each smoked first.
+*IndicConformer's 100 h point*). 06d then: Parakeet's gold fell from 28.63 to 21.53, its teacher
+labels closing 42% of the gap Nepali pretraining gave IndicConformer, still 5.9 behind (findings.md,
+*Parakeet's 100 h point*). **Next:** the remaining students (06b, 06e, 06f) when there is GPU time,
+each smoked first.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 

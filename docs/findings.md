@@ -23,14 +23,89 @@ What survives:
   step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
   their only record.
 - **The students.** `Sagyam/nepanglish-asr-students` under `students-2026-09-30/`: 06a's two
-  Whisper stages and 06c's two IndicConformer stages (weights, transcripts, metrics, error rows),
-  from 2026-10-04.
+  Whisper stages and 06c's two IndicConformer stages from 2026-10-04, and 06d's two Parakeet
+  stages from 2026-10-05 (weights, transcripts, metrics, error rows).
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## Parakeet's 100 h point: teacher labels close 42% of an English encoder's gap (2026-10-05)
+
+`06d_Student_Parakeet` on the 2026-09-30 export, A100 40 GB, the kit built at fc58b42 (sha
+de17d254), after a smoke run. The protocol of 06a and 06c: stage 1 (*human*) from
+Parakeet-TDT-0.6B-v2's English encoder with fresh 1,024-token heads on the 14,834 verified train
+clips; stage 2 (*distill*) from stage 1 on those plus blend-075's 21,368 pseudo-labels (79.5 h),
+half of each epoch's draws human; stage 3 skipped itself. Its tokenizer, heads and recipe are
+IndicConformer's, so the two differ mainly in what the encoder heard before: English only, or
+Indic languages including Nepali. One seed. Outputs in `Sagyam/nepanglish-asr-students` under
+`students-2026-09-30/parakeet-{human,distill}/`. Folded WER is fold-v4.
+
+**Training.** Stage 1, val by epoch: 99.50 (blank), 68.34, 43.21, 34.08, 33.20, 27.34, 25.96,
+23.97, 23.46, 21.94, 20.99, 20.92, 20.58, 19.83, 19.29, 19.18, 19.21, 18.95, **18.76**, 18.84: all 20
+epochs, best at 19 (about 2.2 h). Stage 2: 19.13 (the re-warmed schedule), 17.39, 16.46, 15.54,
+15.26, 14.94, 14.57, 14.36, 14.32, 13.90, 13.85, **13.79**: all 12 epochs, best at the last, 0.11 over
+the last three (about 2.9 h). About 850× realtime, 93% GPU. One epoch of blanks, as IndicConformer.
+No loops in the final scores.
+
+| | val | gold | gold, no crosstalk | gold, >15% crosstalk |
+|---|---|---|---|---|
+| teacher (blend-075) | 7.08 | 10.85 | | |
+| Parakeet, stage 1 | 18.76 (13.26 / 4.05 / 1.45) | 28.63 (20.26 / 6.68 / 1.69) | 24.32 | 44.97 |
+| Parakeet, stage 2 | **13.79** (9.68 / 2.67 / 1.44) | **21.53** (15.28 / 4.65 / 1.60) | 16.87 | 38.38 |
+| IndicConformer, stage 2 (06c) | 10.88 (7.41 / 2.56 / 0.92) | 15.64 (10.04 / 4.57 / 1.03) | 11.40 | 32.26 |
+| Whisper, stage 2 (06a) | 9.43 (6.67 / 1.50 / 1.25) | 15.02 (10.53 / 2.67 / 1.82) | 10.57 | 31.56 |
+
+- **Stage 2 minus stage 1: val −4.96 [−5.82, −4.09], gold −7.09 [−7.78, −6.46]**, below zero in
+  every clip class: two and a half to three times IndicConformer's −2.77 and Whisper's −2.30.
+- **Against IndicConformer, paired on the same clips: stage 1 gold +10.21 [+8.56, +11.80], stage 2
+  +5.89 [+4.68, +7.14]** on 965 clips (158 episodes); val +5.10 → +2.91 on 1,792 (23 episodes).
+  **The teacher's labels closed 42% [37%, 49%] of the gold gap that Nepali pretraining had left**
+  (val 43% [32%, 74%]). Data substitutes for pretraining in part, not in full: at 80 h of
+  pseudo-labels the English encoder is still 5.9 points behind. Against Whisper's stage 2, gold
+  +6.51 [+5.92, +7.08]. Computed from the runs' `per_clip.json` with episodes resampled, outside
+  `evalkit`.
+- **The gap is substitutions.** Stage 2's gold deletions (4.65) are IndicConformer's (4.57); its
+  substitutions are 15.28 against 10.04. It hears the words and spells or chooses them wrong,
+  the signature of a missing vocabulary rather than missing audio.
+- **It gained most where there is no English**: gold CMI 0 −9.31 [−11.17, −8.07] against CMI 30+
+  −5.46 [−6.33, −4.64]. Again each student gained most where its encoder was weakest.
+- **It closed 40% of the gap to the teacher on gold** (+17.78 → +10.68 [+9.53, +11.82]) and 43% on
+  val (+11.68 → +6.71), against IndicConformer's 37% and Whisper's 36%.
+- **Val flatters it most**: val to gold +7.7 at stage 2 (+9.9 at stage 1), against IndicConformer's
+  +4.8 and Whisper's +5.6. Step 0 found the same (+13 on 30 h).
+- **The fastest student: gold RTF 0.0008** (618M parameters), against IndicConformer's 0.0013.
+- Step 0 (30 h, an older export and gold, not comparable clip for clip) had it 13.3 points behind
+  IndicConformer on gold; with 51 h of human labels it is 10.2, with 80 h of pseudo-labels more 5.9.
+
+**Public sets**, folded WER, then plain WER and plain CER:
+
+| set | stage 1 folded | stage 2 folded | difference [95% CI] | plain WER, 1 → 2 | plain CER, 1 → 2 | IndicConformer stage 2 folded |
+|---|---|---|---|---|---|---|
+| FLEURS | 43.22 | 30.28 | −12.94 [−13.86, −11.98] | 54.27 → 42.64 | 24.37 → 19.45 | **15.02** |
+| SLR54 | 42.95 | 28.98 | −13.97 [−14.52, −13.43] | 53.00 → 39.03 | 21.97 → 15.40 | **6.23** |
+| Common Voice | 31.76 | 22.86 | −8.90 [−11.34, −6.87] | 44.21 → 36.65 | 18.85 → 13.77 | **11.46** |
+| IndicVoices | 37.83 | 31.04 | −6.79 [−7.41, −6.21] | 51.90 → 45.78 | 29.80 → 25.87 | **15.04** |
+| nepali_cs | 27.94 | 21.46 | −6.47 [−7.43, −4.83] | 39.27 → 32.69 | 20.90 → 17.36 | 18.85 |
+
+Public mean, folded: 36.74 → 26.92 (IndicConformer's stage 2: 13.32; Whisper's: 19.35; the
+teacher's: 9.99).
+
+- **Here CER fell with WER, by 3.5–6.6 points on every set**, unlike Whisper and IndicConformer,
+  whose CER stayed flat on FLEURS, SLR54 and Common Voice. For a student that knew no Nepali the
+  teacher's labels taught the language, not only its conventions.
+- **It is last on every public set**, nepali_cs included (21.46 against Whisper's 16.48): English
+  pretraining did not buy it the code-switched lectures either.
+
+**What this does not show.**
+- The same learning-rate-restart confound as 06a and 06c. Stage 1 had flattened (under half a point
+  over its last five epochs), so the restart is an unlikely source of −7.09, but the control was not run.
+- One seed.
+- Whether more pseudo-labelled hours would keep closing the gap: one point on that curve.
 
 ---
 
