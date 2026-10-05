@@ -1094,7 +1094,7 @@ if not OMNI_PY.exists():
     !pip install -q uv
     !uv venv -q --python 3.12 {OMNI_ENV}
     !uv pip install -q --python {OMNI_PY} "omnilingual-asr=={OMNI_VERSION}" "torch==2.8.0" "torchaudio==2.8.0"
-!uv pip install -q --python {OMNI_PY} soundfile rapidfuzz pyyaml scipy pyarrow requests
+!uv pip install -q --python {OMNI_PY} soundfile rapidfuzz pyyaml scipy pyarrow duckdb requests
 !{OMNI_PY} -c "import torch, omnilingual_asr; print('omni env: torch', torch.__version__, 'cuda', torch.cuda.is_available())"
 """
 

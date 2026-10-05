@@ -128,3 +128,20 @@ def test_a_built_notebook_is_valid_json_with_one_id_per_cell() -> None:
     nb = json.loads(nbkit.dumps(_BUILT[name]))
     ids = [c["id"] for c in nb["cells"]]
     assert nb["nbformat"] == 4 and len(ids) == len(set(ids))
+
+
+def test_every_student_scores_with_error_mining() -> None:
+    """Error mining (D110) needs DuckDB wherever a student is scored: the Colab kernel, or for 06e
+    the environment its script runs in. Without it the scores land and the error files silently
+    do not, which is what 06e's first smoke run did."""
+    students = importlib.import_module("build_students")
+    assert re.search(r"uv pip install -q --python \{OMNI_PY\}[^\n]*\bduckdb\b", students.OMNI_ENV)
+    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+        cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
+        installs = [
+            line
+            for cell in cells
+            for line in "".join(cell["source"]).splitlines()
+            if re.match(r"\s*[%!].*pip install", line)
+        ]
+        assert any(re.search(r"\bduckdb\b", line) for line in installs), path.name
