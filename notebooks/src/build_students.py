@@ -86,6 +86,7 @@ NOISE_SECONDS = 60        # of each MUSAN file
 # Stage 3's augmentation stages, as augment.AugmentConfig.from_dict reads them. None: the stages that
 # won Flex's ablation (D106). A dict: this student's own (D115).
 STAGE3_RECIPE = __STAGE3_RECIPE__
+SPECAUG_IN_HUMAN = __SPECAUG_IN_HUMAN__  # False: stage 1 trains without SpecAugment (a model from scratch, D116)
 """
 
 DATA = r"""
@@ -322,6 +323,9 @@ def train_stage(stage, run, recipe):
     """Train one stage and upload its best weights. Returns what `trained.json` records."""
     global AUG, STRETCH, optimizer
     load_student(None if stage == "human" else download_weights(f"{STUDENT}-human"))
+    if stage == "human" and not SPECAUG_IN_HUMAN and getattr(model, "spec_augmentation", None) is not None:
+        model.spec_augmentation = None  # until the model listens; stage 2 starts from weights that do
+        print(f"{run}: SpecAugment off for this stage (D116)")
     weights, pseudo_hours = None, 0.0
     if stage == "human":
         rows = prepare_rows(list(splits["train"]))
@@ -1343,6 +1347,7 @@ class Student:
     settings: dict
     stage3_recipe: dict | None = None  # its own stage 3 augmentation (D115); None: Flex's winner
     effective_s: float = 720.0  # audio seconds per optimizer step; 06f takes smaller ones (D116)
+    specaug_in_human: bool = True  # 06f's stage 1 trains without SpecAugment (D116)
 
 
 STUDENTS = (
@@ -1506,8 +1511,8 @@ time, and the smoke run is its first test. If NeMo's constructor rejects it, the
 field; the three sizes are set in `load_conformer`. IndicConformer's checkpoint is downloaded for
 its config alone.
 
-**Choices, first guesses fixed before any run.** Peak LR 1e-3 for the whole model (nothing is
-pretrained, so there is no slower group), linear decay after 10% warmup, up to 40 epochs on the
+**Choices.** Peak LR 3e-4 for the whole model (nothing is pretrained, so there is no slower group;
+1e-3, the first guess, never let the encoder learn, D116), linear decay after 10% warmup, up to 40 epochs on the
 human labels and 30 on the mixture, stopping once val WER has gained less than 0.2 points over 3
 epochs. NeMo's own SpecAugment. A model trained from scratch usually wants a longer schedule than
 a fine-tune; if the curve is still falling when the epochs run out, raise `EPOCHS`.
@@ -1516,6 +1521,11 @@ a fine-tune; if the curve is still falling when the epochs run out, raise `EPOCH
 (about 130 steps an epoch), this model wrote nothing at all for 14 epochs while its loss crawled
 from 6.2 to 3.7. A transducer from random weights needs many updates before it emits a token, so
 it takes 2 min per step instead (`EFFECTIVE_S`): about 6x the steps for the same audio.
+
+**Stage 1 without SpecAugment** (D116). On 2,000 clips for 2,000 steps, a fresh model's CTC head
+reached 31 train / 72 val CER with SpecAugment off and stayed near 80 with it on, whatever the CTC
+weight. Stage 1 therefore trains without it (`SPECAUG_IN_HUMAN`); stage 2 starts from weights that
+already listen and keeps it.
 
 **Its own stage 3** (D115, the owner, 2026-10-05). Flex's ablation kept no augmentation, but Flex
 was pretrained on 1.7 M hours; a model from random weights on ~130 h is where augmentation is
@@ -1530,10 +1540,11 @@ still undertrained: read stage 1's and 2's train loss against their val WER befo
         settings={
             "__HUMAN_EPOCHS__": "40",
             "__DISTILL_EPOCHS__": "30",
-            "__LR_ENCODER__": "1e-3",
-            "__LR_HEADS__": "1e-3",
+            "__LR_ENCODER__": "3e-4",
+            "__LR_HEADS__": "3e-4",
         },
         effective_s=120.0,
+        specaug_in_human=False,
         stage3_recipe={
             "speed": {"p": 0.5},
             "reverb": {"p": 0.3},
@@ -1556,6 +1567,7 @@ def fill(template: str, student: Student, **extra: str) -> str:
         "__EXTRA_LOADER_NAMES__": ', "conformer": load_conformer' if scratch else "",
         "__STAGE3_RECIPE__": repr(student.stage3_recipe),
         "__EFFECTIVE_S__": repr(student.effective_s),
+        "__SPECAUG_IN_HUMAN__": repr(student.specaug_in_human),
         **student.settings,
         **extra,
     }

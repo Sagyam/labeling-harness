@@ -225,3 +225,18 @@ def test_a_fresh_stage_starts_from_an_empty_output_folder(tmp_path: Path) -> Non
     ns["clear_dir"](tmp_path)
     assert tmp_path.is_dir() and not any(tmp_path.iterdir())
     assert "clear_dir(OUT)" in students.STAGES
+
+
+def test_only_the_scratch_conformer_trains_stage_1_slower_and_without_specaugment() -> None:
+    """On 2,000 clips for 2,000 steps (2026-10-05, D116): at lr 1e-3 a fresh 06f never listened;
+    at 3e-4 with SpecAugment off its CTC head reached 31 train / 72 val CER, and with SpecAugment
+    on it stayed at ~80, CTC alone or hybrid. Stage 2 starts from weights that already listen, so
+    it keeps SpecAugment."""
+    students = importlib.import_module("build_students")
+    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+        config = _config(path.name)
+        scratch = path.name == "06f_Student_Conformer.ipynb"
+        assert config["SPECAUG_IN_HUMAN"] is (not scratch), path.name
+        if scratch:
+            assert config["LR_ENCODER"] == config["LR_HEADS"] == 3e-4
+    assert 'stage == "human" and not SPECAUG_IN_HUMAN' in students.STAGES

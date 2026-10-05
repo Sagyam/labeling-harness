@@ -2853,5 +2853,26 @@ the owner stopped it.
 - **What it costs the comparison.** 06f's stages 1 and 2 no longer share 06c's and 06d's step
   size, on top of their weights. Its question (does pretraining matter at ~150 h?) is answered by
   its own curve against theirs, not by an identical recipe, which random weights never allowed.
+- **Smaller steps were not enough.** The third run, at 120 s steps, was still all blanks at epoch 5
+  (loss 4.07). On its epoch-5 weights the CTC head wrote the same filler for every clip: the
+  model ignored the audio.
+- **06f's stage 1 trains at peak lr 3e-4 without SpecAugment** (`SPECAUG_IN_HUMAN = False`), the
+  owner's choice after these diagnostics, on 2,000 short train clips (2.5 h), 2,000 steps of 32
+  clips, CER from the CTC head:
 
-**Reversal:** cheap: `effective_s` back to 720 for 06f; the cap is a bug fix and stays.
+  | peak lr | CTC weight | SpecAugment | train CER | val CER |
+  |---|---|---|---|---|
+  | 1e-3 | 1.0 | off | 81.7 | 81.7 (loss unstable) |
+  | 3e-4 | 1.0 | off | **30.8** | **72.3** |
+  | 1e-4 | 1.0 | off | 50.1 | 72.2 |
+  | 3e-4 | 0.3 | off | 71.4 | 79.4 |
+  | 3e-4 | 1.0 | on | 79.3 | 81.1 |
+  | 3e-4 | 0.3 | on | 79.7 | 81.3 |
+
+  1e-3 never let the encoder learn; SpecAugment from step 1 kept it from starting, whatever the
+  CTC weight. Stage 2 starts from stage 1's weights, which already listen, and keeps SpecAugment.
+  The CTC weight stays 0.3, as in 06c and 06d. A fixed batch of 32 clips was memorised by every
+  setting, which shows the plumbing works and nothing more: 32 clips can be told apart by length.
+
+**Reversal:** cheap: `effective_s` back to 720 for 06f; the cap is a bug fix and stays. The
+learning rate and `specaug_in_human` are `Student` fields in `build_students.py`.
