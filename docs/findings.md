@@ -35,6 +35,131 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## A cross-model vote recovers a fifth to a quarter of the judge's room (2026-10-06)
+
+Before any LLM judge: can the students' transcripts pick among the teacher's 8 beam candidates
+(the candidates of *The judge's ceiling*)? Every pick is the candidate with the least folded word
+edit distance to the voters. Variants fixed before any score; the rule: lowest folded val WER,
+counted only if it beats the beam's top candidate on val with an interval clear of zero.
+- **V1, students vote:** a teacher beam is picked; voters are the teacher's greedy decode and the
+  Whisper, IndicConformer and Parakeet students' stage 2, one vote each.
+- **V2, everyone can win:** the pool is the 8 beams, greedy and those 3 students; every system
+  votes once, the beams sharing one vote.
+- **V3:** V1 with the Conformer from scratch as a fourth voter.
+
+Run on a CPU from the stored transcripts (nothing decoded again; experiment code discarded). The
+greedy and student rows reproduce their published scores. Folded WER, then the difference from
+greedy and from the top candidate, [95% CI]:
+
+| set | greedy | top@1 | MBR (beams) | V1 | V2 | **V3** | V3 − greedy | V3 − top@1 | oracle@8 |
+|---|---|---|---|---|---|---|---|---|---|
+| val | 7.08 | 6.83 | 6.84 | 6.52 | 6.51 | **6.50** | −0.58 [−0.77, −0.43] | −0.33 [−0.44, −0.23] | 5.47 |
+| gold | 10.85 | 10.41 | 10.45 | 10.20 | 10.27 | **10.16** | −0.69 [−0.85, −0.53] | −0.25 [−0.37, −0.14] | 9.10 |
+| FLEURS | 11.12 | 10.78 | 10.70 | 10.76 | 11.25 | **10.83** | −0.28 [−0.55, −0.01] | +0.05 [−0.17, +0.27] | 8.56 |
+| OpenSLR 54 | 7.43 | 6.90 | 7.85 | 6.28 | 6.49 | **6.48** | −0.95 [−1.16, −0.77] | −0.42 [−0.60, −0.25] | 2.22 |
+| Common Voice | 7.85 | 7.62 | 7.56 | 7.68 | 8.32 | **8.09** | +0.23 [−0.34, +0.74] | +0.47 [−0.16, +1.09] | 4.42 |
+| IndicVoices | 12.29 | 12.01 | 12.21 | 11.40 | 11.83 | **11.47** | −0.82 [−1.15, −0.54] | −0.53 [−0.87, −0.25] | 8.84 |
+| nepali_cs | 11.31 | 11.60 | 11.58 | 11.33 | 10.71 | **11.42** | +0.12 [−0.25, +0.62] | −0.18 [−0.92, +0.17] | 9.32 |
+
+- **The rule picks V3** (val 6.50), but V1, V2 and V3 are within 0.02 of each other on val: which
+  students vote matters less than that other models vote at all.
+- **The vote recovers about a fifth to a quarter of the room above the beam:** 0.33 of val's 1.36
+  points between the top candidate and oracle@8 (24%), 0.25 of gold's 1.31 (19%). Against greedy,
+  gold falls from 10.85 to 10.16, 39% of the way to oracle@8.
+- **It is a hearing gain as much as a convention gain:** gold CER falls 9.04 → 8.49 (−0.55),
+  nearly as much as WER.
+- **The beams cannot vote for themselves; other models can.** On OpenSLR 54 the beams' own MBR is
+  +0.95 over the top candidate, while the students' vote is −0.42 under it.
+- **No gain where the students are weakest:** FLEURS, Common Voice and nepali_cs, the code-switched
+  lectures every student does worst on, tie greedy.
+- **Cost.** At inference this needs the teacher's beam and four students per clip; on audio already
+  transcribed by all of them (the corpus, any rescoring) it costs a CPU minute.
+
+**What it means for the judge.** An LLM judge now has to beat V3, not the top candidate: val 6.50,
+gold 10.16. What is left above V3 is about 1.0 point on val and 1.1 on gold.
+
+---
+
+## The judge's ceiling: 1.6-1.8 points on our sets, more on the public ones, and no free lunch (2026-10-06)
+
+`08_Judge_Headroom` (D117) on the 2026-09-30 export. The teacher (blend-075, bf16 as shipped)
+decoded val (Colab L4), gold and the five public sets (Colab G4) with beam 8 under the standard
+length cap, keeping all 8 candidates; on the public sets it also decoded greedily. Every row is
+scored with fold-v4 and paired against the standard greedy decode of the same model, the best
+model we have, with 95% intervals resampling episodes (speakers, sentences or videos on the public
+sets). The oracle picks, per clip, the candidate with the fewest folded errors against the
+reference: a ceiling no judge reaches. MBR picks the candidate closest to the other seven and
+reads no reference. Candidates and each set's `report.json` are in `Sagyam/nepanglish-asr-flex-ft`
+under `flex-2026-09-30/judge-headroom/<set>/`. A smoke run caught the public sets' greedy rows
+paired with the wrong clips (beam batches are sorted by length) before the full run; fixed, and
+the smoke outputs deleted.
+
+**The greedy rows reproduce the teacher's own numbers** (gold 10.85, val 7.08; the public sets
+within 0.06 of 03d's fp32 scores), so the comparison is with the model as shipped.
+
+Folded WER, S / D / I per 100 reference words:
+
+| set | clips | greedy | beam top@1 | random | MBR | oracle@2 | oracle@4 | oracle@8 |
+|---|---|---|---|---|---|---|---|---|
+| val | 1,792 | 7.08 (4.6/1.4/1.1) | 6.83 | 7.03 | 6.84 | 6.39 | 5.88 | **5.47** (3.5/1.1/0.8) |
+| gold | 965 | 10.85 (7.0/2.4/1.4) | 10.41 | 10.62 | 10.45 | 9.97 | 9.48 | **9.10** (5.7/2.2/1.2) |
+| FLEURS | 726 | 11.12 (8.1/1.4/1.6) | 10.78 | 11.05 | 10.70 | 10.07 | 9.28 | **8.56** (6.3/1.2/1.0) |
+| OpenSLR 54 | 13,609 | 7.43 (6.1/0.5/0.8) | 6.90 | 16.96 | 7.85 | 4.91 | 3.26 | **2.22** (1.9/0.1/0.2) |
+| Common Voice | 287 | 7.85 (6.6/0.9/0.3) | 7.62 | 11.81 | 7.56 | 6.92 | 5.53 | **4.42** (3.9/0.4/0.1) |
+| IndicVoices | 2,829 | 12.29 (8.1/2.4/1.9) | 12.01 | 13.29 | 12.21 | 10.85 | 9.71 | **8.84** (6.0/1.5/1.3) |
+| nepali_cs | 1,763 | 11.31 (6.2/1.3/3.8) | 11.60 | 11.93 | 11.58 | 10.84 | 10.01 | **9.32** (4.7/1.0/3.6) |
+
+Minus greedy, folded WER, raw WER and CER, [95% CI]:
+
+| set | top@1, WER | MBR, WER | oracle@8, WER | oracle@8, raw WER | oracle@8, CER |
+|---|---|---|---|---|---|
+| val | −0.25 [−0.40, −0.15] | −0.24 [−0.36, −0.14] | −1.61 [−2.01, −1.27] | −1.44 [−1.78, −1.14] | −0.63 [−0.86, −0.42] |
+| gold | −0.44 [−0.60, −0.28] | −0.40 [−0.57, −0.22] | −1.75 [−1.98, −1.50] | −1.52 [−1.81, −1.22] | −0.70 [−0.85, −0.52] |
+| FLEURS | −0.34 [−0.55, −0.11] | −0.42 [−0.66, −0.18] | −2.55 [−2.94, −2.20] | −2.09 [−2.48, −1.68] | −0.79 [−1.08, −0.50] |
+| OpenSLR 54 | −0.53 [−0.66, −0.40] | +0.42 [+0.20, +0.64] | −5.21 [−5.48, −4.95] | −3.42 [−3.69, −3.17] | −0.41 [−0.58, −0.24] |
+| Common Voice | −0.23 [−0.65, +0.16] | −0.29 [−0.93, +0.36] | −3.43 [−4.20, −2.73] | −3.08 [−4.00, −2.28] | −0.78 [−1.19, −0.41] |
+| IndicVoices | −0.29 [−0.44, −0.12] | −0.08 [−0.27, +0.12] | −3.46 [−3.90, −3.09] | −2.52 [−2.99, −2.13] | −1.15 [−1.43, −0.90] |
+| nepali_cs | +0.30 [−0.27, +1.39] | +0.28 [−0.29, +1.40] | −1.98 [−2.50, −1.51] | −2.25 [−2.71, −1.63] | −0.84 [−1.28, −0.12] |
+
+- **The ceiling is real on every set and in every metric.** Each oracle@8 interval is clear of
+  zero in folded WER, raw WER and CER. It is spread, not carried by a few rooms: oracle@8 beats
+  greedy in 120 of 158 gold episodes (worse in 1; the five most improved carry 29% of the net
+  gain), 22 of 23 val episodes, 177 of 343 FLEURS sentences, 490 of 525 SLR54 speakers, 196 of
+  310 IndicVoices speakers and 21 of 23 nepali_cs videos.
+- **Against the best model we have, the ceiling is 1.6–1.8 points on our sets** (16% relative on
+  gold, 23% on val) **and 2.0–3.5 on the public sets**, OpenSLR 54 apart (5.21, see below).
+- **No picker without outside knowledge gets near it.** Beam alone is worth 0.25–0.5 points on
+  most sets; MBR, the candidates' own consensus, adds nothing over the beam's first choice and is
+  worse on OpenSLR 54. A random candidate is about as good as greedy on val and gold but much
+  worse on the read-speech sets (+9.5 on OpenSLR 54). Whatever a judge recovers has to come from
+  the audio or from knowing the language, not from the list.
+- **OpenSLR 54's ceiling is short clips and small spellings.** Its clips have a median of 3
+  reference words (gold: 44), so one fixed word moves a clip by a third, and eight tries at a
+  three-word phrase often hit it. Of the 4.68 points oracle@8 removes over the top candidate, 59%
+  are candidates one or two characters from it (vowel length, nasal, aspiration: `सहित`/`सहिद`,
+  `भुट्टा`/`बुट्टा`, `गरेँ`/`गरी`), part spelling convention and part real near-misses; 38% a
+  different word, often a name the fold lets match across scripts (`Chinamukh`/`छिनामखु`); 3%
+  spacing. On gold, 62% of the 1.30 points is a different word and 36% one or two characters. This
+  is why OpenSLR 54's CER gain is 8% of its WER gain, against about 40% on val and gold. The
+  ceiling is also largest on short clips elsewhere: under 5 s it is 4.0 (val) and 4.1 (gold)
+  against 1.2–1.9 for longer clips, and 9.6 on IndicVoices' read scenario. Compare OpenSLR 54 with
+  nothing else.
+- **On our sets the ceiling is highest where the teacher is weakest**: gold above 15% crosstalk
+  2.41, two speakers 2.23, CMI 0 2.03 (val CMI 0 3.03), SNR under 15 dB 2.09, against 1.53 on
+  single-speaker clips.
+- **Beam 8 hurts nepali_cs's pure-Nepali clips** (greedy 10.52, top@1 12.32, ceiling 0.33) and
+  adds insertions there overall (3.8 → 4.3).
+- **The better candidate is rarely second.** Off rank 1, the oracle's picks spread over ranks 2–8
+  on every set; a judge has to read all eight.
+- **Cost.** Beam 8 on a G4 (RTX PRO 6000, 96 GB, batches of 600 s / 48 clips) ran at RTF
+  0.002–0.009, about 25 minutes for all 31 hours; on an L4, 0.043.
+
+**What this does not show.** How much of the ceiling any judge recovers; that is the judge matrix.
+One teacher, one beam width. The oracle reads the reference, so wherever the reference is wrong
+it picks a candidate that agrees with the mistake.
+
+---
+
 ## The Conformer from scratch: teacher labels halve its gap, pretraining is still worth 11 points (2026-10-06)
 
 `06f_Student_Conformer` on the 2026-09-30 export, Colab G4 (RTX PRO 6000 Blackwell 96 GB, 48 vCPU).

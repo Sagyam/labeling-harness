@@ -45,6 +45,7 @@ the notebooks are numbered in the order they run, and that order is the protocol
 | 5 | `05_Teacher` | B steps 2–3 |
 | 6 | `06a`–`06f_Student_*` | B step 4, one notebook per student |
 | 7 | `07_Report` | E: every model in one table |
+| 8 | `08_Judge_Headroom` | G1's pilot, step 0: the oracle headroom (D117) |
 
 Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
 val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
@@ -456,9 +457,18 @@ LLM that fits in 40 GB picks one. It picks, it never rewrites, so it cannot inve
 were not said. It runs once, after the students (B), on Flex and every student alike: the teacher
 and its labels stay as they are, so no student is judged against a moved target. Fusion (step 3)
 is tried only if the pilot shows promise.
-- **Measure the headroom first.** On val, the oracle WER of the 8 (always picking the candidate
-  closest to the reference) bounds what any judge can gain. If the oracle is less than about a
-  point better than the top candidate, stop: no judge can help.
+- **Measure the headroom first** (`08_Judge_Headroom`, D117; ran 2026-10-06 on val, gold and the
+  public sets: oracle@8 1.36 [1.09, 1.66] below the top candidate on val, so G1 continues; against
+  greedy the ceiling is 1.6–1.8 points on our sets and 2.0–3.5 on the public ones, and MBR gets
+  none of it; findings.md, *The judge's ceiling*). A vote by the students' transcripts (V3)
+  recovers a fifth to a quarter of the room above the top candidate, so a judge has to beat V3:
+  val 6.50, gold 10.16 (findings.md, *A cross-model vote*). On
+  val, the oracle WER of the 8 (always picking the candidate closest to the reference) bounds what
+  any judge can gain. If the oracle is less than 1.0 point better than the top candidate, stop: no
+  judge can help. No judge model is chosen yet: the owner wants a matrix of local models only
+  (Qwen, Gemma, Granite, Nemotron and others), text-only and audio-aware (the audio judge hears
+  the clip), against top@1, a random pick, KenLM and the oracle; up to 96 GB of VRAM if it shows
+  promise. Gemma stays in and is scrutinised only if it wins by a wide margin.
 - **Zero-shot first, no fine-tuning.** Shuffle the candidates for each clip (LLMs favour the first
   one shown), ask for the number only, and compare against two baselines: the top beam
   candidate, and a word n-gram model (KenLM) on the train labels picking from the same 8. An LLM
