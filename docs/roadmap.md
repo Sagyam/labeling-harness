@@ -46,6 +46,7 @@ the notebooks are numbered in the order they run, and that order is the protocol
 | 6 | `06a`–`06f_Student_*` | B step 4, one notebook per student |
 | 7 | `07_Report` | E: every model in one table |
 | 8 | `08_Judge_Headroom` | G1's pilot, step 0: the oracle headroom (D117) |
+| 8 | `08b_Judge_Pilot` | G1's pilot: two local LLM judges against the vote V3 (D118) |
 
 Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
 val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
@@ -462,7 +463,10 @@ is tried only if the pilot shows promise.
   greedy the ceiling is 1.6–1.8 points on our sets and 2.0–3.5 on the public ones, and MBR gets
   none of it; findings.md, *The judge's ceiling*). A vote by the students' transcripts (V3)
   recovers a fifth to a quarter of the room above the top candidate, so a judge has to beat V3:
-  val 6.50, gold 10.16 (findings.md, *A cross-model vote*). On
+  val 6.50, gold 10.16 (findings.md, *A cross-model vote*). **The pilot** (`08b_Judge_Pilot`,
+  D118): Qwen3.8-27B reading the candidates and Gemma 4 12B hearing the clip, each with thinking
+  off and on, on 300 random val clips, beside an n-gram picker; a judge must beat V3 with a
+  98.75% interval below zero, or G1 stops with the negative. On
   val, the oracle WER of the 8 (always picking the candidate closest to the reference) bounds what
   any judge can gain. If the oracle is less than 1.0 point better than the top candidate, stop: no
   judge can help. No judge model is chosen yet: the owner wants a matrix of local models only

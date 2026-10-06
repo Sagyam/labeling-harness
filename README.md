@@ -165,7 +165,8 @@ Indic-Transcribe-Flex, score it on the public Nepali sets, ablate the augmentati
 weights with the base model and freeze one teacher; `04_PreDistill` and `05_Teacher` cut and
 pseudo-label unlabelled audio; `06a`–`06f` train one student each; `07_Report` puts every model in
 one table; `08_Judge_Headroom` measures how much a judge picking among the teacher's beam
-candidates could gain. They run in Colab against the dataset on Hugging Face, each with a `SMOKE`
+candidates could gain, and `08b_Judge_Pilot` whether a local LLM picks better than a vote of the
+students. They run in Colab against the dataset on Hugging Face, each with a `SMOKE`
 switch for a run of a few minutes first. Notebooks 03 to 08 are generated:
 
 ```bash
