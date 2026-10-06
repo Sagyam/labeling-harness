@@ -57,8 +57,10 @@ its 100 h point: Whisper's gold fell from 17.32 to 15.02 with the pseudo-labels 
 Whisper's 15.02 at a seventh of its size, its extra errors deletions in crosstalk (findings.md,
 *IndicConformer's 100 h point*). 06d then: Parakeet's gold fell from 28.63 to 21.53, its teacher
 labels closing 42% of the gap Nepali pretraining gave IndicConformer, still 5.9 behind (findings.md,
-*Parakeet's 100 h point*). **Next:** the remaining students (06b, 06e, 06f) when there is GPU time,
-each smoked first.
+*Parakeet's 100 h point*). 06f last: the Conformer from scratch fell from 43.70 to 27.08, its
+teacher labels closing half its gap to the teacher, still 11 points behind the pretrained
+students; its stage 3 was stopped after one epoch (findings.md, *The Conformer from scratch*).
+**Next:** the remaining students (06b, 06e) when there is GPU time, each smoked first.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
@@ -107,7 +109,7 @@ Checked on 2026-09-24:
 | **Whisper-large-v3-turbo** (OpenAI, MIT) | weakly (123% zero-shot, loops) | yes: byte-level BPE | 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. Its decoder stops at 448 positions, and Devanagari costs several tokens a character: 9 train labels do not fit, and 5 gold clips cannot be written whole in one pass. |
 | **Qwen3-ASR-0.6B** ([Alibaba](https://github.com/QwenLM/Qwen3-ASR), Apache-2.0) | no; Hindi among its 30 languages | yes: byte-level BPE | An audio encoder feeding a Qwen3 decoder, the 0.6B picked over the 1.7B for being Parakeet's size and smaller than Flex. Zero-shot it writes rough Nepanglish already. Streams through vLLM only; its forced aligner covers 11 languages, not Hindi or Nepali. Its prompt names the language, and `language None` means "no speech", so ours is fixed at `language Nepali`. `qwen-asr` pins transformers 4.57.6, so it runs in its own runtime. |
 | **Omnilingual CTC** (Meta; 300M or 1B) | yes: 1,600+ languages | to check | Added for step 4 (2026-09-26), not in step 0. A self-supervised wav2vec 2.0 encoder with a CTC head: the one family the other students leave out, and the one least able to use the context a code-switch needs, since CTC predicts each token independently. The 1B reached ~16.6% on val in the 2026-09-14 bake-off before it was stopped at epoch 6, under a different protocol. |
-| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. `06f_Student_Conformer` builds it from IndicConformer's config, resized, without the encoder copy (not yet run). |
+| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. `06f_Student_Conformer` builds it from IndicConformer's config, resized, without the encoder copy. Ran 2026-10-05/06: pretraining is still worth ~11 points of gold at this data (findings.md, *The Conformer from scratch*). |
 
 **Pick, before step 0.** Parakeet-v2 was the main bet, with IndicConformer next to it as the
 safety net. Step 0 overturned it (findings.md, 2026-09-25): Whisper-turbo came closest to Flex, and

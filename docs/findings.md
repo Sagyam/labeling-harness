@@ -23,14 +23,119 @@ What survives:
   step-0 students), with the hubs' history squashed: they were scored on exports that no longer exist, so the numbers below are
   their only record.
 - **The students.** `Sagyam/nepanglish-asr-students` under `students-2026-09-30/`: 06a's two
-  Whisper stages and 06c's two IndicConformer stages from 2026-10-04, and 06d's two Parakeet
-  stages from 2026-10-05 (weights, transcripts, metrics, error rows).
+  Whisper stages and 06c's two IndicConformer stages from 2026-10-04, 06d's two Parakeet
+  stages from 2026-10-05, and 06f's two Conformer stages from 2026-10-05/06 (weights, transcripts,
+  metrics, error rows; 06f also `fit_check.json`).
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## The Conformer from scratch: teacher labels halve its gap, pretraining is still worth 11 points (2026-10-06)
+
+`06f_Student_Conformer` on the 2026-09-30 export, Colab G4 (RTX PRO 6000 Blackwell 96 GB, 48 vCPU).
+IndicConformer's hybrid transducer resized to 33M parameters (16 layers, d_model 256) from random
+weights, with the shared 1,024-token SentencePiece. Steps of 120 s of audio and stage 1 at peak lr
+3e-4 without SpecAugment, both from the diagnostics of D116; stage 2 keeps SpecAugment. Stage 1 ran
+from the kit at 9deaa68 (sha 611746f6), stage 2 resumed after its epoch 3 from the kit at db55e90
+(sha 329429ee), after 9b4c6db stopped patience counting evaluations inside the LR warmup. One seed.
+Outputs in `Sagyam/nepanglish-asr-students` under `students-2026-09-30/conformer-{human,distill}/`.
+Folded WER is fold-v4.
+
+**Training.** Stage 1, val by epoch: 100.00, 100.00, 96.32 (blank output until epoch 3), 83.75,
+66.56, 52.55, 46.40, 44.50, 40.17, 38.50, 37.45, 37.33, 35.68, 35.22, 34.61, 34.11, 33.73, 33.38,
+33.07, 33.41, 33.01, **32.93**: stopped by patience after 22 of 40 epochs. Stage 2: 31.68, 31.84,
+32.28 (the re-warmed schedule), 31.03, 28.96, 27.25, 26.32, 25.64, 25.06, 24.39, 23.36, 22.94,
+22.47, 21.83, 21.75, 21.32, 20.93, 20.63, 20.44, 20.18, 19.69, 19.85, 19.84, 19.39, 18.86,
+**18.83**, 18.94, 18.90: stopped by patience after 28 of 30, best at 26, about 6 min an epoch at
+~1,400× realtime. No loops in the final scores.
+
+| | val | gold | gold, no crosstalk | gold, >15% crosstalk |
+|---|---|---|---|---|
+| teacher (blend-075) | 7.08 | 10.85 | | |
+| Conformer, stage 1 | 32.93 (23.42 / 7.54 / 1.97) | 43.70 (31.33 / 10.31 / 2.07) | 39.37 | 59.12 |
+| Conformer, stage 2 | **18.83** (12.87 / 4.57 / 1.39) | **27.08** (18.51 / 6.91 / 1.66) | 22.45 | 44.85 |
+| Parakeet, stage 2 (06d) | 13.79 | 21.53 | 16.87 | 38.38 |
+| IndicConformer, stage 2 (06c) | 10.88 | 15.64 | 11.40 | 32.26 |
+| Whisper, stage 2 (06a) | 9.43 | 15.02 | 10.57 | 31.56 |
+
+- **Stage 2 minus stage 1: val −14.10 [−16.89, −11.55], gold −16.63 [−17.64, −15.62]**: the
+  largest gain of any student (Parakeet's −7.09, IndicConformer's −2.77, Whisper's −2.30).
+- **It closed 51% of the gap to the teacher on gold** (+32.86 [+31.40, +34.34] → +16.23 [+15.22,
+  +17.22]), against Parakeet's 40%, IndicConformer's 37% and Whisper's 36%.
+- **Pretraining is still worth about 11 points at this much data**, which is the question 06f was
+  added to ask. Paired on gold, stage 2 against the pretrained students' stage 2: IndicConformer
+  +11.43 [+10.64, +12.25], Whisper +12.06 [+10.89, +13.18], Parakeet +5.54 [+4.30, +6.83] on 965
+  clips (158 episodes). An English-only encoder is worth half of what a Nepali one is.
+  Computed from the runs' `per_clip.json` with episodes resampled, outside `evalkit`.
+- **It overfits; it is not too small.** The fit check (`fit_check`, dae71d7) decodes 500 of the
+  human train clips it learned from:
+
+  | | train (500 clips) | val | gold |
+  |---|---|---|---|
+  | stage 1 | 2.98 (1.69 / 1.09 / 0.20) | 32.93 | 43.70 |
+  | stage 2 | 4.83 (2.73 / 1.79 / 0.32) | 18.83 | 27.08 |
+
+  Stage 1 had nearly memorised its train set. The teacher's labels halved the gap to val (−30 to
+  −14), but a model that writes its own train clips at 3–5% has room to fit; it lacks variety.
+  Part of any train-to-val gap is val being mostly one episode. Stage 2's check ran on a T4,
+  stage 1's on the G4.
+
+**What it got wrong: common words, not only rare ones.** The per-word substitution-plus-deletion
+rate on gold, split by how often the word occurs in what stage 2 trained on (human labels plus
+the teacher's), the measure of *The vocabulary narrowed* below; fold-v4 alignments, words keyed by
+`spelling_key`:
+
+| occurrences in training | share of gold words | teacher | IndicConformer, stage 2 | Conformer, stage 1 | Conformer, stage 2 |
+|---|---|---|---|---|---|
+| never | 5.3% | 27.1 | 42.5 | 77.6 | 65.0 |
+| 1–9 | 8.7% | 16.1 | 31.9 | 69.0 | 49.4 |
+| 10–99 | 18.8% | 9.3 | 15.5 | 56.3 | 31.3 |
+| 100+ | 67.2% | 7.2 | 9.9 | 31.2 | 17.6 |
+
+- **It spells 35% of the words it never saw right.** A model that only memorised could write none
+  of them: it builds them from word pieces by ear, so it has learned how Nepali sounds are spelled.
+- **Common words are its largest loss: 11.8 of its 25.4 points of substitutions and deletions**
+  (never-seen 3.4, 1–9 times 4.3, 10–99 times 5.9). Only 5% of those errors are near-misses
+  (romanized similarity ≥ 0.7, against 23% on never-seen words): whole wrong words, in voices it
+  has not heard. The teacher's labels mostly taught it familiar words in more voices: common-word
+  errors fell 31.2 → 17.6, never-seen 77.6 → 65.0.
+
+**Public sets**, folded WER, then plain WER and plain CER:
+
+| set | stage 1 folded | stage 2 folded | difference [95% CI] | plain WER, 1 → 2 | plain CER, 1 → 2 |
+|---|---|---|---|---|---|
+| FLEURS | 52.05 | 34.27 | −17.79 [−18.96, −16.65] | 60.45 → 45.61 | 29.76 → 22.98 |
+| SLR54 | 56.29 | 33.10 | −23.19 [−23.93, −22.43] | 65.34 → 42.55 | 30.80 → 18.49 |
+| Common Voice | 43.57 | 26.41 | −17.16 [−20.79, −13.88] | 54.10 → 39.33 | 27.45 → 17.09 |
+| IndicVoices | 56.25 | 37.54 | −18.72 [−19.65, −17.83] | 64.96 → 49.85 | 39.93 → 29.68 |
+| nepali_cs | 53.44 | 36.29 | −17.14 [−18.45, −15.34] | 63.72 → 47.18 | 41.12 → 28.36 |
+
+Public mean, folded: 52.32 → 33.52 (Parakeet's stage 2: 26.92; IndicConformer's: 13.32). As for
+Parakeet, CER fell with WER on every set: for a student that knew no Nepali, the teacher's labels
+taught the language, not only its conventions.
+
+**Stage 3 (D115) was stopped after one epoch.** The smoke passed on 2026-10-06 (with generated
+noise; the real MUSAN download then ran in 7–11 min). The owner stopped the real run: it starts
+from stage 1's weights by design, so at best it would have measured a few points of augmentation
+on a model 16 points from the teacher, without making one anyone would use.
+- Epoch 1's val was 32.91, from 32.02 before it, inside the LR warmup (stage 2 read 31.68 there).
+- **It ran at ~900× realtime with the GPU 50–60% busy, against stage 2's ~1,400×.** Raising the
+  DataLoader workers from 6 to 32 changed neither (reverted, 3397ba3). The last ~60 steps of the
+  epoch ran at ~1,300× and 84%, so the GPU keeps up when batches are ready; what holds them back
+  was not measured. Any rerun of an augmented stage should profile the loader first.
+- Its epoch-1 resume point is left in `Sagyam/nepanglish-asr-resume`; a rerun would resume from it.
+
+**What this does not show.**
+- The same learning-rate-restart confound as 06a, 06c and 06d; stage 1 had flattened (0.14 over
+  its last three epochs).
+- One seed.
+- Whether augmentation helps a model from scratch: stage 3 did not run.
+- Gold RTF on the G4 (0.0004) is not comparable with the A100 students'.
 
 ---
 

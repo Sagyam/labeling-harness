@@ -2830,6 +2830,9 @@ reason 03c gave for augmentation having little to fix, and a 33 M model from ran
 - **Augmentation is the remedy for overfitting, not undertraining.** If 06f's train loss and val
   WER are both still falling when its epochs run out, the answer is more epochs, and stage 3 will
   read worse than it should.
+- **Stopped after one epoch (owner, 2026-10-06).** Starting from stage 1, it could only measure a
+  few points of augmentation on a model 16 points from the teacher (findings.md, *The Conformer
+  from scratch*). The recipe stays in Config; nothing of stage 3 was published.
 
 **Reversal:** cheap: set `STAGE3_RECIPE` back to `None` in `build_students.py` and rebuild. A
 trained stage 3 stays in the students repo as a result, under `conformer-distill-aug`.
