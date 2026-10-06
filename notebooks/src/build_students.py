@@ -435,7 +435,59 @@ def run_stage(stage):
     if failure:
         print(failure)
         raise RuntimeError(f"{run} failed (traceback above); the GPU is freed for the next stage")
+
+
+def fit_sample(rows, n):
+    """`n` rows spread evenly over `rows` in segment-id order: the same clips on every run, each
+    episode drawn in proportion to its clips. All of them when there are no more than `n`."""
+    ordered = sorted(rows, key=lambda r: r["segment_id"])
+    if n >= len(ordered):
+        return ordered
+    return [ordered[i * len(ordered) // n] for i in range(n)]
+
+
+def fit_check(stage, n=500):
+    """A stage's best weights on `n` human train clips, beside its stored val and gold scores, and
+    `fit_check.json` in its folder of OUT_REPO."""
+    run = f"{STUDENT}-{stage}"
+    stored = {s: fetch_json(f"{RUN_PREFIX}/{run}/{s}_metrics.json") for s in ("val", "gold")}
+    if None in stored.values():
+        print(f"{run}: not scored in {OUT_REPO} yet, no fit check")
+        return None
+    rows = fit_sample(splits["train"], n)
+    try:
+        free_model()
+        load_student(download_weights(run))
+        texts, _, _ = decode(rows)
+        train = score([r["text"] for r in rows], texts)
+    finally:
+        free_model()
+    found = {"run": run, "train_clips": len(rows), "train": train,
+             **{s: {k: m[k] for k in ("wer", "sub", "del", "ins", "cer")} for s, m in stored.items()}}
+    path = OUT_ROOT / run / "fit_check.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(found, indent=1))
+    api.upload_file(path_or_fileobj=str(path), path_in_repo=f"{RUN_PREFIX}/{run}/fit_check.json",
+                    repo_id=OUT_REPO, commit_message=f"{run}: fit check")
+    print(f"{run}: train {line(train)} on {len(rows)} clips | val {line(found['val'])} | "
+          f"gold {line(found['gold'])} | train - val {train['wer'] - found['val']['wer']:+.2f}")
+    return found
 '''
+
+FIT_NOTE = """
+## Fit check — train WER beside val
+
+A stage's best weights on 500 of the human train clips it learned from, decoded as val is. Train
+far below val means the model fits what it saw and does not carry it to new audio: more data or
+more regularisation. Train close to val means it cannot even fit the train set: too small, or
+undertrained. Val is mostly one episode and train is many, so part of any gap is the difference
+between the two sets, not overfitting; gold is printed beside them for that reason. Run it any
+time after the stages cell; a stage that is not in `OUT_REPO` yet is skipped.
+"""
+
+FIT_CHECK = """fit_check("human")
+fit_check("distill")
+fit_check("distill-aug")"""
 
 RUN_NOTES = {
     "human": """
@@ -1625,6 +1677,8 @@ def student_cells(student: Student) -> list[dict]:
         *stage_cells(),
         md(REPORT_NOTE),
         code(REPORT),
+        md(FIT_NOTE),
+        code(FIT_CHECK),
     ]
 
 

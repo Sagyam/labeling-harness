@@ -240,3 +240,40 @@ def test_only_the_scratch_conformer_trains_stage_1_slower_and_without_specaugmen
         if scratch:
             assert config["LR_ENCODER"] == config["LR_HEADS"] == 3e-4
     assert 'stage == "human" and not SPECAUG_IN_HUMAN' in students.STAGES
+
+
+def _stages_fn(name: str, **globals_: object):
+    students = importlib.import_module("build_students")
+    tree = ast.parse(students.STAGES)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+    ns: dict = dict(globals_)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<STAGES>", "exec"), ns)
+    return ns[name]
+
+
+def test_the_fit_check_reads_the_same_train_clips_whatever_their_order() -> None:
+    """06f, 2026-10-06: its stage 1 train loss fell to 0.33 while val sat at 33, which reads as
+    overfitting, but loss is not WER. The fit check decodes train clips with a stage's weights;
+    the same clips every time, spread over the train split in segment-id order, so whole episodes
+    are not over- or under-drawn."""
+    sample = _stages_fn("fit_sample")
+    rows = [{"segment_id": f"ep{e}_{i:05d}"} for e in range(4) for i in range(25)]
+    picked = sample(rows, 10)
+    assert picked == sample(list(reversed(rows)), 10)
+    assert len({r["segment_id"] for r in picked}) == 10
+    assert [r["segment_id"][:3] for r in picked].count("ep0") in (2, 3)  # a quarter of 10
+    assert sample(rows[:7], 10) == sorted(rows[:7], key=lambda r: r["segment_id"])
+
+
+def test_the_fit_check_comes_after_every_other_cell() -> None:
+    """Owners run cells by index (a smoke of stage 3 is a list of them), so the check is appended
+    to the end of each student notebook and moves nothing. Omnilingual runs as one script and has
+    no check."""
+    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+        cells = json.loads(path.read_text("utf-8"))["cells"]
+        sources = ["".join(c["source"]) for c in cells]
+        calls = [i for i, s in enumerate(sources) if s.startswith("fit_check(")]
+        if path.name == "06e_Student_Omnilingual.ipynb":
+            assert not calls
+            continue
+        assert calls == [len(cells) - 1], path.name
