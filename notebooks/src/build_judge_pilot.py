@@ -367,7 +367,7 @@ def run_judge(name, split, rows):
             else:
                 many.append(r)
         with ftkit.timed(f"{split}/{name} shard {number}: {len(many)} clips judged, {len(part) - len(many)} with one candidate"):
-            i, size = 0, BATCH
+            i, size, t0 = 0, BATCH, time.perf_counter()
             while i < len(many):
                 chunk = many[i:i + size]
                 try:
@@ -381,6 +381,9 @@ def run_judge(name, split, rows):
                     print(f"out of memory: batch {size} from here")
                     continue
                 i += len(chunk)
+                took = time.perf_counter() - t0
+                print(f"  {split}/{name} shard {number}: {i}/{len(many)} clips, {took:.0f} s, "
+                      f"about {took / i * (len(many) - i):.0f} s to go", flush=True)
         local = OUT / split / name / f"part-{number:05d}.jsonl"
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_text("".join(json.dumps(o, ensure_ascii=False) + "\n" for o in out), "utf-8")
