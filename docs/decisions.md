@@ -2918,3 +2918,58 @@ the candidate with the fewest folded errors, a tie going to the higher-ranked on
 
 **Reversal:** cheap. The threshold is one Config value; changing it after the result is read
 would need a new entry saying why.
+
+## D118 — The judge pilot: two local judges, thinking off and on, must beat the cross-model vote on 300 val clips
+
+Roadmap G1, after D117 found the room (oracle@8 1.36 points under the top candidate on val) and
+the cross-model vote V3 took a quarter of it (findings.md, *A cross-model vote*). The question
+is now narrower: does an LLM that picks among the teacher's 8 beam candidates extract more than
+a vote of four smaller models? `08b_Judge_Pilot` answers it. Everything below was fixed on
+2026-10-06, before any judge was run.
+
+- **The sample.** 300 val clips, `judgekit.sample` with seed 0 over the sorted segment ids. Nothing
+  preselects them: not the oracle, not the number of distinct candidates.
+- **The judges** (owner, 2026-10-06), each run with thinking off and on, so four judge rows:
+  - text only: `Qwen/Qwen3.8-27B`, the newest dense Qwen, bf16 on the 96 GB G4;
+  - audio-aware: `google/gemma-4-12B-it`, the only current audio LLM between 8 and 14B. It hears
+    the clip the teacher transcribed (at most 20 s, 16 kHz), then reads the candidates. Google built
+    the fusion model behind the references; it is scrutinised (does it prefer their conventions?)
+    only if it beats the other rows by a wide margin.
+- **The input.** The 8 candidates with exact duplicates removed (a duplicate has the same errors,
+  so nothing is lost; the highest-ranked copy stands for them), shuffled per clip by a seed and
+  the segment id, because LLMs favour the first one shown, and numbered from 1. A clip with one
+  distinct candidate is not sent and keeps it. The prompt (`judgekit.prompt`) asks for the number
+  only. The judge picks; it never rewrites.
+- **Decoding.** Greedy, so a rerun gives the same picks. Thinking on gets a budget of 2,048 tokens;
+  a judge still thinking at the budget has its thinking closed for it and is asked for the number
+  (budget forcing). Qwen thinks at its `medium` effort; Gemma has no effort setting.
+- **The answer.** Exactly one integer from 1 to the number shown (Devanagari digits read as
+  digits). Anything else is a parse failure, which takes the top candidate and is counted.
+- **The rows, on the same 300 clips:** greedy, top@1, V3, an n-gram picker, the four judges and
+  oracle@8. Every row: folded WER with S/D/I, raw WER, CER, plain WER and CER, per clip class, and
+  each judge paired against V3, top@1 and greedy with episodes resampled; how the judge's change
+  against V3 spreads over the episodes; how often it agrees with V3; the beam rank it picked
+  from; its parse failures and unfinished thoughts; and its time per clip.
+- **V3 is recomputed, not read.** Voters: the teacher's greedy transcript and the stage-2
+  transcripts of the Whisper, IndicConformer, Parakeet and Conformer students; each beam's cost is
+  its summed Levenshtein distance over folded tokens to the voters, a tie going to the higher
+  rank. On the whole of val it must reproduce the published 6.50 (to 0.02), or the notebook stops.
+- **The n-gram picker** (owner: in the pilot, out of the kill rule). The roadmap names KenLM; this
+  is the same model class written in `judgekit` so it is tested and needs no build: an
+  interpolated Kneser-Ney trigram over folded tokens of the train labels. A candidate scores its
+  beam score plus λ times its n-gram log-probability per word; λ is chosen from a fixed grid on
+  the val clips outside the sample, lowest folded WER, ties to the smaller λ.
+- **The kill rule.** A judge row passes if its folded val WER minus V3's is below zero with the
+  whole interval, episodes resampled (`sweep.paired_bootstrap`, 2,000 draws). Four rows get four
+  chances, so the interval is Bonferroni's: 98.75% (1 − 0.05/4), not 95%. If no row passes, G1
+  stops, and the result is the negative: an LLM picks no better than a vote of smaller models.
+- **Only if a row passes:** that row runs on gold, reported and never chosen on (D105); then the
+  full matrix (more families and sizes up to the G4, every set) gets its own entry.
+- **Cost term.** Judge time per clip, batched on the G4 in bf16 with transformers, beside V3's (a
+  CPU minute for all of val once the transcripts exist). A gain that costs a 27B thinking pass per
+  clip is weighed as one.
+- **What it cannot say.** It measures how much better the teacher's labels could be, not how much
+  better a student trained on them would get: no student is retrained (paper B, limitation).
+
+**Reversal:** cheap before the run: every item is a Config value or a `judgekit` function. After
+the judges are read, changing the sample, the rule or the interval needs a new entry saying why.
