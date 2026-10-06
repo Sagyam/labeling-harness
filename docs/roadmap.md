@@ -46,7 +46,6 @@ the notebooks are numbered in the order they run, and that order is the protocol
 | 6 | `06a`–`06f_Student_*` | B step 4, one notebook per student |
 | 7 | `07_Report` | E: every model in one table |
 | 8 | `08_Judge_Headroom` | G1's pilot, step 0: the oracle headroom (D117) |
-| 8 | `08b_Judge_Pilot` | G1's pilot: two local LLM judges against the vote V3 (D118) |
 
 Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
 val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
@@ -442,6 +441,10 @@ error anatomy, and weight blending*). The owner parked them for later.
 
 ### G1. Shallow fusion with a text-only language model
 
+**Closed 2026-10-06 (D120).** Its pilot found an LLM judge a dead end: on val and gold both
+judges lost to the panel vote, and the n-gram picker on our train labels gained nothing. By the
+pilot rule below, fusion is not tried. What follows is the plan as it stood.
+
 **Why.** Words our train labels never contain are the largest cause of error on the public sets:
 3.23 of the fine-tuned model's 11.20 points, plus 1.09 for words seen 1–9 times. Blending recovers
 the vocabulary fine-tuning erased; a text model adds vocabulary neither model ever had. Nepali text
@@ -461,15 +464,12 @@ is tried only if the pilot shows promise.
 - **Measure the headroom first** (`08_Judge_Headroom`, D117; ran 2026-10-06 on val, gold and the
   public sets: oracle@8 1.36 [1.09, 1.66] below the top candidate on val, so G1 continues; against
   greedy the ceiling is 1.6–1.8 points on our sets and 2.0–3.5 on the public ones, and MBR gets
-  none of it; findings.md, *The judge's ceiling*). A vote by the students' transcripts (V3)
-  recovers a fifth to a quarter of the room above the top candidate, so a judge has to beat V3:
-  val 6.50, gold 10.16 (findings.md, *A cross-model vote*). **The pilot** (`08b_Judge_Pilot`,
-  D118): Qwen3.8-27B reading the candidates and Gemma 4 12B hearing the clip, without thinking
-  (dropped for its cost), on 300 random val clips, beside an n-gram picker; a judge must beat V3
-  with a 97.5% interval below zero, or G1 stops with the negative. **Ran 2026-10-06: stopped.**
-  Qwen +0.13 [−0.15, +0.44] and Gemma +0.03 [−0.22, +0.38] over V3 on folded WER, and both
-  clearly worse on raw WER and CER (findings.md, *An LLM picks no better than the cross-model
-  vote*). On
+  none of it; findings.md, *The judge's ceiling*). The panel vote (the teacher's greedy decode and
+  four students voting among the beams) recovers a fifth to a quarter of the room above the top
+  candidate: val 6.50, gold 10.16 (findings.md, *The panel vote*). **The pilot** (D118, its
+  notebook since removed): Qwen3.8-27B reading the candidates and Gemma 4 12B hearing the clip,
+  without thinking, against the panel vote; it stopped, and on every set the judges lost to the
+  panel or tied it, FLEURS aside (findings.md, *An LLM judge is a dead end*). On
   val, the oracle WER of the 8 (always picking the candidate closest to the reference) bounds what
   any judge can gain. If the oracle is less than 1.0 point better than the top candidate, stop: no
   judge can help. No judge model is chosen yet: the owner wants a matrix of local models only

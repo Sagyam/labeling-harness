@@ -277,7 +277,7 @@ def test_the_bootstrap_is_repeatable_from_its_seed():
 
 
 def test_a_wider_level_gives_a_wider_interval_around_the_same_point():
-    # D118: four judge rows share one kill rule, so each is read at a Bonferroni level
+    # several rows read against one rule are each read at a Bonferroni level
     a = _counts([1, 3, 0, 2, 5, 1, 2, 4])
     b = _counts([2, 1, 1, 4, 3, 0, 2, 5])
     eps = [f"e{i}" for i in range(8)]

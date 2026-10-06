@@ -35,71 +35,64 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
-## An LLM picks no better than the cross-model vote: G1's pilot stops (2026-10-06)
+## An LLM judge is a dead end: G1 closed (2026-10-06)
 
-`08b_Judge_Pilot` (D118): can a local LLM that picks one of the teacher's 8 beam candidates beat
-V3, the vote of the teacher's greedy decode and four students (*A cross-model vote*)? Two judges,
-zero-shot, no thinking (the thinking rows were dropped for their cost before any score was read,
-D118): **Qwen3.8-27B** reads the candidates; **Gemma 4 12B-it** also hears the clip. Each sees the
-distinct candidates shuffled per clip and answers with a number. 300 val clips drawn at random
-(seed 0) from 21 episodes; folded WER, fold-v4, S/D/I per 100 reference words. On all of val the
-recomputed V3 reproduced 6.50 exactly. Outputs: `flex-2026-09-30/judge-pilot/` in the Flex repo
-(picks with raw responses, `val/report.json`, `decision.json`).
+Can a local LLM that picks one of the teacher's 8 beam candidates beat the panel vote (the
+teacher's greedy decode and four students voting among the beams, *The panel vote* below)? Two
+judges, zero-shot, no thinking: **Qwen3.8-27B** reads the distinct candidates, shuffled per clip;
+**Gemma 4 12B-it** also hears the clip. Each answers with a number and never rewrites. The pilot
+(D118) ran on 300 random val clips; after its rule said stop, both judges ran on every set for the
+record (D119). The owner's verdict: a dead end, not worth the compute or a section of the paper,
+and G1 is closed (D120). Folded WER, fold-v4. Picks and reports are on the hub under
+`flex-2026-09-30/judge-pilot/` (the notebook is gone).
 
-| row | WER (S/D/I) | raw WER | CER | plain WER / CER |
-|---|---|---|---|---|
-| greedy | 6.75 (4.4/1.2/1.2) | 11.14 | 5.16 | 12.30 / 5.41 |
-| top@1 | 6.54 (4.2/1.3/1.1) | 10.82 | 5.08 | 12.12 / 5.31 |
-| **V3** | **6.35** (4.1/1.2/1.0) | **10.10** | **4.60** | **11.06 / 4.84** |
-| n-gram (λ 0.05) | 6.54 (4.2/1.2/1.2) | 10.64 | 5.08 | 11.96 / 5.32 |
-| Qwen3.8-27B, text | 6.48 (4.2/1.2/1.2) | 10.76 | 5.01 | 12.07 / 5.20 |
-| Gemma 4 12B, audio | 6.38 (4.1/1.1/1.1) | 10.64 | 4.97 | 11.91 / 5.14 |
-| oracle@8 | 5.23 (3.4/0.9/0.9) | 9.90 | 4.66 | 11.19 / 4.89 |
+**Every set, folded WER**, then each judge minus the panel vote with a 95% interval (groups
+resampled):
 
-Differences in points, episodes resampled, 95% unless marked:
+| set | clips | top@1 | **panel** | n-gram | Qwen, text | Gemma, audio | oracle@8 | Qwen − panel | Gemma − panel |
+|---|---|---|---|---|---|---|---|---|---|
+| val (all) | 1,792 | 6.83 | **6.50** | 6.82 | 6.82 | 6.72 | 5.47 | +0.32 [+0.22, +0.48] | +0.22 [+0.14, +0.34] |
+| gold | 965 | 10.41 | **10.16** | 10.41 | 10.38 | 10.29 | 9.10 | +0.22 [+0.09, +0.36] | +0.13 [+0.00, +0.28] |
+| FLEURS | 726 | 10.78 | 10.83 | 10.71 | **10.26** | 10.70 | 8.56 | −0.57 [−0.82, −0.32] | −0.13 [−0.38, +0.13] |
+| Common Voice | 287 | **7.62** | 8.09 | 7.68 | 9.19 | 9.60 | 4.42 | +1.11 [+0.29, +2.06] | +1.51 [+0.71, +2.49] |
+| nepali_cs | 1,762 | 11.51 | **11.33** | 11.65 | 11.59 | 11.82 | 9.23 | +0.27 [−0.09, +1.00] | +0.50 [+0.04, +1.29] |
 
-| row | − V3, folded (97.5%, the rule) | − V3, raw WER | − V3, CER | − top@1, folded | − greedy, folded |
-|---|---|---|---|---|---|
-| Qwen, text | +0.13 [−0.15, +0.44] | +0.66 [+0.22, +1.35] | +0.40 [+0.17, +0.74] | −0.06 [−0.28, +0.17] | −0.27 [−0.48, −0.07] |
-| Gemma, audio | +0.03 [−0.22, +0.38] | +0.54 [+0.15, +1.15] | +0.37 [+0.18, +0.66] | −0.16 [−0.39, +0.09] | −0.37 [−0.66, −0.07] |
-| n-gram | +0.19 [−0.08, +0.49] (95%) | +0.54 [+0.15, +1.10] | +0.48 [+0.23, +0.80] | +0.00 [−0.14, +0.11] | −0.20 [−0.45, +0.03] |
+IndicVoices and OpenSLR 54 were not finished: the run hit the hub's limit of 128 commits an hour
+on IndicVoices' second shard, and after the verdict it was not resumed.
 
-- **The rule says stop.** Neither judge's interval against V3 is below zero (97.5%, Bonferroni
-  over two rows), so G1 stops and gold was not run. Gemma, scrutinised only if it won by a wide
-  margin, did not win.
-- **On folded WER the LLMs tie V3; on everything else they lose to it.** Raw WER and CER put
-  both judges clearly behind the vote (intervals above zero): the students' vote picks the
-  spelling and characters the labels use, which the fold forgives and the LLMs do not see. The
-  judges beat greedy only by about as much as the beam's first choice already does: against
-  top@1 neither moves significantly.
-- **They pick differently from the vote, not better.** Agreement with V3 is 25% (Qwen) and 26%
-  (Gemma); with top@1 40% and 34%. The oracle keeps rank 0 on 210 of 300 clips; the judges pick
-  rank 0 on 120 (Qwen) and 103 (Gemma), spreading the rest over every rank, so they leave a good
-  first choice too often. Against V3 over the 21 episodes: Qwen better on 4, same on 8, worse on 9
-  (net 13 errors added); Gemma 5/9/7 (net 3 added).
-- **Hearing helps a little, not enough.** Gemma with the audio is 0.10 points under Qwen without
-  it and at half its time, but its CER is still 0.37 over V3's.
-- **Per class, a few tenths either way.** A judge is under V3 in some classes (SNR < 15 dB, 23
-  clips: Qwen 12.58 vs 13.25; SNR 45+ dB, 77: Qwen 3.85 vs 4.13; two speakers, 48: Qwen 10.67 vs
-  10.88) and over it in others (no overlap, 253: V3 4.91, Gemma 5.01, Qwen 5.10). No per-class
-  interval was computed and no class was named beforehand, so these are leads at most.
-- **The n-gram picker is the top candidate.** The weight chosen outside the sample is the
-  smallest on the grid (0.05; λ ≥ 0.1 was worse), and it keeps rank 0 on 228 of 300 clips: our
-  own train labels say nothing the beam did not already know.
-- **Cost.** Batched (16) bf16 on the G4 with transformers: Qwen 0.26 s a clip (0.022 s per second
-  of audio), Gemma 0.14 s (0.011); parse failures 0 and 1 of 300. V3 needs a CPU minute for all
-  of val once the four students' transcripts exist. Thinking would have cost about 3.5 minutes a
-  batch of 16 at a 2,048-token budget; the smoke run found every thinking judge still thinking at
-  256 tokens.
-- **What it can and cannot say** (paper B). Zero-shot local LLMs *without reasoning*, one prompt,
-  one shuffle: they extract no more of the needle than a vote of four smaller ASR models, and
-  less of what raw WER and CER count. It does not rule out a reasoning judge, a fine-tuned judge,
-  or a larger model; with 21 episodes the intervals are about ±0.3 points, so a judge gain under
-  that would go unseen. It measures labels, not students: no student was retrained.
+- **On val and gold both judges lose to the panel**, on raw WER (+0.57 to +0.75) and CER (+0.24
+  to +0.44) as well as folded WER, every interval above zero but one (Gemma's folded gold,
+  +0.13 [+0.00, +0.28]). Against the beam's own first choice
+  they tie (val −0.01 and −0.11, gold −0.03 and −0.12). On val the panel beats Qwen in 18 of 23
+  episodes and Gemma in 19.
+- **The one win is suspect.** Qwen beats the panel on FLEURS by 0.57 folded, but not on raw WER
+  (−0.35 [−0.83, +0.10]) or CER (−0.12 [−0.41, +0.16]); FLEURS's sentences come from Wikipedia,
+  which a 27B model has read. Gemma, hearing the clip, gains nothing there.
+- **On the 300-clip pilot** (D118's rule, 97.5% interval for two rows): Qwen +0.13 [−0.15, +0.44],
+  Gemma +0.03 [−0.22, +0.38] over the panel: stop. Gemma never won by the wide margin that would
+  have made it suspect of preferring the references' (Gemini-built) conventions.
+- **They pick differently, not better.** They agree with the panel on 21–27% of val and gold
+  clips and with the top candidate on 31–41%. The oracle keeps the top candidate on 210 of the
+  pilot's 300 clips; Qwen keeps it on 120 and Gemma on 103, spreading the rest over every rank.
+- **Hearing helps a little, not enough:** Gemma is about 0.1 under Qwen on val and gold, at half
+  its time, and still loses to the panel.
+- **The n-gram picker is the top candidate.** An interpolated Kneser-Ney trigram on the folded
+  train labels, weighted against the beam score: the weight chosen on the val clips outside the
+  pilot's sample was the grid's smallest (0.05), and it kept the top candidate on 228 of 300.
+- **Cost.** Without thinking, batched 16 in bf16 on the G4 (transformers): Qwen 0.08–0.32 s a clip,
+  Gemma 0.05–0.16 s; parse failures 0 (Qwen) and at most 6 of 1,792 (Gemma). With thinking, a
+  batch of 16 took about 3.5 minutes at a 2,048-token budget, and the smoke run found every judge
+  still thinking at 256 tokens; the thinking rows were dropped before any score was read. The
+  panel needs a CPU minute for all of val once the transcripts exist.
+- **Not ruled out:** a reasoning judge (with a faster decoder), a fine-tuned judge, a larger
+  model.
+- **nepali_cs repeats an id** whose two copies carry different references; 08 matched decodes back
+  by id, so that clip's candidates are of unknown audio. It is left out here (1,762 of 08's 1,763),
+  which is why the panel reads 11.33 here and 11.42 below.
 
 ---
 
-## A cross-model vote recovers a fifth to a quarter of the judge's room (2026-10-06)
+## The panel vote: a cross-model vote recovers a fifth to a quarter of the judge's room (2026-10-06)
 
 Before any LLM judge: can the students' transcripts pick among the teacher's 8 beam candidates
 (the candidates of *The judge's ceiling*)? Every pick is the candidate with the least folded word
@@ -109,13 +102,14 @@ counted only if it beats the beam's top candidate on val with an interval clear 
   Whisper, IndicConformer and Parakeet students' stage 2, one vote each.
 - **V2, everyone can win:** the pool is the 8 beams, greedy and those 3 students; every system
   votes once, the beams sharing one vote.
-- **V3:** V1 with the Conformer from scratch as a fourth voter.
+- **V3, the panel vote** (named on 2026-10-06, D120): V1 with the Conformer from scratch as a
+  fourth voter.
 
 Run on a CPU from the stored transcripts (nothing decoded again; experiment code discarded). The
 greedy and student rows reproduce their published scores. Folded WER, then the difference from
 greedy and from the top candidate, [95% CI]:
 
-| set | greedy | top@1 | MBR (beams) | V1 | V2 | **V3** | V3 − greedy | V3 − top@1 | oracle@8 |
+| set | greedy | top@1 | MBR (beams) | V1 | V2 | **panel (V3)** | panel − greedy | panel − top@1 | oracle@8 |
 |---|---|---|---|---|---|---|---|---|---|
 | val | 7.08 | 6.83 | 6.84 | 6.52 | 6.51 | **6.50** | −0.58 [−0.77, −0.43] | −0.33 [−0.44, −0.23] | 5.47 |
 | gold | 10.85 | 10.41 | 10.45 | 10.20 | 10.27 | **10.16** | −0.69 [−0.85, −0.53] | −0.25 [−0.37, −0.14] | 9.10 |
@@ -125,8 +119,8 @@ greedy and from the top candidate, [95% CI]:
 | IndicVoices | 12.29 | 12.01 | 12.21 | 11.40 | 11.83 | **11.47** | −0.82 [−1.15, −0.54] | −0.53 [−0.87, −0.25] | 8.84 |
 | nepali_cs | 11.31 | 11.60 | 11.58 | 11.33 | 10.71 | **11.42** | +0.12 [−0.25, +0.62] | −0.18 [−0.92, +0.17] | 9.32 |
 
-- **The rule picks V3** (val 6.50), but V1, V2 and V3 are within 0.02 of each other on val: which
-  students vote matters less than that other models vote at all.
+- **The rule picks the panel vote** (val 6.50), but V1, V2 and V3 are within 0.02 of each other
+  on val: which students vote matters less than that other models vote at all.
 - **The vote recovers about a fifth to a quarter of the room above the beam:** 0.33 of val's 1.36
   points between the top candidate and oracle@8 (24%), 0.25 of gold's 1.31 (19%). Against greedy,
   gold falls from 10.85 to 10.16, 39% of the way to oracle@8.
@@ -139,8 +133,9 @@ greedy and from the top candidate, [95% CI]:
 - **Cost.** At inference this needs the teacher's beam and four students per clip; on audio already
   transcribed by all of them (the corpus, any rescoring) it costs a CPU minute.
 
-**What it means for the judge.** An LLM judge now has to beat V3, not the top candidate: val 6.50,
-gold 10.16. What is left above V3 is about 1.0 point on val and 1.1 on gold.
+**What it means for the judge.** An LLM judge now has to beat the panel vote, not the top
+candidate: val 6.50, gold 10.16. What is left above it is about 1.0 point on val and 1.1 on gold.
+No LLM did (*An LLM judge is a dead end*, above).
 
 ---
 

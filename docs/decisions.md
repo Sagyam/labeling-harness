@@ -47,6 +47,12 @@ commit that added this list. D59–D61 were never used.
 - **D82** The recorded D67 `legacy` score deleted from `reason_jsonb`: structurally zero on a
   fused seed.
 - **D92** The playground starts with the stack; see D85.
+- **D118** The LLM-judge pilot (`08b_Judge_Pilot`): Qwen3.8-27B reading and Gemma 4 12B hearing
+  pick one of the teacher's 8 beams on 300 random val clips, against the panel vote, with a
+  Bonferroni interval as the kill rule; the thinking rows were dropped mid-run for their cost.
+  It stopped G1; the notebook is gone (D120).
+- **D119** After D118 stopped G1, both judges ran on every set for the record. Removed with the
+  notebook (D120); its numbers are in findings.md.
 
 ## D1 — Postgres is the source of truth; migrations are the only schema change mechanism
 Every schema change ships as an Alembic revision with a working `downgrade`. The test suite builds
@@ -2919,94 +2925,27 @@ the candidate with the fewest folded errors, a tie going to the higher-ranked on
 **Reversal:** cheap. The threshold is one Config value; changing it after the result is read
 would need a new entry saying why.
 
-## D118 — The judge pilot: two local judges, without thinking, must beat the cross-model vote on 300 val clips
+## D120 — The LLM judge is a dead end: G1 is closed, and the vote is the panel vote
 
-Roadmap G1, after D117 found the room (oracle@8 1.36 points under the top candidate on val) and
-the cross-model vote V3 took a quarter of it (findings.md, *A cross-model vote*). The question
-is now narrower: does an LLM that picks among the teacher's 8 beam candidates extract more than
-a vote of four smaller models? `08b_Judge_Pilot` answers it. Everything below was fixed on
-2026-10-06, before any judge was run.
+The owner's verdict (2026-10-06), after D118's pilot and D119's run on every set: not worth
+writing up and not worth the compute. On all of val and gold both judges were worse than the
+panel vote on folded WER, raw WER and CER; on nepali_cs Qwen tied it and Gemma lost, both lost
+on Common Voice, and only Qwen won, on FLEURS, whose sentences come from Wikipedia
+(findings.md, *An LLM judge is a dead end*).
 
-- **The sample.** 300 val clips, `judgekit.sample` with seed 0 over the sorted segment ids. Nothing
-  preselects them: not the oracle, not the number of distinct candidates.
-- **The judges** (owner, 2026-10-06), each run with thinking off and on, so four judge rows:
-  - text only: `Qwen/Qwen3.8-27B`, the newest dense Qwen, bf16 on the 96 GB G4;
-  - audio-aware: `google/gemma-4-12B-it`, the only current audio LLM between 8 and 14B. It hears
-    the clip the teacher transcribed (at most 20 s, 16 kHz), then reads the candidates. Google built
-    the fusion model behind the references; it is scrutinised (does it prefer their conventions?)
-    only if it beats the other rows by a wide margin.
-- **The input.** The 8 candidates with exact duplicates removed (a duplicate has the same errors,
-  so nothing is lost; the highest-ranked copy stands for them), shuffled per clip by a seed and
-  the segment id, because LLMs favour the first one shown, and numbered from 1. A clip with one
-  distinct candidate is not sent and keeps it. The prompt (`judgekit.prompt`) asks for the number
-  only. The judge picks; it never rewrites.
-- **Decoding.** Greedy, so a rerun gives the same picks. Thinking on gets a budget of 2,048 tokens;
-  a judge still thinking at the budget has its thinking closed for it, followed by `Answer: `, and
-  writes the number (budget forcing). Qwen thinks at its `medium` effort; Gemma has no effort
-  setting. The `Answer: ` cue was added after the smoke run, which read no score: closed
-  mid-sentence without it, Gemma went on writing prose in 3 of 12 forced answers.
-- **The answer.** Exactly one integer from 1 to the number shown (Devanagari digits read as
-  digits). Anything else is a parse failure, which takes the top candidate and is counted.
-- **The rows, on the same 300 clips:** greedy, top@1, V3, an n-gram picker, the four judges and
-  oracle@8. Every row: folded WER with S/D/I, raw WER, CER, plain WER and CER, per clip class, and
-  each judge paired against V3, top@1 and greedy with episodes resampled; how the judge's change
-  against V3 spreads over the episodes; how often it agrees with V3; the beam rank it picked
-  from; its parse failures and unfinished thoughts; and its time per clip.
-- **V3 is recomputed, not read.** Voters: the teacher's greedy transcript and the stage-2
-  transcripts of the Whisper, IndicConformer, Parakeet and Conformer students; each beam's cost is
-  its summed Levenshtein distance over folded tokens to the voters, a tie going to the higher
-  rank. On the whole of val it must reproduce the published 6.50 (to 0.02), or the notebook stops.
-- **The n-gram picker** (owner: in the pilot, out of the kill rule). The roadmap names KenLM; this
-  is the same model class written in `judgekit` so it is tested and needs no build: an
-  interpolated Kneser-Ney trigram over folded tokens of the train labels. A candidate scores its
-  beam score plus λ times its n-gram log-probability per word; λ is chosen from a fixed grid on
-  the val clips outside the sample, lowest folded WER, ties to the smaller λ.
-- **The kill rule.** A judge row passes if its folded val WER minus V3's is below zero with the
-  whole interval, episodes resampled (`sweep.paired_bootstrap`, 2,000 draws). Each row is one
-  more chance, so the interval is Bonferroni's over the rows run: 97.5% (1 − 0.05/2) for the two
-  rows below, not 95%. If no row passes, G1
-  stops, and the result is the negative: an LLM picks no better than a vote of smaller models.
-- **Only if a row passes:** that row runs on gold, reported and never chosen on (D105); then the
-  full matrix (more families and sizes up to the G4, every set) gets its own entry.
-- **Cost term.** Judge time per clip, batched on the G4 in bf16 with transformers, beside V3's (a
-  CPU minute for all of val once the transcripts exist). A gain that costs a 27B thinking pass per
-  clip is weighed as one.
-- **The thinking rows were dropped** (owner, 2026-10-06, during the run, before any score was
-  read). Without thinking, Qwen judged all 300 clips in about 80 s; with thinking, its first 100
-  had taken over 13 minutes, at about 3.5 minutes a batch of 16 that runs to the budget. That puts
-  a thinking row at an hour or more on the sample and 3–4 hours on gold, against V3's CPU minute,
-  so a thinking judge would have to gain a lot to be worth running at all. The pilot keeps
-  `qwen-text` and `gemma-audio`, and the interval is 97.5%. What the negative can then say is
-  narrower: an LLM *without reasoning* picks no better than the vote. The thinking settings stay
-  in the notebook's Config (`THINKING`) for a run that adds them back; faster decoding (larger
-  batches, vLLM) comes first if it does.
-- **What it cannot say.** It measures how much better the teacher's labels could be, not how much
-  better a student trained on them would get: no student is retrained (paper B, limitation).
+- **G1 is closed.** The roadmap ran fusion (its steps 1–4) only if the pilot showed promise, and
+  the n-gram picker on our train labels gained nothing either (its weight went to 0.05, which is
+  the top candidate).
+- **`08b_Judge_Pilot` and its kit code are removed** (the sample, the prompt and answer parsing,
+  the Kneser-Ney picker, the kill rule), as experiment code is once its findings are written.
+  Kept: `judgekit.mbr_index`'s voters (the panel vote), `sweep.paired_bootstrap`'s `level`, and
+  `build_flex.load(..., flex=False)` for a notebook that runs another model. The judges' picks
+  and reports stay on the hub under `flex-2026-09-30/judge-pilot/`.
+- **V3 is the panel vote.** The pick among the teacher's 8 beams by least folded edit distance to
+  the teacher's greedy decode and the four students' stage-2 transcripts was named V3 for being
+  the third variant tried. Its numbers do not change: val 6.50, gold 10.16. Files already on the
+  hub keep the key `v3`.
 
-**Reversal:** cheap before the run: every item is a Config value or a `judgekit` function. After
-the judges are read, changing the sample, the rule or the interval needs a new entry saying why.
-
-## D119 — After G1 stopped, both judges run on every set, for the record
-
-The owner's choice (2026-10-06), after D118's rule stopped G1 on the 300-clip sample. Without
-thinking a judge costs a fraction of a second a clip, so `08b_Judge_Pilot` runs both judge rows
-(Qwen3.8-27B reading, Gemma 4 12B hearing) on every clip of val, gold and the five public sets.
-
-- **It chooses nothing.** The D118 verdict stands; these numbers describe the negative on every
-  set, for paper B, and are never read as a second chance to pass. Gold is reported, as always.
-- **Same rows, same numbers** as the sample: greedy, top@1, V3, the n-gram picker (λ from val, so
-  partly in-sample on all of val), both judges and oracle@8, each judge against V3, top@1 and
-  greedy with 95% intervals (groups resampled: episodes, or the public sets' speakers, sentences
-  or videos), per class, spread over groups, agreement, ranks, time.
-- **V3 on the public sets** takes the teacher's greedy decode from 08's shards and the four
-  students' transcripts from their `benchmarks/<set>.jsonl`, matched by id; a clip whose
-  reference differs from the one 08 scored stops the notebook.
-- **Gemma hears at most 30 s.** Two FLEURS clips are longer; they are cut at 30 s and counted.
-- **An id a public set repeats is left out.** nepali_cs has 2 ids twice (one with two different
-  references); 08 matched its decodes back by id, so which audio such a clip's candidates came from
-  is unknown, and the check above stopped the first gauntlet run on it. Those clips are dropped
-  (nepali_cs: 1,761 of 08's 1,763). 08's own nepali_cs numbers carry the same ambiguity on those
-  two clips.
-- **Outputs**: `<set>/report-all.json` beside the sample's `val/report.json`.
-
-**Reversal:** cheap: it adds reports and decides nothing.
+**Reversal:** moderate: the notebook and kit are in git history before this entry, and the
+picks are on the hub; a reasoning or fine-tuned judge would need its own entry and a faster
+decoder first.
