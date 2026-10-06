@@ -7,6 +7,7 @@ are stand-ins with the shape of ``score.per_clip``'s."""
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -174,3 +175,155 @@ def test_parallel_map_keeps_the_order_of_its_items() -> None:
     items = list(range(-50, 50))
     assert judgekit.parallel_map(abs, items, workers=3, chunk=7) == [abs(i) for i in items]
     assert judgekit.parallel_map(abs, items, workers=1) == [abs(i) for i in items]
+
+
+# --- the pilot (D118): the cross-model vote ------------------------------------------------------
+
+
+def test_with_voters_mbr_picks_the_candidate_closest_to_the_voters_not_to_the_beams() -> None:
+    # the beams agree with each other on "a b c"; the voters heard "a b d"
+    clip = [s.split() for s in ("a b c", "a b c", "a b d")]
+    voters = [[s.split() for s in ("a b d", "a b d", "x b d")]]
+    assert judgekit.mbr_index([clip], _lev) == [0]
+    assert judgekit.mbr_index([clip], _lev, voters=voters) == [2]
+
+
+def test_a_tie_among_the_voters_goes_to_the_higher_ranked_beam() -> None:
+    clip = [s.split() for s in ("a b c", "a b d")]
+    voters = [[s.split() for s in ("a b c", "a b d")]]
+    assert judgekit.mbr_index([clip], _lev, voters=voters) == [0]
+
+
+def test_voters_must_be_given_for_every_clip() -> None:
+    with pytest.raises(ValueError):
+        judgekit.mbr_index([[["a"]], [["b"]]], _lev, voters=[[["a"]]])
+
+
+# --- the pilot: the sample and what the judge is shown -------------------------------------------
+
+
+def test_the_sample_is_repeatable_and_ignores_the_order_ids_arrive_in() -> None:
+    ids = [f"s{i:04d}" for i in range(1000)]
+    first = judgekit.sample(ids, 300, seed=0)
+    assert len(first) == len(set(first)) == 300
+    assert first == judgekit.sample(list(reversed(ids)), 300, seed=0)
+    assert first != judgekit.sample(ids, 300, seed=1)
+
+
+def test_a_sample_larger_than_the_pool_is_the_whole_pool() -> None:
+    assert sorted(judgekit.sample(["b", "a"], 300, seed=0)) == ["a", "b"]
+
+
+def test_duplicates_are_shown_once_as_their_highest_ranked_copy() -> None:
+    shown = judgekit.present(["a b", "c", " a b", "c", "d"], key="seg-1", seed=0)
+    assert sorted(shown) == [0, 1, 4]
+
+
+def test_the_shown_order_is_a_repeatable_shuffle_per_clip() -> None:
+    texts = [f"t{i}" for i in range(8)]
+    first = judgekit.present(texts, key="seg-1", seed=0)
+    assert sorted(first) == list(range(8))
+    assert first == judgekit.present(texts, key="seg-1", seed=0)
+    orders = {tuple(judgekit.present(texts, key=f"seg-{i}", seed=0)) for i in range(50)}
+    assert len(orders) > 40  # clips are not all shown in one order
+    firsts = [judgekit.present(texts, key=f"seg-{i}", seed=0)[0] for i in range(400)]
+    assert set(firsts) == set(range(8))  # the top candidate is not always shown first
+
+
+def test_the_prompt_numbers_every_candidate_from_one_and_asks_for_the_number_only() -> None:
+    text = judgekit.prompt(["पहिलो", "second one"], audio=False)
+    assert "1. पहिलो\n2. second one" in text
+    assert "number" in text.lower()
+    assert "listen" not in text.lower()
+    assert "listen" in judgekit.prompt(["a", "b"], audio=True).lower()
+
+
+# --- the pilot: reading the answer ---------------------------------------------------------------
+
+
+def test_the_answer_is_what_follows_the_last_thinking_close() -> None:
+    assert judgekit.split_answer("<think>2 or 3</think>\n\n3", close="</think>") == ("3", True)
+    assert judgekit.split_answer("still thinking about 2", close="</think>") == ("", False)
+    assert judgekit.split_answer(" 4 ", close=None) == ("4", True)
+
+
+def test_a_single_number_in_range_is_a_pick_counted_from_zero() -> None:
+    assert judgekit.parse_pick("3", 5) == 2
+    assert judgekit.parse_pick("Candidate 1.", 5) == 0
+    assert judgekit.parse_pick("**2**", 5) == 1
+    assert judgekit.parse_pick("३", 5) == 2  # Devanagari digits are digits
+
+
+def test_anything_but_one_number_in_range_is_a_parse_failure() -> None:
+    for answer in ("", "none", "0", "6", "2 or 3", "12"):
+        assert judgekit.parse_pick(answer, 5) is None, answer
+
+
+# --- the pilot: the n-gram picker ----------------------------------------------------------------
+
+_CORPUS = [s.split() for s in ("म घर जान्छु", "म स्कुल जान्छु", "उ घर जान्छ", "म घर आउँछु")]
+
+
+def test_the_language_model_prefers_a_sentence_like_its_text_to_the_same_words_scrambled() -> None:
+    lm = judgekit.KneserNey(_CORPUS)
+    assert lm.logprob(["म", "घर", "जान्छु"]) > lm.logprob(["जान्छु", "घर", "म"])
+
+
+def test_the_next_word_probabilities_sum_to_one_after_any_context() -> None:
+    lm = judgekit.KneserNey(_CORPUS)
+    for context in (("<s>", "म"), ("म", "घर"), ("नयाँ", "शब्द"), ("<s>", "<s>")):
+        total = sum(math.exp(lm.word_logprob(context, w)) for w in [*lm.vocab, "</s>", "<unk>"])
+        assert total == pytest.approx(1.0, abs=1e-9), context
+
+
+def test_an_unseen_word_costs_more_than_a_seen_one_but_is_never_impossible() -> None:
+    lm = judgekit.KneserNey(_CORPUS)
+    seen, unseen = lm.logprob(["म", "घर"]), lm.logprob(["म", "हावा"])
+    assert math.isfinite(unseen) and unseen < seen
+
+
+def test_lambda_zero_keeps_the_top_candidate_and_a_large_one_follows_the_language_model() -> None:
+    beam = [[-0.10, -0.30, -0.20]]
+    lm = [[-20.0, -2.0, -9.0]]
+    words = [[3, 3, 3]]
+    assert judgekit.lm_index(beam, lm, words, lam=0.0) == [0]
+    assert judgekit.lm_index(beam, lm, words, lam=10.0) == [1]
+
+
+def test_lambda_is_the_grid_value_with_the_lowest_wer_ties_to_the_smaller() -> None:
+    wer = {0.0: 7.0, 0.1: 6.8, 0.2: 6.8, 0.5: 7.1}
+    assert judgekit.choose_lambda(list(wer), wer.__getitem__) == 0.1
+
+
+# --- the pilot: the verdict and what is reported beside it ---------------------------------------
+
+
+def test_a_judge_passes_only_when_the_whole_interval_is_below_the_vote() -> None:
+    v3 = [_c(3), _c(3), _c(3), _c(3), _c(3), _c(3)]
+    better = [_c(1), _c(1), _c(1), _c(1), _c(1), _c(1)]
+    episodes = ["e1", "e1", "e2", "e2", "e3", "e3"]
+    out = judgekit.verdict(better, v3, episodes, level=0.9875)
+    assert out["pass"] is True
+    assert out["diff"] == pytest.approx(-20.0)
+    assert out["level"] == 0.9875
+    assert judgekit.verdict(v3, v3, episodes, level=0.9875)["pass"] is False
+
+
+def test_a_gain_one_episode_carries_does_not_pass() -> None:
+    v3 = [_c(3)] * 8
+    one_room = [_c(0), _c(0)] + [_c(3)] * 6
+    episodes = ["hot", "hot", "e1", "e2", "e3", "e4", "e5", "e6"]
+    assert judgekit.verdict(one_room, v3, episodes, level=0.9875)["pass"] is False
+
+
+def test_agreement_is_the_share_of_clips_two_pickers_pick_alike() -> None:
+    assert judgekit.agreement([0, 1, 2, 3], [0, 1, 0, 0]) == pytest.approx(0.5)
+
+
+def test_judge_time_is_summarised_per_clip_and_per_second_of_audio() -> None:
+    out = judgekit.timing([1.0, 2.0, 3.0, 10.0], [5.0, 5.0, 5.0, 5.0])
+    assert out["clips"] == 4
+    assert out["mean_s"] == pytest.approx(4.0)
+    assert out["median_s"] == pytest.approx(2.5)
+    assert out["per_audio_s"] == pytest.approx(0.8)
+    assert out["total_s"] == pytest.approx(16.0)
