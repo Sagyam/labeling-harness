@@ -35,6 +35,70 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## An LLM picks no better than the cross-model vote: G1's pilot stops (2026-10-06)
+
+`08b_Judge_Pilot` (D118): can a local LLM that picks one of the teacher's 8 beam candidates beat
+V3, the vote of the teacher's greedy decode and four students (*A cross-model vote*)? Two judges,
+zero-shot, no thinking (the thinking rows were dropped for their cost before any score was read,
+D118): **Qwen3.8-27B** reads the candidates; **Gemma 4 12B-it** also hears the clip. Each sees the
+distinct candidates shuffled per clip and answers with a number. 300 val clips drawn at random
+(seed 0) from 21 episodes; folded WER, fold-v4, S/D/I per 100 reference words. On all of val the
+recomputed V3 reproduced 6.50 exactly. Outputs: `flex-2026-09-30/judge-pilot/` in the Flex repo
+(picks with raw responses, `val/report.json`, `decision.json`).
+
+| row | WER (S/D/I) | raw WER | CER | plain WER / CER |
+|---|---|---|---|---|
+| greedy | 6.75 (4.4/1.2/1.2) | 11.14 | 5.16 | 12.30 / 5.41 |
+| top@1 | 6.54 (4.2/1.3/1.1) | 10.82 | 5.08 | 12.12 / 5.31 |
+| **V3** | **6.35** (4.1/1.2/1.0) | **10.10** | **4.60** | **11.06 / 4.84** |
+| n-gram (λ 0.05) | 6.54 (4.2/1.2/1.2) | 10.64 | 5.08 | 11.96 / 5.32 |
+| Qwen3.8-27B, text | 6.48 (4.2/1.2/1.2) | 10.76 | 5.01 | 12.07 / 5.20 |
+| Gemma 4 12B, audio | 6.38 (4.1/1.1/1.1) | 10.64 | 4.97 | 11.91 / 5.14 |
+| oracle@8 | 5.23 (3.4/0.9/0.9) | 9.90 | 4.66 | 11.19 / 4.89 |
+
+Differences in points, episodes resampled, 95% unless marked:
+
+| row | − V3, folded (97.5%, the rule) | − V3, raw WER | − V3, CER | − top@1, folded | − greedy, folded |
+|---|---|---|---|---|---|
+| Qwen, text | +0.13 [−0.15, +0.44] | +0.66 [+0.22, +1.35] | +0.40 [+0.17, +0.74] | −0.06 [−0.28, +0.17] | −0.27 [−0.48, −0.07] |
+| Gemma, audio | +0.03 [−0.22, +0.38] | +0.54 [+0.15, +1.15] | +0.37 [+0.18, +0.66] | −0.16 [−0.39, +0.09] | −0.37 [−0.66, −0.07] |
+| n-gram | +0.19 [−0.08, +0.49] (95%) | +0.54 [+0.15, +1.10] | +0.48 [+0.23, +0.80] | +0.00 [−0.14, +0.11] | −0.20 [−0.45, +0.03] |
+
+- **The rule says stop.** Neither judge's interval against V3 is below zero (97.5%, Bonferroni
+  over two rows), so G1 stops and gold was not run. Gemma, scrutinised only if it won by a wide
+  margin, did not win.
+- **On folded WER the LLMs tie V3; on everything else they lose to it.** Raw WER and CER put
+  both judges clearly behind the vote (intervals above zero): the students' vote picks the
+  spelling and characters the labels use, which the fold forgives and the LLMs do not see. The
+  judges beat greedy only by about as much as the beam's first choice already does: against
+  top@1 neither moves significantly.
+- **They pick differently from the vote, not better.** Agreement with V3 is 25% (Qwen) and 26%
+  (Gemma); with top@1 40% and 34%. The oracle keeps rank 0 on 210 of 300 clips; the judges pick
+  rank 0 on 120 (Qwen) and 103 (Gemma), spreading the rest over every rank, so they leave a good
+  first choice too often. Against V3 over the 21 episodes: Qwen better on 4, same on 8, worse on 9
+  (net 13 errors added); Gemma 5/9/7 (net 3 added).
+- **Hearing helps a little, not enough.** Gemma with the audio is 0.10 points under Qwen without
+  it and at half its time, but its CER is still 0.37 over V3's.
+- **Per class, a few tenths either way.** A judge is under V3 in some classes (SNR < 15 dB, 23
+  clips: Qwen 12.58 vs 13.25; SNR 45+ dB, 77: Qwen 3.85 vs 4.13; two speakers, 48: Qwen 10.67 vs
+  10.88) and over it in others (no overlap, 253: V3 4.91, Gemma 5.01, Qwen 5.10). No per-class
+  interval was computed and no class was named beforehand, so these are leads at most.
+- **The n-gram picker is the top candidate.** The weight chosen outside the sample is the
+  smallest on the grid (0.05; λ ≥ 0.1 was worse), and it keeps rank 0 on 228 of 300 clips: our
+  own train labels say nothing the beam did not already know.
+- **Cost.** Batched (16) bf16 on the G4 with transformers: Qwen 0.26 s a clip (0.022 s per second
+  of audio), Gemma 0.14 s (0.011); parse failures 0 and 1 of 300. V3 needs a CPU minute for all
+  of val once the four students' transcripts exist. Thinking would have cost about 3.5 minutes a
+  batch of 16 at a 2,048-token budget; the smoke run found every thinking judge still thinking at
+  256 tokens.
+- **What it can and cannot say** (paper B). Zero-shot local LLMs *without reasoning*, one prompt,
+  one shuffle: they extract no more of the needle than a vote of four smaller ASR models, and
+  less of what raw WER and CER count. It does not rule out a reasoning judge, a fine-tuned judge,
+  or a larger model; with 21 episodes the intervals are about ±0.3 points, so a judge gain under
+  that would go unseen. It measures labels, not students: no student was retrained.
+
+---
+
 ## A cross-model vote recovers a fifth to a quarter of the judge's room (2026-10-06)
 
 Before any LLM judge: can the students' transcripts pick among the teacher's 8 beam candidates

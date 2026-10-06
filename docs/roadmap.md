@@ -466,7 +466,10 @@ is tried only if the pilot shows promise.
   val 6.50, gold 10.16 (findings.md, *A cross-model vote*). **The pilot** (`08b_Judge_Pilot`,
   D118): Qwen3.8-27B reading the candidates and Gemma 4 12B hearing the clip, without thinking
   (dropped for its cost), on 300 random val clips, beside an n-gram picker; a judge must beat V3
-  with a 97.5% interval below zero, or G1 stops with the negative. On
+  with a 97.5% interval below zero, or G1 stops with the negative. **Ran 2026-10-06: stopped.**
+  Qwen +0.13 [−0.15, +0.44] and Gemma +0.03 [−0.22, +0.38] over V3 on folded WER, and both
+  clearly worse on raw WER and CER (findings.md, *An LLM picks no better than the cross-model
+  vote*). On
   val, the oracle WER of the 8 (always picking the candidate closest to the reference) bounds what
   any judge can gain. If the oracle is less than 1.0 point better than the top candidate, stop: no
   judge can help. No judge model is chosen yet: the owner wants a matrix of local models only
