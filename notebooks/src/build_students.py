@@ -92,7 +92,6 @@ SPECAUG_IN_HUMAN = __SPECAUG_IN_HUMAN__  # False: stage 1 trains without SpecAug
 DATA = r"""
 import gc
 import glob
-import os
 import traceback
 
 import numpy as np
@@ -320,13 +319,6 @@ def micro_budget(budget):
     return budget if budget == float("inf") else min(budget, EFFECTIVE_S)
 
 
-def loader_workers(cpus):
-    """DataLoader workers for training: the VM's cores less 8 for the main process and NeMo, at
-    least ftkit's 6 and at most 32. Stage 3 augments every clip in them, so too few leave the GPU
-    waiting (06f on the 48-vCPU G4, 2026-10-06)."""
-    return max(6, min(32, (cpus or 0) - 8))
-
-
 def train_stage(stage, run, recipe):
     """Train one stage and upload its best weights. Returns what `trained.json` records."""
     global AUG, STRETCH, optimizer
@@ -376,8 +368,7 @@ def train_stage(stage, run, recipe):
               f"{epochs * full_val_min / 60:.1f} h on top of training")
         (OUT / "speed_check.json").write_text(json.dumps(speed, indent=1))
     cfg = ftkit.TrainConfig(name=run, out=str(OUT), epochs=epochs, lr=PEAK_LR, schedule=SCHEDULE,
-                            warmup_frac=WARMUP, effective_s=EFFECTIVE_S, patience=PATIENCE, min_delta=MIN_DELTA,
-                            workers=loader_workers(os.cpu_count()))
+                            warmup_frac=WARMUP, effective_s=EFFECTIVE_S, patience=PATIENCE, min_delta=MIN_DELTA)
     result = ftkit.train(model, cfg=cfg, rows=rows, make_batches=make_batches, collate=collate,
                          loss_fn=loss_fn, evaluate=evaluate, save_best=lambda m: save_weights(m, OUT / "best"),
                          optimizer=optimizer, monitor=monitor, resume=resume)

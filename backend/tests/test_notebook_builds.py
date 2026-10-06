@@ -210,22 +210,6 @@ def test_a_micro_batch_never_holds_more_audio_than_an_optimizer_step() -> None:
     assert ns["micro_budget"](float("inf")) == float("inf")
 
 
-def test_the_loader_gets_the_vms_spare_cores() -> None:
-    """Stage 3 augments every clip in the DataLoader workers (an ffmpeg codec round trip, reverb,
-    noise). With ftkit's default of 6, 06f's stage 3 on the 48-vCPU G4 ran at ~900x realtime with
-    the GPU 30-65% busy, against stage 2's ~1,400x (2026-10-06). An A100 VM's 12 vCPUs keep 6."""
-    students = importlib.import_module("build_students")
-    tree = ast.parse(students.STAGES)
-    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "loader_workers")
-    ns: dict = {}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<STAGES>", "exec"), ns)
-    assert ns["loader_workers"](48) == 32
-    assert ns["loader_workers"](12) == 6
-    assert ns["loader_workers"](None) == 6
-    assert ns["loader_workers"](200) == 32
-    assert "workers=loader_workers(os.cpu_count())" in students.STAGES
-
-
 def test_a_fresh_stage_starts_from_an_empty_output_folder(tmp_path: Path) -> None:
     """A stage's best-weights upload sends its whole local folder. On 2026-10-05 the third 06f
     attempt uploaded the first attempt's scores beside its own weights, because the folder on the
