@@ -43,7 +43,7 @@ def config(notebook: str, *bodies: str) -> dict:
     return code("\n".join(p.strip("\n") for p in parts))
 
 
-_LOAD = r'''
+_LOAD_DATA = r"""
 import gc
 import math
 import warnings
@@ -82,7 +82,9 @@ with ftkit.timed("reading them into RAM"):
 score = ftkit.harness_scorer(DATA, FT)
 print({k: len(v) for k, v in splits.items()}, f"| audio in RAM: {store.gib:.1f} GiB | export",
       export["exported_at"][:10], "|", score.fold_version)
+"""
 
+_LOAD_MODEL = r'''
 FLEX_DIR = snapshot_download(MODEL_ID)
 sys.path.insert(0, FLEX_DIR)
 from indic_transcribe import MODES, IndicTranscribe  # noqa: E402
@@ -116,9 +118,12 @@ UNK_MULTI = tk.multi.unk_id()
 '''
 
 
-def load(audio_splits: tuple[str, ...], analytics: bool = False) -> dict:
+def load(audio_splits: tuple[str, ...], analytics: bool = False, flex: bool = True) -> dict:
+    """The Load cell: the dataset, the audio of `audio_splits`, the scorer and, unless `flex` is
+    False, Flex's model code and base weights (a notebook that runs another model leaves it out)."""
+    src = _LOAD_DATA + _LOAD_MODEL if flex else _LOAD_DATA
     return code(
-        _LOAD.replace("__AUDIO_SPLITS__", repr(audio_splits)).replace(
+        src.replace("__AUDIO_SPLITS__", repr(audio_splits)).replace(
             "__ANALYTICS__", repr(analytics)
         )
     )
