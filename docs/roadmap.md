@@ -212,6 +212,26 @@ step 4's curve says how much audio closes the gap.
      then `05_Teacher` with `SMOKE` (its log-prob masking and `output_scores` memory have never run
      on a GPU), then the whole corpus, then the students. Done up to the students, 2026-10-04.
 
+5. **At the very end, convene the council again** (owner, 2026-10-06). Once every student is
+   trained, rerun the panel vote: the teacher's greedy decode and the students vote among the
+   teacher's 8 beam candidates, and the candidate closest to them wins (findings.md, *The panel
+   vote*). With four students it recovered 36–39% of the room between greedy and oracle@8 on val
+   and gold (val 7.08 → 6.50, gold 10.85 → 10.16), the only picker that beat beam search alone.
+   It is the promising recipe for the last bit of performance from a council of models.
+   - **Cheap to rerun.** `judgekit.mbr_index(voters=...)` over transcripts already stored (08's
+     candidates on the hub, each student's `harness/` and `benchmarks/` files): a CPU minute, no
+     decoding. A new student joins by adding its transcripts.
+   - **The owner hand-picks the council.** Questions left open on purpose, not worth a grid now:
+     which students sit on it (only the Nepali-pretrained ones, only the best); the beam width
+     (oracle@2/4/8 on val: 6.39, 5.88, 5.47); the students' own beams as candidates or voters.
+     Already measured: without the Conformer from scratch (V1) the vote reads val 6.52 and gold
+     10.20 against 6.50 and 10.16 with it, so its seat changes almost nothing.
+   - **A vote is only as good as its voters.** It lost on Common Voice (7.85 → 8.09) and gained
+     nothing on FLEURS or nepali_cs, where every student is weakest; it gained most on IndicVoices
+     (12.29 → 11.47). Judge a council per set, not on val alone.
+   - Only worth tuning if its output is used: relabelling a student's training data with the
+     council's pick would make it a recipe question; a reported number does not.
+
 **Success bar.** The student's gold and val WER falls within Flex's episode-bootstrap CI, per clip
 class, folded and raw, split into S/D/I. Only then are its extras (streaming, timestamps,
 conditioning) worth their cost.
