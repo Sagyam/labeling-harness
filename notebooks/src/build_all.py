@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import build_flex
+import build_judge
 import build_predistill
 import build_report
 import build_students
@@ -28,6 +29,7 @@ def notebooks(commit: str | None = None) -> dict[str, list]:
         **build_teacher.NOTEBOOKS,
         **build_students.NOTEBOOKS,
         **build_report.NOTEBOOKS,
+        **build_judge.NOTEBOOKS,
     }
 
 

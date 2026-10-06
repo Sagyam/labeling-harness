@@ -164,8 +164,9 @@ evaluated (D105): `01_EDA` and `02_Sociolinguistics` describe the corpus; `03a`â
 Indic-Transcribe-Flex, score it on the public Nepali sets, ablate the augmentations, blend its
 weights with the base model and freeze one teacher; `04_PreDistill` and `05_Teacher` cut and
 pseudo-label unlabelled audio; `06a`â€“`06f` train one student each; `07_Report` puts every model in
-one table. They run in Colab against the dataset on Hugging Face, each with a `SMOKE` switch for
-a run of a few minutes first. Notebooks 03 to 07 are generated:
+one table; `08_Judge_Headroom` measures how much a judge picking among the teacher's beam
+candidates could gain. They run in Colab against the dataset on Hugging Face, each with a `SMOKE`
+switch for a run of a few minutes first. Notebooks 03 to 08 are generated:
 
 ```bash
 python notebooks/src/build_all.py   # after editing notebooks/src/*.py

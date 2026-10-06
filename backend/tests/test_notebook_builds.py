@@ -113,7 +113,7 @@ def test_notebooks_are_numbered_in_the_order_they_run() -> None:
     names = sorted(set(_BUILT) | set(build_all.HAND_WRITTEN))
     assert all(re.match(r"\d\d[a-z]?_", name) for name in names), names
     assert [name[:2] for name in names] == sorted(name[:2] for name in names)
-    assert {name[:2] for name in names} == {f"{step:02d}" for step in range(1, 8)}
+    assert {name[:2] for name in names} == {f"{step:02d}" for step in range(1, 9)}
 
 
 def test_only_the_report_asks_for_no_gpu() -> None:

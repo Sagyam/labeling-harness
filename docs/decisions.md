@@ -2472,6 +2472,7 @@ now on a model is trained and evaluated by running the notebooks in the order of
 | 5 | `05_Teacher` | the frozen teacher pseudo-labels them; the labels are filtered |
 | 6 | `06a`–`06f_Student_*` | one notebook per student, three stages each (D106) |
 | 7 | `07_Report` | every model's scores read back into one table; no GPU |
+| 8 | `08_Judge_Headroom` | how much a judge picking among the teacher's beam candidates could gain (D117) |
 
 - **One notebook per GPU session.** Each starts from the hub and ends with an upload, a run whose
   result is already there is skipped, and a run whose weights are there without its scores is
@@ -2887,3 +2888,33 @@ the owner stopped it.
 **Reversal:** cheap: `effective_s` back to 720 for 06f; the cap is a bug fix and stays. The
 learning rate and `specaug_in_human` are `Student` fields in `build_students.py`. Counting warmup
 again is `warming=False` in `ftkit.train`.
+
+## D117 — The judge pilot starts with its ceiling: oracle@8 on val must beat the top candidate by a point
+
+Roadmap G1's pilot (2026-10-04) has an LLM pick one of the teacher's beam candidates. Before any
+judge is chosen, `08_Judge_Headroom` measures the most any picker could gain. The teacher in
+`teacher.json` decodes val with beam 8 under the standard length cap. The oracle takes, per clip,
+the candidate with the fewest folded errors, a tie going to the higher-ranked one.
+
+- **The rule, fixed before any candidate was decoded:** G1 goes on only if oracle@8 is at least
+  1.0 point of folded val WER below the beam's own first choice (`judgekit.decide`,
+  `GAIN_TO_CONTINUE`). Under that, the pilot stops and the null is reported. One point is the
+  roadmap's "about a point", and about three times the run-to-run noise on val.
+- **The rule reads val alone.** Gold and the public sets never take part in a choice (D105).
+- **Reported beside the decision, on val, gold and the five public sets** (the owner asked for the
+  whole picture before any judge is built, 2026-10-06): the standard greedy decode, the top
+  candidate, a random pick, an MBR pick (the candidate closest to the others, which reads no
+  reference and needs no LLM) and oracle@2/4/8, each with folded WER and S/D/I, raw WER, CER and
+  plain WER and CER, each paired against greedy with episodes or speakers resampled; per clip
+  class on val and gold and per the public sets' own column; how the gain spreads over the
+  episodes (how many improve, the share the five most improved carry); how many candidates
+  still differ once folded; the rank the oracle picked from; and the beam's real-time factor. The
+  decode cost enters the later choice of a judge, not this rule.
+- **Step 8 of the protocol.** G1 runs after the students and the report, so the numbered order
+  gains a step. Each set's candidates are uploaded in shards to the Flex model repo
+  (`<RUN_PREFIX>/judge-headroom/<set>/`); they are the judge's input if G1 goes on.
+- **No judge model is named yet.** That choice is made on val against a KenLM rescorer, and only if
+  this notebook says there is something to choose.
+
+**Reversal:** cheap. The threshold is one Config value; changing it after the result is read
+would need a new entry saying why.
