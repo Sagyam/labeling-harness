@@ -175,11 +175,11 @@ def prepare(split):
         for s in VOTERS:
             lines = fetch_lines(f"{STUDENTS_PREFIX}/{s}/benchmarks/{split}.jsonl", repo=STUDENTS_REPO)
             voters.append({r["id"]: r["hyp"] for r in lines})
-    rows, seen = [], set()
-    for r in split_rows(split):
-        if r["segment_id"] in recs and r["segment_id"] not in seen:  # a public set may repeat an id
-            seen.add(r["segment_id"])
-            rows.append(r)
+    every = split_rows(split)
+    twice = {i for i, n in Counter(r["segment_id"] for r in every).items() if n > 1}
+    if twice:  # 08 matched its decodes back by id, so which audio such a clip's candidates are is unknown
+        print(f"{split}: {len(twice)} ids appear more than once in the set; their clips are left out")
+    rows = [r for r in every if r["segment_id"] in recs and r["segment_id"] not in twice]
     ids = [r["segment_id"] for r in rows]
     missing = [i for i in ids if any(i not in v for v in voters)]
     assert not missing, f"{split}: {len(missing)} clips lack a voter's transcript"

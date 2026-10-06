@@ -3002,6 +3002,11 @@ thinking a judge costs a fraction of a second a clip, so `08b_Judge_Pilot` runs 
   students' transcripts from their `benchmarks/<set>.jsonl`, matched by id; a clip whose
   reference differs from the one 08 scored stops the notebook.
 - **Gemma hears at most 30 s.** Two FLEURS clips are longer; they are cut at 30 s and counted.
+- **An id a public set repeats is left out.** nepali_cs has 2 ids twice (one with two different
+  references); 08 matched its decodes back by id, so which audio such a clip's candidates came from
+  is unknown, and the check above stopped the first gauntlet run on it. Those clips are dropped
+  (nepali_cs: 1,761 of 08's 1,763). 08's own nepali_cs numbers carry the same ambiguity on those
+  two clips.
 - **Outputs**: `<set>/report-all.json` beside the sample's `val/report.json`.
 
 **Reversal:** cheap: it adds reports and decides nothing.
