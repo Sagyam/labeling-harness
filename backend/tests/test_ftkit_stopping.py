@@ -89,3 +89,15 @@ def test_a_replay_skips_blank_evaluations_too() -> None:
         {"epoch": e, "step": 100 * e, "val_wer": w} for e, w in enumerate([100.0, 80.0, 79.9], 1)
     ]
     assert _replay(history, warm=1) == (80.0, 1)
+
+
+def test_a_replay_reads_only_the_evaluations_among_the_step_logs() -> None:
+    """`train`'s history holds a record per logged step (loss, lr, ...) besides one per evaluation;
+    the first 06f stage 2 resume (2026-10-06) failed on a step record with KeyError 'val_wer'."""
+    history = [
+        {"step": 10, "epoch": 1, "lr": 1e-5, "loss": 3.1},
+        {"epoch": 1, "step": 2506, "val_wer": 31.68},
+        {"step": 2510, "epoch": 2, "lr": 3e-4, "loss": 2.9},
+        {"epoch": 2, "step": 5012, "val_wer": 31.84},
+    ]
+    assert _replay(history, warm=1) == (31.68, 1)

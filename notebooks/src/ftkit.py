@@ -564,10 +564,11 @@ def patience_step(
 
 
 def patience_replay(history: Sequence[dict], warm: int, min_delta: float) -> tuple[float, int]:
-    """`patience_step` over a run's stored history (`step`, `val_wer` per evaluation), so a resumed
-    run counts by the rule in force rather than the one its resume point was saved under."""
+    """`patience_step` over a run's stored history, so a resumed run counts by the rule in force
+    rather than the one its resume point was saved under. Only its evaluations (`step`, `val_wer`)
+    count; the history also logs training steps."""
     counted, bad = float("inf"), 0
-    for h in history:
+    for h in (h for h in history if "val_wer" in h):
         counted, bad = patience_step(
             h["val_wer"], counted, bad, min_delta, warming=h["step"] < warm
         )
