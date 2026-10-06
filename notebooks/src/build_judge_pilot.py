@@ -24,7 +24,7 @@ fixed in D118, before any judge was run.
 
 **The sample.** 300 val clips drawn at random with a fixed seed; nothing preselects them.
 
-**The judges**, each with thinking off and on, so four judge rows:
+**The judges**, without thinking (D118 dropped the thinking rows for their cost):
 - **text only:** `Qwen/Qwen3.8-27B` reads the candidates;
 - **audio-aware:** `google/gemma-4-12B-it` hears the clip the teacher transcribed, then reads them.
 
@@ -36,14 +36,14 @@ there has its thinking closed for it, followed by `Answer: `, and writes the num
 
 **The rows, on the same clips:** greedy (the standard decoder), top@1 (the beam's first choice),
 V3, an n-gram picker (an interpolated Kneser-Ney trigram on the train labels, its weight chosen on
-the val clips outside the sample), the four judges, and oracle@8 (reads the reference: the
+the val clips outside the sample), the judges, and oracle@8 (reads the reference: the
 ceiling). Folded WER with S/D/I, raw WER, CER, plain WER and CER, per clip class; every judge
 paired against V3, top@1 and greedy with episodes resampled; how its change against V3 spreads
 over the episodes; how often it agrees with V3; the beam rank it picked; parse failures, forced
 answers, and its time per clip.
 
 **The rule** (D118): a judge row passes if its folded val WER minus V3's has its whole interval
-below zero, episodes resampled, at Bonferroni's 98.75% (four rows, four chances). If none passes,
+below zero, episodes resampled, at Bonferroni's level over the judge rows (97.5% for two). If none passes,
 G1 stops and the negative is the result. A row that passes is then run on gold, reported and never
 chosen on.
 
@@ -64,9 +64,11 @@ SAMPLE_N, SAMPLE_SEED, SHOW_SEED = 300, 0, 0  # D118
 QWEN, GEMMA = "Qwen/Qwen3.8-27B", "google/gemma-4-12B-it"
 JUDGES = {  # consecutive rows of one model share one load
     "qwen-text": {"model": QWEN, "audio": False, "think": False},
+    "gemma-audio": {"model": GEMMA, "audio": True, "think": False},
+}
+THINKING = {  # D118: dropped from the pilot for their cost; add one to JUDGES to run it
     "qwen-text-think": {"model": QWEN, "audio": False, "think": True, "close": "</think>",
                         "force": "\n</think>\n\nAnswer: ", "chat": {"reasoning_effort": "medium"}},
-    "gemma-audio": {"model": GEMMA, "audio": True, "think": False},
     "gemma-audio-think": {"model": GEMMA, "audio": True, "think": True, "close": "<channel|>",
                           "force": "\n<channel|>Answer: "},
 }

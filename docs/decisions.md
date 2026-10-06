@@ -2919,7 +2919,7 @@ the candidate with the fewest folded errors, a tie going to the higher-ranked on
 **Reversal:** cheap. The threshold is one Config value; changing it after the result is read
 would need a new entry saying why.
 
-## D118 — The judge pilot: two local judges, thinking off and on, must beat the cross-model vote on 300 val clips
+## D118 — The judge pilot: two local judges, without thinking, must beat the cross-model vote on 300 val clips
 
 Roadmap G1, after D117 found the room (oracle@8 1.36 points under the top candidate on val) and
 the cross-model vote V3 took a quarter of it (findings.md, *A cross-model vote*). The question
@@ -2962,14 +2962,24 @@ a vote of four smaller models? `08b_Judge_Pilot` answers it. Everything below wa
   beam score plus λ times its n-gram log-probability per word; λ is chosen from a fixed grid on
   the val clips outside the sample, lowest folded WER, ties to the smaller λ.
 - **The kill rule.** A judge row passes if its folded val WER minus V3's is below zero with the
-  whole interval, episodes resampled (`sweep.paired_bootstrap`, 2,000 draws). Four rows get four
-  chances, so the interval is Bonferroni's: 98.75% (1 − 0.05/4), not 95%. If no row passes, G1
+  whole interval, episodes resampled (`sweep.paired_bootstrap`, 2,000 draws). Each row is one
+  more chance, so the interval is Bonferroni's over the rows run: 97.5% (1 − 0.05/2) for the two
+  rows below, not 95%. If no row passes, G1
   stops, and the result is the negative: an LLM picks no better than a vote of smaller models.
 - **Only if a row passes:** that row runs on gold, reported and never chosen on (D105); then the
   full matrix (more families and sizes up to the G4, every set) gets its own entry.
 - **Cost term.** Judge time per clip, batched on the G4 in bf16 with transformers, beside V3's (a
   CPU minute for all of val once the transcripts exist). A gain that costs a 27B thinking pass per
   clip is weighed as one.
+- **The thinking rows were dropped** (owner, 2026-10-06, during the run, before any score was
+  read). Without thinking, Qwen judged all 300 clips in about 80 s; with thinking, its first 100
+  had taken over 13 minutes, at about 3.5 minutes a batch of 16 that runs to the budget. That puts
+  a thinking row at an hour or more on the sample and 3–4 hours on gold, against V3's CPU minute,
+  so a thinking judge would have to gain a lot to be worth running at all. The pilot keeps
+  `qwen-text` and `gemma-audio`, and the interval is 97.5%. What the negative can then say is
+  narrower: an LLM *without reasoning* picks no better than the vote. The thinking settings stay
+  in the notebook's Config (`THINKING`) for a run that adds them back; faster decoding (larger
+  batches, vLLM) comes first if it does.
 - **What it cannot say.** It measures how much better the teacher's labels could be, not how much
   better a student trained on them would get: no student is retrained (paper B, limitation).
 

@@ -464,9 +464,9 @@ is tried only if the pilot shows promise.
   none of it; findings.md, *The judge's ceiling*). A vote by the students' transcripts (V3)
   recovers a fifth to a quarter of the room above the top candidate, so a judge has to beat V3:
   val 6.50, gold 10.16 (findings.md, *A cross-model vote*). **The pilot** (`08b_Judge_Pilot`,
-  D118): Qwen3.8-27B reading the candidates and Gemma 4 12B hearing the clip, each with thinking
-  off and on, on 300 random val clips, beside an n-gram picker; a judge must beat V3 with a
-  98.75% interval below zero, or G1 stops with the negative. On
+  D118): Qwen3.8-27B reading the candidates and Gemma 4 12B hearing the clip, without thinking
+  (dropped for its cost), on 300 random val clips, beside an n-gram picker; a judge must beat V3
+  with a 97.5% interval below zero, or G1 stops with the negative. On
   val, the oracle WER of the 8 (always picking the candidate closest to the reference) bounds what
   any judge can gain. If the oracle is less than 1.0 point better than the top candidate, stop: no
   judge can help. No judge model is chosen yet: the owner wants a matrix of local models only
