@@ -2874,5 +2874,13 @@ the owner stopped it.
   The CTC weight stays 0.3, as in 06c and 06d. A fixed batch of 32 clips was memorised by every
   setting, which shows the plumbing works and nothing more: 32 clips can be told apart by length.
 
+- **Early stopping does not count warmup** (2026-10-06). Stage 2 starts from stage 1's weights
+  and re-warms its rate over three epochs; val went 31.68, 31.84, 32.28 as it rose, so patience
+  stood at 2 and the first evaluation at peak rate had to beat 31.48 or end the stage. An
+  evaluation that ends before the warmup's last step now counts for nothing, like one at 100;
+  the best weights are still kept from every epoch. A resumed run rebuilds its count from its
+  stored history, so a resume point saved under the old rule is counted by the new one.
+
 **Reversal:** cheap: `effective_s` back to 720 for 06f; the cap is a bug fix and stays. The
-learning rate and `specaug_in_human` are `Student` fields in `build_students.py`.
+learning rate and `specaug_in_human` are `Student` fields in `build_students.py`. Counting warmup
+again is `warming=False` in `ftkit.train`.

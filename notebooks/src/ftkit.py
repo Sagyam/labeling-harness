@@ -546,17 +546,32 @@ def sid(m: dict) -> str:
     return f"S {m['sub']:.2f}  D {m['del']:.2f}  I {m['ins']:.2f}"
 
 
-def patience_step(wer: float, counted: float, bad: int, min_delta: float) -> tuple[float, int]:
+def patience_step(
+    wer: float, counted: float, bad: int, min_delta: float, *, warming: bool = False
+) -> tuple[float, int]:
     """Early stopping after one evaluation: the val WER that last reset the count, and the
     evaluations since. An evaluation at 100 or more counts for nothing: a model that writes only
     blanks, or more garbage than the references hold, has not started transcribing. From random
     weights that can last several epochs while the loss falls (06f, 2026-10-05), and patience
-    used to stop it there."""
-    if wer >= 100.0:
+    used to stop it there. Nor does one that ends inside LR warmup (`warming`): a stage that starts
+    from trained weights gets worse while its rate climbs (06f stage 2, 2026-10-05). The best
+    weights are kept from every evaluation either way."""
+    if warming or wer >= 100.0:
         return counted, bad
     if wer < counted - min_delta:  # at 0: the old rule, any strict gain
         return wer, 0
     return counted, bad + 1
+
+
+def patience_replay(history: Sequence[dict], warm: int, min_delta: float) -> tuple[float, int]:
+    """`patience_step` over a run's stored history (`step`, `val_wer` per evaluation), so a resumed
+    run counts by the rule in force rather than the one its resume point was saved under."""
+    counted, bad = float("inf"), 0
+    for h in history:
+        counted, bad = patience_step(
+            h["val_wer"], counted, bad, min_delta, warming=h["step"] < warm
+        )
+    return counted, bad
 
 
 def retry_note(val: dict) -> str:
@@ -761,6 +776,7 @@ def train(
     torch.manual_seed(cfg.seed)
     plan = [group_steps(rows, make_batches(e), cfg.effective_s) for e in range(cfg.epochs)]
     total = sum(len(p) for p in plan)
+    warm = max(1, int(cfg.warmup_frac * total))  # as in lr_factor
     base_lrs = [g["lr"] for g in optimizer.param_groups]
     params = [p for p in model.parameters() if p.requires_grad]
     history, best, best_state, bad, step = [], float("inf"), None, 0, 0
@@ -770,13 +786,14 @@ def train(
     if state is not None:
         model.load_state_dict(state["model"])
         best_state = state["best_model"] or state["model"]
-        history, best, counted = state["history"], state["best"], state["counted"]
-        bad, step, first_epoch, finished = (
-            state["bad"],
+        history, best, step, first_epoch = (
+            state["history"],
+            state["best"],
             state["step"],
             state["epoch"],
-            state["done"],
         )
+        counted, bad = patience_replay(history, warm, cfg.min_delta)
+        finished = bad >= cfg.patience or first_epoch >= cfg.epochs
         print(
             f"{cfg.name}: resumed after epoch {first_epoch} (best val WER {best:.2f})", flush=True
         )
@@ -871,7 +888,9 @@ def train(
                 }
             if improved:
                 best_state, best = current, val["wer"]
-            counted, bad = patience_step(val["wer"], counted, bad, cfg.min_delta)
+            counted, bad = patience_step(
+                val["wer"], counted, bad, cfg.min_delta, warming=step < warm
+            )
             finished = bad >= cfg.patience
             if resume is not None:
                 resume.save(
