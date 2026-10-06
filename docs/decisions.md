@@ -2941,8 +2941,10 @@ a vote of four smaller models? `08b_Judge_Pilot` answers it. Everything below wa
   distinct candidate is not sent and keeps it. The prompt (`judgekit.prompt`) asks for the number
   only. The judge picks; it never rewrites.
 - **Decoding.** Greedy, so a rerun gives the same picks. Thinking on gets a budget of 2,048 tokens;
-  a judge still thinking at the budget has its thinking closed for it and is asked for the number
-  (budget forcing). Qwen thinks at its `medium` effort; Gemma has no effort setting.
+  a judge still thinking at the budget has its thinking closed for it, followed by `Answer: `, and
+  writes the number (budget forcing). Qwen thinks at its `medium` effort; Gemma has no effort
+  setting. The `Answer: ` cue was added after the smoke run, which read no score: closed
+  mid-sentence without it, Gemma went on writing prose in 3 of 12 forced answers.
 - **The answer.** Exactly one integer from 1 to the number shown (Devanagari digits read as
   digits). Anything else is a parse failure, which takes the top candidate and is counted.
 - **The rows, on the same 300 clips:** greedy, top@1, V3, an n-gram picker, the four judges and

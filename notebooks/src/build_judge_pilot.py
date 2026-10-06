@@ -32,7 +32,7 @@ Each sees the clip's distinct candidates, shuffled per clip (LLMs favour the fir
 numbered from 1, and answers with a number. It picks; it never rewrites. A clip with one distinct
 candidate is not sent. An answer that is not exactly one number in range is a parse failure and
 keeps the top candidate. Thinking has a budget (`THINK_BUDGET` tokens); a judge still thinking
-there has its thinking closed for it and is asked for the number.
+there has its thinking closed for it, followed by `Answer: `, and writes the number.
 
 **The rows, on the same clips:** greedy (the standard decoder), top@1 (the beam's first choice),
 V3, an n-gram picker (an interpolated Kneser-Ney trigram on the train labels, its weight chosen on
@@ -65,10 +65,10 @@ QWEN, GEMMA = "Qwen/Qwen3.8-27B", "google/gemma-4-12B-it"
 JUDGES = {  # consecutive rows of one model share one load
     "qwen-text": {"model": QWEN, "audio": False, "think": False},
     "qwen-text-think": {"model": QWEN, "audio": False, "think": True, "close": "</think>",
-                        "force": "\n</think>\n\n", "chat": {"reasoning_effort": "medium"}},
+                        "force": "\n</think>\n\nAnswer: ", "chat": {"reasoning_effort": "medium"}},
     "gemma-audio": {"model": GEMMA, "audio": True, "think": False},
     "gemma-audio-think": {"model": GEMMA, "audio": True, "think": True, "close": "<channel|>",
-                          "force": "\n<channel|>"},
+                          "force": "\n<channel|>Answer: "},
 }
 THINK_BUDGET = 2048                  # thinking tokens before the answer is forced
 ANSWER_TOKENS = 16                   # tokens for the number itself
