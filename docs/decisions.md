@@ -2985,3 +2985,23 @@ a vote of four smaller models? `08b_Judge_Pilot` answers it. Everything below wa
 
 **Reversal:** cheap before the run: every item is a Config value or a `judgekit` function. After
 the judges are read, changing the sample, the rule or the interval needs a new entry saying why.
+
+## D119 — After G1 stopped, both judges run on every set, for the record
+
+The owner's choice (2026-10-06), after D118's rule stopped G1 on the 300-clip sample. Without
+thinking a judge costs a fraction of a second a clip, so `08b_Judge_Pilot` runs both judge rows
+(Qwen3.8-27B reading, Gemma 4 12B hearing) on every clip of val, gold and the five public sets.
+
+- **It chooses nothing.** The D118 verdict stands; these numbers describe the negative on every
+  set, for paper B, and are never read as a second chance to pass. Gold is reported, as always.
+- **Same rows, same numbers** as the sample: greedy, top@1, V3, the n-gram picker (λ from val, so
+  partly in-sample on all of val), both judges and oracle@8, each judge against V3, top@1 and
+  greedy with 95% intervals (groups resampled: episodes, or the public sets' speakers, sentences
+  or videos), per class, spread over groups, agreement, ranks, time.
+- **V3 on the public sets** takes the teacher's greedy decode from 08's shards and the four
+  students' transcripts from their `benchmarks/<set>.jsonl`, matched by id; a clip whose
+  reference differs from the one 08 scored stops the notebook.
+- **Gemma hears at most 30 s.** Two FLEURS clips are longer; they are cut at 30 s and counted.
+- **Outputs**: `<set>/report-all.json` beside the sample's `val/report.json`.
+
+**Reversal:** cheap: it adds reports and decides nothing.

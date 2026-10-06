@@ -45,7 +45,8 @@ answers, and its time per clip.
 **The rule** (D118): a judge row passes if its folded val WER minus V3's has its whole interval
 below zero, episodes resampled, at Bonferroni's level over the judge rows (97.5% for two). If none passes,
 G1 stops and the negative is the result. A row that passes is then run on gold, reported and never
-chosen on.
+chosen on. After the rule, both judges run on every clip of every set for the record
+(D119): the gauntlet at the end.
 
 **Small blast radius.** Each judge's picks go to `OUT_REPO/<RUN_PREFIX>/judge-pilot/<split>/<judge>/`
 every `SHARD_CLIPS` clips, and a rerun skips every clip already there; the report and the decision
@@ -80,6 +81,8 @@ LAMBDAS = (0.0, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0)  # n-gram weight grid, chose
 BATCH = 16                           # clips per generate call; halved on an out-of-memory error
 SHARD_CLIPS = 100                    # clips per uploaded shard: a lost runtime loses at most one
 GOLD_FOR_PASSED = True               # run a passing judge on gold (reported, never chosen on)
+GAUNTLET = ("common_voice", "fleurs", "val", "gold", "nepali_cs", "indicvoices", "slr54")  # D119, smallest first
+AUDIO_MAX_S = 30.0                   # Gemma 4 hears at most 30 s; a longer clip is cut there and counted
 RESCORE = False                      # True scores a split again even when its report is on the hub
 WORKERS = None                       # processes aligning candidates; None for every core
 """
@@ -141,21 +144,48 @@ def align_one(pair):
     return c
 
 
+def split_rows(split):
+    """A split's rows: val and gold from the export; a public set loaded with its audio (the audio
+    judge hears it), its own column as the clip class, its group where an episode stands."""
+    if split in ("val", "gold"):
+        return splits[split]
+    with ftkit.timed(f"{split}: loading"):
+        rows = evalkit.load_benchmark(split, FT / "bench", TOKEN, 40 if SMOKE else None)
+    by = evalkit.BENCHMARKS[split].by
+    for r in rows:
+        r["classes"] = {by: r.get(by)} if by else {}
+    return rows
+
+
 def prepare(split):
     """A split's clips with candidates: their texts, beam scores, folded tokens and per-clip counts,
-    the greedy decode, and the V3 and oracle picks. Rows are matched by segment_id throughout."""
+    the greedy decode, and the V3 and oracle picks. Rows are matched by segment_id throughout; a
+    public set's reference must be the one its shard was scored against."""
     recs = {}
     for shard in files_under(f"{BASE}/{HEADROOM}/{split}/shards/"):
         for r in fetch_lines(shard):
             recs[r["segment_id"]] = r
-    voters = [{r["segment_id"]: r["text"] for r in fetch_lines(f"{TEACHER}/harness/{split}.jsonl")}]
-    for s in VOTERS:
-        lines = fetch_lines(f"{STUDENTS_PREFIX}/{s}/harness/{split}.jsonl", repo=STUDENTS_REPO)
-        voters.append({r["segment_id"]: r["text"] for r in lines})
-    rows = [r for r in splits[split] if r["segment_id"] in recs]
+    if split in ("val", "gold"):
+        voters = [{r["segment_id"]: r["text"] for r in fetch_lines(f"{TEACHER}/harness/{split}.jsonl")}]
+        for s in VOTERS:
+            lines = fetch_lines(f"{STUDENTS_PREFIX}/{s}/harness/{split}.jsonl", repo=STUDENTS_REPO)
+            voters.append({r["segment_id"]: r["text"] for r in lines})
+    else:  # the teacher's greedy decode is in 08's shard; the students' in their benchmark files
+        voters = [{i: r["greedy"] for i, r in recs.items()}]
+        for s in VOTERS:
+            lines = fetch_lines(f"{STUDENTS_PREFIX}/{s}/benchmarks/{split}.jsonl", repo=STUDENTS_REPO)
+            voters.append({r["id"]: r["hyp"] for r in lines})
+    rows, seen = [], set()
+    for r in split_rows(split):
+        if r["segment_id"] in recs and r["segment_id"] not in seen:  # a public set may repeat an id
+            seen.add(r["segment_id"])
+            rows.append(r)
     ids = [r["segment_id"] for r in rows]
     missing = [i for i in ids if any(i not in v for v in voters)]
     assert not missing, f"{split}: {len(missing)} clips lack a voter's transcript"
+    if split not in ("val", "gold"):
+        wrong = [r["segment_id"] for r in rows if recs[r["segment_id"]]["ref"] != r["text"]]
+        assert not wrong, f"{split}: {len(wrong)} clips' references differ from 08's: rows are mispaired"
     cands = [[c["text"] for c in recs[i]["candidates"]] for i in ids]
     greedy = [voters[0][i] for i in ids]
     pairs = [(r["text"], t) for r, cs in zip(rows, cands, strict=True) for t in cs]
@@ -266,9 +296,10 @@ def load_judge(model_id):
 
 
 def wav_path(row):
-    path = WAV / (hashlib.sha1(row["segment_id"].encode()).hexdigest()[:16] + ".wav")
+    key = f"{row['episode_id']}/{row['segment_id']}"
+    path = WAV / (hashlib.sha1(key.encode()).hexdigest()[:16] + ".wav")
     if not path.exists():
-        sf.write(path, store.clip_f32(row).numpy(), ftkit.SR)
+        sf.write(path, store.clip_f32(row).numpy()[: int(AUDIO_MAX_S * ftkit.SR)], ftkit.SR)
     return str(path)
 
 
@@ -424,7 +455,7 @@ def diff(base, pick, groups):
                                  ("cer", "char_errors", "chars"))}
 
 
-def score_split(split, ids, names, decide):
+def score_split(split, ids, names, decide, name="report"):
     d = data[split]
     ks = [d["at"][i] for i in ids]
     rows = [d["rows"][k] for k in ks]
@@ -460,10 +491,14 @@ def score_split(split, ids, names, decide):
             m["forced"] = sum(not rec["finished"] for rec, _ in called)
             m["new_tokens_mean"] = sum(rec["new_tokens"] for rec, _ in called) / max(len(called), 1)
             m["timing"] = judgekit.timing([rec["judge_s"] for rec, _ in called], [ftkit.duration(r) for _, r in called])
+            if JUDGES[row]["audio"]:
+                m["audio_cut"] = sum(ftkit.duration(r) > AUDIO_MAX_S for _, r in called)
             if decide:
                 m["verdict"] = judgekit.verdict(counts[row], counts["v3"], groups, level=LEVEL)
         report["rows"][row] = m
-    report["by_class"] = {row: distill.by_class(rows, counts[row], score.summarize, keys=evalkit.REPORT_KEYS)
+    by = None if split in ("val", "gold") else evalkit.BENCHMARKS[split].by
+    keys = evalkit.REPORT_KEYS if split in ("val", "gold") else ([by] if by else [])
+    report["by_class"] = {row: distill.by_class(rows, counts[row], score.summarize, keys=keys)
                           for row in report["row_order"]}
     report["distinct"] = Counter(len(judgekit.present(d["cands"][k], d["ids"][k], SHOW_SEED)) for k in ks)
     report.update({"teacher": TEACHER, "dataset_export": export["exported_at"], "fold_version": score.fold_version,
@@ -472,11 +507,11 @@ def score_split(split, ids, names, decide):
                    "show_seed": SHOW_SEED, "ngram": {"order": NGRAM_ORDER, "lambda": LAMBDA, "curve": curve},
                    "level": LEVEL, "transformers": transformers.__version__,
                    "gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else None})
-    local = OUT / split / "report.json"
+    local = OUT / split / f"{name}.json"
     local.parent.mkdir(parents=True, exist_ok=True)
     local.write_text(json.dumps(report, indent=1, ensure_ascii=False, default=str), "utf-8")
-    api.upload_file(path_or_fileobj=str(local), path_in_repo=f"{DEST}/{split}/report.json", repo_id=OUT_REPO,
-                    commit_message=f"{DEST}/{split}: report")
+    api.upload_file(path_or_fileobj=str(local), path_in_repo=f"{DEST}/{split}/{name}.json", repo_id=OUT_REPO,
+                    commit_message=f"{DEST}/{split}: {name}")
     return report
 
 
@@ -570,6 +605,50 @@ else:
     print("no judge passed on val: gold is not run (D118)")
 """
 
+GAUNTLET_NOTE = """
+## The gauntlet: both judges on every clip of every set, for the record
+
+D119 (owner, 2026-10-06): after the rule stopped G1, both judges run on all of val, all of gold
+and the five public sets, so the paper can show the negative everywhere and not only on the
+sample. Nothing here chooses anything, and the D118 verdict stands. The n-gram picker keeps the
+weight chosen on val (on all of val it is partly in-sample). Sets go smallest first, so a problem
+shows on a small one; each judge's picks are uploaded every `SHARD_CLIPS` clips (the sample's 300
+val clips are read back, not judged again), and each set's report goes to
+`<set>/report-all.json` as soon as it is scored.
+"""
+
+GAUNTLET_CELL = r"""
+summary = {}
+for split in GAUNTLET:
+    remote = f"{DEST}/{split}/report-all.json"
+    if not RESCORE and api.file_exists(OUT_REPO, remote):
+        summary[split] = fetch_json(remote)
+        print(f"{split}: already scored, read back")
+        continue
+    if split not in data:
+        data[split] = prepare(split)
+        add_ngram(data[split], LAMBDA)
+    d = data[split]
+    print(f"=== {split}: {len(d['ids'])} clips, {sum(map(ftkit.duration, d['rows'])) / 3600:.2f} h")
+    picks.setdefault(split, {})
+    for n in JUDGES:
+        picks[split][n] = run_judge(n, split, d["rows"])
+    summary[split] = score_split(split, d["ids"], list(JUDGES), decide=False, name="report-all")
+    show(summary[split])
+    if split not in ("val", "gold"):
+        for r in d["rows"]:
+            r.pop("audio", None)  # a scored public set's audio is not needed again
+
+order = ["greedy", "top1", "v3", "ngram", *JUDGES, "oracle@8"]
+print(f"\nEvery set, folded WER\n{'set':<13} {'clips':>6}" + "".join(f"{r[:11]:>12}" for r in order))
+for split, rep in summary.items():
+    print(f"{split:<13} {rep['clips']:>6}" + "".join(f"{rep['rows'][r]['wer']:>12.2f}" for r in order))
+for metric, label in (("wer", "folded WER"), ("raw_wer", "raw WER"), ("cer", "CER")):
+    print(f"\n{label}, judge minus V3 [95%]\n{'set':<13}" + "".join(f"{n:>26}" for n in JUDGES))
+    for split, rep in summary.items():
+        print(f"{split:<13}" + "".join(f"{ci(rep['rows'][n]['vs_v3'][metric]):>26}" for n in JUDGES))
+"""
+
 cells = [
     md(INTRO + nbkit.SMOKE_NOTE),
     md("## Config"),
@@ -588,6 +667,8 @@ cells = [
     code(REPORT),
     md(GOLD_NOTE),
     code(GOLD),
+    md(GAUNTLET_NOTE),
+    code(GAUNTLET_CELL),
 ]
 
 NOTEBOOKS = {"08b_Judge_Pilot.ipynb": cells}
