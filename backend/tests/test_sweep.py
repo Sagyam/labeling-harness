@@ -276,6 +276,18 @@ def test_the_bootstrap_is_repeatable_from_its_seed():
     )
 
 
+def test_a_wider_level_gives_a_wider_interval_around_the_same_point():
+    # D118: four judge rows share one kill rule, so each is read at a Bonferroni level
+    a = _counts([1, 3, 0, 2, 5, 1, 2, 4])
+    b = _counts([2, 1, 1, 4, 3, 0, 2, 5])
+    eps = [f"e{i}" for i in range(8)]
+    d95, lo95, hi95 = sweep.paired_bootstrap(a, b, eps, n=2000)
+    d99, lo99, hi99 = sweep.paired_bootstrap(a, b, eps, n=2000, level=0.9875)
+    assert d95 == d99
+    assert lo99 < lo95 and hi99 > hi95
+    assert sweep.paired_bootstrap(a, b, eps, n=2000, level=0.95) == (d95, lo95, hi95)
+
+
 def test_misaligned_inputs_are_an_error():
     with pytest.raises(ValueError):
         sweep.paired_bootstrap(_counts([1, 2]), _counts([1]), ["e", "e"])

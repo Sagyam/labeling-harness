@@ -134,8 +134,9 @@ def paired_bootstrap(
     *,
     n: int = 2000,
     seed: int = 0,
+    level: float = 0.95,
 ) -> tuple[float, float, float]:
-    """WER(b) - WER(a) in points, with a 95% interval from resampling episodes.
+    """WER(b) - WER(a) in points, with a `level` (95%) interval from resampling episodes.
 
     `a` and `b` are per-clip `{"errors", "words"}` for the same clips in the same order, and
     `episodes` names each clip's episode. WER is pooled (sum of errors over sum of words)."""
@@ -156,5 +157,6 @@ def paired_bootstrap(
     draws = rng.integers(0, len(ids), size=(n, len(ids)))
     totals = per[draws].sum(axis=1)  # (n, 3)
     boot = 100 * (totals[:, 1] - totals[:, 0]) / np.maximum(totals[:, 2], 1)
-    lo, hi = np.percentile(boot, [2.5, 97.5])
+    tail = 100 * (1 - level) / 2
+    lo, hi = np.percentile(boot, [tail, 100 - tail])
     return point, float(lo), float(hi)
