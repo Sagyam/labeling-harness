@@ -21,6 +21,11 @@ Step 9 of the protocol (D105), and the last. No GPU, and no model is loaded. Eac
 notebook reads them back and lays them side by side: base Flex, every Flex run and blend, the
 frozen teacher, and every student, ASR and speech-LLM, at every stage.
 
+**Two families of students.** The ASR students (06) and the speech-LLM students (07, D122) share
+the recipe, the data and the evaluation; the report labels every run with its family
+(`evalkit.family`) and reads the recipe's gain per family, which is the claim the paper makes
+(D121), not which family wins.
+
 **Why the numbers can sit in one table.** Every run was scored by the same code (`evalkit`), on
 the same export (`DATASET_EXPORT`, checked by each notebook before it trained or scored), with the
 same fold, and each model card records the export, the fold version and the kits' digests. A run
@@ -49,6 +54,9 @@ STUDENTS_REPO = "Sagyam/nepanglish-asr-students"
 STUDENTS_PREFIX = "students-2026-09-30"
 SMOKE = False             # True reads the -smoke folders, and teacher-smoke.json if there is one
 CLASSES = ("overlap", "cmi")   # the clip classes every pairing is also split by
+# Student A minus student B at every stage both have (D122): the LLM decoder against the CTC head on
+# one encoder family, and each speech-LLM student against Whisper, the ASR student to beat (D121).
+CROSS = (("omni-llm", "omnilingual"), ("gemma-e2b", "whisper"), ("omni-llm", "whisper"))
 """
 
 SETUP_TAIL = r"""
@@ -137,15 +145,15 @@ GOLD_NOTE = """
 ## Gold and val
 
 Folded WER with S/D/I, raw WER, and the real-time factor of the decode on the GPU it was scored
-on. `*` marks the teacher.
+on. `*` marks the teacher; the family is Flex, an ASR student or a speech-LLM student.
 """
 
 GOLD = r"""
-print(f"{'model':<28}{'epoch':>6}  {'val':<34}{'gold':<34}{'gold raw':>9}{'gold RTF':>10}")
+print(f"{'model':<28}{'family':<12}{'epoch':>6}  {'val':<34}{'gold':<34}{'gold raw':>9}{'gold RTF':>10}")
 for m in models:
     r = m["row"]
-    print(f"{label(m):<28}{str(r.get('best_epoch') or '-'):>6}  {line(r['val']):<34}{line(r['gold']):<34}"
-          f"{r['gold']['raw_wer']:9.2f}{r['gold']['rtf']:10.4f}")
+    print(f"{label(m):<28}{evalkit.family(r):<12}{str(r.get('best_epoch') or '-'):>6}  {line(r['val']):<34}"
+          f"{line(r['gold']):<34}{r['gold']['raw_wer']:9.2f}{r['gold']['rtf']:10.4f}")
 print("\ngold by crosstalk bucket, folded WER:")
 print(f"{'model':<28}" + "".join(f"{b:>10}" for b in evalkit.BUCKETS))
 for m in models:
@@ -187,16 +195,19 @@ for split in ("gold", "val"):
 """
 
 STAGES_NOTE = """
-## What each stage added to a student
+## What each stage added to a student, by family
 
 Stage 2 minus stage 1 is the pseudo-labels together with the extra training (D106: stage 2
 continues stage 1's weights, so the two cannot be told apart here). Stage 3 minus stage 2 is the
-augmentation alone: both start from stage 1's weights.
+augmentation alone: both start from stage 1's weights. Grouped by family: whether the recipe
+transfers to speech-LLM students is read here (D121).
 """
 
 STAGES = r"""
 steps = {}
-for student in sorted({m["row"]["student"] for m in models if m["row"].get("student")}):
+students = sorted({m["row"]["student"] for m in models if m["row"].get("student")},
+                  key=lambda s: (evalkit.family({"student": s}), s))
+for student in students:
     have = {m["row"]["stage"]: m for m in models if m["row"].get("student") == student}
     for before, after in (("human", "distill"), ("distill", "distill-aug")):
         if before not in have or after not in have:
@@ -209,9 +220,39 @@ for student in sorted({m["row"]["student"] for m in models if m["row"].get("stud
                 steps[name][split] = evalkit.pair(rows[split], a, b, keys=())
         cells = "  ".join(f"{split} {v['all'][0]:+.2f} [{v['all'][1]:+.2f},{v['all'][2]:+.2f}]"
                           for split, v in steps[name].items())
-        print(f"{name:<44} {cells}")
+        print(f"{evalkit.family({'student': student}):<12}{name:<44} {cells}")
 if not steps:
     print("no student has two stages scored yet")
+"""
+
+CROSS_NOTE = """
+## Student against student, stage by stage
+
+Each pair in `CROSS`, at every stage both students have: A minus B in WER points, on the clips
+both scored, with episodes resampled. Below zero, A is better. Omnilingual LLM-ASR minus
+Omnilingual CTC is one encoder family with an LLM decoder against a CTC head (D121); a speech-LLM
+student minus Whisper is D121's bar: worth its decode cost only below zero with an interval that
+excludes it.
+"""
+
+CROSS_PAIRS = r"""
+cross = {}
+for a, b in CROSS:
+    for stage in ("human", "distill", "distill-aug"):
+        ma, mb = by_run.get(f"{a}-{stage}"), by_run.get(f"{b}-{stage}")
+        if ma is None or mb is None:
+            continue
+        name = f"{a} minus {b}, {stage}"
+        cross[name] = {}
+        for split in ("val", "gold"):
+            of_b, of_a = mb["counts"].get(split), ma["counts"].get(split)
+            if of_a and of_b:  # evalkit.pair gives WER(second) - WER(first): A minus B
+                cross[name][split] = evalkit.pair(rows[split], of_b, of_a, keys=CLASSES)
+        cells = "  ".join(f"{split} {v['all'][0]:+.2f} [{v['all'][1]:+.2f},{v['all'][2]:+.2f}]"
+                          for split, v in cross[name].items())
+        print(f"{name:<48} {cells}")
+if not cross:
+    print("no pair in CROSS has a stage scored for both students yet")
 """
 
 PUBLIC_NOTE = """
@@ -303,7 +344,7 @@ for set_name in ("gold", "val", *SETS):
 WRITE_NOTE = """
 ## Write the report
 
-`report.json` holds every number above, the breakdowns included; `report.md` is the three main tables as Markdown, to paste
+`report.json` holds every number above, the breakdowns included; `report.md` is the main tables as Markdown, to paste
 into `docs/findings.md`.
 """
 
@@ -314,12 +355,12 @@ def cell(v):
 
 md_lines = [f"Export {export['exported_at'][:10]}, {models[0]['card'].get('fold_version', '')}. "
             f"Teacher: `{TEACHER}` (marked `*`). Folded WER (S / D / I).", "",
-            "| Model | Val | Gold | Gold raw | Gold minus teacher | Public mean |", "|---|---|---|---|---|---|"]
+            "| Model | Family | Val | Gold | Gold raw | Gold minus teacher | Public mean |", "|---|---|---|---|---|---|---|"]
 for m in models:
     r = m["row"]
     vs = paired.get(m["run"], {}).get("gold")
     md_lines.append(
-        f"| {label(m)} | {r['val']['wer']:.2f} ({r['val']['sub']:.2f} / {r['val']['del']:.2f} / {r['val']['ins']:.2f}) "
+        f"| {label(m)} | {evalkit.family(r)} | {r['val']['wer']:.2f} ({r['val']['sub']:.2f} / {r['val']['del']:.2f} / {r['val']['ins']:.2f}) "
         f"| {r['gold']['wer']:.2f} ({r['gold']['sub']:.2f} / {r['gold']['del']:.2f} / {r['gold']['ins']:.2f}) "
         f"| {r['gold']['raw_wer']:.2f} | {cell(vs['all']) if vs else '—'} "
         f"| {format(means[m['run']], '.2f') if m['run'] in means else '—'} |")
@@ -328,15 +369,16 @@ for m in models:
     got = public[m["run"]]
     if got:
         md_lines.append(f"| {label(m)} | " + " | ".join(f"{got[n][0]['wer']:.2f}" if n in got else "—" for n in SETS) + " |")
-if steps:
-    md_lines += ["", "| Step | Val | Gold |", "|---|---|---|"]
-    md_lines += [f"| {name} | " + " | ".join(cell(v[s]["all"]) if s in v else "—" for s in ("val", "gold")) + " |"
-                 for name, v in steps.items()]
+for title, table in (("Step", steps), ("Pair", cross)):
+    if table:
+        md_lines += ["", f"| {title} | Val | Gold |", "|---|---|---|"]
+        md_lines += [f"| {name} | " + " | ".join(cell(v[s]["all"]) if s in v else "—" for s in ("val", "gold")) + " |"
+                     for name, v in table.items()]
 report = {
     "export": export["exported_at"], "teacher": teacher,
-    "models": [{"run": m["run"], "repo": m["repo"], "prefix": m["prefix"],
+    "models": [{"run": m["run"], "repo": m["repo"], "prefix": m["prefix"], "family": evalkit.family(m["row"]),
                 "architecture": m["card"].get("architecture"), "row": m["row"]} for m in models],
-    "left_out": left_out, "vs_teacher": paired, "stage_steps": steps,
+    "left_out": left_out, "vs_teacher": paired, "stage_steps": steps, "cross": cross,
     "public": {run: {name: got[name][0] for name in got} for run, got in public.items()},
     "public_mean": means, "public_vs_base": vs_base, "breakdowns": breakdowns,
 }
@@ -365,6 +407,8 @@ cells = nbkit.cpu(
         code(PAIRED),
         md(STAGES_NOTE),
         code(STAGES),
+        md(CROSS_NOTE),
+        code(CROSS_PAIRS),
         md(PUBLIC_NOTE),
         code(PUBLIC),
         md(BREAKDOWN_NOTE),

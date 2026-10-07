@@ -53,6 +53,9 @@ MIN_CLASS_CLIPS = 10
 #: What a result row keeps of a split's metrics.
 KEEP = ("wer", "raw_wer", "cer", "sub", "del", "ins", "loops", "clips", "rtf", "vs")
 
+#: The students whose decoder is an LLM (07a, 07b; D122). Every other student is an ASR model.
+SPEECH_LLM_STUDENTS = ("gemma-e2b", "omni-llm")
+
 #: `decode(rows)` -> texts, per-clip compute seconds, and the loop retries as
 #: (segment_id, first decode, retried decode).
 Decode = Callable[[Sequence[dict]], tuple[list[str], list[float], list[tuple[str, str, str]]]]
@@ -73,6 +76,16 @@ def duration(row: dict) -> float:
 
 
 # --- provenance ----------------------------------------------------------------------------------
+
+
+def family(row: Mapping[str, Any]) -> str:
+    """The family of a run: "Flex" for one with no student (base, the Flex runs and blends, the
+    teacher), else its student's, "speech-LLM" or "ASR". The report reads the recipe's gain per
+    family (D121)."""
+    student = row.get("student")
+    if not student:
+        return "Flex"
+    return "speech-LLM" if student in SPEECH_LLM_STUDENTS else "ASR"
 
 
 def check_export(manifest: Mapping[str, Any], expected: str) -> None:

@@ -682,3 +682,30 @@ def test_without_error_mining_in_the_harness_copy_a_run_still_scores(tmp_path: P
     assert row["gold_wer"] == 0.0
     assert not (tmp_path / "harness" / "errors").exists()
     assert json.loads((tmp_path / "gold_metrics.json").read_text("utf-8"))["breakdown"] is None
+
+
+# --- families (D122) -----------------------------------------------------------------------------
+
+
+def test_a_run_is_flex_an_asr_student_or_a_speech_llm_student() -> None:
+    """The report groups students by family, so the recipe's gain can be read per family (D121)."""
+    assert evalkit.family({"run_name": "base"}) == "Flex"
+    assert evalkit.family({"student": "whisper", "stage": "human"}) == "ASR"
+    assert evalkit.family({"student": "omnilingual", "stage": "distill"}) == "ASR"
+    assert evalkit.family({"student": "gemma-e2b", "stage": "human"}) == "speech-LLM"
+    assert evalkit.family({"student": "omni-llm", "stage": "distill"}) == "speech-LLM"
+
+
+def test_every_speech_llm_student_has_a_notebook_in_step_7() -> None:
+    """A speech-LLM student the family list does not name would be reported as ASR."""
+    notebooks = _SRC.parent
+    keys = {
+        "gemma-e2b": "07a_Student_LLM_Gemma_E2B.ipynb",
+        "omni-llm": "07b_Student_LLM_Omni_LLM_1B.ipynb",
+    }
+    assert set(evalkit.SPEECH_LLM_STUDENTS) == set(keys)
+    for key, name in keys.items():
+        text = (notebooks / name).read_text("utf-8")
+        assert f'STUDENT = \\"{key}\\"' in text, name
+    found = sorted(p.name for p in notebooks.glob("07*_Student_LLM_*.ipynb"))
+    assert found == sorted(keys.values())
