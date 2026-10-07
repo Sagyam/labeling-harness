@@ -98,6 +98,20 @@ def test_the_omnilingual_script_is_a_whole_program(tmp_path: Path) -> None:
     assert "get_ipython" not in script and "\n%" not in script and "\n!" not in script
 
 
+def test_the_bakeoff_omnilingual_script_is_a_whole_program(tmp_path: Path) -> None:
+    """09 runs Omnilingual LLM-ASR as a script in fairseq2's environment (D121): it reads only its
+    arguments and ftkit, so every name it uses has to be its own."""
+    cell = next(
+        c["source"]
+        for c in _BUILT["09_SpeechLLM_Bakeoff.ipynb"]
+        if c["source"].startswith("%%writefile /content/ft/bakeoff_omni.py")
+    )
+    script = cell.split("\n", 1)[1]
+    ast.parse(script)
+    assert _undefined_names(script, tmp_path / "bakeoff_omni.py") == ""
+    assert "get_ipython" not in script and "\n%" not in script and "\n!" not in script
+
+
 def test_a_kit_cell_is_the_kit_file() -> None:
     cell = nbkit.kit("sweep")
     text = (_NOTEBOOKS / "src" / "sweep.py").read_text("utf-8")
@@ -113,7 +127,7 @@ def test_notebooks_are_numbered_in_the_order_they_run() -> None:
     names = sorted(set(_BUILT) | set(build_all.HAND_WRITTEN))
     assert all(re.match(r"\d\d[a-z]?_", name) for name in names), names
     assert [name[:2] for name in names] == sorted(name[:2] for name in names)
-    assert {name[:2] for name in names} == {f"{step:02d}" for step in range(1, 9)}
+    assert {name[:2] for name in names} == {f"{step:02d}" for step in range(1, 10)}
 
 
 def test_only_the_report_asks_for_no_gpu() -> None:
