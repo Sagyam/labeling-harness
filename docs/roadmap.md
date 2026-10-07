@@ -212,7 +212,14 @@ step 4's curve says how much audio closes the gap.
      then `05_Teacher` with `SMOKE` (its log-prob masking and `output_scores` memory have never run
      on a GPU), then the whole corpus, then the students. Done up to the students, 2026-10-04.
 
-5. **At the very end, convene the council again** (owner, 2026-10-06). Once every student is
+5. **Speech-LLM students** (D121, 2026-10-07). Before any audio LLM is trained as a student,
+   `09_SpeechLLM_Bakeoff` shortlists Gemma 4 E4B and 12B, Omnilingual LLM-ASR 1B/3B,
+   Qwen3-ASR-1.7B and Voxtral Mini 3B: a zero-shot gate on val (writes Devanagari on 90% of the
+   Nepali clips) and a projected training budget of 24 G4-hours. Those that pass get a student
+   notebook with the same three stages, held to D121's bars. The paper's family claim is the
+   recipe's gain per family, not which family wins. Not yet run on a GPU.
+
+6. **At the very end, convene the council again** (owner, 2026-10-06). Once every student is
    trained, rerun the panel vote: the teacher's greedy decode and the students vote among the
    teacher's 8 beam candidates, and the candidate closest to them wins (findings.md, *The panel
    vote*). With four students it recovered 36–39% of the room between greedy and oracle@8 on val

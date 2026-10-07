@@ -2949,3 +2949,38 @@ on Common Voice, and only Qwen won, on FLEURS, whose sentences come from Wikiped
 **Reversal:** moderate: the notebook and kit are in git history before this entry, and the
 picks are on the hub; a reasoning or fine-tuned judge would need its own entry and a faster
 decoder first.
+
+## D121 — Speech-LLM students are shortlisted by a zero-shot gate and a training budget, not by zero-shot WER
+
+Roadmap B's students so far are pure ASR models. The question for the paper is whether an
+open-weight LLM that hears audio can be a student under the same recipe, and whether that family
+does better. Before any is trained, `09_SpeechLLM_Bakeoff` shortlists them (2026-10-07), with the
+rules fixed here before any candidate transcribes a clip.
+
+- **Candidates:** Gemma 4 E4B and 12B, Omnilingual LLM-ASR 1B and 3B (`nep_Deva`; the 7B as a
+  zero-shot data point only, since full fine-tuning does not fit in 96 GB), Qwen3-ASR-1.7B and
+  Voxtral Mini 3B. Omnilingual LLM-ASR 1B against 06e's Omnilingual CTC 1B is the cleanest family
+  comparison (same encoder family and pretraining languages, CTC head against LLM decoder).
+- **The gate, on val** (`bakeoffkit.zero_shot_report`): among clips whose reference is at least
+  half Devanagari letters, at least 90% must be answered at least half in Devanagari. Zero-shot WER
+  ranks nothing: Whisper-turbo read 123% zero-shot and 15.02 on gold after training. Gold is
+  scored and reported, never used to choose (D105), and each candidate's prompt is chosen on a
+  300-clip val sample alone.
+- **The budget:** training speed measured by `ftkit.speed_check` on the G4, projected over every
+  epoch of both stages (`HUMAN_EPOCHS` 8 on the human hours, `DISTILL_EPOCHS` 6 on a 131 h
+  mixture epoch, each with a val pass), must fit `BUDGET_H`, 24 GPU-hours, about four times what
+  Whisper's two stages took. A candidate whose training step cannot be timed does not continue.
+- **Recorded beside it:** empty answers, runaways (more than twice the reference's words plus
+  ten), answers in another script, and the Latin share of answers against references. Answers
+  are greedy, capped at 1.5× the densest train label's token rate, never retried, and cleaned only
+  of whitespace and wrapping quotes.
+- **The bars for the student notebooks that follow:** stage 1's first epoch at most 15.86 on val
+  (Whisper's); the end of stage 1 at most 10.69 (Whisper), or 13.65 (IndicConformer) for a small
+  model; worth its decode cost only if stage 2 beats Whisper's 15.02 on gold with an interval
+  that excludes zero.
+- **Framing for the paper:** "the recipe transfers to speech-LLM students" (stage 2 minus stage 1
+  per family), not "LLM students are better": size, pretraining data and decoder differ at once
+  across families.
+
+**Reversal:** cheap. The gate share, the budget and the epoch caps are constants in
+`bakeoffkit.py` and Config; changing one after the results are read needs a new entry saying why.
