@@ -220,6 +220,15 @@ def test_a_candidate_with_no_training_measurement_cannot_continue() -> None:
     assert v["continue"] is False and v["reasons"][0].startswith("budget")
 
 
+def test_a_failed_training_step_is_timed_again_on_a_rerun() -> None:
+    """A crash (an OOM in the 2026-10-07 smoke run) is not a measurement: the record of it must not
+    make a rerun skip the candidate, or its verdict stays "stop" for good."""
+    assert bakeoffkit.needs_timing(None, rescore=False)
+    assert bakeoffkit.needs_timing({"error": "OutOfMemoryError: CUDA out of memory"}, rescore=False)
+    assert not bakeoffkit.needs_timing({"train_x_realtime": 120.0}, rescore=False)
+    assert bakeoffkit.needs_timing({"train_x_realtime": 120.0}, rescore=True)
+
+
 # --- generation length ---------------------------------------------------------------------------
 
 

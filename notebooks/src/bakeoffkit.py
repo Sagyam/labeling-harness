@@ -185,6 +185,12 @@ def verdict(
     return {"continue": not reasons, "reasons": reasons}
 
 
+def needs_timing(speed: Mapping[str, Any] | None, *, rescore: bool) -> bool:
+    """Whether round 2 times a candidate's training step: when it has no measurement, when the
+    last attempt failed (an `error` record says why, but is not a measurement), or on a rescore."""
+    return speed is None or "error" in speed or rescore
+
+
 def token_cap(
     tokens_per_s: float, seconds: float, slack: float = 1.5, extra: int = 8, ceiling: int = 1024
 ) -> int:

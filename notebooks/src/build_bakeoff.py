@@ -884,7 +884,7 @@ def time_training(key):
         raise RuntimeError(f"{key} was not swept: run round 1 first")
     name, prompt = kept(key, found)
     speed = fetch_json(f"{dest}/speed_check.json")
-    if (speed is None or RESCORE) and spec["train"] is not None:
+    if bakeoffkit.needs_timing(speed, rescore=RESCORE) and spec["train"] is not None:
         print(f"\n=== {key}: timing the training step, prompt {name!r}")
         try:
             speed = omni_speed(spec, prompt) if spec["family"] == "omni" else hf_speed(spec, prompt)
