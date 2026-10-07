@@ -220,6 +220,23 @@ def test_a_candidate_with_no_training_measurement_cannot_continue() -> None:
     assert v["continue"] is False and v["reasons"][0].startswith("budget")
 
 
+def test_the_micro_batch_is_extrapolated_from_two_measured_peaks() -> None:
+    """The probe never runs a batch it expects to run out of memory: OOMs in a row during the
+    2026-10-07 smoke run left ~46 GiB allocated that nothing in Python held (D121)."""
+    gib = 2**30
+    # 30 GiB with one clip, 32 with two: 2 GiB a clip, so 30 + 2 (n - 1) <= 60 -> n = 16
+    assert bakeoffkit.fit_items(30 * gib, 32 * gib, 60 * gib) == 16
+    assert bakeoffkit.fit_items(30 * gib, 32 * gib, 61.9 * gib) == 16  # whole clips only
+
+
+def test_the_extrapolated_micro_batch_has_a_floor_and_a_ceiling() -> None:
+    gib = 2**30
+    assert bakeoffkit.fit_items(70 * gib, 72 * gib, 60 * gib) == 0  # not even one clip
+    # a second clip that measured no growth
+    assert bakeoffkit.fit_items(30 * gib, 30 * gib, 60 * gib, ceiling=256) == 256
+    assert bakeoffkit.fit_items(30 * gib, 30.001 * gib, 60 * gib, ceiling=64) == 64
+
+
 def test_a_failed_training_step_is_timed_again_on_a_rerun() -> None:
     """A crash (an OOM in the 2026-10-07 smoke run) is not a measurement: the record of it must not
     make a rerun skip the candidate, or its verdict stays "stop" for good."""

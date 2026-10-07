@@ -446,26 +446,49 @@ def allocate_state(model, optimizer):
 
 def hf_probe(rows, optimizer):
     """The largest micro-batch at the longest clip carrying the wordiest transcript, and at the
-    wordiest of the shortest tenth (each clip brings its own prompt): (seconds, clips)."""
-    def probe_at(clip):
-        def step(n):
-            b = sft_collate([clip] * n)
-            with torch.autocast(DEVICE, dtype=torch.bfloat16):
-                loss, _ = sft_loss(model, b)
-            loss.backward()
+    wordiest of the shortest tenth (each clip brings its own prompt): (seconds, clips).
 
-        return ftkit.probe_max_items(step, 1, 256, model)
+    Extrapolated from the peaks of one and two clips (`bakeoffkit.fit_items`) rather than found by
+    running out of memory: in the 2026-10-07 smoke run a binary search's OOMs left ~46 GiB that
+    nothing in Python held, and every candidate after it ran out of memory too."""
+    params = [p for p in model.parameters() if p.requires_grad]
+
+    def peak(clip, n):
+        torch.cuda.reset_peak_memory_stats()
+        b = sft_collate([clip] * n)
+        with torch.autocast(DEVICE, dtype=torch.bfloat16):
+            loss, _ = sft_loss(model, b)
+        loss.backward()
+        torch.cuda.synchronize()
+        loss = b = None
+        for p in params:  # kept allocated: from the second micro-batch on, training holds them
+            p.grad.zero_()
+        return torch.cuda.max_memory_allocated()
+
+    def fit(clip):
+        torch.cuda.empty_cache()
+        free, _ = torch.cuda.mem_get_info()
+        limit = torch.cuda.memory_allocated() + free
+        one, two = peak(clip, 1), peak(clip, 2)
+        return bakeoffkit.fit_items(one, two, limit)
 
     longest = max(rows, key=ftkit.duration)
     wordiest = max(rows, key=lambda r: len(r["text"]))
     model.train()
     allocate_state(model, optimizer)
-    n = probe_at({**longest, "text": wordiest["text"]})
-    if n == 0:
-        raise RuntimeError("not even one clip fits a micro-batch")
+    for p in params:
+        p.grad = torch.zeros_like(p)
     by_length = sorted(rows, key=ftkit.duration)
     short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["text"]))
-    n_short = probe_at(short)
+    with ftkit.batchnorm_kept(model):  # an audio encoder's running statistics are left as found
+        n = fit({**longest, "text": wordiest["text"]})
+        n_short = fit(short)
+    if n == 0:
+        raise RuntimeError("not even one clip fits a micro-batch")
+    for p in params:
+        p.grad = None
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
     budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
     print(f"largest micro-batch: {n} clips at {ftkit.duration(longest):.1f} s, {n_short} at "
           f"{ftkit.duration(short):.1f} s -> {items} clips or {budget:.0f} s of audio")

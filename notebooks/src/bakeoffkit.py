@@ -185,6 +185,20 @@ def verdict(
     return {"continue": not reasons, "reasons": reasons}
 
 
+def fit_items(peak_one: float, peak_two: float, limit: float, ceiling: int = 256) -> int:
+    """The most clips a micro-batch holds within `limit` bytes, from the measured peaks of one and
+    of two clips: each clip adds `peak_two - peak_one`, so n fit while
+    `peak_one + (n - 1) * step <= limit`. 0 when one clip does not fit; `ceiling` when a second
+    clip measured no growth. The probe then never runs a batch it expects to run out of memory,
+    because a run of OOMs left memory that nothing in Python held (2026-10-07)."""
+    if peak_one > limit:
+        return 0
+    step = peak_two - peak_one
+    if step <= 0:
+        return ceiling
+    return min(ceiling, 1 + math.floor((limit - peak_one) / step))
+
+
 def needs_timing(speed: Mapping[str, Any] | None, *, rescore: bool) -> bool:
     """Whether round 2 times a candidate's training step: when it has no measurement, when the
     last attempt failed (an `error` record says why, but is not a measurement), or on a rescore."""
