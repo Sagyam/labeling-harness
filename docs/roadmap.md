@@ -43,9 +43,10 @@ the notebooks are numbered in the order they run, and that order is the protocol
 | 3 | `03a_Flex_Train` to `03e_Flex_Ship` | Flex retrained, scored on the public sets, C's ablation, blended, one teacher frozen |
 | 4 | `04_PreDistill` | B step 1, and each clip's overlap measured |
 | 5 | `05_Teacher` | B steps 2–3 |
-| 6 | `06a`–`06f_Student_*` | B step 4, one notebook per student |
-| 7 | `07_Report` | E: every model in one table |
+| 6 | `06a`–`06f_Student_*` | B step 4, one notebook per ASR student |
+| 7 | `07a`–`07b_Student_LLM_*` | B step 5, one notebook per speech-LLM student (D122) |
 | 8 | `08_Judge_Headroom` | G1's pilot, step 0: the oracle headroom (D117) |
+| 9 | `09_Report` | E: every model in one table, always last |
 
 Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
 val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
@@ -212,13 +213,12 @@ step 4's curve says how much audio closes the gap.
      then `05_Teacher` with `SMOKE` (its log-prob masking and `output_scores` memory have never run
      on a GPU), then the whole corpus, then the students. Done up to the students, 2026-10-04.
 
-5. **Speech-LLM students** (D121, 2026-10-07). Before any audio LLM is trained as a student,
-   `09_SpeechLLM_Bakeoff` shortlists Gemma 4 E2B/E4B/12B, Omnilingual LLM-ASR 1B/3B (7B
-   zero-shot), Qwen3-ASR-1.7B and Voxtral Mini 3B, breadth-first: a zero-shot sweep of every
-   candidate on a val sample, then, for the shortlist only, the training step (budget 24 G4-hours)
-   and full val and gold. The gate: Devanagari on 90% of the Nepali clips. Those that pass get a student
-   notebook with the same three stages, held to D121's bars. The paper's family claim is the
-   recipe's gain per family, not which family wins. Not yet run on a GPU.
+5. **Speech-LLM students** (D121, D122). The bake-off ran on 2026-10-07 (findings.md,
+   *Speech-LLMs as students*): Gemma 4 E2B and Omnilingual LLM-ASR 1B go on, as `07a` and `07b`,
+   the smaller sibling of each kind; the rest are out. Each has the same three stages as the ASR
+   students, held to D121's bars. The paper's family claim is the recipe's gain per family (stage
+   2 minus stage 1), with 06e against 07b as the controlled pair, not which family wins. Neither
+   notebook has run on a GPU: smoke runs first.
 
 6. **At the very end, convene the council again** (owner, 2026-10-06). Once every student is
    trained, rerun the panel vote: the teacher's greedy decode and the students vote among the
@@ -408,7 +408,7 @@ against the single-stream gold, and attribution by grading the model's output by
   - *Reference audit*: public-set clips where the models agree with each other and not with the
     reference, top of the list heard. FLEURS, OpenSLR 54 and Common Voice references are the
     prompt the speaker read, not what was said.
-  - `07_Report` prints the crosstalk and number blocks only; the confusion table and the
+  - `09_Report` prints the crosstalk and number blocks only; the confusion table and the
     attribution card are on the Models page.
 
 ## F. Fiddling with the diarizer (priority 4, after B, C and G)

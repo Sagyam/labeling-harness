@@ -164,10 +164,9 @@ evaluated (D105): `01_EDA` and `02_Sociolinguistics` describe the corpus; `03a`�
 Indic-Transcribe-Flex, score it on the public Nepali sets, ablate the augmentations, blend its
 weights with the base model and freeze one teacher; `04_PreDistill` and `05_Teacher` cut and
 pseudo-label unlabelled audio; `06a`–`06f` train one ASR student each and `07a`–`07b` one speech-LLM student
-each (Gemma 4 E2B, Omnilingual LLM-ASR 1B; D122); `07_Report` puts every model in
-one table; `08_Judge_Headroom` measures how much a judge picking among the teacher's beam
-candidates could gain; `09_SpeechLLM_Bakeoff` shortlists the audio LLMs worth training as students
-(D121). They run in Colab against the dataset on Hugging Face, each with a `SMOKE`
+each (Gemma 4 E2B, Omnilingual LLM-ASR 1B; D122); `08_Judge_Headroom` measures how much a judge
+picking among the teacher's beam candidates could gain; `09_Report` puts every model in one table,
+and always comes last. They run in Colab against the dataset on Hugging Face, each with a `SMOKE`
 switch for a run of a few minutes first. Notebooks 03 to 09 are generated:
 
 ```bash

@@ -109,20 +109,6 @@ def test_the_omnilingual_llm_script_is_a_whole_program(tmp_path: Path) -> None:
     assert "Seq2SeqBatch" in script and "import llmkit" in script
 
 
-def test_the_bakeoff_omnilingual_script_is_a_whole_program(tmp_path: Path) -> None:
-    """09 runs Omnilingual LLM-ASR as a script in fairseq2's environment (D121): it reads only its
-    arguments and ftkit, so every name it uses has to be its own."""
-    cell = next(
-        c["source"]
-        for c in _BUILT["09_SpeechLLM_Bakeoff.ipynb"]
-        if c["source"].startswith("%%writefile /content/ft/bakeoff_omni.py")
-    )
-    script = cell.split("\n", 1)[1]
-    ast.parse(script)
-    assert _undefined_names(script, tmp_path / "bakeoff_omni.py") == ""
-    assert "get_ipython" not in script and "\n%" not in script and "\n!" not in script
-
-
 def test_a_kit_cell_is_the_kit_file() -> None:
     cell = nbkit.kit("sweep")
     text = (_NOTEBOOKS / "src" / "sweep.py").read_text("utf-8")
@@ -145,7 +131,7 @@ def test_only_the_report_asks_for_no_gpu() -> None:
     cpu = [
         n for n, cells in _BUILT.items() if "accelerator" not in nbkit.notebook(cells)["metadata"]
     ]
-    assert cpu == ["07_Report.ipynb"]
+    assert cpu == ["09_Report.ipynb"]
 
 
 def test_a_built_notebook_is_valid_json_with_one_id_per_cell() -> None:
@@ -193,21 +179,6 @@ def test_every_student_scores_with_error_mining() -> None:
             if re.match(r"\s*[%!].*pip install", line)
         ]
         assert any(re.search(r"\bduckdb\b", line) for line in installs), path.name
-
-
-def test_the_bakeoff_installs_what_voxtral_tokenizes_with() -> None:
-    """Voxtral's tokenizer is mistral-common's: without the package transformers loads one with no
-    chat template, and the candidate fails on its first clip (the 2026-10-07 smoke run)."""
-    cells = json.loads((_NOTEBOOKS / "09_SpeechLLM_Bakeoff.ipynb").read_text(encoding="utf-8"))[
-        "cells"
-    ]
-    installs = [
-        line
-        for cell in cells
-        for line in "".join(cell["source"]).splitlines()
-        if re.match(r"\s*[%!].*pip install", line)
-    ]
-    assert any(re.search(r"\bmistral-common\[audio\]", line) for line in installs)
 
 
 def _config(name: str) -> dict:

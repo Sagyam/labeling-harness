@@ -1,4 +1,4 @@
-"""Build notebooks/07_Report.ipynb: `python notebooks/src/build_report.py`. Step 7 of the
+"""Build notebooks/09_Report.ipynb: `python notebooks/src/build_report.py`. Step 9 of the
 protocol (D105): every model's scores, read back from the hub, in one table. No GPU and no model:
 the numbers were written by evalkit when each run was scored, and the pairings are taken here
 from the per-clip counts each run left. Shared code lives in evalkit.py, sweep.py and distill.py,
@@ -14,12 +14,12 @@ HERE = Path(__file__).parent
 OUT_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent
 
 INTRO = """
-# 07 — Report: every model, one table
+# 09 — Report: every model, one table
 
-Step 7 of the protocol (D105). No GPU, and no model is loaded. Each run of notebooks 03 and 06
-left its scores, its transcripts and its per-clip error counts on the hub; this notebook reads
-them back and lays them side by side: base Flex, every Flex run and blend, the frozen teacher, and
-every student at every stage.
+Step 9 of the protocol (D105), and the last. No GPU, and no model is loaded. Each run of notebooks
+03, 06 and 07 left its scores, its transcripts and its per-clip error counts on the hub; this
+notebook reads them back and lays them side by side: base Flex, every Flex run and blend, the
+frozen teacher, and every student, ASR and speech-LLM, at every stage.
 
 **Why the numbers can sit in one table.** Every run was scored by the same code (`evalkit`), on
 the same export (`DATASET_EXPORT`, checked by each notebook before it trained or scored), with the
@@ -41,7 +41,7 @@ blends and the teacher are chosen on val. The gold and public columns are scores
 """
 
 CONFIG = r"""
-NOTEBOOK = "07_Report"
+NOTEBOOK = "09_Report"
 DATASET_REPO = "Sagyam/nepanglish-asr"
 DATASET_EXPORT = "2026-09-30"        # runs scored on another export are left out
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"      # teacher.json names the Flex runs' folder
@@ -374,7 +374,7 @@ cells = nbkit.cpu(
     ]
 )
 
-NOTEBOOKS = {"07_Report.ipynb": cells}
+NOTEBOOKS = {"09_Report.ipynb": cells}
 
 if __name__ == "__main__":
     nbkit.write(NOTEBOOKS, OUT_DIR)

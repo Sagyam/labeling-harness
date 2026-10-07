@@ -40,7 +40,7 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 Can an open-weight LLM that hears audio be a student (roadmap B), and which ones are worth
 training? Seven candidates were swept zero-shot on 300 val clips, the shortlist had a training
 step timed on 600 train clips, and each candidate's kept prompt then decoded all of val and gold
-(`09_SpeechLLM_Bakeoff`, D121). One RTX PRO 6000 (96 GB), bf16,
+(`09_SpeechLLM_Bakeoff`, D121, removed in D122). One RTX PRO 6000 (96 GB), bf16,
 greedy decoding with a token cap; folded WER, fold-v4. Omnilingual LLM 3B was left out: its
 checkpoint download from Meta's server stalled twice. Outputs are on the hub under
 `speech-llm-bakeoff-2026-10-08/` in the students repo.

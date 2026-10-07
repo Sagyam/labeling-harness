@@ -2476,9 +2476,10 @@ now on a model is trained and evaluated by running the notebooks in the order of
 | | `03e_Flex_Ship` | freezes the teacher in `teacher.json`, exports it for the CPU |
 | 4 | `04_PreDistill` | cuts the unlabelled recordings (D101) and measures each clip's overlap |
 | 5 | `05_Teacher` | the frozen teacher pseudo-labels them; the labels are filtered |
-| 6 | `06a`–`06f_Student_*` | one notebook per student, three stages each (D106) |
-| 7 | `07_Report` | every model's scores read back into one table; no GPU |
+| 6 | `06a`–`06f_Student_*` | one notebook per ASR student, three stages each (D106) |
+| 7 | `07a`–`07b_Student_LLM_*` | one notebook per speech-LLM student, the same three stages (D122) |
 | 8 | `08_Judge_Headroom` | how much a judge picking among the teacher's beam candidates could gain (D117) |
+| 9 | `09_Report` | every model's scores read back into one table; no GPU; always last (D122) |
 
 - **One notebook per GPU session.** Each starts from the hub and ends with an upload, a run whose
   result is already there is skipped, and a run whose weights are there without its scores is
@@ -2954,8 +2955,10 @@ decoder first.
 
 Roadmap B's students so far are pure ASR models. The question for the paper is whether an
 open-weight LLM that hears audio can be a student under the same recipe, and whether that family
-does better. Before any is trained, `09_SpeechLLM_Bakeoff` shortlists them (2026-10-07), with the
-rules fixed here before any candidate transcribes a clip.
+does better. Before any was trained, `09_SpeechLLM_Bakeoff` shortlisted them (2026-10-07), with the
+rules fixed here before any candidate transcribed a clip. It ran, its results are in findings.md
+(*Speech-LLMs as students*), and the notebook and its kit were removed (D122); they are in git
+history before that entry.
 
 - **Candidates:** Gemma 4 E2B, E4B and 12B, Omnilingual LLM-ASR 1B and 3B (`nep_Deva`; the 7B as a
   zero-shot data point only, since full fine-tuning does not fit in 96 GB), Qwen3-ASR-1.7B and
@@ -2986,5 +2989,35 @@ rules fixed here before any candidate transcribes a clip.
   per family), not "LLM students are better": size, pretraining data and decoder differ at once
   across families.
 
-**Reversal:** cheap. The gate share, the budget and the epoch caps are constants in
-`bakeoffkit.py` and Config; changing one after the results are read needs a new entry saying why.
+**Reversal:** cheap. The gate share, the budget and the epoch caps were constants in
+`bakeoffkit.py` and Config (git history); changing one after the results are read needs a new
+entry saying why.
+
+## D122 — Two speech-LLM students, the smaller sibling of each kind, and the report goes last
+
+The bake-off (D121) ran on 2026-10-07 (findings.md, *Speech-LLMs as students*). The owner's
+choice the same day:
+
+- **Students: Gemma 4 E2B (`07a`) and Omnilingual LLM-ASR 1B (`07b`).** The rest are out. Gemma
+  12B and Voxtral failed on language (Hindi, loops); Qwen3-ASR-1.7B started at 67 on gold.
+- **No bigger sibling when the smaller does the job.** E4B read 3.1 points better than E2B on gold
+  zero-shot and trains 1.6× slower; Omnilingual 7B read 1.4 better than the 1B. The rule is about
+  kind, not size: two models of the same kind keep the smaller one, and models of different kinds
+  are both kept. So Qwen3-ASR stays as 06b's 0.6B, which is the same model as the 1.7B at a
+  smaller size; and Omnilingual LLM-ASR 1B joins 06e's Omnilingual CTC 1B, because a CTC head and
+  an LLM decoder are different kinds (and the pair is the cleanest family comparison, D121).
+- **Numbering.** The speech-LLM students are step 7 (`07a`, `07b`, `<NN><x>_Student_LLM_<name>`),
+  the judge's headroom stays step 8, and the report moves from 07 to **09**: it reads every run
+  of every earlier step, so it always sits last.
+- **The bake-off notebook and `bakeoffkit.py` are removed**, as experiment code is once its
+  findings are written. What the students still use moved to `llmkit.py` (tested in
+  `test_llm_kit.py`): the answer's cleaning and length cap, `fit_items` (a micro-batch sized from
+  two measured peaks; a run of out-of-memory probes leaked memory in the bake-off), where each
+  answer sits after its own prompt, and Omnilingual LLM-ASR's loss turned back into a sum. Its
+  outputs stay on the hub under `speech-llm-bakeoff-2026-10-08/`.
+- **Each student keeps the bake-off's prompt** (Gemma's "Nepali" instruction, Omnilingual's
+  `nep_Deva`), chosen on the val sample, and its training-step code, which ran on the G4. The
+  stages around them follow D105/D106 unchanged, with D121's projected epoch caps (8 and 6).
+
+**Reversal:** cheap. A student notebook is one `Student` entry in `build_students.py`; adding
+the 1.7B Qwen or E4B back is one entry and a smoke run.

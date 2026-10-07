@@ -123,7 +123,7 @@ a base model on the clips both scored, the set's own unit resampled:
   its share.
 - **The attribution card** (D111).
 
-`07_Report` prints the first two per run and set; the Models page shows all four.
+`09_Report` prints the first two per run and set; the Models page shows all four.
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an
