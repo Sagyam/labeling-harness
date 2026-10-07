@@ -26,8 +26,7 @@ def _row(seconds: float, text: str) -> dict:
 
 def test_the_probe_also_measures_the_length_where_both_limits_meet() -> None:
     """A budget of 720 s and 163 clips meet at clips of 4.4 s: a batch of 163 of those is legal
-    under both limits, and neither the longest nor the shortest clip measured it (06b's stage 2
-    ran out of memory there on 2026-10-07)."""
+    under both limits, and neither the longest nor the shortest clip measures it."""
     pick = _crossover_clip()
     rows = [_row(2.0, "a"), _row(4.3, "a b"), _row(4.5, "a b c d e"), _row(9.0, "a b c d e f g")]
     assert pick(rows, budget_s=720.0, items=163) == rows[2]  # the wordiest near 4.4 s
@@ -50,3 +49,15 @@ def test_a_clip_count_budget_has_no_crossover() -> None:
     """Whisper pays for 30 s whatever a clip's length: its budget is a count, not seconds."""
     pick = _crossover_clip()
     assert pick([_row(3.0, "a")], budget_s=float("inf"), items=40) is None
+
+
+def test_the_wordiest_is_measured_in_the_students_own_tokens() -> None:
+    """Characters are the wrong measure: a Devanagari character costs a byte-level tokenizer
+    several tokens and a Latin one about a quarter of one, so the clip with the most characters
+    was not the one with the most tokens, and 06b's probe under-measured its batches."""
+    pick = _crossover_clip()
+    rows = [_row(4.4, "a long english sentence here"), _row(4.4, "नमस्ते")]  # namaste
+    tokens = {rows[0]["text"]: 5, rows[1]["text"]: 18}
+    assert pick(rows, budget_s=440.0, items=100) == rows[0]  # by characters
+    chosen = pick(rows, budget_s=440.0, items=100, size=lambda r: tokens[r["text"]])
+    assert chosen == rows[1]

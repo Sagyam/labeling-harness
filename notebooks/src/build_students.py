@@ -1136,8 +1136,13 @@ def probe(model, optimizer, rows):
 
         return ftkit.probe_max_items(step, 1, 256, model)
 
+    # The wordiest in the student's own tokens, not characters: a Devanagari character costs a
+    # byte-level tokenizer several tokens, and by characters the probe under-measured a batch
+    # of Nepali clips and stage 2 ran out of memory (2026-10-07).
+    tokens = {id(r): count_tokens(r["text"]) for r in rows}
+    size = lambda r: tokens[id(r)]  # noqa: E731
     longest = max(rows, key=ftkit.duration)
-    wordiest = max(rows, key=lambda r: len(r["text"]))
+    wordiest = max(rows, key=size)
     model.train()
     ftkit.init_optimizer_state(model, optimizer)
     n = probe_at({**longest, "text": wordiest["text"]})
@@ -1150,13 +1155,13 @@ def probe(model, optimizer, rows):
         # wordiest of the shortest tenth of the clips (Qwen ran out of memory on 2026-09-25 with
         # only the long probe).
         by_length = sorted(rows, key=ftkit.duration)
-        short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["text"]))
+        short = max(by_length[: max(1, len(by_length) // 10)], key=size)
         n_short = probe_at(short)
         items = max(1, int(n_short * PROBE_FRACTION))
         print(f"largest micro-batch at {ftkit.duration(short):.1f} s: {n_short} clips")
         # Where the two limits meet, a batch of `items` mid-length clips is legal under both and
-        # measured by neither probe: it ran out of memory in stage 2 (2026-10-07).
-        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items)
+        # measured by neither probe.
+        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items, size=size)
         if mid is not None:
             n_mid = probe_at(mid)
             items = min(items, max(1, int(n_mid * PROBE_FRACTION)))
@@ -1379,10 +1384,14 @@ def probe(model, optimizer, rows):
         limit = torch.cuda.memory_allocated() + free
         return llmkit.fit_items(peak(clip, 1), peak(clip, 2), limit)
 
+    # The wordiest in its own tokens, not characters (06b's stage 2 ran out of memory on the
+    # difference, 2026-10-07).
+    tokens = {id(r): len(processor.tokenizer.encode(r["text"], add_special_tokens=False)) for r in rows}
+    size = lambda r: tokens[id(r)]  # noqa: E731
     longest = max(rows, key=ftkit.duration)
-    wordiest = max(rows, key=lambda r: len(r["text"]))
+    wordiest = max(rows, key=size)
     by_length = sorted(rows, key=ftkit.duration)
-    short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["text"]))
+    short = max(by_length[: max(1, len(by_length) // 10)], key=size)
     model.train()
     ftkit.init_optimizer_state(model, optimizer)
     for p in params:
@@ -1394,8 +1403,8 @@ def probe(model, optimizer, rows):
         n_short = fit(short)
         budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
         # Where the two limits meet, a batch of `items` mid-length clips is legal under both and
-        # measured by neither: 06b's stage 2 ran out of memory there (2026-10-07).
-        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items)
+        # measured by neither.
+        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items, size=size)
         n_mid = fit(mid) if mid is not None else items
         items = min(items, max(1, int(n_mid * PROBE_FRACTION)))
     for p in params:
@@ -1737,10 +1746,11 @@ def probe(model, optimizer, rows):
         limit = torch.cuda.memory_allocated() + free
         return llmkit.fit_items(peak(row, 1), peak(row, 2), limit)
 
+    size = lambda r: len(r["ids"])  # noqa: E731  # its own tokens: characters, here
     longest = max(rows, key=ftkit.duration)
-    wordiest = max(rows, key=lambda r: len(r["ids"]))
+    wordiest = max(rows, key=size)
     by_length = sorted(rows, key=ftkit.duration)
-    short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["ids"]))
+    short = max(by_length[: max(1, len(by_length) // 10)], key=size)
     model.train()
     ftkit.init_optimizer_state(model, optimizer)
     for p in params:
@@ -1752,8 +1762,8 @@ def probe(model, optimizer, rows):
         n_short = fit(short)
         budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
         # Where the two limits meet, a batch of `items` mid-length clips is legal under both and
-        # measured by neither: 06b's stage 2 ran out of memory there (2026-10-07).
-        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items)
+        # measured by neither.
+        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items, size=size)
         n_mid = fit(mid) if mid is not None else items
         items = min(items, max(1, int(n_mid * PROBE_FRACTION)))
     for p in params:
