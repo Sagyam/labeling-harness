@@ -98,6 +98,17 @@ def test_the_omnilingual_script_is_a_whole_program(tmp_path: Path) -> None:
     assert "get_ipython" not in script and "\n%" not in script and "\n!" not in script
 
 
+def test_the_omnilingual_llm_script_is_a_whole_program(tmp_path: Path) -> None:
+    """07b runs Omnilingual LLM-ASR's stages the way 06e runs the CTC model's (D122): one script
+    assembled from the student cells, in fairseq2's environment, handed its Config as JSON."""
+    students = importlib.import_module("build_students")
+    script = students.OMNI_LLM_SCRIPT
+    ast.parse(script)
+    assert _undefined_names(script, tmp_path / "student_omni_llm.py") == ""
+    assert "get_ipython" not in script and "\n%" not in script and "\n!" not in script
+    assert "Seq2SeqBatch" in script and "import llmkit" in script
+
+
 def test_the_bakeoff_omnilingual_script_is_a_whole_program(tmp_path: Path) -> None:
     """09 runs Omnilingual LLM-ASR as a script in fairseq2's environment (D121): it reads only its
     arguments and ftkit, so every name it uses has to be its own."""

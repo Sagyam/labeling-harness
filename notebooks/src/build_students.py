@@ -1569,6 +1569,186 @@ def probe(model, optimizer, rows):
 '''
 
 
+# --- a speech-LLM student in fairseq2's environment: Omnilingual LLM-ASR -------------------------
+
+OMNI_LLM_CONFIG = r"""
+OMNI_CARD = "omniASR_LLM_1B_v2"   # the bake-off's; its 7B sibling read 1.4 points better zero-shot (D122)
+OMNI_LANG = "nep_Deva"            # the language code the bake-off kept on the val sample; training needs one
+OMNI_VERSION = "0.2.0"            # omnilingual-asr; it needs Python <= 3.12 and fairseq2 0.6
+# Per stage: the most epochs, which is also the length of the LR schedule (the bake-off's projection).
+EPOCHS = {"human": 8, "distill": 6}
+LR = 1e-5
+EVAL_BUDGET_S, EVAL_ITEMS = 600.0, 32  # a decoding batch: the bake-off's
+"""
+
+OMNI_LLM_STUDENT = r'''
+from fairseq2.datasets.batch import Seq2SeqBatch
+from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+import llmkit
+
+ARCHITECTURE = "Omnilingual LLM-ASR 1B: wav2vec 2.0 encoder + LLaMA decoder; its own character vocabulary"
+BASE_MODEL = OMNI_CARD
+DECODER_NAME = "greedy, the pipeline's own (its compression-ratio stop, no retry)"
+LR_CARD = LR
+PEAK_LR, SCHEDULE = LR, "tristage"  # fairseq2's recipe, as 06e: 10% warmup, 40% hold, 50% decay
+
+
+def normalize(text: str) -> str:
+    # ZWJ/ZWNJ change rendering, not the word (06e)
+    return text.replace("‍", "").replace("‌", "")
+
+
+def load_student(weights=None):
+    """The student as `model`: the pretrained card in float32 master weights, through the
+    inference pipeline that also decodes it (`pipe`), or with a stage's `best/` weights loaded over
+    it. The convolutional feature extractor is frozen, as in the official recipe and 06e."""
+    global model, pipe, encode_text, UNK, PAD
+    pipe = ASRInferencePipeline(model_card=OMNI_CARD, dtype=torch.float32)  # greedy: nbest 1
+    model, tokenizer = pipe.model, pipe.tokenizer
+    if weights is not None:
+        state = torch.load(Path(weights) / "model.pt", map_location="cpu", weights_only=True)
+        model.load_state_dict({k: v.float() if v.is_floating_point() else v for k, v in state.items()})
+        print(f"{STUDENT}: {len(state)} tensors loaded from {weights}")
+    encode_text = tokenizer.create_encoder()
+    UNK, PAD = tokenizer.vocab_info.unk_idx, tokenizer.vocab_info.pad_idx
+    for p in model.encoder_frontend.feature_extractor.parameters():
+        p.requires_grad_(False)
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"{STUDENT}: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B parameters, "
+          f"{trainable / 1e9:.2f}B trained")
+    return model
+
+
+def _target(text):
+    """The target ids of `text`, or None when the vocabulary cannot write it or it is empty."""
+    ids = encode_text(normalize(text))
+    if UNK is not None and bool((ids == UNK).any()):
+        return None
+    return ids.tolist() if len(ids) else None
+
+
+def prepare_rows(rows):
+    kept = []
+    for r in rows:
+        ids = _target(r["text"])
+        if ids is not None:
+            kept.append({**r, "ids": ids})
+    print(f"{STUDENT}: dropped {len(rows) - len(kept)} clip(s) with an unknown character or an empty target")
+    return kept
+
+
+def retarget(row, text):
+    ids = _target(text)
+    return None if ids is None else {**row, "text": text, "ids": ids}
+
+
+def save_weights(model, folder):
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    torch.save({k: v.to(torch.bfloat16) if v.is_floating_point() else v for k, v in model.state_dict().items()},
+               folder / "model.pt")
+    (folder / "README.txt").write_text(
+        f"state_dict for {OMNI_CARD} (bf16). Load the card with ASRInferencePipeline(model_card=...), then "
+        "model.load_state_dict(torch.load(...)) with the floats cast to float32; decode with "
+        f"lang=[{OMNI_LANG!r}].\n")
+
+
+def decoder():
+    return transcribe
+
+
+def make_optimizer(model):
+    return torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=LR, betas=(0.9, 0.98),
+                             eps=1e-8, weight_decay=0.0, fused=True)
+
+
+def waveforms(clips):
+    """Per-clip layer norm, as the recipe's `normalize_audio` and the inference pipeline do."""
+    clips = [torch.nn.functional.layer_norm(c, c.shape) for c in clips]
+    wav = torch.zeros(len(clips), ftkit.pad_len(max(len(c) for c in clips), PAD_TO_S))
+    for i, c in enumerate(clips):
+        wav[i, :len(c)] = c
+    return wav, [len(c) for c in clips]
+
+
+def collate(rows):
+    audio, rows = train_batch(rows)
+    wav, lens = waveforms([torch.from_numpy(np.asarray(a).astype(np.float32) / 32768.0) for a in audio])
+    targets = torch.full((len(rows), max(len(r["ids"]) for r in rows)), PAD, dtype=torch.long)
+    for i, r in enumerate(rows):
+        targets[i, :len(r["ids"])] = torch.tensor(r["ids"])
+    return {"wav": wav, "lens": lens, "targets": targets, "tlens": [len(r["ids"]) for r in rows],
+            "seconds": sum(lens) / ftkit.SR, "padded_seconds": wav.numel() / ftkit.SR}
+
+
+def loss_fn(model, b):
+    """Summed token cross-entropy over the transcripts and their end-of-sequence tokens. The model
+    returns the per-token mean times the clips (`llmkit.omni_loss_scale` undoes it); the language
+    code is given for every clip, and the model drops it at random by itself while training."""
+    wav = b["wav"].cuda(non_blocking=True)
+    targets = b["targets"].cuda(non_blocking=True)
+    batch = Seq2SeqBatch(source_seqs=wav, source_seq_lens=b["lens"], target_seqs=targets, target_seq_lens=b["tlens"],
+                         example={"lang": [OMNI_LANG] * len(b["lens"])})
+    scale, tokens = llmkit.omni_loss_scale(b["tlens"])
+    return model(batch) * scale, tokens
+
+
+def transcribe(rows):
+    inp = [{"waveform": store.clip_f32(r).numpy(), "sample_rate": ftkit.SR} for r in rows]
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        texts = pipe.transcribe(inp, lang=[OMNI_LANG] * len(rows), batch_size=len(rows))
+    return [llmkit.clean(t) for t in texts]
+
+
+def probe(model, optimizer, rows):
+    """The largest micro-batch at the longest clip carrying the longest target, and at the
+    longest target of the shortest tenth: (seconds, clips). Extrapolated from the peaks of one and
+    two clips (`llmkit.fit_items`), never by running out of memory."""
+    params = [p for p in model.parameters() if p.requires_grad]
+
+    def peak(row, n):
+        torch.cuda.reset_peak_memory_stats()
+        b = collate([row] * n)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            loss, _ = loss_fn(model, b)
+        loss.backward()
+        torch.cuda.synchronize()
+        loss = b = None
+        for p in params:  # kept allocated: from the second micro-batch on, training holds them
+            p.grad.zero_()
+        return torch.cuda.max_memory_allocated()
+
+    def fit(row):
+        torch.cuda.empty_cache()
+        free, _ = torch.cuda.mem_get_info()
+        limit = torch.cuda.memory_allocated() + free
+        return llmkit.fit_items(peak(row, 1), peak(row, 2), limit)
+
+    longest = max(rows, key=ftkit.duration)
+    wordiest = max(rows, key=lambda r: len(r["ids"]))
+    by_length = sorted(rows, key=ftkit.duration)
+    short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["ids"]))
+    model.train()
+    ftkit.init_optimizer_state(model, optimizer)
+    for p in params:
+        p.grad = torch.zeros_like(p)
+    with ftkit.batchnorm_kept(model):
+        n = fit({**longest, "text": wordiest["text"], "ids": wordiest["ids"]})
+        n_short = fit(short)
+    for p in params:
+        p.grad = None
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    if n == 0:
+        raise RuntimeError("not even one clip fits a micro-batch")
+    budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
+    print(f"largest micro-batch: {n} clips at {ftkit.duration(longest):.1f} s, {n_short} at "
+          f"{ftkit.duration(short):.1f} s -> {items} clips or {budget:.0f} s of audio")
+    return budget, items
+'''
+
+
 def config_names(*parts: str) -> list[str]:
     """Every name a Config cell assigns, in order: what the Omnilingual script is handed."""
     names: list[str] = []
@@ -1579,11 +1759,14 @@ def config_names(*parts: str) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def omni_script(names: list[str]) -> str:
+def omni_script(
+    names: list[str], student_cell: str = OMNI_STUDENT, title: str = "Omnilingual"
+) -> str:
     """`student_omni.py`: the cells every other student notebook runs in its kernel, as one script
-    for the environment fairseq2 needs. Run as `student_omni.py <config.json> <stage|report>`."""
+    for the environment fairseq2 needs, with `student_cell` as its model (06e's CTC model, or 07b's
+    LLM-ASR). Run as `student_omni.py <config.json> <stage|report>`."""
     preamble = [
-        '"""One stage of the Omnilingual student (D105), in the Python 3.12 environment fairseq2 needs.',
+        f'"""One stage of the {title} student (D105), in the Python 3.12 environment fairseq2 needs.',
         "",
         "Written by the notebook from the same cell sources the other students run in their kernels:",
         "build_students.py assembles it, so the stages, the scoring and the uploads are one code.",
@@ -1606,7 +1789,7 @@ def omni_script(names: list[str]) -> str:
         + textwrap.indent(REPORT.strip("\n"), "    ")
         + "\nelse:\n    run_stage(ACTION)\nmonitor.stop()"
     )
-    cells = [DATA, OMNI_STUDENT, AUG_KIT, PUBLIC_SETS, STAGES]
+    cells = [DATA, student_cell, AUG_KIT, PUBLIC_SETS, STAGES]
     return "\n\n\n".join(["\n".join(preamble), *[c.strip("\n") for c in cells], main]) + "\n"
 
 
@@ -1617,7 +1800,7 @@ CONFIG_NAMES = __CONFIG_NAMES__
 
 
 def stage(action):
-    !{OMNI_PY} {FT / "student_omni.py"} {FT / "omni_config.json"} {action}
+    !{OMNI_PY} {FT / "__SCRIPT__"} {FT / "omni_config.json"} {action}
 """
 
 
@@ -1628,7 +1811,7 @@ class Student:
     key: str
     file: str
     title: str
-    family: str  # "nemo", "hf", "omni" (the ASR students, 06) or "llm" (a speech-LLM student, 07)
+    family: str  # "nemo", "hf", "omni" (the ASR students, 06); "llm" or "omni-llm" (speech-LLM students, 07)
     intro: str
     architecture: str
     base_model: str  # a Python expression, read in the notebook
@@ -1876,6 +2059,45 @@ on the G4; the stages around them have not. The smoke run is the first test.
         base_model="GEMMA_ID",
         settings={},
     ),
+    Student(
+        key="omni-llm",
+        file="07b_Student_LLM_Omni_LLM_1B.ipynb",
+        title="Omnilingual LLM-ASR 1B (speech-LLM)",
+        family="omni-llm",
+        intro="""
+**The student.** Meta's Omnilingual ASR, LLM variant (`omniASR_LLM_1B_v2`): a wav2vec 2.0 encoder
+feeding a LLaMA-style decoder, 2.28B parameters, already trained for ASR on Nepali among 1,600+
+languages, with its own character vocabulary. Its CTC sibling is 06e: the same encoder family
+and pretraining languages with a CTC head instead of an LLM decoder, so 06e against 07b, stage by
+stage, is the cleanest comparison of the two families (D121). Zero-shot it read 31.5 on gold and
+28.4 on val with the language code `nep_Deva`, which also makes it write English words in
+Devanagari (findings.md, *Speech-LLMs as students*); the labels write them in Latin, which
+training has to teach. The owner picked it over the 7B (D122): 1.4 points better zero-shot is
+not worth a bigger sibling.
+
+**It runs as a script**, as 06e does: `omnilingual-asr` needs Python <= 3.12 and `fairseq2` 0.6,
+so the stages run in a `uv` environment as `student_omni_llm.py`, which this notebook writes and
+launches. The script is the very cells the other student notebooks run in their kernels, joined
+end to end; only the model cell is its own.
+
+**Choices, fixed before any run.** The language code is given for every clip (`OMNI_LANG`); the
+model drops it at random by itself while training, as its LID variant was trained. The loss is
+the model's own token cross-entropy over the transcript and its end-of-sequence token, turned back
+into a sum (`llmkit.omni_loss_scale`). From the official fairseq2 recipe, as 06e: peak LR 1e-5 with
+the tri-stage schedule, AdamW with betas (0.9, 0.98), per-clip waveform layer norm, a frozen
+convolutional feature extractor. Up to 8 epochs on the human labels and 6 on the mixture (the
+bake-off projected 3.9 h and 6.7 h on the G4), stopping once val WER has gained less than 0.2
+points over 3 epochs. Decoding is the inference pipeline's greedy search with its own
+compression-ratio stop for loops; it takes no repetition penalty, so there is no retry. The
+micro-batch is sized from two measured peaks, never by running out of memory.
+
+**Not yet run in this form.** Its training step and decoding are the bake-off's, which ran on the
+G4; the stages around them have not run in this environment. The smoke run is the first test.
+""",
+        architecture="",
+        base_model="",
+        settings={},
+    ),
 )
 
 
@@ -1910,7 +2132,7 @@ def student_cells(student: Student) -> list[dict]:
     notebook = student.file.removesuffix(".ipynb")
     intro = f"# {notebook[:3]} — Student: {student.title}\n\nStep {int(notebook[:2])} of the protocol (D105)."
     head = f'NOTEBOOK = "{notebook}"\nSTUDENT = "{student.key}"'
-    if student.family == "omni":
+    if student.family in ("omni", "omni-llm"):
         return omni_cells(student, intro, head)
     if student.family == "nemo":
         config = [head, fill(COMMON_CONFIG, student), fill(NEMO_CONFIG, student)]
@@ -1966,8 +2188,24 @@ def student_cells(student: Student) -> list[dict]:
 
 
 def omni_cells(student: Student, intro: str, head: str) -> list[dict]:
-    config = [head, fill(COMMON_CONFIG, student), OMNI_CONFIG]
+    """06e and 07b: the stages as a script in fairseq2's environment, with the CTC model's cell or
+    LLM-ASR's."""
+    llm = student.family == "omni-llm"
+    config = [head, fill(COMMON_CONFIG, student), OMNI_LLM_CONFIG if llm else OMNI_CONFIG]
     names = config_names(*config)
+    script = "student_omni_llm.py" if llm else "student_omni.py"
+    model_cell, title = (
+        (OMNI_LLM_STUDENT, "Omnilingual LLM-ASR") if llm else (OMNI_STUDENT, "Omnilingual")
+    )
+    kits = (
+        "ftkit",
+        "evalkit",
+        "sweep",
+        "distill",
+        "xtalk",
+        "augment",
+        *(("llmkit",) if llm else ()),
+    )
     out = [
         md(intro + "\n" + student.intro + PROTOCOL + SMOKE_NOTE + GPU_NOTE),
         md("## Config"),
@@ -1975,13 +2213,13 @@ def omni_cells(student: Student, intro: str, head: str) -> list[dict]:
         md("## Setup"),
         nbkit.setup("rapidfuzz"),
         code(OMNI_ENV),
-        *nbkit.kits("ftkit", "evalkit", "sweep", "distill", "xtalk", "augment"),
+        *nbkit.kits(*kits),
         md(
             "## The script\n\nThe data, the student, the augmenter, the public sets and the stages, "
             "as the other student notebooks run them cell by cell."
         ),
-        code("%%writefile /content/ft/student_omni.py\n" + omni_script(names)),
-        code(OMNI_LAUNCH.replace("__CONFIG_NAMES__", repr(names))),
+        code(f"%%writefile /content/ft/{script}\n" + omni_script(names, model_cell, title)),
+        code(OMNI_LAUNCH.replace("__CONFIG_NAMES__", repr(names)).replace("__SCRIPT__", script)),
     ]
     for stage, note in RUN_NOTES.items():
         out += [md(note), code(f'stage("{stage}")')]
@@ -1991,6 +2229,12 @@ def omni_cells(student: Student, intro: str, head: str) -> list[dict]:
 NOTEBOOKS = {student.file: student_cells(student) for student in STUDENTS}
 #: The Omnilingual script as it is written into its notebook, for the builds test to read.
 OMNI_SCRIPT = omni_script(config_names(COMMON_CONFIG, OMNI_CONFIG, 'NOTEBOOK = ""\nSTUDENT = ""'))
+#: 07b's script, the same way.
+OMNI_LLM_SCRIPT = omni_script(
+    config_names(COMMON_CONFIG, OMNI_LLM_CONFIG, 'NOTEBOOK = ""\nSTUDENT = ""'),
+    OMNI_LLM_STUDENT,
+    "Omnilingual LLM-ASR",
+)
 
 if __name__ == "__main__":
     nbkit.write(NOTEBOOKS, OUT_DIR)
