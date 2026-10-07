@@ -1160,6 +1160,242 @@ def probe(model, optimizer, rows):
 '''
 
 
+# --- a speech-LLM student: Gemma 4 (transformers 5) ---------------------------------------------
+
+LLM_CONFIG = r"""
+GEMMA_ID = "google/gemma-4-E2B-it"
+# The prompt the bake-off kept for it on the val sample (findings.md, *Speech-LLMs as students*).
+PROMPT = "Transcribe the following speech segment in Nepali into Nepali text."
+# Per stage: the most epochs, which is also the length of the linear LR decay (the bake-off's projection).
+EPOCHS = {"human": 8, "distill": 6}
+LR = 1e-5
+EVAL_BUDGET_S, EVAL_ITEMS = 600.0, 32  # a generate batch: the bake-off's
+"""
+
+LLM_STUDENT = r'''
+import math
+import warnings
+
+import transformers
+from transformers import AutoProcessor
+
+import llmkit
+
+transformers.logging.set_verbosity_error()
+warnings.filterwarnings("ignore", module="transformers")
+
+ARCHITECTURE = __ARCHITECTURE__
+BASE_MODEL = __BASE_MODEL__
+DECODER_NAME = "greedy+retry"
+LR_CARD = LR
+PEAK_LR, SCHEDULE = LR, "linear"
+RETRY = {"repetition_penalty": 1.2, "no_repeat_ngram_size": 6}
+
+
+def floats(clips):
+    return [np.asarray(c).astype(np.float32) / 32768.0 for c in clips]
+
+
+def _turn_end():
+    """The tokens that close the model's turn, read off its chat template (Gemma's `<turn|>`)."""
+    msgs = [{"role": "user", "content": [{"type": "text", "text": "hi"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "ANSWER"}]}]
+    text = processor.apply_chat_template(msgs, tokenize=False, enable_thinking=False)
+    ids = processor.tokenizer.encode(text.split("ANSWER", 1)[1].strip(), add_special_tokens=False)
+    return ids or [processor.tokenizer.eos_token_id]
+
+
+def load_student(weights=None):
+    """The student on DEVICE as `model`, fp32 master weights: from its pretrained checkpoint, or
+    from a stage's `best/` folder. Its embeddings (the per-layer ones included) stay frozen, as in
+    the bake-off's timing, and gradient checkpointing is on. Measures the densest human train
+    label in its own tokens, for the answer's length cap."""
+    global model, processor, PROMPT_TEXT, END_IDS, PAD_ID, MAX_TOKENS_PER_S
+    source = str(weights) if weights is not None else GEMMA_ID
+    processor = AutoProcessor.from_pretrained(source)
+    for name in ("AutoModelForMultimodalLM", "AutoModelForImageTextToText"):  # the bake-off's order
+        auto = getattr(transformers, name, None)
+        if auto is None:
+            continue
+        try:
+            model = auto.from_pretrained(source, dtype=torch.float32, device_map=DEVICE)
+            break
+        except ValueError:
+            continue
+    else:
+        raise RuntimeError(f"no auto class loads {source}")
+    for key in ("temperature", "top_p", "top_k"):  # decoding here is always greedy
+        setattr(model.generation_config, key, None)
+    for m in model.modules():
+        if isinstance(m, torch.nn.Embedding):
+            m.weight.requires_grad_(False)
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    model.config.use_cache = False
+    # The prompt as text: the processor expands its audio placeholder to each clip's own length, so
+    # the clips go in as arrays (augmented or not) and no file is written.
+    msgs = [{"role": "user", "content": [{"type": "text", "text": PROMPT}, {"type": "audio", "audio": "clip"}]}]
+    PROMPT_TEXT = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                                enable_thinking=False)
+    END_IDS = _turn_end()
+    tok = processor.tokenizer
+    PAD_ID = tok.pad_token_id if tok.pad_token_id is not None else 0
+    MAX_TOKENS_PER_S = max(len(tok.encode(r["text"], add_special_tokens=False)) / ftkit.duration(r)
+                           for r in splits["train"] if r["text"].strip())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"{STUDENT}: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B parameters, "
+          f"{trainable / 1e9:.2f}B trained | densest train label {MAX_TOKENS_PER_S:.1f} tokens/s")
+    return model
+
+
+def _prompts(clips, side):
+    return processor(text=[PROMPT_TEXT] * len(clips), audio=clips, sampling_rate=ftkit.SR, return_tensors="pt",
+                     padding=True, padding_side=side)
+
+
+def prepare_rows(rows):
+    kept = [r for r in rows if r["text"].strip()]
+    print(f"{STUDENT}: dropped {len(rows) - len(kept)} empty clip(s)")
+    return kept
+
+
+def retarget(row, text):
+    return {**row, "text": text} if text.strip() else None
+
+
+def save_weights(model, folder):
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(folder, state_dict={k: v.to(torch.bfloat16) for k, v in model.state_dict().items()})
+    processor.save_pretrained(folder)
+
+
+def _per_token(key, value, width):
+    # input_ids and the masks and type ids beside them; not the audio features or their mask
+    return (torch.is_tensor(value) and value.dim() == 2 and value.shape[1] == width
+            and not any(w in key for w in ("feature", "audio")))
+
+
+def collate(rows):
+    """Each clip's prompt (its audio expanded to its own length), then its transcript and the
+    turn's closing token; labels on those only. Per-token inputs are extended beside the answer:
+    the mask with ones, type ids with zeros (text)."""
+    audio, rows = train_batch(rows)
+    clips = floats(audio)
+    prefix = _prompts(clips, "right")
+    prefix_lens = prefix["attention_mask"].sum(dim=1).tolist()
+    answers = [processor.tokenizer.encode(r["text"], add_special_tokens=False) + END_IDS for r in rows]
+    width, spans = llmkit.answer_spans(prefix_lens, [len(a) for a in answers])
+    length = prefix["input_ids"].shape[1]
+    inputs = {}
+    for key, value in prefix.items():
+        if not _per_token(key, value, length):
+            inputs[key] = value
+            continue
+        new = torch.full((len(rows), width), PAD_ID if key == "input_ids" else 0, dtype=value.dtype)
+        for i, ((start, end), a) in enumerate(zip(spans, answers, strict=True)):
+            new[i, :start] = value[i, :start]
+            if key == "input_ids":
+                new[i, start:end] = torch.tensor(a, dtype=value.dtype)
+            elif "mask" in key:
+                new[i, start:end] = 1
+        inputs[key] = new
+    labels = torch.full((len(rows), width), -100, dtype=torch.long)
+    for i, ((start, end), a) in enumerate(zip(spans, answers, strict=True)):
+        labels[i, start:end] = torch.tensor(a)
+    lens = [len(c) for c in clips]
+    return {"inputs": inputs, "labels": labels, "first": min(s for s, _ in spans), "tokens": sum(map(len, answers)),
+            "lens": torch.tensor(lens), "seconds": sum(lens) / ftkit.SR,
+            "padded_seconds": len(rows) * max(lens) / ftkit.SR}
+
+
+def loss_fn(model, b):
+    """Summed token cross-entropy over the transcripts and closing tokens, with logits only from
+    the batch's first labelled position on (a 262k-word head over every audio position would not
+    fit); position t predicts the label at t + 1."""
+    kw = {k: v.to(DEVICE, non_blocking=True) for k, v in b["inputs"].items() if torch.is_tensor(v)}
+    labels = b["labels"].to(DEVICE, non_blocking=True)
+    keep = labels.shape[1] - b["first"] + 1
+    logits = model(**kw, logits_to_keep=keep, use_cache=False).logits
+    target = labels[:, b["first"]:]
+    sel = target != -100
+    loss = torch.nn.functional.cross_entropy(logits[:, :-1][sel].float(), target[sel], reduction="sum")
+    return loss, b["tokens"]
+
+
+def transcribe(rows, **gen):
+    enc = _prompts(floats(store.clip(r) for r in rows), "left")
+    enc = {k: v.to(DEVICE) for k, v in enc.items() if torch.is_tensor(v)}
+    cap = max(llmkit.token_cap(MAX_TOKENS_PER_S, ftkit.duration(r)) for r in rows)
+    with torch.no_grad(), torch.autocast(DEVICE, dtype=torch.bfloat16):
+        out = model.generate(**enc, do_sample=False, num_beams=1, use_cache=True, **{"max_new_tokens": cap, **gen})
+    return [llmkit.clean(processor.tokenizer.decode(ids, skip_special_tokens=True))
+            for ids in out[:, enc["input_ids"].shape[1]:].tolist()]
+
+
+def retry_one(row):
+    return transcribe([row], **RETRY)[0]
+
+
+def decoder():
+    return ftkit.RetryLoops(transcribe, retry_one)
+
+
+def make_optimizer(model):
+    return torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=LR, weight_decay=0.0,
+                             fused=DEVICE == "cuda")
+
+
+def probe(model, optimizer, rows):
+    """The largest micro-batch at the longest clip carrying the wordiest transcript, and at the
+    wordiest of the shortest tenth (each clip brings its own prompt): (seconds, clips).
+
+    Extrapolated from the peaks of one and two clips (`llmkit.fit_items`) rather than found by
+    running out of memory: in the bake-off a binary search's OOMs left ~46 GiB that nothing in
+    Python held, and everything after it ran out of memory too."""
+    params = [p for p in model.parameters() if p.requires_grad]
+
+    def peak(clip, n):
+        torch.cuda.reset_peak_memory_stats()
+        b = collate([clip] * n)
+        with torch.autocast(DEVICE, dtype=torch.bfloat16):
+            loss, _ = loss_fn(model, b)
+        loss.backward()
+        torch.cuda.synchronize()
+        loss = b = None
+        for p in params:  # kept allocated: from the second micro-batch on, training holds them
+            p.grad.zero_()
+        return torch.cuda.max_memory_allocated()
+
+    def fit(clip):
+        torch.cuda.empty_cache()
+        free, _ = torch.cuda.mem_get_info()
+        limit = torch.cuda.memory_allocated() + free
+        return llmkit.fit_items(peak(clip, 1), peak(clip, 2), limit)
+
+    longest = max(rows, key=ftkit.duration)
+    wordiest = max(rows, key=lambda r: len(r["text"]))
+    by_length = sorted(rows, key=ftkit.duration)
+    short = max(by_length[: max(1, len(by_length) // 10)], key=lambda r: len(r["text"]))
+    model.train()
+    ftkit.init_optimizer_state(model, optimizer)
+    for p in params:
+        p.grad = torch.zeros_like(p)
+    with ftkit.batchnorm_kept(model):
+        n = fit({**longest, "text": wordiest["text"]})
+        n_short = fit(short)
+    for p in params:
+        p.grad = None
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    if n == 0:
+        raise RuntimeError("not even one clip fits a micro-batch")
+    budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
+    print(f"largest micro-batch: {n} clips at {ftkit.duration(longest):.1f} s, {n_short} at "
+          f"{ftkit.duration(short):.1f} s -> {items} clips or {budget:.0f} s of audio")
+    return budget, items
+'''
+
+
 # --- Omnilingual CTC: a script in its own Python environment (fairseq2) --------------------------
 
 OMNI_CONFIG = r"""
@@ -1392,7 +1628,7 @@ class Student:
     key: str
     file: str
     title: str
-    family: str  # "nemo", "hf" or "omni"
+    family: str  # "nemo", "hf", "omni" (the ASR students, 06) or "llm" (a speech-LLM student, 07)
     intro: str
     architecture: str
     base_model: str  # a Python expression, read in the notebook
@@ -1606,6 +1842,40 @@ still undertrained: read stage 1's and 2's train loss against their val WER befo
             "codec": {"p": 0.3},
         },
     ),
+    Student(
+        key="gemma-e2b",
+        file="07a_Student_LLM_Gemma_E2B.ipynb",
+        title="Gemma 4 E2B (speech-LLM)",
+        family="llm",
+        intro="""
+**The student.** Gemma 4 E2B-it (Google): a ~300M audio encoder feeding a decoder-only LLM with
+per-layer embeddings, 5.1B parameters of which 2.35B are trained (the embeddings stay frozen).
+Nepali is not among the languages Google lists for it. The speech-LLM bake-off (D121) found it
+the best value of the audio LLMs: zero-shot it read 27.2 on gold and 23.2 on val, 3 points behind
+its bigger sibling E4B at 1.6× its training speed, and it follows a free-text instruction, so the
+corpus's own convention (English in Latin script) can be asked for (findings.md, *Speech-LLMs as
+students*). The owner picked it over E4B (D122): no point training the bigger sibling when the
+smaller does the job. With Omnilingual LLM-ASR (07b) it asks whether the recipe transfers to a
+speech-LLM: stage 2 minus stage 1 here against the ASR students', not which family wins.
+
+**Choices, fixed before any run.** The prompt the bake-off kept for it on the val sample
+(`PROMPT` in Config); the loss is on the transcript and the turn's closing token alone. Full
+fine-tuning in fp32 master weights with bf16 autocast and gradient checkpointing, peak LR 1e-5,
+linear decay after 10% warmup, up to 8 epochs on the human labels and 6 on the mixture (the
+bake-off projected 2.4 h and 4.2 h on the G4), stopping once val WER has gained less than 0.2
+points over 3 epochs. ~12 min of audio per optimizer step, summed token cross-entropy divided by
+the step's tokens. Decoding is greedy, capped at 1.5× the densest train label's token rate, with
+Flex's loop retry. The micro-batch is sized from two measured peaks, never by running out of
+memory (`llmkit.fit_items`).
+
+**Not yet run in this form.** Its loading, loss, decoding and probe are the bake-off's, which ran
+on the G4; the stages around them have not. The smoke run is the first test.
+""",
+        architecture="Gemma 4 E2B: ~300M audio encoder + decoder-only LLM with per-layer embeddings, "
+        "5.1B (2.35B trained); no vocabulary change",
+        base_model="GEMMA_ID",
+        settings={},
+    ),
 )
 
 
@@ -1638,7 +1908,7 @@ def stage_cells() -> list[dict]:
 
 def student_cells(student: Student) -> list[dict]:
     notebook = student.file.removesuffix(".ipynb")
-    intro = f"# {notebook[:3]} — Student: {student.title}\n\nStep 6 of the protocol (D105)."
+    intro = f"# {notebook[:3]} — Student: {student.title}\n\nStep {int(notebook[:2])} of the protocol (D105)."
     head = f'NOTEBOOK = "{notebook}"\nSTUDENT = "{student.key}"'
     if student.family == "omni":
         return omni_cells(student, intro, head)
@@ -1656,17 +1926,30 @@ def student_cells(student: Student) -> list[dict]:
             md(STUDENT_NOTE),
             code(fill(NEMO_STUDENT, student)),
         ]
+    elif student.family == "llm":
+        config = [head, fill(COMMON_CONFIG, student), LLM_CONFIG]
+        setup = nbkit.setup('rapidfuzz duckdb pyarrow librosa accelerate -U "transformers>=5.13.0"')
+        model_cells = [md(STUDENT_NOTE), code(fill(LLM_STUDENT, student))]
     else:
         config = [head, fill(COMMON_CONFIG, student), fill(HF_CONFIG, student)]
         setup = nbkit.setup('rapidfuzz duckdb pyarrow "qwen-asr=={QWEN_ASR_VERSION}"')
         model_cells = [md(STUDENT_NOTE), code(fill(HF_STUDENT, student))]
+    kits = (
+        "ftkit",
+        "evalkit",
+        "sweep",
+        "distill",
+        "xtalk",
+        "augment",
+        *(("llmkit",) if student.family == "llm" else ()),
+    )
     return [
         md(intro + "\n" + student.intro + PROTOCOL + SMOKE_NOTE + GPU_NOTE),
         md("## Config"),
         code("\n".join(part.strip("\n") for part in config)),
         md("## Setup"),
         setup,
-        *nbkit.kits("ftkit", "evalkit", "sweep", "distill", "xtalk", "augment"),
+        *nbkit.kits(*kits),
         code(DATA),
         *model_cells,
         md("## Augmentation, for stage 3\n\nThe augmenter of `03c_Flex_Augment.ipynb`, unchanged."),

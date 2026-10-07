@@ -163,7 +163,8 @@ Latin exactly as typed. `?` opens the full list in the app.
 evaluated (D105): `01_EDA` and `02_Sociolinguistics` describe the corpus; `03a`–`03e` train
 Indic-Transcribe-Flex, score it on the public Nepali sets, ablate the augmentations, blend its
 weights with the base model and freeze one teacher; `04_PreDistill` and `05_Teacher` cut and
-pseudo-label unlabelled audio; `06a`–`06f` train one student each; `07_Report` puts every model in
+pseudo-label unlabelled audio; `06a`–`06f` train one ASR student each and `07a` a speech-LLM student
+(Gemma 4 E2B, D122); `07_Report` puts every model in
 one table; `08_Judge_Headroom` measures how much a judge picking among the teacher's beam
 candidates could gain; `09_SpeechLLM_Bakeoff` shortlists the audio LLMs worth training as students
 (D121). They run in Colab against the dataset on Hugging Face, each with a `SMOKE`

@@ -14,7 +14,8 @@ scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
 docs/            architecture, decisions, roadmap, findings, sociolinguistics, custom-arch
 notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 03 Flex, 04-05 pseudo-labels,
-                 06 students, 07 report, 08 judge headroom, 09 speech-LLM bake-off; 03-09 are generated
+                 06 students, 07a speech-LLM student, 07 report, 08 judge headroom, 09 speech-LLM bake-off;
+                 03-09 are generated
                  from notebooks/src/ by build_all.py
 ```
 

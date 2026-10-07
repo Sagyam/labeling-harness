@@ -144,13 +144,36 @@ def test_a_built_notebook_is_valid_json_with_one_id_per_cell() -> None:
     assert nb["nbformat"] == 4 and len(ids) == len(set(ids))
 
 
+def _student_notebooks() -> list[Path]:
+    """Every student notebook: the ASR students (06) and the speech-LLM students (07, D122)."""
+    found = sorted(_NOTEBOOKS.glob("0[67]*_Student_*.ipynb"))
+    assert any(p.name.startswith("07") for p in found), "no speech-LLM student notebook"
+    return found
+
+
+def test_the_gemma_student_runs_on_transformers_5() -> None:
+    """Gemma 4 needs transformers 5 (the bake-off ran it on >= 5.13); 06's qwen-asr pins 4.57.6,
+    so the speech-LLM student must not inherit that install line."""
+    cells = json.loads(
+        (_NOTEBOOKS / "07a_Student_LLM_Gemma_E2B.ipynb").read_text(encoding="utf-8")
+    )["cells"]
+    installs = [
+        line
+        for cell in cells
+        for line in "".join(cell["source"]).splitlines()
+        if re.match(r"\s*[%!].*pip install", line)
+    ]
+    assert any(re.search(r'"transformers>=5\.13', line) for line in installs)
+    assert not any("qwen-asr" in line for line in installs)
+
+
 def test_every_student_scores_with_error_mining() -> None:
     """Error mining (D110) needs DuckDB wherever a student is scored: the Colab kernel, or for 06e
     the environment its script runs in. Without it the scores land and the error files silently
     do not, which is what 06e's first smoke run did."""
     students = importlib.import_module("build_students")
     assert re.search(r"uv pip install -q --python \{OMNI_PY\}[^\n]*\bduckdb\b", students.OMNI_ENV)
-    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+    for path in _student_notebooks():
         cells = json.loads(path.read_text(encoding="utf-8"))["cells"]
         installs = [
             line
@@ -189,7 +212,7 @@ def test_only_the_scratch_conformer_names_its_own_stage3_recipe() -> None:
     its own (D115): the Conformer from scratch, with 03c's six acoustic stages at their tested
     strengths and crosstalk left out."""
     augment = importlib.import_module("augment")
-    for path in sorted(_NOTEBOOKS.glob("06*_Student_*.ipynb")):
+    for path in _student_notebooks():
         recipe = _config(path.name)["STAGE3_RECIPE"]
         if path.name != "06f_Student_Conformer.ipynb":
             assert recipe is None, path.name
