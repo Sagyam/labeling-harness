@@ -35,6 +35,62 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## Speech-LLMs as students: the bake-off, zero-shot (2026-10-07)
+
+Can an open-weight LLM that hears audio be a student (roadmap B), and which ones are worth
+training? Seven candidates were swept zero-shot on 300 val clips, the shortlist had a training
+step timed on 600 train clips, and each candidate's kept prompt then decoded all of val and gold
+(`09_SpeechLLM_Bakeoff`, D121). One RTX PRO 6000 (96 GB), bf16,
+greedy decoding with a token cap; folded WER, fold-v4. Omnilingual LLM 3B was left out: its
+checkpoint download from Meta's server stalled twice. Outputs are on the hub under
+`speech-llm-bakeoff-2026-10-08/` in the students repo.
+
+| candidate | params | val WER (S / D / I) | gold WER (S / D / I) | gold, no crosstalk | gold, >15% | decode | train | stage 1 + 2 |
+|---|---|---|---|---|---|---|---|---|
+| Gemma 4 E4B | 7.94B | **20.02** (15.28 / 2.77 / 1.97) | **24.11** (18.10 / 3.84 / 2.16) | 18.63 | 42.67 | 105× | 126× | 3.7 + 6.6 h |
+| Gemma 4 E2B | 5.10B | 23.20 (17.52 / 3.26 / 2.42) | 27.24 (20.70 / 3.90 / 2.65) | 21.69 | 45.82 | 145× | 203× | 2.4 + 4.2 h |
+| Omnilingual LLM 7B | ~7B | 25.65 (19.23 / 4.72 / 1.70) | 30.13 (21.99 / 6.34 / 1.81) | 23.98 | 51.37 | 61× | not timed | — |
+| Omnilingual LLM 1B | 2.28B | 28.38 (20.93 / 4.68 / 2.77) | 31.50 (22.94 / 6.18 / 2.38) | 24.31 | 55.08 | 69× | 128× | 3.9 + 6.7 h |
+| Qwen3-ASR 1.7B | 2.04B | 59.07 (47.40 / 6.35 / 5.32) | 66.94 (53.21 / 8.65 / 5.07) | 63.29 | 79.08 | 89× | 376× | 1.6 + 2.5 h |
+| Voxtral Mini 3B | 4.68B | 104.64 (54.22 / 17.38 / 33.04) | 105.41 (53.61 / 14.25 / 37.55) | 90.62 | 144.78 | 76× | 108× | 4.5 + 7.8 h |
+| Gemma 4 12B | 11.96B | fails the gate | — | — | — | 21× | not timed | — |
+
+Speeds are multiples of real time on the G4: decode is a batched greedy pass over gold, train a
+forward and backward pass at the largest micro-batch that fits (every peak near 90 GiB, by
+design). Stage 1 is 8 epochs of the 51.3 h of human labels, stage 2 is 6 epochs of 131 h (human
+plus 79.5 h of teacher labels), each with a val pass per epoch: upper bounds, which early
+stopping only shortens. For scale, the teacher reads 10.85 on gold and the Whisper student 15.02
+after its two stages, from 123% zero-shot: zero-shot WER is a gate, not a ranking.
+
+- **Gemma E4B and E2B start best**, 24.1 and 27.2 on gold with no Nepali training, and both pass
+  the script gate on every prompt but one (≥ 90% of the Nepali clips answered in Devanagari).
+- **The prompt steers Gemma; a language code steers Omnilingual; nothing else is steerable.**
+  Asked to write English words in Latin script, E4B's Latin share went from 13% to 40% (the
+  references hold 36%), and E2B's from 13% to 21%, at the same WER, because folding forgives the
+  script. Omnilingual takes only a language code: `nep_Deva` writes English in Devanagari (1% Latin
+  for the 1B, 9% for the 7B) and no code lets 14% through, 2 points worse. Qwen3-ASR takes only a
+  language prefix: "Nepali" reads 55 on the sweep, "Hindi" and its own guess about 79.
+- **Every candidate is worst on pure Nepali.** On gold, Gemma E4B reads 26.9 on clips with no
+  English (CMI 0) and 21.3 above CMI 30; Omnilingual 1B 34.1 and 28.8. The gap the ASR students
+  showed in distillation step 0 (theirs was Nepali, not code-switching) is the LLMs' gap too.
+- **Crosstalk costs them what it costs everyone**: Gemma E4B doubles from 18.6 to 42.7 between
+  clean and >15% overlapped gold clips.
+- **A bigger sibling buys little.** Omnilingual 7B is 1.4 points under the 1B on gold at 0.9× its
+  decoding speed; Gemma E4B is 3.1 under E2B and trains 1.6× slower.
+- **Out on language:** Gemma 12B fails the gate on every prompt: it drifts into Hindi, repeats its
+  whole answer after "Nepali:", and runs away on 34–64 of 300 clips. Voxtral asked for Nepali
+  writes Hindi and paraphrases (216 loops on val); its mixed-script prompt reads 75 on the sweep
+  but answers only 81% of the Nepali clips in Devanagari. Qwen3-ASR-1.7B passes the gate but
+  substitutes half its words.
+- **The probe's out-of-memory runs leaked.** A binary search for the largest micro-batch that ran
+  out of memory several times in a row, with gradients and optimizer state allocated, left about
+  46 GiB allocated that nothing in Python referenced; one out-of-memory step did not. The
+  bake-off then sized batches from the peaks of one and two clips instead (`fit_items`), and every
+  candidate loaded at its own size. Voxtral, whose 131k-word vocabulary makes the logits large,
+  still needed a safety fraction of 0.7 rather than 0.9.
+
+---
+
 ## An LLM judge is a dead end: G1 closed (2026-10-06)
 
 Can a local LLM that picks one of the teacher's 8 beam candidates beat the panel vote (the
