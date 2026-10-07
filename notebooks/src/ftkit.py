@@ -99,6 +99,21 @@ def duration(row: dict) -> float:
     return row["end_time"] - row["start_time"]
 
 
+def crossover_clip(rows: Sequence[dict], *, budget_s: float, items: int) -> dict | None:
+    """The clip a micro-batch probe measures besides the longest and the shortest: where the
+    seconds budget and the clip cap meet (`budget_s / items` seconds), a batch of `items` such
+    clips is legal under both, and each brings its own prompt and transcript. The wordiest clip
+    within half a second of that length, or the nearest clip when none is. None for a clip-count
+    budget (infinite seconds). 06b's stage 2 ran out of memory on such a batch (2026-10-07)."""
+    if budget_s == float("inf") or not rows:
+        return None
+    target = budget_s / items
+    near = [r for r in rows if abs(duration(r) - target) <= 0.5]
+    if not near:
+        return min(rows, key=lambda r: abs(duration(r) - target))
+    return max(near, key=lambda r: len(r["text"]))
+
+
 class AudioStore:
     """Every episode decoded once into RAM as int16; a clip is a slice of it (a view, no copy).
 

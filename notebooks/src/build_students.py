@@ -1154,6 +1154,13 @@ def probe(model, optimizer, rows):
         n_short = probe_at(short)
         items = max(1, int(n_short * PROBE_FRACTION))
         print(f"largest micro-batch at {ftkit.duration(short):.1f} s: {n_short} clips")
+        # Where the two limits meet, a batch of `items` mid-length clips is legal under both and
+        # measured by neither probe: it ran out of memory in stage 2 (2026-10-07).
+        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items)
+        if mid is not None:
+            n_mid = probe_at(mid)
+            items = min(items, max(1, int(n_mid * PROBE_FRACTION)))
+            print(f"largest micro-batch at {ftkit.duration(mid):.1f} s: {n_mid} clips")
     print(f"largest micro-batch at {ftkit.duration(longest):.0f} s: {n} clips -> "
           f"{items} clips or {budget:.0f} s of audio per micro-batch")
     return budget, items
@@ -1382,16 +1389,21 @@ def probe(model, optimizer, rows):
         p.grad = torch.zeros_like(p)
     with ftkit.batchnorm_kept(model):
         n = fit({**longest, "text": wordiest["text"]})
+        if n == 0:
+            raise RuntimeError("not even one clip fits a micro-batch")
         n_short = fit(short)
+        budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
+        # Where the two limits meet, a batch of `items` mid-length clips is legal under both and
+        # measured by neither: 06b's stage 2 ran out of memory there (2026-10-07).
+        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items)
+        n_mid = fit(mid) if mid is not None else items
+        items = min(items, max(1, int(n_mid * PROBE_FRACTION)))
     for p in params:
         p.grad = None
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
-    if n == 0:
-        raise RuntimeError("not even one clip fits a micro-batch")
-    budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
     print(f"largest micro-batch: {n} clips at {ftkit.duration(longest):.1f} s, {n_short} at "
-          f"{ftkit.duration(short):.1f} s -> {items} clips or {budget:.0f} s of audio")
+          f"{ftkit.duration(short):.1f} s, {n_mid} at the crossover -> {items} clips or {budget:.0f} s of audio")
     return budget, items
 '''
 
@@ -1735,16 +1747,21 @@ def probe(model, optimizer, rows):
         p.grad = torch.zeros_like(p)
     with ftkit.batchnorm_kept(model):
         n = fit({**longest, "text": wordiest["text"], "ids": wordiest["ids"]})
+        if n == 0:
+            raise RuntimeError("not even one clip fits a micro-batch")
         n_short = fit(short)
+        budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
+        # Where the two limits meet, a batch of `items` mid-length clips is legal under both and
+        # measured by neither: 06b's stage 2 ran out of memory there (2026-10-07).
+        mid = ftkit.crossover_clip(rows, budget_s=min(budget, EFFECTIVE_S), items=items)
+        n_mid = fit(mid) if mid is not None else items
+        items = min(items, max(1, int(n_mid * PROBE_FRACTION)))
     for p in params:
         p.grad = None
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
-    if n == 0:
-        raise RuntimeError("not even one clip fits a micro-batch")
-    budget, items = n * ftkit.duration(longest) * PROBE_FRACTION, max(1, int(n_short * PROBE_FRACTION))
     print(f"largest micro-batch: {n} clips at {ftkit.duration(longest):.1f} s, {n_short} at "
-          f"{ftkit.duration(short):.1f} s -> {items} clips or {budget:.0f} s of audio")
+          f"{ftkit.duration(short):.1f} s, {n_mid} at the crossover -> {items} clips or {budget:.0f} s of audio")
     return budget, items
 '''
 
