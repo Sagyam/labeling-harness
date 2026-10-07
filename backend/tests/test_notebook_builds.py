@@ -161,6 +161,21 @@ def test_every_student_scores_with_error_mining() -> None:
         assert any(re.search(r"\bduckdb\b", line) for line in installs), path.name
 
 
+def test_the_bakeoff_installs_what_voxtral_tokenizes_with() -> None:
+    """Voxtral's tokenizer is mistral-common's: without the package transformers loads one with no
+    chat template, and the candidate fails on its first clip (the 2026-10-07 smoke run)."""
+    cells = json.loads((_NOTEBOOKS / "09_SpeechLLM_Bakeoff.ipynb").read_text(encoding="utf-8"))[
+        "cells"
+    ]
+    installs = [
+        line
+        for cell in cells
+        for line in "".join(cell["source"]).splitlines()
+        if re.match(r"\s*[%!].*pip install", line)
+    ]
+    assert any(re.search(r"\bmistral-common\[audio\]", line) for line in installs)
+
+
 def _config(name: str) -> dict:
     """The names a notebook's Config cell (its first code cell) assigns: plain assignments only."""
     cells = json.loads((_NOTEBOOKS / name).read_text(encoding="utf-8"))["cells"]

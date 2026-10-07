@@ -1012,7 +1012,7 @@ cells = [
     code(CONFIG),
     md("## Setup"),
     nbkit.setup(
-        'rapidfuzz duckdb soundfile librosa accelerate peft bitsandbytes -U "transformers>=5.13.0"'
+        'rapidfuzz duckdb soundfile librosa accelerate peft bitsandbytes "mistral-common[audio]>=1.12" -U "transformers>=5.13.0"'
     ),
     *nbkit.kits("ftkit", "evalkit", "sweep", "distill", "bakeoffkit"),
     code(DATA),
