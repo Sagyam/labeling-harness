@@ -1224,7 +1224,9 @@ def load_student(weights=None):
     label in its own tokens, for the answer's length cap."""
     global model, processor, PROMPT_TEXT, END_IDS, PAD_ID, MAX_TOKENS_PER_S
     source = str(weights) if weights is not None else GEMMA_ID
-    processor = AutoProcessor.from_pretrained(source)
+    # Always the base model's processor: training never changes it, and one written back by
+    # save_pretrained broke on the round trip (truncation on, no max_length; 07a's smoke, 2026-10-07).
+    processor = AutoProcessor.from_pretrained(GEMMA_ID)
     for name in ("AutoModelForMultimodalLM", "AutoModelForImageTextToText"):  # the bake-off's order
         auto = getattr(transformers, name, None)
         if auto is None:
