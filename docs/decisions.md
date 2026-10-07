@@ -2957,15 +2957,19 @@ open-weight LLM that hears audio can be a student under the same recipe, and whe
 does better. Before any is trained, `09_SpeechLLM_Bakeoff` shortlists them (2026-10-07), with the
 rules fixed here before any candidate transcribes a clip.
 
-- **Candidates:** Gemma 4 E4B and 12B, Omnilingual LLM-ASR 1B and 3B (`nep_Deva`; the 7B as a
+- **Candidates:** Gemma 4 E2B, E4B and 12B, Omnilingual LLM-ASR 1B and 3B (`nep_Deva`; the 7B as a
   zero-shot data point only, since full fine-tuning does not fit in 96 GB), Qwen3-ASR-1.7B and
   Voxtral Mini 3B. Omnilingual LLM-ASR 1B against 06e's Omnilingual CTC 1B is the cleanest family
   comparison (same encoder family and pretraining languages, CTC head against LLM decoder).
-- **The gate, on val** (`bakeoffkit.zero_shot_report`): among clips whose reference is at least
-  half Devanagari letters, at least 90% must be answered at least half in Devanagari. Zero-shot WER
-  ranks nothing: Whisper-turbo read 123% zero-shot and 15.02 on gold after training. Gold is
-  scored and reported, never used to choose (D105), and each candidate's prompt is chosen on a
-  300-clip val sample alone.
+- **Breadth-first** (the owner, 2026-10-07: no GPU-hours before the performance is known). Round 1
+  sweeps every candidate and every prompt zero-shot on a 300-clip val sample and stops at a table;
+  round 2 times the training step of the shortlist alone (the owner's pick, by default those whose
+  kept prompt passed the gate); round 3 decodes the shortlist's full val and gold for the record.
+- **The gate, on the sweep's val sample** (`bakeoffkit.zero_shot_report`): among clips whose
+  reference is at least half Devanagari letters, at least 90% must be answered at least half in
+  Devanagari. Zero-shot WER ranks nothing: Whisper-turbo read 123% zero-shot and 15.02 on gold
+  after training. Each candidate's prompt is chosen on the same sample. Gold is scored in round 3
+  and reported, never used to choose (D105).
 - **The budget:** training speed measured by `ftkit.speed_check` on the G4, projected over every
   epoch of both stages (`HUMAN_EPOCHS` 8 on the human hours, `DISTILL_EPOCHS` 6 on a 131 h
   mixture epoch, each with a val pass), must fit `BUDGET_H`, 24 GPU-hours, about four times what

@@ -213,9 +213,10 @@ step 4's curve says how much audio closes the gap.
      on a GPU), then the whole corpus, then the students. Done up to the students, 2026-10-04.
 
 5. **Speech-LLM students** (D121, 2026-10-07). Before any audio LLM is trained as a student,
-   `09_SpeechLLM_Bakeoff` shortlists Gemma 4 E4B and 12B, Omnilingual LLM-ASR 1B/3B,
-   Qwen3-ASR-1.7B and Voxtral Mini 3B: a zero-shot gate on val (writes Devanagari on 90% of the
-   Nepali clips) and a projected training budget of 24 G4-hours. Those that pass get a student
+   `09_SpeechLLM_Bakeoff` shortlists Gemma 4 E2B/E4B/12B, Omnilingual LLM-ASR 1B/3B (7B
+   zero-shot), Qwen3-ASR-1.7B and Voxtral Mini 3B, breadth-first: a zero-shot sweep of every
+   candidate on a val sample, then, for the shortlist only, the training step (budget 24 G4-hours)
+   and full val and gold. The gate: Devanagari on 90% of the Nepali clips. Those that pass get a student
    notebook with the same three stages, held to D121's bars. The paper's family claim is the
    recipe's gain per family, not which family wins. Not yet run on a GPU.
 

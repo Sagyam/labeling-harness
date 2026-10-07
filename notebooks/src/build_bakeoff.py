@@ -20,32 +20,37 @@ INTRO = """
 # 09 — Speech-LLM bake-off: which audio LLMs are worth training as students?
 
 Roadmap B trains students on the teacher's labels. All six so far are pure ASR models. This
-notebook shortlists the LLMs that hear audio for the same recipe. It trains nothing: every
-candidate transcribes val and gold zero-shot, and its training step is timed (D121).
+notebook shortlists the LLMs that hear audio for the same recipe. It trains nothing, and it
+searches breadth-first: every candidate is swept zero-shot on a val sample before any GPU-hours
+go to one, and only the shortlist has its training step timed and its full val and gold decoded
+(D121).
 
 **Candidates** (`SPECS`, below the kits; `CANDIDATES` in Config picks and orders them):
-- **Gemma 4 E4B** (~300M audio encoder, PLE) and **Gemma 4 12B** (no encoder: the waveform is
-  projected straight into the LLM). No ASR language list is published for either.
+- **Gemma 4 E2B and E4B** (~300M audio encoder, PLE) and **Gemma 4 12B** (no encoder: the waveform
+  is projected straight into the LLM). No ASR language list is published for any of them.
 - **Omnilingual LLM-ASR 1B and 3B** (Meta; wav2vec 2.0 encoder + LLM decoder; Nepali among its
   1,600+ languages, `nep_Deva`). With 06e's Omnilingual CTC 1B it makes the cleanest family
   comparison: same encoder family and pretraining languages, CTC head against LLM decoder. The 7B
-  is in `SPECS` as a zero-shot data point only (full fine-tuning does not fit in 96 GB).
+  is swept as a zero-shot data point only (full fine-tuning does not fit in 96 GB).
 - **Qwen3-ASR-1.7B** and **Voxtral Mini 3B**: cheap extra data points, neither trained on Nepali.
 
-**What runs, per candidate.**
-1. **Prompts, on a val sample.** Each of its prompts (or language codes) transcribes the same
-   `PROMPT_CLIPS` val clips. The kept prompt is the one with the lowest folded WER among those that
-   pass the gate, or the one nearest the gate when none passes (`bakeoffkit.pick_prompt`). Gold
-   takes no part in the choice.
-2. **Zero-shot val and gold**, with the kept prompt, greedy, bf16, scored by `evalkit.evaluate_run`:
-   folded and raw WER split into S/D/I, CER, per clip class, error rows. Each answer is capped at
-   1.5× the densest training label's token rate in its own tokenizer, so a runaway cannot fill the
-   context, and is never retried: a loop is a finding here.
-3. **The training step**, timed by `ftkit.speed_check` (the format of 06's `speed_check.json`): a
-   probe finds the largest micro-batch, then real train clips run forward and backward. Full
-   fine-tuning where it fits, LoRA for Gemma 4 12B (`SPECS[...]["train"]`).
-4. **The verdict** (`bakeoffkit.verdict`): the gate on val and the projected cost of both student
-   stages against `BUDGET_H`.
+**Three rounds, breadth-first** (each its own cell, below):
+1. **Sweep, every candidate.** Each of its prompts (or language codes) transcribes the same
+   `SWEEP_CLIPS` val clips, greedy, bf16, scored with fold.py. The kept prompt is the one with the
+   lowest folded WER among those that pass the gate, or the one nearest the gate when none passes
+   (`bakeoffkit.pick_prompt`). Gold takes no part. It ends with a table to read before anything
+   else is spent.
+2. **Training step, the shortlist.** `SHORTLIST` in Config, or every candidate whose kept prompt
+   passed the gate. Timed by `ftkit.speed_check` (06's `speed_check.json`): a probe finds the
+   largest micro-batch, then real train clips run forward and backward. Full fine-tuning where it
+   fits, LoRA for Gemma 4 12B. The verdict (`bakeoffkit.verdict`) reads the sweep's gate and the
+   projected cost of both student stages against `BUDGET_H`.
+3. **Full val and gold, the shortlist**, zero-shot with the kept prompt, through
+   `evalkit.evaluate_run`: folded and raw WER split into S/D/I, CER, per clip class, error rows.
+   For the record and the paper; the verdict does not wait for it.
+
+Each answer is capped at 1.5× the densest training label's token rate in its own tokenizer, so a
+runaway cannot fill the context, and is never retried: a loop is a finding here.
 
 **The gate.** Among the clips whose reference is mostly Devanagari, the share whose answer is
 mostly Devanagari too must be at least 90%. It is only a gate: zero-shot WER does not predict
@@ -56,7 +61,7 @@ answers in another script, and the Latin share of the answers against the refere
 
 **The projection.** Stage 1 trains on the human train hours for `HUMAN_EPOCHS`, stage 2 on a
 `DISTILL_H` epoch (human plus pseudo-labels, as 06's mixture draws it) for `DISTILL_EPOCHS`, each
-epoch with a val pass at the zero-shot val speed. Every epoch counted, so early stopping can only
+epoch with a val pass at the sweep's decode speed. Every epoch counted, so early stopping can only
 make it cheaper. Whisper took about 5.6 A100-hours for both stages (findings, 2026-10-04).
 
 **The bars for whoever continues** (D121, fixed now, read in the student notebooks, not here):
@@ -68,8 +73,9 @@ beats Whisper's 15.02 on gold with an interval that excludes zero.
 with the A100 numbers of 06.
 
 **Small blast radius.** Every step uploads to `OUT_REPO/<RUN_PREFIX>/<candidate>/` as it finishes
-(`prompts.json` after each prompt, the zero-shot run, `speed_check.json`, `bakeoff.json`), and a
-rerun skips whatever is there. A candidate that fails is reported and the next one runs.
+(`prompts.json` after each prompt, `speed_check.json` and `bakeoff.json` in round 2, the zero-shot
+run in round 3), and a rerun skips whatever is there. A candidate that fails is reported and the
+next one runs.
 """
 
 CONFIG = r"""
@@ -79,9 +85,11 @@ DATASET_EXPORT = "2026-09-30"   # the export every model trains and is scored on
 DATASET_REPO = "Sagyam/nepanglish-asr"
 OUT_REPO = "Sagyam/nepanglish-asr-students"  # private HF model repo
 SMOKE = False                   # True: a few clips of each set, under <RUN_PREFIX>-smoke
-# In the order they run; leave one out to skip it. "omni-llm-7b" is zero-shot only.
-CANDIDATES = ("gemma-4-e4b", "gemma-4-12b", "omni-llm-1b", "omni-llm-3b", "qwen3-asr-1.7b", "voxtral-mini-3b")
-PROMPT_CLIPS = 300              # val clips each prompt is tried on, spread over val
+# Round 1 sweeps all of these, in this order; leave one out to skip it. "omni-llm-7b" is zero-shot only.
+CANDIDATES = ("gemma-4-e2b", "gemma-4-e4b", "gemma-4-12b", "omni-llm-1b", "omni-llm-3b", "omni-llm-7b",
+              "qwen3-asr-1.7b", "voxtral-mini-3b")
+SWEEP_CLIPS = 300               # val clips each prompt is tried on in round 1, spread over val
+SHORTLIST = None                # rounds 2 and 3: None for every candidate whose kept prompt passed the gate
 SPEED_CLIPS = 600               # train clips the training step is timed on, spread over train
 BUDGET_H = 24.0                 # GPU-hours both student stages may take, projected (D121)
 HUMAN_EPOCHS, DISTILL_EPOCHS = 8, 6  # the epoch caps of 06's stages 1 and 2
@@ -128,7 +136,7 @@ HUMAN_H = sum(ftkit.duration(r) for r in splits["train"]) / 3600  # the projecti
 VAL_H = sum(ftkit.duration(r) for r in splits["val"]) / 3600
 if SMOKE:
     splits = {"train": splits["train"][::50], "val": splits["val"][::30], "gold": splits["gold"][::16]}
-    PROMPT_CLIPS, SPEED_CLIPS = 24, 60
+    SWEEP_CLIPS, SPEED_CLIPS = 24, 60
 
 
 def spread(rows, n):
@@ -137,7 +145,7 @@ def spread(rows, n):
     return list(rows[::step][:n])
 
 
-PROMPT_ROWS = spread(splits["val"], PROMPT_CLIPS)
+SWEEP_ROWS = spread(splits["val"], SWEEP_CLIPS)
 SPEED_ROWS = [r for r in spread(splits["train"], SPEED_CLIPS) if r["text"].strip()]
 episodes = [r["episode_id"] for rows in (splits["val"], splits["gold"], SPEED_ROWS) for r in rows]
 with ftkit.timed(f"downloading {len(set(episodes))} recordings"):
@@ -145,7 +153,7 @@ with ftkit.timed(f"downloading {len(set(episodes))} recordings"):
 with ftkit.timed("reading them into RAM"):
     store = ftkit.AudioStore(DATA, episodes)
 score = ftkit.harness_scorer(DATA, FT)
-print({k: len(v) for k, v in splits.items()}, f"| prompt sample {len(PROMPT_ROWS)}, speed sample {len(SPEED_ROWS)}",
+print({k: len(v) for k, v in splits.items()}, f"| prompt sample {len(SWEEP_ROWS)}, speed sample {len(SPEED_ROWS)}",
       f"| human train {HUMAN_H:.1f} h, val {VAL_H:.2f} h | audio in RAM: {store.gib:.1f} GiB |", score.fold_version)
 """
 
@@ -169,6 +177,9 @@ GEMMA_PROMPTS = {"nepali": NEPALI, "mixed": MIXED, "card": CARD}
 # Omnilingual takes a language code (None: none given); Qwen3-ASR a language name it is prefilled
 # with ("language Nepali<asr_text>"; None: it names the language itself).
 SPECS = {
+    "gemma-4-e2b": {"family": "gemma", "model_id": "google/gemma-4-E2B-it", "prompts": GEMMA_PROMPTS,
+                    "train": {"mode": "full", "optim": "adamw", "lr": 1e-5, "grad_ckpt": True},
+                    "architecture": "Gemma 4 E2B: ~300M audio encoder + decoder-only LLM with per-layer embeddings"},
     "gemma-4-e4b": {"family": "gemma", "model_id": "google/gemma-4-E4B-it", "prompts": GEMMA_PROMPTS,
                     "train": {"mode": "full", "optim": "adamw8bit", "lr": 1e-5, "grad_ckpt": True},
                     "architecture": "Gemma 4 E4B: ~300M audio encoder + decoder-only LLM with per-layer embeddings"},
@@ -471,7 +482,7 @@ def hf_speed(spec, prompt):
     budget, items = hf_probe(SPEED_ROWS, optimizer)
     batches = ftkit.bucket_batches(SPEED_ROWS, budget_s=budget, max_items=items, pad_to_s=PAD_TO_S,
                                    shuffle=True, seed=0)
-    sample = PROMPT_ROWS[:16]
+    sample = SWEEP_ROWS[:16]
 
     def evaluate(m):
         texts = hf_transcribe(spec, prompt, sample)
@@ -684,12 +695,21 @@ def omni_speed(spec, lang):
 """
 
 RUN_NOTE = """
-## Run every candidate
+## Shared by the rounds
 
-One candidate at a time on the GPU: its prompts on the val sample, then zero-shot val and gold
-with the kept prompt, then the training step. Each step's output is uploaded as it lands, and a
-rerun picks up after the last one on the hub. A failure is printed with its traceback, the GPU is
-freed, and the next candidate runs.
+The search is breadth-first, so no GPU-hours go to a candidate before its zero-shot numbers have
+been read. Each round is its own cell and reads what the earlier rounds left on the hub, so it runs
+in a fresh kernel after the cells above.
+
+1. **Sweep**: every candidate in `CANDIDATES`, every prompt, on `SWEEP_CLIPS` val clips. Zero-shot
+   only, about a minute of decoding per prompt. It ends with a table and the default shortlist.
+2. **Training step**: only the shortlist (`SHORTLIST` in Config, or the candidates whose kept prompt
+   passed the gate). A few minutes each; it gives the projected cost and the verdict.
+3. **Full val and gold**: only the shortlist again, through `evalkit.evaluate_run`. The numbers
+   for the record and the paper. The verdict does not wait for them.
+
+One candidate at a time on the GPU. Each output is uploaded as it lands and a rerun skips it; a
+failure is printed with its traceback, the GPU is freed, and the next candidate runs.
 """
 
 RUN = r'''
@@ -705,6 +725,12 @@ def fetch_json(remote):
 def upload(folder, dest, message):
     with ftkit.timed(f"uploading {dest}: {message}"):
         api.upload_folder(repo_id=OUT_REPO, folder_path=str(folder), path_in_repo=dest, commit_message=f"{dest}: {message}")
+
+
+def where(key):
+    out = OUT_ROOT / key
+    out.mkdir(parents=True, exist_ok=True)
+    return f"{RUN_PREFIX}/{key}", out
 
 
 def decode_rows(spec, prompt, rows, tag):
@@ -736,27 +762,55 @@ def decode_rows(spec, prompt, rows, tag):
     return texts, compute
 
 
-def try_prompts(key, spec, dest, out):
-    """Every prompt of `spec` on the val sample; prompts.json is uploaded after each one."""
+def sweep(key):
+    """Round 1: every prompt of `key` on the val sample; prompts.json is uploaded after each one."""
+    spec, (dest, out) = SPECS[key], where(key)
     found = fetch_json(f"{dest}/prompts.json") or {}
-    refs = [r["text"] for r in PROMPT_ROWS]
-    audio_s = sum(ftkit.duration(r) for r in PROMPT_ROWS)
+    refs = [r["text"] for r in SWEEP_ROWS]
+    audio_s = sum(ftkit.duration(r) for r in SWEEP_ROWS)
     for name, prompt in spec["prompts"].items():
-        if name in found:
+        if name in found and not RESCORE:
             continue
-        with ftkit.timed(f"{key}: prompt {name!r} on {len(PROMPT_ROWS)} val clips"):
-            texts, compute = decode_rows(spec, prompt, PROMPT_ROWS, "prompt-sample")
+        with ftkit.timed(f"{key}: prompt {name!r} on {len(SWEEP_ROWS)} val clips"):
+            texts, compute = decode_rows(spec, prompt, SWEEP_ROWS, "sweep")
         m = score.summarize(score.per_clip(refs, texts))
         found[name] = {**bakeoffkit.zero_shot_report(refs, texts), **{k: m[k] for k in evalkit.KEEP if k in m},
                        "prompt": prompt, "rtf": sum(compute) / audio_s,
                        "examples": [{"ref": r, "hyp": h} for r, h in list(zip(refs, texts))[:8]]}
-        f = found[name]
-        print(f"  {name:<10} WER {f['wer']:7.2f} ({ftkit.sid(f)}), writes Nepali {f['writes_nepali']:.0%}, "
-              f"empty {f['empty']}, runaway {f['runaway']}, other script {f['other_script_clips']}, "
-              f"Latin {f['latin_hyp']:.0%} (refs {f['latin_ref']:.0%}), RTF {f['rtf']:.3f}")
         (out / "prompts.json").write_text(json.dumps(found, indent=1, ensure_ascii=False))
-        upload(out, dest, f"prompt {name}")
+        upload(out, dest, f"sweep, prompt {name}")
     return found
+
+
+def sweeps():
+    """Every candidate's round-1 reports from the hub ({} for one not yet swept)."""
+    return {k: fetch_json(f"{RUN_PREFIX}/{k}/prompts.json") or {} for k in CANDIDATES}
+
+
+def kept(key, found):
+    name = bakeoffkit.pick_prompt(found)
+    return name, SPECS[key]["prompts"][name]
+
+
+def shortlisted():
+    """Rounds 2 and 3 run these: `SHORTLIST` when Config names one, else the sweep's default."""
+    keys = list(SHORTLIST) if SHORTLIST is not None else bakeoffkit.shortlist(sweeps())
+    unknown = [k for k in keys if k not in SPECS]
+    assert not unknown, f"not in SPECS: {unknown}"
+    return keys
+
+
+def guarded(fn, key):
+    """`fn(key)`, with a failure printed and the GPU freed, so the next candidate still runs."""
+    try:
+        return fn(key)
+    except Exception:
+        traceback.print_exc()
+        print(f"{key}: FAILED, the next candidate runs")
+        return None
+    finally:
+        globals()["LOADED"] = None
+        free_model()
 
 
 def card(key, spec, prompt):
@@ -771,112 +825,185 @@ def card(key, spec, prompt):
         "fold_version": score.fold_version,
         "kits": evalkit.kit_digests(FT),
     }
+'''
 
+SWEEP_NOTE = """
+## Round 1: the sweep
 
-def run_candidate(key):
-    spec, dest = SPECS[key], f"{RUN_PREFIX}/{key}"
-    out = OUT_ROOT / key
-    out.mkdir(parents=True, exist_ok=True)
-    done = fetch_json(f"{dest}/bakeoff.json")
-    if done is not None and not RESCORE:
-        print(f"{key}: already in {OUT_REPO}, skipped")
-        return done
-    print(f"\n=== {key}: {spec['model_id']}")
-    prompts = try_prompts(key, spec, dest, out)
-    chosen = bakeoffkit.pick_prompt(prompts)
-    prompt = spec["prompts"][chosen]
-    print(f"{key}: prompt {chosen!r} kept for val and gold")
+Every candidate, every prompt, on the same val sample. In the table: folded WER with S/D/I, CER,
+the share of Nepali clips answered in Devanagari (the gate is 90%), empty answers, runaways,
+answers in another script, the Latin share of the answers against the references, and the decode's
+real-time factor. `*` marks the prompt each candidate keeps. Two of its answers follow, beside
+their references. **Read this before running round 2**, and set `SHORTLIST` in Config to overrule
+the default.
+"""
 
-    result = fetch_json(f"{dest}/result.json")
-    if result is None or RESCORE:
-        result = evalkit.evaluate_run(
-            out, key, splits={"val": splits["val"], "gold": splits["gold"]},
-            decode=lambda rows: (*decode_rows(spec, prompt, rows, "val" if rows is splits["val"] else "gold"), []),
-            score=score, card=card(key, spec, chosen), meta={"candidate": key, "stage": "zero-shot", "prompt": chosen})
-        upload(out, dest, f"zero-shot val and gold, prompt {chosen}")
-    else:
-        for split in ("val", "gold"):
-            remote = f"{dest}/harness/{split}.jsonl"
-            (out / "harness").mkdir(exist_ok=True)
-            shutil.copy(hf_hub_download(OUT_REPO, remote, token=TOKEN), out / "harness" / f"{split}.jsonl")
-    gates = {}
-    for split in ("val", "gold"):
-        hyps = evalkit.read_hyps(out / "harness" / f"{split}.jsonl")
-        gates[split] = bakeoffkit.zero_shot_report([r["text"] for r in splits[split]],
-                                                   [hyps[r["segment_id"]] for r in splits[split]])
+SWEEP = r"""
+for key in CANDIDATES:
+    print(f"\n=== {key}: {SPECS[key]['model_id']}")
+    guarded(sweep, key)
 
+found = sweeps()
+print(f"\n{'candidate':<16} {'prompt':<10} {'WER':>7} {'S/D/I':>17} {'CER':>6} {'Nepali':>6} {'empty':>5} "
+      f"{'runaway':>7} {'other':>5} {'Latin':>11} {'RTF':>6}")
+for key, prompts in found.items():
+    if not prompts:
+        print(f"{key:<16} not swept")
+        continue
+    best = bakeoffkit.pick_prompt(prompts)
+    for name, f in prompts.items():
+        mark = "*" if name == best else " "
+        print(f"{key:<16}{mark}{name:<10} {f['wer']:7.2f} {ftkit.sid(f):>17} {f['cer']:6.2f} {f['writes_nepali']:6.0%} "
+              f"{f['empty']:5d} {f['runaway']:7d} {f['other_script_clips']:5d} {f['latin_hyp']:4.0%} / {f['latin_ref']:3.0%} "
+              f"{f['rtf']:6.3f}")
+for key, prompts in found.items():
+    if prompts:
+        name = bakeoffkit.pick_prompt(prompts)
+        print(f"\n{key} ({name}):")
+        for ex in prompts[name]["examples"][:2]:
+            print(f"  ref: {ex['ref']}\n  hyp: {ex['hyp']}")
+print("\ndefault shortlist (kept prompt passes the gate):", ", ".join(bakeoffkit.shortlist(found)) or "none")
+print("rounds 2 and 3 will run:", ", ".join(shortlisted()) or "nothing")
+"""
+
+SPEED_NOTE = """
+## Round 2: the training step and the verdict
+
+The shortlist only. Each candidate is loaded for training (full fine-tuning, or LoRA for Gemma 4
+12B), a probe finds its largest micro-batch, and real train clips run forward and backward. The
+projection covers every epoch of both student stages at the measured speed, with val passes at the
+sweep's decode speed. The verdict reads the gate on the sweep's val sample and the projection
+against `BUDGET_H`.
+"""
+
+SPEED = r"""
+def time_training(key):
+    spec, (dest, out) = SPECS[key], where(key)
+    found = fetch_json(f"{dest}/prompts.json")
+    if not found:
+        raise RuntimeError(f"{key} was not swept: run round 1 first")
+    name, prompt = kept(key, found)
     speed = fetch_json(f"{dest}/speed_check.json")
-    if speed is None and spec["train"] is not None:
-        globals()["LOADED"] = None
+    if (speed is None or RESCORE) and spec["train"] is not None:
+        print(f"\n=== {key}: timing the training step, prompt {name!r}")
         try:
             speed = omni_speed(spec, prompt) if spec["family"] == "omni" else hf_speed(spec, prompt)
-        except Exception as exc:  # recorded, not raised: the zero-shot numbers stand on their own
+        except Exception as exc:  # recorded, not raised: the verdict says it was not measured
             traceback.print_exc()
             speed = {"error": f"{type(exc).__name__}: {exc}"[:500]}
-        finally:
-            if spec["family"] != "omni":
-                free_model()
         (out / "speed_check.json").write_text(json.dumps(speed, indent=1))
         upload(out, dest, "training step timed")
     cost = None
     if speed and "train_x_realtime" in speed:
-        cost = bakeoffkit.projection(train_x_realtime=speed["train_x_realtime"], val_x_realtime=1 / result["val"]["rtf"],
+        cost = bakeoffkit.projection(train_x_realtime=speed["train_x_realtime"], val_x_realtime=1 / found[name]["rtf"],
                                      human_h=HUMAN_H, human_epochs=HUMAN_EPOCHS, distill_h=DISTILL_H,
                                      distill_epochs=DISTILL_EPOCHS, val_h=VAL_H)
-    verdict = bakeoffkit.verdict(gates["val"], cost, BUDGET_H)
-    row = {"candidate": key, "model_id": spec["model_id"], "family": spec["family"], "prompt": chosen,
-           "prompts": {n: {k: p[k] for k in ("wer", "writes_nepali", "passes_gate")} for n, p in prompts.items()},
-           "val": {**result["val"], "gate": gates["val"]}, "gold": {**result["gold"], "gate": gates["gold"]},
+    verdict = bakeoffkit.verdict(found[name], cost, BUDGET_H)
+    row = {**(fetch_json(f"{dest}/bakeoff.json") or {}), "candidate": key, "model_id": spec["model_id"],
+           "family": spec["family"], "prompt": name, "sweep": {k: v for k, v in found[name].items() if k != "examples"},
            "speed": speed, "cost": cost, "budget_h": BUDGET_H, "verdict": verdict}
     (out / "bakeoff.json").write_text(json.dumps(row, indent=1, ensure_ascii=False))
     upload(out, dest, "verdict: " + ("continue" if verdict["continue"] else "stop"))
-    print(f"{key}: {'CONTINUE' if verdict['continue'] else 'STOP'}" + "".join(f"\n    {r}" for r in verdict["reasons"]))
     return row
 
 
-rows = {}
-for key in CANDIDATES:
-    try:
-        rows[key] = run_candidate(key)
-    except Exception:
-        traceback.print_exc()
-        print(f"{key}: FAILED, the next candidate runs")
-    finally:
-        globals()["LOADED"] = None
-        free_model()
-'''
+for key in shortlisted():
+    guarded(time_training, key)
 
-REPORT_NOTE = """
-## The shortlist
-
-Every candidate's row, read back from the hub, so it can run in a fresh kernel after the run
-above. Folded WER with S/D/I and CER on val and gold, the gate and the failure counts on val, the
-decode speed, the training step, the projected cost of both stages and the verdict. The summary
-goes to `<RUN_PREFIX>/summary.json`.
-"""
-
-REPORT = r"""
-found = {k: fetch_json(f"{RUN_PREFIX}/{k}/bakeoff.json") for k in SPECS}
-found = {k: v for k, v in found.items() if v is not None}
-print(f"{'candidate':<16} {'prompt':<9} {'val':>14} {'gold':>14} {'val CER':>7} {'Nepali':>6} {'empty':>5} {'runaway':>7} "
-      f"{'other':>5} {'Latin':>11} {'RTF':>6} {'train x':>7} {'GiB':>5} {'proj h':>6}  verdict")
-for k, r in found.items():
-    g, s, c = r["val"]["gate"], r["speed"] or {}, r["cost"] or {}
-    print(f"{k:<16} {r['prompt']:<9} {r['val']['wer']:7.2f} ({r['val']['ins']:4.1f}I) {r['gold']['wer']:7.2f} "
-          f"({r['gold']['ins']:4.1f}I) {r['val']['cer']:7.2f} {g['writes_nepali']:6.0%} {g['empty']:5d} {g['runaway']:7d} "
-          f"{g['other_script_clips']:5d} {g['latin_hyp']:4.0%} / {g['latin_ref']:3.0%} {r['val']['rtf']:6.3f} "
-          f"{s.get('train_x_realtime', float('nan')):7.0f} {s.get('gpu_mem_gib', float('nan')):5.1f} "
-          f"{c.get('total_h', float('nan')):6.1f}  {'continue' if r['verdict']['continue'] else 'stop'}")
+print(f"\n{'candidate':<16} {'train x':>7} {'pad':>5} {'GPU':>5} {'GiB':>5} {'stage 1 h':>9} {'stage 2 h':>9} {'total h':>8}  verdict")
+for key in shortlisted():
+    r = fetch_json(f"{RUN_PREFIX}/{key}/bakeoff.json")
+    if r is None:
+        print(f"{key:<16} no verdict")
+        continue
+    s, c = r["speed"] or {}, r["cost"] or {}
+    nan = float("nan")
+    print(f"{key:<16} {s.get('train_x_realtime', nan):7.0f} {s.get('padding_waste', nan):5.0%} {s.get('gpu_util', nan):4.0f}% "
+          f"{s.get('gpu_mem_gib', nan):5.1f} {c.get('stage1_h', nan):9.1f} {c.get('stage2_h', nan):9.1f} "
+          f"{c.get('total_h', nan):8.1f}  {'continue' if r['verdict']['continue'] else 'stop'}")
     for reason in r["verdict"]["reasons"]:
         print(f"{'':<18}{reason}")
     if "error" in s:
         print(f"{'':<18}training step failed: {s['error']}")
+"""
+
+FULL_NOTE = """
+## Round 3: full val and gold, zero-shot
+
+The shortlist only, with each candidate's kept prompt: every val and gold clip through
+`evalkit.evaluate_run` (folded and raw WER with S/D/I, CER, per clip class, error rows, the
+Models page's files), and the gate on the full sets. This is the costly round, for the record
+and the paper. Skip it if round 2 left nothing worth writing up.
+"""
+
+FULL = r"""
+def full_zero_shot(key):
+    spec, (dest, out) = SPECS[key], where(key)
+    found = fetch_json(f"{dest}/prompts.json")
+    if not found:
+        raise RuntimeError(f"{key} was not swept: run round 1 first")
+    name, prompt = kept(key, found)
+    result = fetch_json(f"{dest}/result.json")
+    if result is None or RESCORE:
+        print(f"\n=== {key}: val and gold, prompt {name!r}")
+        result = evalkit.evaluate_run(
+            out, key, splits={"val": splits["val"], "gold": splits["gold"]},
+            decode=lambda rows: (*decode_rows(spec, prompt, rows, "val" if rows is splits["val"] else "gold"), []),
+            score=score, card=card(key, spec, name), meta={"candidate": key, "stage": "zero-shot", "prompt": name})
+        upload(out, dest, f"zero-shot val and gold, prompt {name}")
+    else:
+        (out / "harness").mkdir(exist_ok=True)
+        for split in ("val", "gold"):
+            shutil.copy(hf_hub_download(OUT_REPO, f"{dest}/harness/{split}.jsonl", token=TOKEN),
+                        out / "harness" / f"{split}.jsonl")
+    row = fetch_json(f"{dest}/bakeoff.json") or {"candidate": key, "model_id": spec["model_id"], "prompt": name}
+    for split in ("val", "gold"):
+        hyps = evalkit.read_hyps(out / "harness" / f"{split}.jsonl")
+        gate = bakeoffkit.zero_shot_report([r["text"] for r in splits[split]], [hyps[r["segment_id"]] for r in splits[split]])
+        row[split] = {**result[split], "gate": gate}
+    (out / "bakeoff.json").write_text(json.dumps(row, indent=1, ensure_ascii=False))
+    upload(out, dest, "full val and gold in the verdict file")
+    return row
+
+
+for key in shortlisted():
+    guarded(full_zero_shot, key)
+"""
+
+REPORT_NOTE = """
+## The shortlist
+
+Every candidate the rounds reached, read back from the hub: the sweep's numbers for all of them,
+the training step and the verdict for the shortlist, and val and gold for those round 3 ran. The
+summary goes to `<RUN_PREFIX>/summary.json`.
+"""
+
+REPORT = r"""
+nan = float("nan")
+found = sweeps()
+rows = {k: fetch_json(f"{RUN_PREFIX}/{k}/bakeoff.json") or {} for k in CANDIDATES}
+print(f"{'candidate':<16} {'prompt':<10} {'sweep':>7} {'Nepali':>6} {'val':>7} {'gold':>7} {'gold CER':>8} {'train x':>7} "
+      f"{'total h':>7}  verdict")
+for key, prompts in found.items():
+    if not prompts:
+        print(f"{key:<16} not swept")
+        continue
+    name = bakeoffkit.pick_prompt(prompts)
+    f, r = prompts[name], rows[key]
+    s, c, v = r.get("speed") or {}, r.get("cost") or {}, r.get("verdict")
+    verdict = "-" if v is None else ("continue" if v["continue"] else "stop")
+    print(f"{key:<16} {name:<10} {f['wer']:7.2f} {f['writes_nepali']:6.0%} {r.get('val', {}).get('wer', nan):7.2f} "
+          f"{r.get('gold', {}).get('wer', nan):7.2f} {r.get('gold', {}).get('cer', nan):8.2f} "
+          f"{s.get('train_x_realtime', nan):7.0f} {c.get('total_h', nan):7.1f}  {verdict}")
 summary = {"run_prefix": RUN_PREFIX, "budget_h": BUDGET_H, "gate_share": bakeoffkit.GATE_SHARE,
-           "shortlist": [k for k, r in found.items() if r["verdict"]["continue"]], "candidates": found}
+           "sweep_clips": len(SWEEP_ROWS), "default_shortlist": bakeoffkit.shortlist(found),
+           "continue": [k for k, r in rows.items() if (r.get("verdict") or {}).get("continue")],
+           "sweeps": {k: {n: {x: y for x, y in p.items() if x != "examples"} for n, p in ps.items()} for k, ps in found.items()},
+           "candidates": rows}
 (OUT_ROOT / "summary.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False))
 api.upload_file(path_or_fileobj=str(OUT_ROOT / "summary.json"), path_in_repo=f"{RUN_PREFIX}/summary.json",
                 repo_id=OUT_REPO, commit_message=f"{RUN_PREFIX}: summary")
-print("\nshortlist:", ", ".join(summary["shortlist"]) or "none")
+print("\ngo on to a student notebook:", ", ".join(summary["continue"]) or "none")
 """
 
 cells = [
@@ -899,6 +1026,12 @@ cells = [
     code(OMNI_KERNEL),
     md(RUN_NOTE),
     code(RUN),
+    md(SWEEP_NOTE),
+    code(SWEEP),
+    md(SPEED_NOTE),
+    code(SPEED),
+    md(FULL_NOTE),
+    code(FULL),
     md(REPORT_NOTE),
     code(REPORT),
 ]
