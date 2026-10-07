@@ -226,3 +226,23 @@ def test_a_candidate_with_no_training_measurement_cannot_continue() -> None:
 def test_the_token_cap_scales_with_the_clip_and_has_a_ceiling() -> None:
     assert bakeoffkit.token_cap(10.0, 4.0) == 68  # ceil(1.5 * 10 * 4) + 8
     assert bakeoffkit.token_cap(10.0, 400.0, ceiling=600) == 600
+
+
+# --- the breadth-first rounds --------------------------------------------------------------------
+
+
+def _p(passes: bool, wer: float = 50.0, share: float = 0.95) -> dict:
+    return {"passes_gate": passes, "wer": wer, "writes_nepali": share}
+
+
+def test_the_shortlist_is_every_candidate_whose_kept_prompt_passes_in_sweep_order() -> None:
+    sweeps = {
+        "b": {"x": _p(False, share=0.5), "y": _p(True)},
+        "a": {"x": _p(False, share=0.8)},
+        "c": {"x": _p(True)},
+    }
+    assert bakeoffkit.shortlist(sweeps) == ["b", "c"]
+
+
+def test_a_candidate_not_yet_swept_is_not_shortlisted() -> None:
+    assert bakeoffkit.shortlist({"a": {}, "b": {"x": _p(True)}}) == ["b"]

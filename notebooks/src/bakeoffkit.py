@@ -1,6 +1,7 @@
 """The speech-LLM bake-off's rules (D121): which audio LLMs are worth training as students?
 
-Every candidate transcribes val and gold zero-shot, and its training step is timed on the same GPU.
+The search is breadth-first: every candidate is swept zero-shot on a val sample first, and only
+the shortlist has its training step timed and its full val and gold decoded.
 Zero-shot WER says little about how a model trains (Whisper-turbo read 123% before fine-tuning
 and 15.02 after it), so the transcripts serve as a gate, not a ranking:
 
@@ -136,6 +137,16 @@ def pick_prompt(reports: Mapping[str, Mapping[str, Any]]) -> str:
     if passing:
         return min(passing, key=lambda n: (reports[n]["wer"], names.index(n)))
     return max(names, key=lambda n: (reports[n]["writes_nepali"], -names.index(n)))
+
+
+def shortlist(sweeps: Mapping[str, Mapping[str, Mapping[str, Any]]]) -> list[str]:
+    """The candidates that go on from the sweep (round 1) by default: those whose kept prompt
+    passes the gate on the val sample, in the sweep's order. One not yet swept is left out."""
+    return [
+        k
+        for k, prompts in sweeps.items()
+        if prompts and prompts[pick_prompt(prompts)]["passes_gate"]
+    ]
 
 
 def projection(
