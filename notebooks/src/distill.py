@@ -25,6 +25,12 @@ def smoke_source(
     return real_path
 
 
+def smoke_name(smoke: bool, stem: str) -> str:
+    """The name a notebook writes `stem` under: `<stem>-smoke` in a smoke run. A smoke run may
+    read a real folder (`smoke_source`), so what it writes there must never take a real name."""
+    return f"{stem}-smoke" if smoke else stem
+
+
 def tokenizer_texts(splits: Mapping[str, Sequence[dict]]) -> list[str]:
     """The labels the shared student tokenizer is trained on: train only.
 

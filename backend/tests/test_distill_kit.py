@@ -370,3 +370,10 @@ def test_a_real_run_never_reads_a_smoke_output() -> None:
 
     chosen = distill.smoke_source(False, "teacher-smoke.json", "teacher.json", exists)
     assert chosen == "teacher.json"
+
+
+def test_a_smoke_run_writes_under_its_own_name() -> None:
+    """09's smoke run reads the real Flex folder when there is no smoke teacher, so it must not
+    write report.md there: it would replace the real report with smoke numbers."""
+    assert distill.smoke_name(True, "report") == "report-smoke"
+    assert distill.smoke_name(False, "report") == "report"

@@ -311,3 +311,11 @@ def test_the_fit_check_comes_after_every_other_cell() -> None:
             assert not calls
             continue
         assert calls == [len(cells) - 1], path.name
+
+
+def test_a_smoke_report_never_replaces_the_real_one() -> None:
+    """09 uploads into the real Flex folder whenever no smoke teacher exists, so its file names
+    come from distill.smoke_name (the 2026-10-07 smoke run nearly overwrote report.md)."""
+    write = next(c["source"] for c in _BUILT["09_Report.ipynb"] if "upload_folder" in c["source"])
+    assert 'distill.smoke_name(SMOKE, "report")' in write
+    assert '"report.json"' not in write and '"report.md"' not in write

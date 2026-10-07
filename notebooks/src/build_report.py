@@ -42,7 +42,8 @@ overlapped beyond `MAX_OVERLAP_SHARE` were kept out of the pseudo-labels in step
 **Gold is held out.** Nothing in the protocol is chosen on gold or on the public sets: recipes,
 blends and the teacher are chosen on val. The gold and public columns are scores, not selections.
 
-**Outputs**: `FLEX_REPO/<flex prefix>/report.json` and `report.md`.
+**Outputs**: `FLEX_REPO/<flex prefix>/report.json` and `report.md` (`report-smoke.*` from a smoke
+run, which reads the real Flex runs when there is no smoke teacher).
 """
 
 CONFIG = r"""
@@ -382,10 +383,11 @@ report = {
     "public": {run: {name: got[name][0] for name in got} for run, got in public.items()},
     "public_mean": means, "public_vs_base": vs_base, "breakdowns": breakdowns,
 }
+name = distill.smoke_name(SMOKE, "report")  # a smoke run reads the real Flex folder; never overwrite its report
 out = FT / "report"
 out.mkdir(exist_ok=True)
-(out / "report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False))
-(out / "report.md").write_text("\n".join(md_lines) + "\n", "utf-8")
+(out / f"{name}.json").write_text(json.dumps(report, indent=1, ensure_ascii=False))
+(out / f"{name}.md").write_text("\n".join(md_lines) + "\n", "utf-8")
 api.upload_folder(repo_id=FLEX_REPO, folder_path=str(out), path_in_repo=FLEX_PREFIX,
                   commit_message=f"{FLEX_PREFIX}: report, {len(models)} runs")
 print("\n".join(md_lines))
