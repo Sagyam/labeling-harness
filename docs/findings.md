@@ -36,6 +36,95 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## Why the students stop 4-5 points short of the teacher (2026-10-08)
+
+Whisper, IndicConformer and Gemma E2B end stage 2 within 0.6 of each other on gold (15.02, 15.64,
+15.41) and 2.4-3.8 behind the teacher on val, 4.2-4.8 on gold, at 121M to 5.1B parameters. Where
+is that gap? Every stage's stored gold and val transcripts (the students repo, blend-075 and base
+in the Flex repo), aligned again with fold-v4 on a CPU; each row reproduces its published WER.
+Every reference word is put in a bucket by how often its `spelling_key` occurs in what stage 2
+trained on: the 14,835 human train labels plus blend-075's 21,368 kept pseudo-labels. A student's
+gap is split into the bucket's extra substitutions and deletions (per 100 reference words, so the
+parts sum to the WER gap) and the extra insertions. Intervals resample episodes. Code discarded.
+
+**Per-word error rate on gold** (substitutions plus deletions per 100 reference words in the
+bucket; the first three rows had none of our data or only ours):
+
+| | never (5.3% of words) | 1-9 (8.7%) | 10-99 (18.8%) | 100+ (67.2%) |
+|---|---|---|---|---|
+| teacher (blend-075) | 27.1 | 16.1 | 9.3 | 7.2 |
+| Flex base, none of our data | 26.8 | 18.3 | 12.6 | 10.3 |
+| Gemma E2B, zero-shot | 42.5 | 35.0 | 27.0 | 21.2 |
+| Whisper, stage 1 → 2 | 37.1 → 34.9 | 28.0 → 25.7 | 19.2 → 15.6 | 10.8 → 9.2 |
+| IndicConformer, stage 1 → 2 | 47.3 → 42.5 | 37.2 → 31.9 | 21.6 → 15.5 | 11.6 → 9.9 |
+| Gemma E2B, stage 1 → 2 | 38.7 → 38.2 | 25.6 → 23.3 | 14.5 → 13.7 | 10.2 → 9.8 |
+| Parakeet, stage 1 → 2 | 61.9 → 53.0 | 52.2 → 39.4 | 34.8 → 23.5 | 18.7 → 13.8 |
+| Conformer, stage 1 → 2 | 77.6 → 65.0 | 69.0 → 49.4 | 56.3 → 31.3 | 31.2 → 17.6 |
+
+**The gold gap, stage 2 minus the teacher, in points of WER:**
+
+| student | gap | never | 1-9 | 10-99 | 100+ | insertions |
+|---|---|---|---|---|---|---|
+| Whisper | +4.17 | +0.41 [+0.27, +0.55] | +0.83 [+0.62, +1.02] | +1.18 [+0.84, +1.56] | +1.36 [+1.06, +1.63] | +0.38 |
+| IndicConformer | +4.79 | +0.81 [+0.65, +1.00] | +1.38 [+1.19, +1.62] | +1.17 [+0.95, +1.38] | +1.84 [+1.40, +2.23] | −0.41 |
+| Gemma E2B | +4.56 | +0.59 [+0.43, +0.76] | +0.63 [+0.47, +0.77] | +0.82 [+0.63, +1.02] | +1.76 [+1.36, +2.11] | +0.77 |
+| Parakeet | +10.68 | +1.36 | +2.03 | +2.67 | +4.46 | +0.16 |
+| Conformer | +16.23 | +2.00 | +2.90 | +4.13 | +6.97 | +0.22 |
+
+Val has the same shape, smaller: Whisper +2.35 (rare words 35% of it), IndicConformer +3.80
+(42%), Gemma +3.80 (22%; common words +1.60 and insertions +0.73).
+
+- **Rare words are a third of the gap, not most of it**: words seen fewer than 10 times are 27-46%
+  of it on gold (Gemma 27%, Whisper 30%, IndicConformer 46%). Every student's largest single part
+  is the common words, 100+ times in training and 67% of gold's words: +1.4 to +1.8 points.
+- **The teacher's edge on rare words predates our data.** Base Flex, which never saw the corpus,
+  misses never-seen words at the teacher's rate (26.8 against 27.1) and words seen 1-9 times at
+  nearly its rate (18.3 against 16.1). No student gets near either (34.9-42.5, 23.3-31.9). That
+  half of the gap was brought by Flex's pretraining.
+- **On common words the students beat base Flex and lose to the teacher.** Base 10.3, students
+  9.2-9.9, teacher 7.2: the students learned the corpus's words from the same labels, but the
+  teacher, starting from its pretraining, learned more from them.
+- **The common-word gap is unheard voices.** On the 856 gold clips whose voice is not in train, common
+  words: teacher 6.7, Whisper 8.9, IndicConformer 9.4, Gemma 9.3. On the 49 clips of voices
+  heard for 10-60 min: teacher 12.7, Whisper 13.0 (few clips, and mostly podcast crosstalk).
+- **It is not crosstalk.** Gold's 674 clips with no overlap carry 2.75-3.35 points of the gap
+  (teacher 6.42, students 10.50-11.40); the three overlap buckets together 1.2-1.8.
+- **The teacher's labels teach exactly the words they hold, in proportion to how often.** Gold
+  words never in the human labels but present in the pseudo-labels (2.4% of gold's words), stage 1 →
+  stage 2: Whisper 30.4 → 25.2, IndicConformer 39.1 → 32.3, Gemma 26.2 → 21.8 (teacher 14.4).
+  Words in neither (5.3%): Whisper −2.1, IndicConformer −4.8, Gemma −0.4. By how often the
+  pseudo-labels hold such a word, Whisper reads 33.1 → 28.3 when they hold it once, 34.9 → 23.3 at 5-19
+  times and 12.1 → 6.1 at 20+ (33 words; the teacher 18.5, 11.0, 3.0).
+- **The pseudo-labels added vocabulary gold does not use.** They hold 27,846 word types absent
+  from the human labels (the human labels hold 39,057), yet those types are 2.4% of gold's words:
+  podcasts and commentary, while gold is mostly reels.
+- **Gemma learned new words and almost nothing else.** Its stage-2 gain is on pseudo-only words
+  (−4.4) and 1-9 (−1.5); unseen words −0.4, common −0.3. Whisper and IndicConformer also heard
+  common words better (−1.3, −1.4). This fits its fit check (train 3.18): it memorised.
+- **The farther from the teacher, the more every bucket gained**: Parakeet and the Conformer
+  fell 4-25 points per bucket, common words included. Stage 2 helps a student most where its
+  own prior is weakest, and the three that knew some Nepali had little left to gain from 80 h.
+
+**The story.** The teacher is two things: a prior (canary's 1.7M hours and Bodhan's Indic
+fine-tune) and our corpus. The students take the corpus from the same labels, beating base Flex
+on its common words, but the prior reaches them only through the 80 h of audio the teacher
+transcribed. That passes on the words in it, more fully the more often they occur, and some
+of the robustness to new voices. The prior's long tail of words and its many voices do not pass.
+So they converge where their own priors plus the corpus put them, regardless of size. To move
+the floor a student needs teacher-labelled audio whose words and voices are gold's: other topics
+and speakers, not more of the same channels.
+
+**What this does not show.**
+- The base row is the base transcripts on the hub (gold 13.79, val 9.53), not 03b's corrected
+  13.40 and 9.24; the corrected run would read slightly better in every bucket.
+- Frequency is counted on spelling keys; a word the teacher's labels misspell counts as unseen.
+- One seed per student, and the learning-rate-restart confound of each 100 h point.
+- The voice-exposure rows outside "unseen" are 49 and 60 clips, mostly crosstalk.
+- How much more data a fixed gain would take: there is one point per student, and the
+  word-count dose response above is from words, not hours.
+
+---
+
 ## Gemma 4 E2B's 100 h point: the best stage 1, the smallest gain from the teacher (2026-10-08)
 
 `07a_Student_LLM_Gemma_E2B` on the 2026-09-30 export, one RTX PRO 6000 (96 GB), the kit built at
