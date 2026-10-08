@@ -36,6 +36,54 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## Word rarity on every set: the public sets' gaps are mostly rare words (2026-10-08)
+
+D123 put the split of the entry below into the evaluation, and `scripts/backfill_rarity.py`
+added it to the teacher's and the four stage-2 students' breakdowns on gold, val and the five
+public sets, from their error files. The counts are the export's human train labels plus
+blend-075's 21,368 kept pseudo-labels: 1,212,922 words, 66,903 spelling keys (fold-v4), in the
+dataset's `harness/word_counts.json`. Gold reproduces the entry below's per-word rates exactly.
+Here an insertion is bucketed by the inserted word, not kept apart, so the parts differ from that
+table's; every row's parts add up to its WER.
+
+**Reference words never in training**: gold 5.3%, val 4.1%, nepali_cs 5.0%, Common Voice 10.8%,
+IndicVoices 13.2%, SLR54 17.8%, FLEURS 18.3%.
+
+**Each student minus the teacher, in points of WER** (never / 1-9 / 10-49 / 50-99 / 100+), and
+the share of the gap on words seen fewer than 10 times:
+
+| set | Whisper | IndicConformer | Gemma E2B | Parakeet |
+|---|---|---|---|---|
+| gold | +4.17: +0.66 / +0.87 / +0.83 / +0.34 / +1.46 (37%) | +4.79: +0.86 / +1.35 / +0.83 / +0.27 / +1.47 (46%) | +4.56: +0.69 / +0.71 / +0.62 / +0.32 / +2.23 (31%) | +10.68 (33%) |
+| val | +2.35 (39%) | +3.80 (42%) | +3.80 (29%) | +6.71 (34%) |
+| FLEURS | +10.53: +3.58 / +2.63 / +1.82 / +0.78 / +1.72 (59%) | +3.97: +2.01 / +0.80 / +0.46 / +0.22 / +0.49 (71%) | +8.53 (56%) | +19.22 (58%) |
+| SLR54 | +12.95 (63%) | −1.18: +0.26 / −0.23 / −0.37 / −0.09 / −0.75 | +9.79 (60%) | +21.57 (62%) |
+| Common Voice | +7.50 (42%) | +3.61 (58%) | +8.14 (51%) | +15.01 (44%) |
+| IndicVoices | +10.67 (44%) | +2.75 (51%) | +12.03: +2.29 / +1.72 / +1.23 / +0.96 / +5.83 (33%) | +18.75 (35%) |
+| nepali_cs | +5.16: +0.58 / +0.52 / +1.05 / +0.48 / +2.53 (21%) | +7.54 (48%) | +4.73 (18%) | +10.14 (27%) |
+
+- **On the read-speech sets the gap is mostly rare words.** FLEURS and SLR54, where a sixth of
+  the words were never trained on, put 56-71% of every student's gap on words seen fewer than 10
+  times; on gold and val, a third.
+- **The teacher's rare-word edge holds outside our domain.** Its rate on never-seen words is
+  18.5-34.6 across the public sets; Whisper's 35.8-45.9, Gemma's 34.5-49.7, Parakeet's 48.7-57.8.
+- **IndicConformer is the exception on the read sets**: closest to the teacher on FLEURS, and on
+  SLR54 better than it overall (6.23 against 7.41) and in every bucket but the never-seen words
+  (common words 1.0 against 2.5 per 100). Its Nepali pretraining is the likely reason; whether
+  SLR54 was part of it was not checked.
+- **On code-switched lectures (nepali_cs) it is the other way round**: IndicConformer is the
+  furthest student behind, worst on rare words (51.6 per 100 on never-seen against Whisper's
+  35.8), and for Whisper and Gemma the common words carry most of the gap (rare 18-21%).
+- **Gemma's gap is common words wherever there is conversation**: on IndicVoices +5.83 of its
+  +12.03 is words seen 100+ times, as on gold (+2.23 of +4.56).
+
+**What this does not show.** Point differences, without intervals: the 09 report prints them so,
+and `error_store.rarity(..., base=...)` gives paired ones. One seed per student. The counts are
+fixed per teacher and export, so a student trained on other pseudo-labels needs them counted
+again.
+
+---
+
 ## Why the students stop 4-5 points short of the teacher (2026-10-08)
 
 Whisper, IndicConformer and Gemma E2B end stage 2 within 0.6 of each other on gold (15.02, 15.64,
