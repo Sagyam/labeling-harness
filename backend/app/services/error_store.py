@@ -28,7 +28,14 @@ from typing import Any
 import duckdb
 
 from app.services import attribution
-from app.services.error_mining import SETS, MinedFileError, metadata
+from app.services.error_mining import (
+    RARITY_BUCKETS,
+    SETS,
+    MinedFileError,
+    metadata,
+    rarity_bucket,
+)
+from app.services.fold import spelling_key
 
 ERRORS_DIR = "errors"
 #: ``model_eval``'s resampling, repeated so this module needs nothing of the database layer: the
@@ -474,6 +481,108 @@ def breakdown(path: Path, *, base: Path | None = None) -> dict[str, Any]:
             _counts_for_card(shared), _counts_for_card([theirs[c.clip_id] for c in shared])
         )
     out["by_values"] = sorted({c.by_value for c in clips if c.by_value is not None})
+    return out
+
+
+@dataclass(frozen=True)
+class _RarityClip:
+    """One clip's counts per rarity bucket: ``{bucket: [sub, del, ins, reference words]}``."""
+
+    clip_id: str
+    group: str
+    words: int
+    cells: dict[str, list[int]]
+
+
+def _rarity_clips(path: Path, counts: Mapping[str, int]) -> dict[str, _RarityClip]:
+    """Each clip's errors and reference words by the rarity of the word each concerns: a
+    substitution's and deletion's reference word, an insertion's inserted word."""
+    bucket_of: dict[str, str] = {}
+
+    def bucket(word: str) -> str:
+        if word not in bucket_of:
+            bucket_of[word] = rarity_bucket(counts.get(spelling_key(word), 0))
+        return bucket_of[word]
+
+    rows = _query(
+        f'SELECT clip_id, "group", kind, ref, hyp FROM {_source(path)} ORDER BY clip_id, pos'
+    )
+    out: dict[str, _RarityClip] = {}
+    for r in rows:
+        clip = out.get(r["clip_id"])
+        if clip is None:
+            cells = {b: [0, 0, 0, 0] for b in RARITY_BUCKETS}
+            clip = out[r["clip_id"]] = _RarityClip(r["clip_id"], r["group"], 0, cells)
+        for word in r["ref"]:
+            clip.cells[bucket(word)][3] += 1
+        if r["kind"] in _ERRORS:
+            word = (r["hyp"] if r["kind"] == "ins" else r["ref"])[0]
+            clip.cells[bucket(word)][_ERRORS.index(r["kind"])] += 1
+    return {
+        k: _RarityClip(c.clip_id, c.group, sum(cell[3] for cell in c.cells.values()), c.cells)
+        for k, c in out.items()
+    }
+
+
+def _in_bucket(bucket: str) -> tuple[Measure, Measure]:
+    """A bucket's points (its errors per 100 reference words of the whole clip) and its rate
+    (substitutions and deletions per 100 of its own reference words), as measures."""
+
+    def points(clip: Any) -> tuple[int, int]:
+        sub, dele, ins, _ = clip.cells[bucket]
+        return sub + dele + ins, clip.words
+
+    def rate(clip: Any) -> tuple[int, int]:
+        sub, dele, _, words = clip.cells[bucket]
+        return sub + dele, words
+
+    return points, rate
+
+
+def rarity(path: Path, counts: Mapping[str, int], *, base: Path | None = None) -> dict[str, Any]:
+    """The file's WER split by how often each error's word occurs in ``counts`` (D123).
+
+    Each bucket of :data:`RARITY_BUCKETS` holds its share of the reference words, its
+    substitutions, deletions and insertions in points of WER (per 100 reference words of the
+    whole set, so every bucket's ``points`` add up to the WER), and its ``rate``: substitutions
+    and deletions per 100 of its own reference words, ``None`` when it has none, with an interval
+    from resampling ``group``. A substitution and a deletion are bucketed by the reference word,
+    an insertion by the word inserted.
+
+    With ``base``, each bucket's points and rate also carry this run minus the base on the clips
+    both scored, ``[difference, low, high]``.
+    """
+    clips = list(_rarity_clips(path, counts).values())
+    words = sum(c.words for c in clips)
+    totals = {b: [sum(c.cells[b][k] for c in clips) for k in range(4)] for b in RARITY_BUCKETS}
+    errors = sum(sum(t[:3]) for t in totals.values())
+    theirs = _rarity_clips(base, counts) if base is not None else None
+    shared = [c for c in clips if theirs is not None and c.clip_id in theirs]
+    out: dict[str, Any] = {"ref_words": words, "wer": _rate(errors, words), "buckets": []}
+    if theirs is not None:
+        out["vs_base"] = {"clips": len(shared)}
+    for b in RARITY_BUCKETS:
+        sub, dele, ins, own = totals[b]
+        points, rate = _in_bucket(b)
+        entry = {
+            "bucket": b,
+            "ref_words": own,
+            "share_of_words": own / words if words else 0.0,
+            "sub": _rate(sub, words),
+            "del": _rate(dele, words),
+            "ins": _rate(ins, words),
+            "points": _rate(sub + dele + ins, words),
+            "share_of_errors": (sub + dele + ins) / errors if errors else 0.0,
+            "rate": _rate(sub + dele, own) if own else None,
+            "rate_ci": _interval(clips, rate) if own else None,
+        }
+        if theirs is not None:
+            paired = {
+                name: _paired(shared, theirs, measure)
+                for name, measure in (("points", points), ("rate", rate))
+            }
+            entry["vs_base"] = {k: v["wer"] if v else None for k, v in paired.items()}
+        out["buckets"].append(entry)
     return out
 
 

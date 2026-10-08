@@ -298,3 +298,41 @@ def test_a_deleted_or_inserted_particle_is_tagged() -> None:
 def test_a_repeated_particle_is_a_repetition() -> None:
     (deleted,) = _by_kind(pairs("हो हो भन्नुभयो", "हो भन्नुभयो"), "del")
     assert deleted["variant"] == "repetition"
+
+
+# --- word rarity (D123) --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("count", "bucket"),
+    [(0, "never"), (1, "1-9"), (9, "1-9"), (10, "10-49"), (49, "10-49"), (50, "50-99"),
+     (99, "50-99"), (100, "100+"), (5000, "100+")],
+)  # fmt: skip
+def test_a_word_s_training_count_puts_it_in_one_rarity_bucket(count: int, bucket: str) -> None:
+    assert error_mining.rarity_bucket(count) == bucket
+
+
+def test_training_words_are_counted_by_spelling_key_after_the_fold_s_tokenizer() -> None:
+    counts = error_mining.word_counts(["Cat sat, on the mat.", "the CAT", None, ""])
+    assert counts == {"cat": 2, "sat": 1, "on": 1, "the": 2, "mat": 1}
+
+
+def test_a_count_file_round_trips_and_names_its_sources(tmp_path: Path) -> None:
+    path = tmp_path / "word_counts.json"
+    error_mining.write_counts(path, {"cat": 2}, sources={"human": 1, "pseudo": 1})
+    meta, counts = error_mining.read_counts(path)
+    assert counts == {"cat": 2}
+    assert meta["sources"] == {"human": 1, "pseudo": 1}
+    assert meta["fold_version"] == fold_version()
+    assert meta["types"] == 1 and meta["tokens"] == 2
+
+
+def test_a_count_file_from_another_fold_is_refused(tmp_path: Path) -> None:
+    """Spelling keys move with the fold: a count keyed by another fold's keys would bucket wrong."""
+    path = tmp_path / "word_counts.json"
+    error_mining.write_counts(path, {"cat": 2}, sources={})
+    data = json.loads(path.read_text("utf-8"))
+    data["fold_version"] = "fold-v0+norm-v0"
+    path.write_text(json.dumps(data))
+    with pytest.raises(MinedFileError, match="fold-v0"):
+        error_mining.read_counts(path)

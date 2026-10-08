@@ -29,6 +29,7 @@ import duckdb
 from app.services.fold import (
     Alignment,
     AlignOp,
+    fold_tokens,
     fold_version,
     is_number,
     is_particle,
@@ -368,6 +369,70 @@ def read_snr(path: Path | str) -> dict[str, float | None]:
             f"SELECT clip_id, snr_db FROM read_parquet({_sql_string(str(path))})"
         ).fetchall()
     return dict(found)
+
+
+# --- word rarity (D123) --------------------------------------------------------------------------
+
+#: How often a word's spelling key occurs in what the students trained on, lowest first; at or
+#: above the last edge is ``100+``.
+RARITY_EDGES = ((1, "never"), (10, "1-9"), (50, "10-49"), (100, "50-99"))
+RARITY_BUCKETS = (*(b for _, b in RARITY_EDGES), "100+")
+
+
+def rarity_bucket(count: int) -> str:
+    """The rarity bucket of a word trained on ``count`` times."""
+    for edge, bucket in RARITY_EDGES:
+        if count < edge:
+            return bucket
+    return "100+"
+
+
+def word_counts(texts: Iterable[str | None]) -> dict[str, int]:
+    """How often each spelling key occurs in ``texts``, tokenized as the scorer tokenizes a
+    reference, so a key here is the key of a word in an error row."""
+    counts: dict[str, int] = {}
+    for text in texts:
+        for token in fold_tokens(text):
+            key = spelling_key(token)
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def write_counts(
+    path: Path | str, counts: Mapping[str, int], *, sources: Mapping[str, Any]
+) -> None:
+    """Write a training corpus's word counts as JSON, with the fold that keyed them and
+    ``sources``: what was counted, for whoever reads a bucket later."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "fold_version": fold_version(),
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),  # noqa: UP017
+        "sources": dict(sources),
+        "types": len(counts),
+        "tokens": sum(counts.values()),
+        "counts": dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+    }
+    partial = path.with_name(path.name + ".tmp")
+    partial.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(partial, path)
+
+
+def read_counts(path: Path | str) -> tuple[dict[str, Any], dict[str, int]]:
+    """A count file's metadata and counts (:func:`write_counts`).
+
+    Raises:
+        MinedFileError: The counts were keyed by another fold, whose spelling keys are not this
+            one's.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if data.get("fold_version") != fold_version():
+        raise MinedFileError(
+            f"{Path(path).name}: counted under {data.get('fold_version')}, and this harness folds "
+            f"with {fold_version()}: count the training texts again"
+        )
+    counts = data.pop("counts")
+    return data, counts
 
 
 def _text(value: bytes | str) -> str:

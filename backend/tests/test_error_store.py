@@ -424,3 +424,75 @@ def test_occurrences_filter_by_rule_and_tag(tmp_path: Path) -> None:
     assert [(r["ref"], r["hyp"]) for r in by_rule["rows"]] == [(["B"], ["बी"])]
     by_tag = occurrences(path, ErrorFilter(variant="ba-va"))
     assert [(r["ref"], r["hyp"]) for r in by_tag["rows"]] == [(["दावी"], ["दाबी"])]
+
+
+# --- word rarity (D123) --------------------------------------------------------------------------
+
+#: alpha is common, bravo never seen, charlie 10-49, delta 1-9; the inserted zulu 50-99.
+_COUNTS = {"alpha": 500, "charlie": 20, "delta": 5, "zulu": 60, "echo": 1}
+
+
+def _bucket(found: dict, name: str) -> dict:
+    return next(b for b in found["buckets"] if b["bucket"] == name)
+
+
+def test_rarity_splits_the_wer_by_how_often_each_error_s_word_was_trained_on(
+    tmp_path: Path,
+) -> None:
+    from app.services.error_store import rarity
+
+    clips = [
+        # bravo -> xray (sub, never) and zulu inserted (50-99)
+        _clip("c1", "alpha bravo charlie delta", "alpha xray charlie zulu delta", group="g1"),
+        # delta deleted (1-9)
+        _clip("c2", "alpha bravo charlie delta", "alpha bravo charlie", group="g2"),
+    ]
+    _file(tmp_path, "r", "gold", clips, name="gold.parquet")
+    found = rarity(tmp_path / "gold.parquet", _COUNTS)
+    assert [b["bucket"] for b in found["buckets"]] == ["never", "1-9", "10-49", "50-99", "100+"]
+    assert found["ref_words"] == 8
+    assert found["wer"] == pytest.approx(300 / 8)
+
+    never = _bucket(found, "never")
+    assert (never["ref_words"], never["share_of_words"]) == (2, 0.25)
+    assert (never["sub"], never["del"], never["ins"]) == (pytest.approx(100 / 8), 0.0, 0.0)
+    assert never["rate"] == pytest.approx(50.0)  # one of its two words missed
+    assert never["share_of_errors"] == pytest.approx(1 / 3)
+
+    rare = _bucket(found, "1-9")
+    assert rare["del"] == pytest.approx(100 / 8) and rare["rate"] == pytest.approx(50.0)
+
+    inserted = _bucket(found, "50-99")
+    assert inserted["ref_words"] == 0 and inserted["rate"] is None
+    assert inserted["ins"] == pytest.approx(100 / 8)
+
+    common = _bucket(found, "100+")
+    assert common["points"] == 0.0 and common["rate"] == 0.0
+    # The buckets' points add up to the WER, and their S, D and I to its.
+    assert sum(b["points"] for b in found["buckets"]) == pytest.approx(found["wer"])
+    assert sum(b["sub"] + b["del"] + b["ins"] for b in found["buckets"]) == pytest.approx(
+        found["wer"]
+    )
+    assert never["rate_ci"] is not None
+
+
+def test_rarity_against_a_base_is_paired_on_the_shared_clips(tmp_path: Path) -> None:
+    from app.services.error_store import rarity
+
+    run = [
+        _clip("c1", "alpha bravo", "alpha xray", group="g1"),
+        _clip("c2", "alpha bravo", "alpha bravo", group="g2"),
+        _clip("c3", "alpha bravo", "alpha", group="g3"),  # the base never scored it
+    ]
+    base = [
+        _clip("c1", "alpha bravo", "alpha bravo", group="g1"),
+        _clip("c2", "alpha bravo", "alpha bravo", group="g2"),
+    ]
+    _file(tmp_path, "r", "gold", run, name="run.parquet")
+    _file(tmp_path, "b", "gold", base, name="base.parquet")
+    found = rarity(tmp_path / "run.parquet", _COUNTS, base=tmp_path / "base.parquet")
+    never = _bucket(found, "never")
+    assert found["vs_base"]["clips"] == 2
+    assert never["vs_base"]["points"][0] == pytest.approx(100 / 4)
+    assert never["vs_base"]["rate"][0] == pytest.approx(50.0)
+    assert _bucket(found, "100+")["vs_base"]["points"][0] == 0.0
