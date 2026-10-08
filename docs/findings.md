@@ -24,14 +24,104 @@ What survives:
   their only record.
 - **The students.** `Sagyam/nepanglish-asr-students` under `students-2026-09-30/`: 06a's two
   Whisper stages and 06c's two IndicConformer stages from 2026-10-04, 06d's two Parakeet
-  stages from 2026-10-05, and 06f's two Conformer stages from 2026-10-05/06 (weights, transcripts,
-  metrics, error rows; 06f also `fit_check.json`).
+  stages from 2026-10-05, 06f's two Conformer stages from 2026-10-05/06, and 07a's two Gemma 4
+  E2B stages from 2026-10-07/08 (weights, transcripts, metrics, error rows; 06f and 07a also
+  `fit_check.json`).
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## Gemma 4 E2B's 100 h point: the best stage 1, the smallest gain from the teacher (2026-10-08)
+
+`07a_Student_LLM_Gemma_E2B` on the 2026-09-30 export, one RTX PRO 6000 (96 GB), the kit built at
+6d62738, after a smoke run. Gemma 4 E2B-it with the bake-off's prompt, fully fine-tuned (2.35B of
+5.10B parameters; the embeddings frozen), the same stages, mixture and teacher as the ASR students:
+stage 1 (*human*) on the 14,834 verified train clips; stage 2 (*distill*) from stage 1 on those
+plus blend-075's 21,368 pseudo-labels (79.5 h), half of each epoch's draws human. Stage 3 was not
+run. One seed. Weights, transcripts, error rows and both fit checks are in
+`Sagyam/nepanglish-asr-students` under `students-2026-09-30/gemma-e2b-{human,distill}/`. Folded
+WER is fold-v4.
+
+**Training.** Stage 1, val by epoch: 12.88, **11.43**, 11.45, 11.71, 11.81, stopped by the
+patience rule after epoch 5, best at 2 (about 1.8 h of training at 170–200× realtime). Stage 2:
+11.41, 10.93, **10.88**, 11.51, stopped by hand after epoch 4 (`stopped_by_hand` in its
+`trained.json`), best at 3 (about 3 h at about 205×). Training loss fell in a step at every epoch
+boundary (stage 1: about 0.45, 0.33, 0.19, 0.095, 0.04; stage 2: 0.24, 0.18, 0.12): it memorises
+clips it has already seen. Val stopped improving within two or three epochs in both stages. No
+loops in the final scores.
+
+| | val | gold | gold, no crosstalk | gold, >15% crosstalk |
+|---|---|---|---|---|
+| teacher (blend-075) | 7.08 | 10.85 | | |
+| Gemma E2B, zero-shot (bake-off) | 23.20 | 27.24 | 21.69 | 45.82 |
+| Gemma E2B, stage 1 | 11.43 (7.87 / 1.77 / 1.79) | 16.09 (11.15 / 2.72 / 2.22) | 11.11 | 34.56 |
+| Gemma E2B, stage 2 | **10.88** (7.36 / 1.69 / 1.83) | **15.41** (10.42 / 2.78 / 2.20) | 10.50 | 33.21 |
+| Whisper, stage 2 (06a) | 9.43 | 15.02 | 10.57 | 31.56 |
+| IndicConformer, stage 2 (06c) | 10.88 | 15.64 | 11.40 | 32.26 |
+
+- **The best stage 1 of any student**, on human labels alone: gold 16.09 against Whisper's 17.32
+  and IndicConformer's 18.42, from 27.24 zero-shot.
+- **The smallest gain from the teacher's labels. Stage 2 minus stage 1: gold −0.68 [−1.08,
+  −0.26], val −0.55 [−1.13, −0.18]**, against Whisper's −2.30 and IndicConformer's −2.77 on gold.
+  It closed 13% of the gap to the teacher on gold (+5.24 → +4.56 [+3.85, +5.21]) and 13% on val
+  (+4.35 → +3.80), against 36–37% for the ASR students.
+- **All of the gain is substitutions** (gold 11.15 → 10.42); deletions and insertions did not
+  move. It was largest on pure Nepali (CMI 0 −1.10 [−2.27, −0.28]) and on two-speaker clips
+  (−1.22), and about nothing where the speech is mostly English (CMI 30+ −0.41 [−1.44, +0.61]).
+- **Against the ASR students' stage 2, paired on the same clips** (from the runs' `per_clip.json`,
+  episodes resampled): Whisper gold +0.39 [−0.47, +1.33] and val +1.45 [+0.57, +2.18];
+  IndicConformer gold −0.23 [−0.98, +0.49] and val −0.00 [−1.60, +2.33]. On gold it ties both.
+- **It memorises fast.** The fit check (500 train clips decoded beside val): train 7.62 against
+  val 11.43 after stage 1, train **3.18** against val 10.88 after stage 2. With half of every
+  stage-2 epoch drawn from the 51 h of human labels, each human clip comes back every epoch. The
+  epochs after the best one were wasted: about 1 h in stage 1 and 45 min in stage 2.
+- **Its crosstalk errors are Whisper's kind, not IndicConformer's.** Gold deletions above 15%
+  overlap 8.00, against Whisper's 7.65 and IndicConformer's 13.84: it attempts overlapped words
+  rather than dropping them.
+- **Val to gold +4.5**, against Whisper's +5.6 and IndicConformer's +4.8 (stage 2).
+- **Gold RTF 0.0085** on the G4 (fp32 weights under bf16 autocast, batched greedy decoding).
+
+**Public sets**, folded WER, then plain WER and plain CER as in 06a:
+
+| set | stage 1 folded | stage 2 folded | difference [95% CI] | plain WER, 1 → 2 | plain CER, 1 → 2 |
+|---|---|---|---|---|---|
+| FLEURS | 20.07 | 19.59 | −0.48 [−1.15, +0.22] | 32.47 → 32.25 | 15.64 → 15.93 |
+| SLR54 | 18.39 | 17.20 | −1.19 [−1.55, −0.84] | 30.22 → 28.38 | 11.67 → 11.17 |
+| Common Voice | 17.57 | 16.00 | −1.57 [−2.97, −0.05] | 32.40 → 31.88 | 11.90 → 11.79 |
+| IndicVoices | 26.08 | 24.32 | −1.76 [−2.26, −1.30] | 43.00 → 40.43 | 24.07 → 22.87 |
+| nepali_cs | 16.71 | 16.04 | −0.67 [−1.48, −0.07] | 29.03 → 28.05 | 16.64 → 16.03 |
+
+Public mean, folded: 19.76 → 18.63 (Whisper's stage 2: 19.35; IndicConformer's: 13.32; the
+teacher's: 9.99).
+
+- **Level with Whisper on the public mean, well behind IndicConformer** except on nepali_cs, where
+  it is close to Whisper (16.48) and ahead of IndicConformer (18.85).
+- **nepali_cs is mostly insertions**: 5.12 of its 16.04 after stage 2, against about 1.3–2.9
+  elsewhere.
+- **Plain WER sits 11–16 points above folded WER on every set** (stage 2), about the same gap as
+  the ASR students'. Plain CER moved by 0.6 points or less between the stages except on
+  IndicVoices (−1.2), so on four of the five sets stage 2 barely heard better.
+
+**What this does not show.**
+- The same learning-rate-restart confound as 06a and 06c, with less reason to dismiss it: stage 1
+  had stopped improving, stage 2 re-warmed the schedule, and its whole gain is 0.68 on gold.
+- One seed.
+- Whether a lower human share or an earlier stop in stage 2 would have let the teacher's labels
+  do more: memorisation of the replayed human clips is the likely reason the gain is small, but
+  that was not tested.
+
+**Operational notes.**
+- The resume point is the whole model in fp32, 22 GB, and 44 GB once it also holds the best
+  weights. From stage 1's epoch 3 the saves hit the hub's private storage limit, and training
+  continued without them, as `HubResume` is built to. `Sagyam/nepanglish-asr-resume` was made
+  public on 2026-10-07 (it only ever holds weights in progress), after which every save
+  succeeded. Saving only the trained parameters would halve the file.
+- The GPU monitor printed `nan` for one stage-2 epoch after a resume upload, as in 06a.
 
 ---
 

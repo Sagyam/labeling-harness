@@ -217,8 +217,10 @@ step 4's curve says how much audio closes the gap.
    *Speech-LLMs as students*): Gemma 4 E2B and Omnilingual LLM-ASR 1B go on, as `07a` and `07b`,
    the smaller sibling of each kind; the rest are out. Each has the same three stages as the ASR
    students, held to D121's bars. The paper's family claim is the recipe's gain per family (stage
-   2 minus stage 1), with 06e against 07b as the controlled pair, not which family wins. Neither
-   notebook has run on a GPU: smoke runs first.
+   2 minus stage 1), with 06e against 07b as the controlled pair, not which family wins. Both
+   passed their smoke runs on 2026-10-07. 07a ran on 2026-10-07/08 (findings.md, *Gemma 4 E2B's
+   100 h point*): the best stage 1 of any student (gold 16.09), but stage 2 gained only 0.68, and
+   it memorised the replayed human clips within two or three epochs. **Next:** 07b.
 
 6. **At the very end, convene the council again** (owner, 2026-10-06). Once every student is
    trained, rerun the panel vote: the teacher's greedy decode and the students vote among the
