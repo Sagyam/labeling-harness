@@ -281,5 +281,11 @@ its reversal cost. When a later entry overrides an old one, delete the old entry
 for it to the file's "Retired entries" list, so code comments citing it still resolve; trim an
 entry that is only partly superseded down to what still holds.
 
+Figures live in `docs/diagrams/` as hand-written SVG and nothing else: no HTML source, no PDF,
+no build step. Each is authored at `viewBox` width 560 in the `nepanglish-paper` style (white
+ground, one teal accent on at most two elements, no type below 12px), and draws what is particular
+to this harness, never how a generic model or tool works. A figure is part of the document that
+embeds it: when the behaviour it draws changes, redraw it in the same commit, or delete it.
+
 Do not reintroduce per-session progress, TODO or verification files. Git history is the session
 log, and the test suite is the verification record.

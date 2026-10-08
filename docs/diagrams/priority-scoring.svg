@@ -1,73 +1,114 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 560 656" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="priority-scoring-title priority-scoring-desc">
-      <title id="priority-scoring-title">Priority score composition</title>
-      <desc id="priority-scoring-desc">Three normalized signals combine into a segment's queue priority, with band width proportional to each weight. Seed outvoted contributes 0.60 and rule flags 0.15; both read every ASR hypothesis of the segment. Low confidence contributes 0.25 and reads the seed hypothesis alone. The three weights sum to 1.0, so the score is itself in the zero-to-one range.</desc>
-      <defs>
-        <style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,400&amp;display=swap');</style>
-        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
-        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#146b6b"/></marker>
-        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
-      </defs>
+<svg viewBox="0 0 560 872" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="priority-title priority-desc">
+  <title id="priority-title">Priority score</title>
+  <desc id="priority-desc">A clip's queue priority is six terms, each between 0 and 1, weighted to sum to 1. Three ask whether the fused seed is supported by the evidence, 0.65 in all: unheard words, fused words no recogniser heard even by sound, 0.30; dropped words, words two recognisers share that the seed lacks, 0.20; and the acoustic gap between the seed and the aligner's own reading of the clip, 0.15. Three measure how hard the clip is, 0.35 in all: disagreement among the three recognisers after script folding, 0.20; Scribe's average log-probability, 0.10; and the share of eight rule flags raised, 0.05. Any hazard gate adds 1: invention, dropped, seam_bleed, length_outlier, emptied, speech_over_silence, unaligned, fuser_uncertain, unfused, or relabel for a reopened clip. A gated clip sorts above every ungated one and refuses a screened decision with 409. An audit queue takes 5% of the lower-ranked half of ungated clips, and a clip with no hypothesis goes to the error queue. The seed is never scored for agreeing with the recognisers, because it was built to agree with them.</desc>
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,400&amp;display=swap');
+      text { font-family: 'Inter', sans-serif; }
+      .n { font-size: 16px; font-weight: 600; fill: #1b2430; }
+      .k { font-size: 12px; font-weight: 600; fill: #1b2430; }
+      .s { font-size: 12px; fill: #55606e; }
+      .m { font-family: 'IBM Plex Mono', monospace; font-size: 12px; fill: #55606e; }
+      .mi { font-family: 'IBM Plex Mono', monospace; font-size: 12px; fill: #1b2430; }
+      .e { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; fill: #7d8794; letter-spacing: 0.14em; }
+      .ea { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; fill: #146b6b; letter-spacing: 0.14em; }
+      .c { font-family: 'Source Serif 4', serif; font-style: italic; font-size: 16px; fill: #1b2430; }
+      .box { fill: #ffffff; stroke: #1b2430; stroke-width: 1; }
+      .in { fill: rgba(85,96,110,0.10); stroke: #7d8794; stroke-width: 1; }
+      .ext { fill: rgba(27,36,48,0.03); stroke: rgba(27,36,48,0.30); stroke-width: 1; }
+      .store { fill: rgba(27,36,48,0.05); stroke: #55606e; stroke-width: 1; }
+      .leaf { fill: #ffffff; stroke: #55606e; stroke-width: 0.8; }
+      .focal { fill: rgba(20,107,107,0.09); stroke: #146b6b; stroke-width: 1.2; }
+      .flow { stroke: #55606e; stroke-width: 1; fill: none; }
+      .dash { stroke: #55606e; stroke-width: 1; fill: none; stroke-dasharray: 4 3; }
+    </style>
+    <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
+  </defs>
 
-      <rect width="100%" height="100%" fill="#ffffff"/>
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text class="e" x="40" y="36">IS THE SEED SUPPORTED?</text>
+  <text class="mi" x="520" y="36" text-anchor="end">0.65</text>
+  <text class="n" x="40" y="68">Unheard words</text>
+  <text class="s" x="40" y="86">fused words no recogniser heard, even by sound</text>
+  <text class="mi" x="392" y="67" text-anchor="end">0.30</text>
+  <rect x="400" y="55" width="120" height="16" fill="#55606e"/>
+  <text class="m" x="400" y="86">unsupported_rate</text>
+  <text class="n" x="40" y="120">Dropped words</text>
+  <text class="s" x="40" y="138">words two recognisers share and the seed lacks</text>
+  <text class="mi" x="392" y="119" text-anchor="end">0.20</text>
+  <rect x="400" y="107" width="80" height="16" fill="#55606e"/>
+  <text class="m" x="400" y="138">dropped_rate</text>
+  <text class="n" x="40" y="172">Acoustic gap</text>
+  <text class="s" x="40" y="190">the seed against the aligner's own reading</text>
+  <text class="mi" x="392" y="171" text-anchor="end">0.15</text>
+  <rect x="400" y="159" width="60" height="16" fill="#55606e"/>
+  <text class="m" x="400" y="190">acoustic_gap</text>
+  <line x1="40" y1="212" x2="520" y2="212" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+  <text class="e" x="40" y="236">HOW HARD IS THE CLIP?</text>
+  <text class="mi" x="520" y="236" text-anchor="end">0.35</text>
+  <text class="n" x="40" y="268">Recognisers disagree</text>
+  <text class="s" x="40" y="286">the three against each other, script-folded</text>
+  <text class="mi" x="392" y="267" text-anchor="end">0.20</text>
+  <rect x="400" y="255" width="80" height="16" fill="#55606e"/>
+  <text class="m" x="400" y="286">asr_disagreement</text>
+  <text class="n" x="40" y="320">Low confidence</text>
+  <text class="s" x="40" y="338">Scribe's average log-probability</text>
+  <text class="mi" x="392" y="319" text-anchor="end">0.10</text>
+  <rect x="400" y="307" width="40" height="16" fill="#55606e"/>
+  <text class="m" x="400" y="338">low_confidence</text>
+  <text class="n" x="40" y="372">Rule flags</text>
+  <text class="s" x="40" y="390">eight rules over every hypothesis and the VAD</text>
+  <text class="mi" x="392" y="371" text-anchor="end">0.05</text>
+  <rect x="400" y="359" width="20" height="16" fill="#55606e"/>
+  <text class="m" x="400" y="390">rule_flag_score</text>
+  <line x1="40" y1="408" x2="520" y2="408" stroke="#c3c9cf" stroke-width="1"/>
+  <text class="mi" x="40" y="432">priority_score</text>
+  <text class="s" x="520" y="432" text-anchor="end">weights sum to 1, so the score is 0–1</text>
 
-      <!-- ============ COLUMN HEADERS ============ -->
-      <text x="97" y="56" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">READS</text>
-      <text x="266" y="56" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">COMPONENT · WEIGHT</text>
-      <text x="447" y="56" fill="#7d8794" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle" letter-spacing="0.14em">QUEUE SCORE</text>
+  <!-- Hazard gates (D74, D114) -->
+  <rect class="focal" x="40" y="456" width="480" height="152" rx="8"/>
+  <text class="n" x="56" y="480">Any hazard gate fired: + 1</text>
+  <text class="s" x="56" y="500">the shape of a failure, which a rate would average away</text>
+  <rect x="56" y="516" width="80" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="96" y="530" text-anchor="middle">invention</text>
+  <rect x="144" y="516" width="64" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="176" y="530" text-anchor="middle">dropped</text>
+  <rect x="216" y="516" width="84" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="258" y="530" text-anchor="middle">seam_bleed</text>
+  <rect x="308" y="516" width="116" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="366" y="530" text-anchor="middle">length_outlier</text>
+  <rect x="432" y="516" width="64" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="464" y="530" text-anchor="middle">emptied</text>
+  <rect x="56" y="544" width="152" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="132" y="558" text-anchor="middle">speech_over_silence</text>
+  <rect x="216" y="544" width="80" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="256" y="558" text-anchor="middle">unaligned</text>
+  <rect x="304" y="544" width="120" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="364" y="558" text-anchor="middle">fuser_uncertain</text>
+  <rect x="432" y="544" width="64" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="464" y="558" text-anchor="middle">unfused</text>
+  <rect x="56" y="572" width="64" height="20" rx="4" fill="#ffffff" stroke="#146b6b" stroke-width="0.8"/>
+  <text class="mi" x="88" y="586" text-anchor="middle">relabel</text>
+  <text class="s" x="128" y="586">a reopened clip, with what to listen for</text>
 
-      <!-- ============ ORDINARY RIBBONS ============ -->
-      <!-- all systems -> rule_flag_score -->
-      <path d="M 152,332 C 206,332 206,348 260,348 L 260,396 C 206,396 206,380 152,380 Z" fill="rgba(85,96,110,0.18)"/>
-      <!-- the seed -> low_confidence -->
-      <path d="M 152,420 C 206,420 206,436 260,436 L 260,516 C 206,516 206,500 152,500 Z" fill="rgba(85,96,110,0.18)"/>
-      <!-- rule_flag_score -> priority_score -->
-      <path d="M 272,348 C 328,348 328,368 384,368 L 384,416 C 328,416 328,396 272,396 Z" fill="rgba(85,96,110,0.18)"/>
-      <!-- low_confidence -> priority_score -->
-      <path d="M 272,436 C 328,436 328,416 384,416 L 384,496 C 328,496 328,516 272,516 Z" fill="rgba(85,96,110,0.18)"/>
+  <!-- Where a clip sorts -->
+  <text class="e" x="40" y="648">WHERE A CLIP SORTS</text>
+  <rect x="40" y="660" width="240" height="48" fill="rgba(85,96,110,0.10)" stroke="#7d8794" stroke-width="1"/>
+  <text class="k" x="52" y="680">ungated</text>
+  <text class="s" x="52" y="696">ranked by score; may be screened</text>
+  <rect x="280" y="660" width="240" height="48" fill="rgba(20,107,107,0.09)" stroke="#146b6b" stroke-width="1.2"/>
+  <text class="k" x="292" y="680">gated</text>
+  <text class="s" x="292" y="696">must be heard; screening → 409</text>
+  <text class="m" x="40" y="724">0</text>
+  <text class="m" x="280" y="724" text-anchor="middle">1</text>
+  <text class="m" x="520" y="724" text-anchor="end">2</text>
+  <text class="s" x="520" y="744" text-anchor="end">the queue serves the highest priority first</text>
 
-      <!-- ============ FOCAL PATH (painted last among ribbons) ============ -->
-      <path d="M 152,140 C 206,140 206,116 260,116 L 260,308 C 206,308 206,332 152,332 Z" fill="rgba(20,107,107,0.28)"/>
-      <path d="M 272,116 C 328,116 328,176 384,176 L 384,368 C 328,368 328,308 272,308 Z" fill="rgba(20,107,107,0.28)"/>
-
-      <!-- ============ NODE BARS ============ -->
-      <rect x="140" y="140" width="12" height="240" fill="#1b2430"/>
-      <rect x="140" y="420" width="12" height="80" fill="#1b2430"/>
-      <rect x="260" y="116" width="12" height="192" fill="#1b2430"/>
-      <rect x="260" y="348" width="12" height="48" fill="#1b2430"/>
-      <rect x="260" y="436" width="12" height="80" fill="#1b2430"/>
-      <rect x="384" y="176" width="12" height="320" fill="#1b2430"/>
-
-      <!-- ============ COLUMN 1 LABELS (outside, anchor end) ============ -->
-      <text x="132" y="254" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="end">all systems</text>
-      <text x="132" y="274" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="end">0.75</text>
-
-      <text x="132" y="454" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="end">the seed</text>
-      <text x="132" y="474" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="end">0.25</text>
-
-      <!-- ============ COLUMN 2 LABELS (gutter, anchor middle) ============ -->
-      <text x="266" y="88" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">0.60</text>
-      <text x="266" y="104" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">seed_outvoted</text>
-
-      <text x="266" y="320" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">0.15</text>
-      <text x="266" y="336" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">rule_flag_score</text>
-
-      <text x="266" y="408" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif" text-anchor="middle">0.25</text>
-      <text x="266" y="424" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" text-anchor="middle">low_confidence</text>
-
-      <!-- ============ COLUMN 3 LABELS (outside, anchor start) ============ -->
-      <text x="404" y="332" fill="#1b2430" font-size="16" font-weight="600" font-family="'Inter', sans-serif">priority_score</text>
-      <text x="404" y="352" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace">1.00</text>
-
-      <!-- ============ LEGEND ============ -->
-      <line x1="40" y1="596" x2="520" y2="596" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
-      <text x="40" y="616" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.14em">LEGEND</text>
-
-      <rect x="112" y="608" width="16" height="8" fill="rgba(85,96,110,0.18)"/>
-      <text x="136" y="616" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">FLOW</text>
-
-      <rect x="200" y="608" width="16" height="8" fill="rgba(20,107,107,0.28)"/>
-      <text x="224" y="616" fill="#55606e" font-size="12" font-family="'IBM Plex Mono', monospace" letter-spacing="0.06em">FOCAL</text>
-
-      <text x="520" y="616" fill="#1b2430" font-size="16" font-style="italic" font-family="'Source Serif 4', serif" text-anchor="end">weights sum to 1.0</text>
-    </svg>
+  <line x1="40" y1="764" x2="520" y2="764" stroke="rgba(27,36,48,0.14)" stroke-width="0.8"/>
+  <text class="mi" x="40" y="788">audit</text>
+  <text class="s" x="96" y="788">5% drawn from the lower-ranked half of ungated clips</text>
+  <text class="mi" x="40" y="808">error</text>
+  <text class="s" x="96" y="808">a clip with no hypothesis at all</text>
+  <text class="c" x="40" y="848">The seed was built to agree, so agreeing proves nothing.</text>
+</svg>

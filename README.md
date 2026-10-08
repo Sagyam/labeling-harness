@@ -11,7 +11,7 @@ time. What you approve becomes a versioned, reproducible dataset.
 It does not train models, manage users, or serve more than one annotator. It is built for one fast
 human.
 
-![Ingestion pipeline: upload or YouTube URL, normalize, VAD segment, transcribe with every cloud ASR route, analyse, import and build the queue](docs/diagrams/ingest-pipeline.svg)
+![Ingest pipeline: an upload or a YouTube URL is normalized, cut into clips, transcribed by three blind recognisers, fused into the seed, analysed, and imported with its queue](docs/diagrams/ingest-pipeline.svg)
 
 ## Quick start
 
@@ -159,6 +159,8 @@ Latin exactly as typed. `?` opens the full list in the app.
 
 ### Training notebooks
 
+![Training protocol: the pinned export feeds Flex, which freezes one teacher; the teacher pseudo-labels unlabelled audio for the students; evalkit scores every run and 09 reports them](docs/diagrams/training-protocol.svg)
+
 `notebooks/` is numbered in the order it runs, and that order is how a model is trained and
 evaluated (D105): `01_EDA` and `02_Sociolinguistics` describe the corpus; `03a`–`03e` train
 Indic-Transcribe-Flex, score it on the public Nepali sets, ablate the augmentations, blend its
@@ -254,4 +256,4 @@ a 76% accept rate.
 | [docs/architecture.md](docs/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
 | [docs/decisions.md](docs/decisions.md) | Every design decision, why it was made, what reversing costs |
 | [docs/score-card/](docs/score-card/) | One score card per model: every stage on every set, by clip class and word rarity |
-| [docs/diagrams/](docs/diagrams/) | Figure sources (HTML), plus `.svg` and print-ready `.pdf` exports |
+| [docs/diagrams/](docs/diagrams/) | The figures, SVG only: ingest, priority score, decision path, pots, error mining, training protocol |

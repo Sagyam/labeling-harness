@@ -2,7 +2,7 @@
 
 ## System boundary
 
-![Ingestion pipeline: upload or YouTube URL, normalize, VAD segment, transcribe with every cloud ASR route, analyse, import and build the queue](diagrams/ingest-pipeline.svg)
+![Ingest pipeline: an upload or a YouTube URL is normalized, cut into clips, transcribed by three blind recognisers, fused into the seed, analysed, and imported with its queue; the diarizer runs on Modal alongside, and every paid call is logged and checkpointed](diagrams/ingest-pipeline.svg)
 
 The harness provides an end-to-end web workflow: the annotator selects a podcast file directly in
 the browser or pastes a YouTube URL, watches real-time progress and logs as it normalizes, segments,
@@ -58,8 +58,6 @@ checksum is an error.
 
 ## Data model
 
-![Core data model: episodes own segments; each segment carries ASR hypotheses, one scores row, queue tasks and append-only labels](diagrams/data-model.svg)
-
 Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 
 ### Provenance and content
@@ -87,6 +85,8 @@ Postgres is the source of truth. All timestamps are `timestamptz` in UTC.
 The model's text never enters `asr_hypotheses`, so it cannot reach disagreement, the queue or an
 export. The harness never runs a model to score it: the notebook transcribes on a GPU and the page
 scores the text with `fold.py`, exactly as the notebook does.
+
+![Error mining: reference and model text pass through the folding rulebook, every aligned pair is classified into a Parquet row, and DuckDB answers every breakdown](diagrams/error-mining.svg)
 
 **Error mining (D110).** No table: every aligned word pair of a run on a
 set is a row in `data/models/asr/<slug>/errors/<set>.parquet`, written by `error_mining.write`
@@ -157,7 +157,7 @@ on the first recording (D92).
 
 ### Status discipline
 
-![Annotation task lifecycle: pending to in_progress to done, with skip returning the task to pending and every decision writing one of four dispositions](diagrams/annotation-lifecycle.svg)
+![Decision path: a task goes pending, in_progress, done or skipped; a decision says verified or screened, three cases are refused with 409, and the rest write a label, an event and an audit row in one transaction](diagrams/annotation-lifecycle.svg)
 
 Exactly three status fields, each with one owner:
 
@@ -168,6 +168,8 @@ Exactly three status fields, each with one owner:
 No fourth status, and no boolean that duplicates one. `segment_labels` rows are append-only.
 
 ### Two pots
+
+![Pots and splits: a clip's pot is chosen by hand, an episode's split by hash; a gold clip exports as test whatever its episode drew](diagrams/pots-and-splits.svg)
 
 `segments.pot` is `gold` or `train` (D71). The owner puts individual clips in gold by hand —
 `POST /segments/{id}/pot`, from the triage star, `g`, or the editor button — and can take them back
@@ -192,9 +194,7 @@ reaches it anyway. Every export row carries the tier and each manifest reports t
 
 ## Priority formula
 
-![Priority score composition](diagrams/priority-scoring.svg)
-
-> The figure above predates D74 and shows the D54 formula; the text below is current.
+![Priority score: three terms ask whether the fused seed is supported, three how hard the clip is; any hazard gate adds 1, so a gated clip sorts above every ungated one and cannot be screened](diagrams/priority-scoring.svg)
 
 ```text
 priority_score =
