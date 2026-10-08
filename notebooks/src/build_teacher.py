@@ -285,13 +285,40 @@ with ftkit.timed("uploading the filtered labels and the report"):
                         repo_type="dataset", commit_message=f"{LABELS}: filtered, {report['kept']} clips kept")
 """
 
+COUNTS_NOTE = """
+## The training corpus's word counts (D123)
+
+A student trains on the human train labels (stage 1) and on these labels (stage 2). The evaluation
+splits every error by how often its word occurs in the two together (`evalkit.rarity`: never, 1-9,
+10-49, 50-99, 100+), so the counts are made here, the moment the labels are final, and go beside
+them and to the dataset's `harness/word_counts.json`, which every notebook's download already
+brings. A smoke run writes them beside its own labels only. Run this cell again after the filter.
+"""
+
+COUNTS = r"""
+from huggingface_hub import CommitOperationAdd
+
+import evalkit
+
+DATA = ftkit.download_dataset()          # the labels and the scorer, no audio
+score = ftkit.harness_scorer(DATA, FT)   # puts the dataset's fold.py and error mining on the path
+export = json.loads((DATA / "training" / "manifest.json").read_text())
+counts = evalkit.count_training_words(OUT / "word_counts.json", ftkit.load_splits(DATA)["train"], kept,
+                                      export=export["exported_at"], labels=LABELS)
+remote = [f"{LABELS}/word_counts.json"] + ([] if SMOKE else [evalkit.WORD_COUNTS_FILE])
+with ftkit.timed(f"uploading the word counts to {', '.join(remote)}"):
+    api.create_commit(repo_id=DATASET_REPO, repo_type="dataset",
+                      operations=[CommitOperationAdd(r, str(counts)) for r in remote],
+                      commit_message=f"{LABELS}: the training corpus's word counts")
+"""
+
 cells = [
     md(INTRO),
     md("## Config"),
     code(CONFIG),
     md("## Setup"),
     nbkit.setup("rapidfuzz duckdb", tail=SETUP_TAIL),
-    *nbkit.kits("ftkit", "distill"),
+    *nbkit.kits("ftkit", "distill", "sweep", "evalkit"),
     code(DATA),
     md(RATE_NOTE),
     code(RATE),
@@ -299,6 +326,8 @@ cells = [
     code(DECODE),
     md(FILTER_NOTE),
     code(FILTER),
+    md(COUNTS_NOTE),
+    code(COUNTS),
 ]
 
 NOTEBOOKS = {"05_Teacher.ipynb": cells}

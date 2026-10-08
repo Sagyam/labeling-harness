@@ -122,6 +122,8 @@ with ftkit.timed(f"downloading {len(set(episodes))} recordings"):
 with ftkit.timed("reading them into RAM"):
     store = ftkit.AudioStore(DATA, episodes)
 score = ftkit.harness_scorer(DATA, FT)
+# Each error's word by how often train and the pseudo-labels hold it (D123); None before 05 has run.
+WORD_COUNTS = evalkit.word_counts_path(DATA)
 print({k: len(v) for k, v in splits.items()}, f"| audio in RAM: {store.gib:.1f} GiB | export",
       export["exported_at"][:10], "|", score.fold_version)
 
@@ -420,7 +422,7 @@ def run_stage(stage):
             meta = {"student": STUDENT, "stage": stage, "recipe": stage, "seed": 0, "stages": recipe,
                     "teacher": teacher["run"], **trained}
             evalkit.evaluate_run(OUT, run, splits=splits, decode=decode, score=score, card=card(stage),
-                                 meta=meta, references=references)
+                                 meta=meta, references=references, word_counts=WORD_COUNTS)
             upload(OUT, run, "scores on gold and val", weights=False)
         else:
             load_student(download_weights(run))

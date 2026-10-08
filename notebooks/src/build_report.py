@@ -342,6 +342,44 @@ for set_name in ("gold", "val", *SETS):
         print(f"{label(by_run[run]):<28}{b['wer']:>8.2f}{cells}{100 * n['share_of_errors']:>8.1f}%{n['wer_without']:>9.2f}")
 """
 
+RARITY_NOTE = """
+## Errors by word rarity (D123)
+
+Each error's word in a bucket by how often what the students train on holds it -- the human train
+labels and the teacher's pseudo-labels, counted by spelling key in the dataset's
+`harness/word_counts.json`: a substitution's and a deletion's reference word, an insertion's
+inserted word. Per bucket: its points of WER (per 100 reference words of the whole set, so a
+row's points add up to its WER) and, in brackets, its rate (substitutions and deletions per 100 of
+the bucket's own reference words). Then each model minus the teacher, point by point: where its
+gap is. A run scored before D123 has no rarity block until `scripts/backfill_rarity.py` adds it.
+"""
+
+RARITY = r"""
+rarity = {}
+for set_name in ("gold", "val", *SETS):
+    have = {run: b[set_name]["rarity"] for run, b in breakdowns.items() if (b.get(set_name) or {}).get("rarity")}
+    if not have:
+        print(f"\n{set_name}: no run has a rarity block")
+        continue
+    rarity[set_name] = have
+    first = next(iter(have.values()))
+    names = [x["bucket"] for x in first["buckets"]]
+    shares = ", ".join(f"{x['bucket']} {100 * x['share_of_words']:.1f}%" for x in first["buckets"])
+    print(f"\n{set_name}: points of WER (rate) by bucket | its reference words: {shares}")
+    print(f"{'model':<28}{'WER':>7}" + "".join(f"{b:>16}" for b in names))
+    for run, r in have.items():
+        cells = "".join(f"{x['points']:>8.2f} ({x['rate']:>5.1f})" if x["rate"] is not None
+                        else f"{x['points']:>8.2f} {'(-)':>7}" for x in r["buckets"])
+        print(f"{label(by_run[run]):<28}{r['wer']:>7.2f}{cells}")
+    if TEACHER in have:
+        theirs = {x["bucket"]: x["points"] for x in have[TEACHER]["buckets"]}
+        print(f"model minus {TEACHER}, points of WER")
+        for run, r in have.items():
+            if run != TEACHER:
+                print(f"  {label(by_run[run]):<26}{r['wer'] - have[TEACHER]['wer']:>+7.2f}"
+                      + "".join(f"{x['points'] - theirs[x['bucket']]:>+16.2f}" for x in r["buckets"]))
+"""
+
 WRITE_NOTE = """
 ## Write the report
 
@@ -370,6 +408,14 @@ for m in models:
     got = public[m["run"]]
     if got:
         md_lines.append(f"| {label(m)} | " + " | ".join(f"{got[n][0]['wer']:.2f}" if n in got else "—" for n in SETS) + " |")
+if rarity.get("gold"):
+    have = rarity["gold"]
+    names = [x["bucket"] for x in next(iter(have.values()))["buckets"]]
+    md_lines += ["", "Gold by word rarity: points of WER (substitutions and deletions per 100 of the bucket's words)", "",
+                 "| Model | WER | " + " | ".join(names) + " |", "|---|---|" + "---|" * len(names)]
+    for run, r in have.items():
+        md_lines.append(f"| {label(by_run[run])} | {r['wer']:.2f} | " + " | ".join(
+            f"{x['points']:.2f} ({x['rate']:.1f})" if x["rate"] is not None else f"{x['points']:.2f}" for x in r["buckets"]) + " |")
 for title, table in (("Step", steps), ("Pair", cross)):
     if table:
         md_lines += ["", f"| {title} | Val | Gold |", "|---|---|---|"]
@@ -381,7 +427,7 @@ report = {
                 "architecture": m["card"].get("architecture"), "row": m["row"]} for m in models],
     "left_out": left_out, "vs_teacher": paired, "stage_steps": steps, "cross": cross,
     "public": {run: {name: got[name][0] for name in got} for run, got in public.items()},
-    "public_mean": means, "public_vs_base": vs_base, "breakdowns": breakdowns,
+    "public_mean": means, "public_vs_base": vs_base, "breakdowns": breakdowns, "rarity": rarity,
 }
 name = distill.smoke_name(SMOKE, "report")  # a smoke run reads the real Flex folder; never overwrite its report
 out = FT / "report"
@@ -415,6 +461,8 @@ cells = nbkit.cpu(
         code(PUBLIC),
         md(BREAKDOWN_NOTE),
         code(BREAKDOWN),
+        md(RARITY_NOTE),
+        code(RARITY),
         md(WRITE_NOTE),
         code(WRITE),
     ]

@@ -12,7 +12,8 @@ functions here, so a number in one notebook means what it means in another:
 Every split and set also keeps its errors: each aligned word pair, classified, in
 `harness/errors/<set>.parquet` with each clip's crosstalk and SNR, and a `breakdown` beside its
 WER (crosstalk buckets, numbers, the
-most common substitutions, deletions and insertions; D110). Both come from the
+most common substitutions, deletions and insertions; D110) and, given the training corpus's word
+counts, the WER split by how often each error's word was trained on (D123). Both come from the
 harness's own `error_mining.py` and `error_store.py`, which the dataset's `harness/` copy carries
 beside fold.py, so the Models page reads exactly what the notebook wrote.
 
@@ -225,9 +226,11 @@ def write_errors(
     overlap: Mapping[str, float | None] | None = None,
     snr: Mapping[str, float | None] | None = None,
     by: str | None = None,
+    word_counts: Path | None = None,
 ) -> dict[str, Any] | None:
     """Every aligned word pair of one split or set, classified, written to `path` (its stem is
-    the set's name); returns the file's report (blocks 1-3), or None when nothing was written.
+    the set's name); returns the file's report (blocks 1-3, and `rarity` with `word_counts`), or
+    None when nothing was written.
 
     A clip's alignment is the one `score.per_clip` counted, when it kept it. `overlap` and `snr`
     are a public set's measured crosstalk and speech-to-noise ratio by clip id; gold and val rows
@@ -260,7 +263,106 @@ def write_errors(
     if not found:
         return None
     mining.write(found, path)
-    return store.report(Path(path))
+    report = store.report(Path(path))
+    if word_counts is not None:
+        report["rarity"] = rarity(Path(path), word_counts)
+    return report
+
+
+# --- word rarity (D123) --------------------------------------------------------------------------
+
+#: The training corpus's word counts, in the dataset's harness/ copy beside the scorer: every
+#: notebook's `ftkit.download_dataset` already brings it. 05_Teacher writes it with its labels.
+WORD_COUNTS_FILE = "harness/word_counts.json"
+
+
+def word_counts_path(data: Path) -> Path | None:
+    """The dataset's word counts, or None -- with a line saying so -- when it has none yet (no
+    teacher has labelled anything): the runs are then scored without their rarity block, and
+    `add_rarity` adds it later."""
+    path = Path(data) / WORD_COUNTS_FILE
+    if not path.exists():
+        print(f"no {WORD_COUNTS_FILE} in the dataset: errors are not split by word rarity")
+        return None
+    return path
+
+
+def count_training_words(
+    path: Path,
+    train: Sequence[Mapping[str, Any]],
+    pseudo: Sequence[Mapping[str, Any]],
+    *,
+    export: str,
+    labels: str,
+) -> Path:
+    """Count every word of what the students train on -- stage 1's human train labels and stage
+    2's pseudo-labels -- by spelling key, and write the counts to `path` (D123).
+
+    `export` is the export's `exported_at` and `labels` the pseudo-labels' folder: the file names
+    both, so a bucket can be traced to the texts it was counted on."""
+    kit = _miner()
+    if kit is None:
+        raise RuntimeError("the dataset's harness/ has no error mining: upload the harness copy")
+    mining, _ = kit
+    texts = [r["text"] for r in train] + [r["text"] for r in pseudo]
+    sources = {
+        "human": {"export": export, "clips": len(train)},
+        "pseudo": {"labels": labels, "clips": len(pseudo)},
+    }
+    mining.write_counts(path, mining.word_counts(texts), sources=sources)
+    return Path(path)
+
+
+def rarity(errors: Path, word_counts: Path, *, base: Path | None = None) -> dict[str, Any] | None:
+    """An error file's WER split by word rarity (`error_store.rarity`), with the corpus it was
+    counted on; None when the harness copy predates it."""
+    kit = _miner()
+    if kit is None or not hasattr(kit[1], "rarity"):
+        print("the dataset's harness/ predates word rarity (D123): upload the harness copy")
+        return None
+    mining, store = kit
+    meta, counts = mining.read_counts(word_counts)
+    keep = ("fold_version", "sources", "types", "tokens", "created_at")
+    return store.rarity(Path(errors), counts, base=base) | {
+        "corpus": {k: meta.get(k) for k in keep}
+    }
+
+
+def add_rarity(out: Path, word_counts: Path) -> dict[str, dict]:
+    """Add the rarity block to a finished run's breakdowns, from its error files: each
+    `harness/errors/<set>.parquet` is read, and `<split>_metrics.json` or `benchmarks/<set>.json`
+    gains `breakdown.rarity`. Nothing is decoded or scored again. Returns {set: block}."""
+    out = Path(out)
+    added = {}
+    for errors in sorted((out / "harness" / "errors").glob("*.parquet")):
+        name = errors.stem
+        summary = (
+            out / f"{name}_metrics.json" if name in SPLITS else out / "benchmarks" / f"{name}.json"
+        )
+        if not summary.exists():
+            print(f"{name}: an error file but no {summary.name}; left as it is")
+            continue
+        block = rarity(errors, word_counts)
+        if block is None:
+            break
+        data = json.loads(summary.read_text("utf-8"))
+        data["breakdown"] = {**(data.get("breakdown") or {}), "rarity": block}
+        summary.write_text(json.dumps(data, indent=1, ensure_ascii=False))
+        added[name] = block
+        print_rarity(name, block)
+    return added
+
+
+def print_rarity(label: str, block: Mapping[str, Any] | None) -> None:
+    """The rarity block in one line: each bucket's share of words, its points of WER and its
+    per-word rate."""
+    if not block:
+        return
+    parts = []
+    for b in block["buckets"]:
+        rate = "-" if b["rate"] is None else f"{b['rate']:.1f}"
+        parts.append(f"{b['bucket']} {100 * b['share_of_words']:.1f}%w {b['points']:.2f}pt r{rate}")
+    print(f"    {label} by rarity: " + " · ".join(parts))
 
 
 #: A public set's measured recording conditions, each `benchmarks/<kind>/<set>.parquet`.
@@ -303,6 +405,7 @@ def print_breakdown(label: str, report: Mapping[str, Any] | None) -> None:
         f"    {label} numbers: {n['errors']} errors ({100 * n['share_of_errors']:.1f}%), "
         f"WER without them {n['wer_without']:.2f}"
     )
+    print_rarity(label, report.get("rarity"))
 
 
 # --- gold and val --------------------------------------------------------------------------------
@@ -317,13 +420,14 @@ def score_split(
     *,
     errors: Path | None = None,
     run: str = "",
+    word_counts: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, list[int]]]:
     """One split's metrics and its per-clip counts, each clip aligned once.
 
     Metrics: the folded, raw and character error rates with S/D/I, the real-time factor, the loop
     retries and the greedy-only score from the same decode, and every clip class (`by_class`).
     With `errors` (`harness/errors/<split>.parquet`), the split's error rows are written there and
-    its `breakdown` added."""
+    its `breakdown` added, split by word rarity with `word_counts` (`count_training_words`)."""
     refs = [r["text"] for r in rows]
     clips = score.per_clip(refs, texts)
     m = score.summarize(clips)
@@ -339,7 +443,7 @@ def score_split(
         m["greedy_only"] = score.summarize(greedy)
     m["by_class"] = distill.by_class(rows, clips, score.summarize)
     if errors is not None:
-        m["breakdown"] = write_errors(errors, run, rows, texts, clips)
+        m["breakdown"] = write_errors(errors, run, rows, texts, clips, word_counts=word_counts)
     return m, counts(rows, clips)
 
 
@@ -354,6 +458,7 @@ def evaluate_run(
     meta: Mapping[str, Any] | None = None,
     references: Mapping[str, Mapping[str, Counts]] | None = None,
     keys: Sequence[str] = REPORT_KEYS,
+    word_counts: Path | None = None,
 ) -> dict[str, Any]:
     """Decode gold and val with the weights `decode` reads, score them, and write the run's files.
 
@@ -362,7 +467,8 @@ def evaluate_run(
     `per_clip.json` (the counts another run is paired against) and `result.json`, whose presence
     on the hub marks the run as done. `references` is {name: {split: per-clip counts}}; each
     becomes `vs[name]`, this run minus that one. `meta` (recipe, seed, stage, best epoch, ...) goes
-    into the card and the result row, which is returned."""
+    into the card and the result row, which is returned. `word_counts` (`word_counts_path`) adds
+    each split's WER by word rarity to its breakdown."""
     out = Path(out)
     results: dict[str, dict] = {}
     per_clip: dict[str, dict] = {}
@@ -373,7 +479,7 @@ def evaluate_run(
         with timed(f"{run} {split}: scoring, per clip class and against the references"):
             errors = out / "harness" / "errors" / f"{split}.parquet"
             m, per_clip[split] = score_split(
-                rows, texts, compute, log, score, errors=errors, run=run
+                rows, texts, compute, log, score, errors=errors, run=run, word_counts=word_counts
             )
             m["vs"] = {}
             for name, ref in (references or {}).items():
@@ -482,6 +588,7 @@ def rescore_run(
     fold_version: str | None = None,
     references: Mapping[str, Mapping[str, Counts]] | None = None,
     keys: Sequence[str] = REPORT_KEYS,
+    word_counts: Path | None = None,
 ) -> dict[str, Any]:
     """Score a finished run again from its stored transcripts, under `score`'s rules (D113).
 
@@ -497,7 +604,7 @@ def rescore_run(
     card["fold_version"] = fold_version or score.fold_version
     row = evaluate_run(
         out, run, splits=splits, decode=stored_decode(out), score=score, card=card, meta=meta,
-        references=references, keys=keys,
+        references=references, keys=keys, word_counts=word_counts,
     )  # fmt: skip
     path = out / "harness" / "model_card.json"
     full = json.loads(path.read_text("utf-8"))
@@ -514,6 +621,7 @@ def rescore_benchmark(
     score: Any,
     run: str | None = None,
     conditions_dir: Path | None = None,
+    word_counts: Path | None = None,
 ) -> dict[str, Any]:
     """Score a public set again from its stored lines (`run_benchmarks`), under `score`'s rules.
 
@@ -546,6 +654,7 @@ def rescore_benchmark(
         run=run or out.name,
         overlap=_measured(conditions_dir, "overlap", name),
         snr=_measured(conditions_dir, "acoustics", name),
+        word_counts=word_counts,
     )
     for key in ("hours", "retried", "x_realtime", "limit"):
         if key in old:
@@ -848,6 +957,7 @@ def score_benchmark(
     run: str = "",
     overlap: Mapping[str, float | None] | None = None,
     snr: Mapping[str, float | None] | None = None,
+    word_counts: Path | None = None,
 ) -> tuple[dict[str, Any], list[dict]]:
     """A public set's summary and its per-clip lines.
 
@@ -855,7 +965,8 @@ def score_benchmark(
     and the score per value of the set's `by` column. A line is `{id, group, ref, hyp, errors,
     words}`: the 2026-09-27 files' fields plus the counts a paired comparison needs. With
     `errors`, the set's error rows are written there, crosstalk from `overlap` and SNR from `snr`
-    (clips missing from either are unmeasured on it), and its `breakdown` added to the summary."""
+    (clips missing from either are unmeasured on it), and its `breakdown` added to the summary,
+    split by word rarity with `word_counts`."""
     bench = BENCHMARKS[name]
     refs = [r["text"] for r in rows]
     clips = score.per_clip(refs, texts)
@@ -872,7 +983,15 @@ def score_benchmark(
         }
     if errors is not None:
         summary["breakdown"] = write_errors(
-            errors, run, rows, texts, clips, overlap=overlap or {}, snr=snr or {}, by=bench.by
+            errors,
+            run,
+            rows,
+            texts,
+            clips,
+            overlap=overlap or {},
+            snr=snr or {},
+            by=bench.by,
+            word_counts=word_counts,
         )
     lines = []
     for r, hyp, c in zip(rows, texts, clips, strict=True):
@@ -925,13 +1044,15 @@ def run_benchmarks(
     done: Collection[str] = (),
     run: str | None = None,
     conditions_dir: Path | None = None,
+    word_counts: Path | None = None,
 ) -> dict[str, dict]:
     """Decode and score each public set with the weights `decode` reads, one set at a time.
 
     Writes `out/benchmarks/<name>.jsonl` (per clip) and `<name>.json` (summary), and the set's
     error rows to `out/harness/errors/<name>.parquet`, as each set finishes, and skips a set named
     in `done`, so a lost runtime costs one set. `run` names the rows (default: `out`'s folder);
-    `conditions_dir` holds the sets' measured crosstalk and acoustics (`fetch_conditions`)."""
+    `conditions_dir` holds the sets' measured crosstalk and acoustics (`fetch_conditions`), and
+    `word_counts` the training corpus's (`word_counts_path`)."""
     run = run or Path(out).name
     folder = Path(out) / "benchmarks"
     folder.mkdir(parents=True, exist_ok=True)
@@ -954,6 +1075,7 @@ def run_benchmarks(
                 run=run,
                 overlap=_measured(conditions_dir, "overlap", name),
                 snr=_measured(conditions_dir, "acoustics", name),
+                word_counts=word_counts,
             )
         summary["retried"] = len(log)
         summary["x_realtime"] = sum(duration(r) for r in rows) / max(sum(compute), 1e-9)

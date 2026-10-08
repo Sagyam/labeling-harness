@@ -80,6 +80,8 @@ with ftkit.timed(f"downloading {len(set(episodes))} recordings"):
 with ftkit.timed("reading them into RAM"):
     store = ftkit.AudioStore(DATA, episodes)
 score = ftkit.harness_scorer(DATA, FT)
+# Each error's word by how often train and the pseudo-labels hold it (D123); None before 05 has run.
+WORD_COUNTS = evalkit.word_counts_path(DATA)
 print({k: len(v) for k, v in splits.items()}, f"| audio in RAM: {store.gib:.1f} GiB | export",
       export["exported_at"][:10], "|", score.fold_version)
 """
@@ -432,7 +434,8 @@ def train_run(recipe, seed, *, stages=None, references=None, baseline=None):
                 "best_epoch": min(evals, key=lambda h: h["val_wer"])["epoch"] if evals else None}
         description = f"{RUN_PREFIX}: {recipe}, seed {seed}" + (f", {json.dumps(stages)}" if stages else "")
         row = evalkit.evaluate_run(OUT, run, splits=splits, decode=decode, score=score,
-                                   card=card(description), meta=meta, references=references)
+                                   card=card(description), meta=meta, references=references,
+                                   word_counts=WORD_COUNTS)
         keep = True
         if baseline is not None:
             keep, why = sweep.beats_baseline(row, baseline)
@@ -499,7 +502,8 @@ def score_sets(run):
             print(f"{run} {name}: already in {OUT_REPO}, skipped")
             continue
         evalkit.run_benchmarks(out, decode=decode, score=score, work=FT / "benchmarks", token=TOKEN,
-                               names=[name], limit=LIMIT, run=run, conditions_dir=CONDITIONS)
+                               names=[name], limit=LIMIT, run=run, conditions_dir=CONDITIONS,
+                               word_counts=WORD_COUNTS)
         api.upload_folder(repo_id=OUT_REPO, folder_path=str(out), path_in_repo=f"{RUN_PREFIX}/{run}",
                           allow_patterns=[f"benchmarks/{name}.json*", f"harness/errors/{name}.parquet"],
                           commit_message=f"{run}: {name}")
@@ -760,7 +764,7 @@ def benchmark(run):
             evalkit.evaluate_run(OUT, run, splits=splits, decode=decode, score=score,
                                  card=card("Indic-Transcribe-Flex as released, no fine-tuning",
                                            name="Indic-Transcribe-Flex (base)"),
-                                 meta={"recipe": "base", "seed": None})
+                                 meta={"recipe": "base", "seed": None}, word_counts=WORD_COUNTS)
             upload_run(OUT, run, "base Flex on gold and val", weights=False)
         score_sets(run)
     finally:
@@ -1170,7 +1174,7 @@ def blend_run(alpha):
                                            name=f"{MODEL_NAME} blend {alpha:g}"),
                                  meta={"recipe": "blend", "alpha": alpha, "source": source,
                                        "seed": tuned_row.get("seed")},
-                                 references=references)
+                                 references=references, word_counts=WORD_COUNTS)
             upload_run(OUT, run, f"blend of base and {source}", weights=False)
         score_sets(run)
     finally:
@@ -1333,7 +1337,7 @@ references = {k: v for k, v in (("base", run_counts("base")),
 row = evalkit.evaluate_run(OUT, run, splits=splits, decode=decode, score=score, card=card_on_hub,
                            meta={k: before[k] for k in ("recipe", "seed", "alpha", "source", "stages",
                                                         "best_epoch", "epochs", "lr") if k in before},
-                           references=references)
+                           references=references, word_counts=WORD_COUNTS)
 print(f"as shipped (bf16): val {row['val_wer']:.2f} (was {before['val_wer']:.2f}), "
       f"gold {row['gold_wer']:.2f} (was {before['gold_wer']:.2f})")
 

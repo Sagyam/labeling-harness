@@ -684,6 +684,87 @@ def test_without_error_mining_in_the_harness_copy_a_run_still_scores(tmp_path: P
     assert json.loads((tmp_path / "gold_metrics.json").read_text("utf-8"))["breakdown"] is None
 
 
+# --- word rarity (D123) --------------------------------------------------------------------------
+
+
+def _counts_file(tmp_path: Path) -> Path:
+    """What train and the pseudo-labels hold: "one" and "two" often, "three" a few times."""
+    path = tmp_path / "word_counts.json"
+    train = [_row(f"t{i}", "one two") for i in range(120)] + [_row("t", "three three")]
+    pseudo = [{"segment_id": "p1", "text": "two"}]
+    evalkit.count_training_words(path, train, pseudo, export="2026-09-30", labels="distill/x")
+    return path
+
+
+def test_the_training_words_are_counted_from_train_and_the_pseudo_labels(tmp_path: Path):
+    from app.services import error_mining
+
+    meta, counts = error_mining.read_counts(_counts_file(tmp_path))
+    assert counts == {"one": 120, "two": 121, "three": 2}
+    assert meta["sources"] == {
+        "human": {"export": "2026-09-30", "clips": 121},
+        "pseudo": {"labels": "distill/x", "clips": 1},
+    }
+
+
+def test_the_counts_are_found_in_the_dataset_s_harness_copy_or_not_at_all(tmp_path: Path):
+    assert evalkit.word_counts_path(tmp_path) is None
+    (tmp_path / "harness").mkdir()
+    (tmp_path / "harness" / "word_counts.json").write_text("{}")
+    assert evalkit.word_counts_path(tmp_path) == tmp_path / "harness" / "word_counts.json"
+
+
+def test_a_run_s_breakdown_splits_its_wer_by_word_rarity(tmp_path: Path):
+    counts = _counts_file(tmp_path)
+    row = evalkit.evaluate_run(
+        tmp_path / "run", "r", splits=_splits(), decode=_decoder({"g2": "one two x four"}),
+        score=_FoldScore, card={}, word_counts=counts,
+    )  # fmt: skip
+    rarity = json.loads((tmp_path / "run" / "gold_metrics.json").read_text("utf-8"))["breakdown"][
+        "rarity"
+    ]
+    assert sum(b["points"] for b in rarity["buckets"]) == pytest.approx(row["gold_wer"])
+    by = {b["bucket"]: b for b in rarity["buckets"]}
+    assert by["1-9"]["sub"] > 0  # "three", seen twice, was the word missed
+    assert rarity["corpus"]["sources"]["pseudo"]["labels"] == "distill/x"
+
+
+def test_a_public_set_s_breakdown_splits_its_wer_by_word_rarity(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(evalkit, "load_benchmark", lambda *a, **k: _bench_rows())
+    summaries = evalkit.run_benchmarks(
+        tmp_path / "r", decode=_decoder({"iv-00001": "a b x y"}), score=_FoldScore,
+        work=tmp_path / "w", token="t", names=("indicvoices",), word_counts=_counts_file(tmp_path),
+    )  # fmt: skip
+    rarity = summaries["indicvoices"]["breakdown"]["rarity"]
+    assert sum(b["points"] for b in rarity["buckets"]) == pytest.approx(
+        summaries["indicvoices"]["wer"]
+    )
+
+
+def test_a_finished_run_gets_its_rarity_added_from_its_error_files(tmp_path: Path, monkeypatch):
+    """The backfill: nothing decoded or scored again, only the breakdowns gain a block."""
+    out = tmp_path / "run"
+    evalkit.evaluate_run(
+        out, "r", splits=_splits(), decode=_decoder({"g2": "one two x four"}), score=_FoldScore,
+        card={},
+    )  # fmt: skip
+    monkeypatch.setattr(evalkit, "load_benchmark", lambda *a, **k: _bench_rows())
+    evalkit.run_benchmarks(
+        out, decode=_decoder({}), score=_FoldScore, work=tmp_path / "w", token="t",
+        names=("indicvoices",),
+    )  # fmt: skip
+    before = json.loads((out / "gold_metrics.json").read_text("utf-8"))
+    added = evalkit.add_rarity(out, _counts_file(tmp_path))
+    assert set(added) == {"gold", "val", "indicvoices"}
+    after = json.loads((out / "gold_metrics.json").read_text("utf-8"))
+    assert after["breakdown"]["rarity"] == added["gold"]
+    assert {k: v for k, v in after.items() if k != "breakdown"} == {
+        k: v for k, v in before.items() if k != "breakdown"
+    }
+    bench = json.loads((out / "benchmarks" / "indicvoices.json").read_text("utf-8"))
+    assert bench["breakdown"]["rarity"] == added["indicvoices"]
+
+
 # --- families (D122) -----------------------------------------------------------------------------
 
 
