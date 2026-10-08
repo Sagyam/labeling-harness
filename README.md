@@ -253,4 +253,5 @@ a 76% accept rate.
 | [AGENTS.md](AGENTS.md) | Working agreement for coding agents: rules, conventions, gotchas |
 | [docs/architecture.md](docs/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
 | [docs/decisions.md](docs/decisions.md) | Every design decision, why it was made, what reversing costs |
+| [docs/score-card/](docs/score-card/) | One score card per model: every stage on every set, by clip class and word rarity |
 | [docs/diagrams/](docs/diagrams/) | Figure sources (HTML), plus `.svg` and print-ready `.pdf` exports |

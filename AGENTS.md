@@ -270,7 +270,11 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Documentation
 
-Eight documents, and no others: this file, `README.md`, and the six under `docs/`. When behaviour
+Eight documents, and no others: this file, `README.md`, and the six under `docs/` -- plus one
+score card per model in `docs/score-card/` (`<model>-score-card.md`). A card's scores are generated
+from the runs on the hub by `scripts/score_cards.py` (run it again after a run is scored or
+backfilled); only its notes, below the notes line, are written by hand: that model's training
+log, caveats and operational notes, which do not go in `findings.md`. When behaviour
 changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
 worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
 its reversal cost. When a later entry overrides an old one, delete the old entry and add one line
