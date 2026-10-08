@@ -2781,7 +2781,7 @@ old WERs are in `audit_logs` and the hub's history.
 
 ## D114 — A labelled clip can be reopened into triage, and accepting the seed never undoes an edit
 
-On 2026-10-03, after the crosstalk augmentation run (findings.md, *Augmentation on Flex*), the gold
+On 2026-10-03, after the crosstalk augmentation run (score-card/flex-score-card.md, *Augmentation on Flex*), the gold
 clips over 15% overlapped turned out to have mostly pre-D100 labels: 118 of 128, and 116 of
 those were the seed accepted as it stood. Under D95 they were allowed to keep only the audible
 voice. Two or more recognisers agree on words missing from 101 of them. The owner wants those

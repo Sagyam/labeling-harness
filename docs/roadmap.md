@@ -51,17 +51,17 @@ the notebooks are numbered in the order they run, and that order is the protocol
 Every model goes through one evaluation (`notebooks/src/evalkit.py`), and every choice is made on
 val by a rule fixed before the result. Each notebook has a smoke switch. **Status, 2026-10-04:**
 03a–03e have run on the 2026-09-30 export. 03c kept no stage, so vanilla-s1 went into 03d, which
-chose blend-075, and 03e froze it as the teacher with an int8 CPU export (findings.md, *The
+chose blend-075, and 03e froze it as the teacher with an int8 CPU export (score-card/flex-score-card.md, *The
 teacher frozen*). 04's overlap pass and 05 have labelled the first tranche: 79.5 h kept of 102.1 h
-at `MAX_OVERLAP_SHARE` 0.05 (findings.md, *The teacher labels the unlabelled corpus*). 06a has run
-its 100 h point: Whisper's gold fell from 17.32 to 15.02 with the pseudo-labels (findings.md,
+at `MAX_OVERLAP_SHARE` 0.05 (score-card/flex-score-card.md, *The teacher labels the unlabelled corpus*). 06a has run
+its 100 h point: Whisper's gold fell from 17.32 to 15.02 with the pseudo-labels (score-card/whisper-score-card.md,
 *Whisper's 100 h point*). 06c followed: IndicConformer's gold fell from 18.42 to 15.64, a tie with
-Whisper's 15.02 at a seventh of its size, its extra errors deletions in crosstalk (findings.md,
+Whisper's 15.02 at a seventh of its size, its extra errors deletions in crosstalk (score-card/indicconformer-score-card.md,
 *IndicConformer's 100 h point*). 06d then: Parakeet's gold fell from 28.63 to 21.53, its teacher
-labels closing 42% of the gap Nepali pretraining gave IndicConformer, still 5.9 behind (findings.md,
+labels closing 42% of the gap Nepali pretraining gave IndicConformer, still 5.9 behind (score-card/parakeet-score-card.md,
 *Parakeet's 100 h point*). 06f last: the Conformer from scratch fell from 43.70 to 27.08, its
 teacher labels closing half its gap to the teacher, still 11 points behind the pretrained
-students; its stage 3 was stopped after one epoch (findings.md, *The Conformer from scratch*).
+students; its stage 3 was stopped after one epoch (score-card/conformer-score-card.md, *The Conformer from scratch*).
 **Next:** the remaining students (06b, 06e) when there is GPU time, each smoked first.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
@@ -111,7 +111,7 @@ Checked on 2026-09-24:
 | **Whisper-large-v3-turbo** (OpenAI, MIT) | weakly (123% zero-shot, loops) | yes: byte-level BPE | 04a scored 14.62 against Flex's 11.44 on the 2026-09-12 gold. It is DiCoW's backbone, so a Nepali-strong Whisper feeds straight into D1. Costs: 800M parameters, every clip padded to 30 s, loops. Its decoder stops at 448 positions, and Devanagari costs several tokens a character: 9 train labels do not fit, and 5 gold clips cannot be written whole in one pass. |
 | **Qwen3-ASR-0.6B** ([Alibaba](https://github.com/QwenLM/Qwen3-ASR), Apache-2.0) | no; Hindi among its 30 languages | yes: byte-level BPE | An audio encoder feeding a Qwen3 decoder, the 0.6B picked over the 1.7B for being Parakeet's size and smaller than Flex. Zero-shot it writes rough Nepanglish already. Streams through vLLM only; its forced aligner covers 11 languages, not Hindi or Nepali. Its prompt names the language, and `language None` means "no speech", so ours is fixed at `language Nepali`. `qwen-asr` pins transformers 4.57.6, so it runs in its own runtime. |
 | **Omnilingual CTC** (Meta; 300M or 1B) | yes: 1,600+ languages | to check | Added for step 4 (2026-09-26), not in step 0. A self-supervised wav2vec 2.0 encoder with a CTC head: the one family the other students leave out, and the one least able to use the context a code-switch needs, since CTC predicts each token independently. The 1B reached ~16.6% on val in the 2026-09-14 bake-off before it was stopped at epoch 6, under a different protocol. |
-| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. `06f_Student_Conformer` builds it from IndicConformer's config, resized, without the encoder copy. Ran 2026-10-05/06: pretraining is still worth ~11 points of gold at this data (findings.md, *The Conformer from scratch*). |
+| **Small Conformer from scratch** (NeMo) | no: no pretraining at all | own tokenizer | Added for step 4 (2026-09-26). The shared SentencePiece and heads of the transducers, a small config and random weights: it asks whether pretraining still matters once 145 h of pseudo and human labels exist. `06f_Student_Conformer` builds it from IndicConformer's config, resized, without the encoder copy. Ran 2026-10-05/06: pretraining is still worth ~11 points of gold at this data (score-card/conformer-score-card.md, *The Conformer from scratch*). |
 
 **Pick, before step 0.** Parakeet-v2 was the main bet, with IndicConformer next to it as the
 safety net. Step 0 overturned it (findings.md, 2026-09-25): Whisper-turbo came closest to Flex, and
@@ -218,7 +218,7 @@ step 4's curve says how much audio closes the gap.
    the smaller sibling of each kind; the rest are out. Each has the same three stages as the ASR
    students, held to D121's bars. The paper's family claim is the recipe's gain per family (stage
    2 minus stage 1), with 06e against 07b as the controlled pair, not which family wins. Both
-   passed their smoke runs on 2026-10-07. 07a ran on 2026-10-07/08 (findings.md, *Gemma 4 E2B's
+   passed their smoke runs on 2026-10-07. 07a ran on 2026-10-07/08 (score-card/gemma-e2b-score-card.md, *Gemma 4 E2B's
    100 h point*): the best stage 1 of any student (gold 16.09), but stage 2 gained only 0.68, and
    it memorised the replayed human clips within two or three epochs. **Next:** 07b.
 
@@ -282,7 +282,7 @@ recipe that won there (D105). The strengths in `ABLATION` are first guesses.
 cleared D109's bar. Speed came closest, at −0.07 on val. Noise was not run. Flex is already robust
 to the acoustic conditions, and what remains on gold is mostly vocabulary. The crosstalk stage's
 label interleaved two sentences with no speaker marker, and most heavy-crosstalk gold labels
-predate D100 (findings.md, *Augmentation on Flex: six stages, nothing kept, and why*). Noise is
+predate D100 (score-card/flex-score-card.md, *Augmentation on Flex: six stages, nothing kept, and why*). Noise is
 worth running only as insurance, judged on the noisy no-crosstalk gold bucket with a threshold set
 beforehand.
 
