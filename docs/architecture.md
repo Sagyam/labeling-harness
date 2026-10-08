@@ -122,18 +122,16 @@ a base model on the clips both scored, the set's own unit resampled:
   growth against base. Short words top it without dominating the errors, so a row is read beside
   its share.
 - **The attribution card** (D111).
-- **Word rarity** (`error_store.rarity`, D123): each error's word in a bucket by how often what
-  the students train on holds it -- the human train labels plus the teacher's filtered
-  pseudo-labels, counted by spelling key (`error_mining.word_counts`) into the dataset's
+- **Word rarity** (`error_store.rarity`, D123): the set's WER within each bucket of how often a
+  word occurs in what the students train on -- the human train labels plus the teacher's
+  filtered pseudo-labels, counted by spelling key (`error_mining.word_counts`) into the dataset's
   `harness/word_counts.json`, which 05_Teacher writes with its labels. Buckets never, 1-9, 10-49,
-  50-99, 100+; a substitution and a deletion go by the reference word, an insertion by the word
-  inserted. Per bucket its share of reference words, its S/D/I in points of WER (so the buckets
-  add up to the WER), and its rate, substitutions and deletions per 100 of its own words. The
-  counts are fixed per export and teacher, so every model is bucketed alike, the teacher included.
+  50-99, 100+; a substitution and a deletion are the reference word's, an insertion the inserted
+  word's. Each bucket's WER with S/D/I is per 100 of its own reference words.
 
-`09_Report` prints the first two and word rarity per run and set; the Models page shows the first
-four. Runs scored before D123 gained their rarity block from their error files
-(`scripts/backfill_rarity.py`).
+`09_Report` prints the first two per run and set, and each run's WER by word rarity as one table
+(a row per bucket, a column per set); the Models page shows the first four. Runs scored before
+D123 gained their rarity block from their error files (`scripts/backfill_rarity.py`).
 
 The page's playground (D85) is the one place a model runs. A recording made on the page goes
 through `POST /models/{slug}/transcribe`. The backend normalises it as ingest normalises an

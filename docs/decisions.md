@@ -3022,31 +3022,31 @@ choice the same day:
 **Reversal:** cheap. A student notebook is one `Student` entry in `build_students.py`; adding
 the 1.7B Qwen or E4B back is one entry and a smoke run.
 
-## D123 — Every error is bucketed by how often its word was trained on
+## D123 — Every set's WER is also given within each word-rarity bucket
 
-Findings *Why the students stop 4-5 points short* (2026-10-08) split each student's gap by word
-frequency with throwaway code. The owner asked the same day for it in the standard evaluation, on
-gold, val and the public sets, and backfilled for the best weights of each model.
+The owner asked on 2026-10-08 for a WER breakdown by how often each word occurs in the training
+corpus, in the standard evaluation, on val, gold and the public sets, backfilled for the best
+weights of each model.
 
+- **Each bucket's own WER, against the set's labels.** For one model on one set, a bucket's WER is
+  its errors per 100 of the set's reference words in that bucket, split into S/D/I. The labels are
+  the truth; no model is a reference, and no bucket is read as a difference from another model.
+- **Buckets** never, 1-9, 10-49, 50-99, 100+ (the owner's 1-10, 10-50, 50-100 with each edge given
+  to the upper bucket). A substitution and a deletion are the reference word's, an insertion the
+  inserted word's, which is the only word it has; a bucket with insertions and no reference words
+  has no WER.
 - **One corpus for every model**: the export's human train labels (stage 1) plus the frozen
   teacher's filtered pseudo-labels (stage 2), counted by `fold.spelling_key` after the scorer's
-  tokenizer. Flex never trained on the pseudo-labels, but a bucket only means the same thing in
-  two rows if both rows were bucketed by the same counts. The file names the export, the labels
-  and the fold; a count file from another fold is refused, because spelling keys move with it.
+  tokenizer, so a bucket holds the same words in every model's table. The file names the export,
+  the labels and the fold; a count file from another fold is refused, because spelling keys move
+  with it.
 - **The counts live in the dataset's `harness/word_counts.json`**, beside the scorer, so
   `ftkit.download_dataset` brings them to every notebook with no new fetch. 05_Teacher writes them
   when its labels are final; before any teacher has run there are none, and runs are scored
   without the block and say so.
-- **Buckets** never, 1-9, 10-49, 50-99, 100+ (the owner's 1-10, 10-50, 50-100 with each edge given
-  to the upper bucket). A substitution and a deletion go by the reference word, an insertion by
-  the word inserted, which is the only word it has.
-- **Points of WER, not shares of errors**: each bucket's S, D and I are per 100 reference words of
-  the whole set, so the buckets add up to the WER (the S/D/I standard), and a gap between two
-  models splits into the same parts. Its rate (S+D per 100 of the bucket's words) is the
-  per-word error rate the finding's first table reads.
-- **Computed from the error rows at report time, not stored in them.** The counts depend on the
-  teacher and the export; the rows depend only on the transcripts. So the miner version did not
-  change, no error file had to be derived again, and a backfill is a read of each run's files.
+- **Computed from the error rows, not stored in them.** The counts depend on the teacher and the
+  export; the rows only on the transcripts. So the miner version did not change, and a backfill is
+  a read of each run's error files (`scripts/backfill_rarity.py`).
 
 **Reversal:** cheap. Remove the `rarity` block from `evalkit` and the report; the error files are
 untouched by it.

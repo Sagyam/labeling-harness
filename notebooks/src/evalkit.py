@@ -13,7 +13,7 @@ Every split and set also keeps its errors: each aligned word pair, classified, i
 `harness/errors/<set>.parquet` with each clip's crosstalk and SNR, and a `breakdown` beside its
 WER (crosstalk buckets, numbers, the
 most common substitutions, deletions and insertions; D110) and, given the training corpus's word
-counts, the WER split by how often each error's word was trained on (D123). Both come from the
+counts, the WER within each bucket of how often a word was trained on (D123). Both come from the
 harness's own `error_mining.py` and `error_store.py`, which the dataset's `harness/` copy carries
 beside fold.py, so the Models page reads exactly what the notebook wrote.
 
@@ -313,9 +313,9 @@ def count_training_words(
     return Path(path)
 
 
-def rarity(errors: Path, word_counts: Path, *, base: Path | None = None) -> dict[str, Any] | None:
-    """An error file's WER split by word rarity (`error_store.rarity`), with the corpus it was
-    counted on; None when the harness copy predates it."""
+def rarity(errors: Path, word_counts: Path) -> dict[str, Any] | None:
+    """An error file's WER within each word-rarity bucket (`error_store.rarity`), with the corpus
+    it was counted on; None when the harness copy predates it."""
     kit = _miner()
     if kit is None or not hasattr(kit[1], "rarity"):
         print("the dataset's harness/ predates word rarity (D123): upload the harness copy")
@@ -323,9 +323,7 @@ def rarity(errors: Path, word_counts: Path, *, base: Path | None = None) -> dict
     mining, store = kit
     meta, counts = mining.read_counts(word_counts)
     keep = ("fold_version", "sources", "types", "tokens", "created_at")
-    return store.rarity(Path(errors), counts, base=base) | {
-        "corpus": {k: meta.get(k) for k in keep}
-    }
+    return store.rarity(Path(errors), counts) | {"corpus": {k: meta.get(k) for k in keep}}
 
 
 def add_rarity(out: Path, word_counts: Path) -> dict[str, dict]:
@@ -354,15 +352,15 @@ def add_rarity(out: Path, word_counts: Path) -> dict[str, dict]:
 
 
 def print_rarity(label: str, block: Mapping[str, Any] | None) -> None:
-    """The rarity block in one line: each bucket's share of words, its points of WER and its
-    per-word rate."""
+    """The rarity block in one line: each bucket's WER and its share of the reference words."""
     if not block:
         return
-    parts = []
-    for b in block["buckets"]:
-        rate = "-" if b["rate"] is None else f"{b['rate']:.1f}"
-        parts.append(f"{b['bucket']} {100 * b['share_of_words']:.1f}%w {b['points']:.2f}pt r{rate}")
-    print(f"    {label} by rarity: " + " · ".join(parts))
+    parts = [
+        f"{b['bucket']} {'-' if b['wer'] is None else format(b['wer'], '.2f')}"
+        f" ({100 * b['share_of_words']:.1f}% of words)"
+        for b in block["buckets"]
+    ]
+    print(f"    {label} WER by word rarity: " + " · ".join(parts))
 
 
 #: A public set's measured recording conditions, each `benchmarks/<kind>/<set>.parquet`.

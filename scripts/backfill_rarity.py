@@ -11,7 +11,7 @@ would have written them. Then, for each run, every `harness/errors/<set>.parquet
 run's `<split>_metrics.json` and `benchmarks/<set>.json` gain `breakdown.rarity`
 (`evalkit.add_rarity`): nothing is decoded or scored again. One commit per repo.
 
-The default runs are the best weights of each model family: the teacher (blend-075) and the four
+The default runs are the best weights of each model: Flex (blend-075, the teacher) and the four
 students' stage 2.
 """
 

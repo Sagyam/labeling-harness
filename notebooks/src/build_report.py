@@ -343,41 +343,35 @@ for set_name in ("gold", "val", *SETS):
 """
 
 RARITY_NOTE = """
-## Errors by word rarity (D123)
+## WER by word rarity (D123)
 
-Each error's word in a bucket by how often what the students train on holds it -- the human train
-labels and the teacher's pseudo-labels, counted by spelling key in the dataset's
-`harness/word_counts.json`: a substitution's and a deletion's reference word, an insertion's
-inserted word. Per bucket: its points of WER (per 100 reference words of the whole set, so a
-row's points add up to its WER) and, in brackets, its rate (substitutions and deletions per 100 of
-the bucket's own reference words). Then each model minus the teacher, point by point: where its
-gap is. A run scored before D123 has no rarity block until `scripts/backfill_rarity.py` adds it.
+One table per model: a row per bucket of how often a word occurs in what the students train on
+(the human train labels and the teacher's pseudo-labels, counted in the dataset's
+`harness/word_counts.json`), a column per set, and in each cell the WER of that set's words in
+that bucket, scored against the set's own labels: its errors per 100 of its reference words in
+the bucket. A substitution and a deletion are the reference word's, an insertion the inserted
+word's. A run scored before D123 has no rarity until `scripts/backfill_rarity.py` adds it.
 """
 
 RARITY = r"""
+RARITY_SETS = ("val", "gold", *SETS)
+
+
 rarity = {}
-for set_name in ("gold", "val", *SETS):
-    have = {run: b[set_name]["rarity"] for run, b in breakdowns.items() if (b.get(set_name) or {}).get("rarity")}
-    if not have:
-        print(f"\n{set_name}: no run has a rarity block")
+for m in models:
+    got = {s: b["rarity"] for s in RARITY_SETS if (b := breakdowns[m["run"]].get(s)) and b.get("rarity")}
+    if not got:
         continue
-    rarity[set_name] = have
-    first = next(iter(have.values()))
-    names = [x["bucket"] for x in first["buckets"]]
-    shares = ", ".join(f"{x['bucket']} {100 * x['share_of_words']:.1f}%" for x in first["buckets"])
-    print(f"\n{set_name}: points of WER (rate) by bucket | its reference words: {shares}")
-    print(f"{'model':<28}{'WER':>7}" + "".join(f"{b:>16}" for b in names))
-    for run, r in have.items():
-        cells = "".join(f"{x['points']:>8.2f} ({x['rate']:>5.1f})" if x["rate"] is not None
-                        else f"{x['points']:>8.2f} {'(-)':>7}" for x in r["buckets"])
-        print(f"{label(by_run[run]):<28}{r['wer']:>7.2f}{cells}")
-    if TEACHER in have:
-        theirs = {x["bucket"]: x["points"] for x in have[TEACHER]["buckets"]}
-        print(f"model minus {TEACHER}, points of WER")
-        for run, r in have.items():
-            if run != TEACHER:
-                print(f"  {label(by_run[run]):<26}{r['wer'] - have[TEACHER]['wer']:>+7.2f}"
-                      + "".join(f"{x['points'] - theirs[x['bucket']]:>+16.2f}" for x in r["buckets"]))
+    rarity[m["run"]] = got
+    names = [x["bucket"] for x in next(iter(got.values()))["buckets"]]
+    columns = [s for s in RARITY_SETS if s in got]
+    print(f"\n{label(m)}: WER by word rarity")
+    print(f"{'bucket':<10}" + "".join(f"{s:>14}" for s in columns))
+    for i, bucket in enumerate(names):
+        cells = [got[s]["buckets"][i]["wer"] for s in columns]
+        print(f"{bucket:<10}" + "".join(f"{'-':>14}" if c is None else f"{c:>14.2f}" for c in cells))
+if not rarity:
+    print("no run has a rarity block")
 """
 
 WRITE_NOTE = """
@@ -408,14 +402,14 @@ for m in models:
     got = public[m["run"]]
     if got:
         md_lines.append(f"| {label(m)} | " + " | ".join(f"{got[n][0]['wer']:.2f}" if n in got else "—" for n in SETS) + " |")
-if rarity.get("gold"):
-    have = rarity["gold"]
-    names = [x["bucket"] for x in next(iter(have.values()))["buckets"]]
-    md_lines += ["", "Gold by word rarity: points of WER (substitutions and deletions per 100 of the bucket's words)", "",
-                 "| Model | WER | " + " | ".join(names) + " |", "|---|---|" + "---|" * len(names)]
-    for run, r in have.items():
-        md_lines.append(f"| {label(by_run[run])} | {r['wer']:.2f} | " + " | ".join(
-            f"{x['points']:.2f} ({x['rate']:.1f})" if x["rate"] is not None else f"{x['points']:.2f}" for x in r["buckets"]) + " |")
+for run, got in rarity.items():
+    names = [x["bucket"] for x in next(iter(got.values()))["buckets"]]
+    columns = [s for s in RARITY_SETS if s in got]
+    md_lines += ["", f"WER by word rarity, {label(by_run[run])}", "",
+                 "| Bucket | " + " | ".join(columns) + " |", "|---|" + "---|" * len(columns)]
+    for i, bucket in enumerate(names):
+        md_lines.append(f"| {bucket} | " + " | ".join(
+            "—" if (c := got[s]["buckets"][i]["wer"]) is None else f"{c:.2f}" for s in columns) + " |")
 for title, table in (("Step", steps), ("Pair", cross)):
     if table:
         md_lines += ["", f"| {title} | Val | Gold |", "|---|---|---|"]

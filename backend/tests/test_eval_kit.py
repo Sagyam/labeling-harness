@@ -723,9 +723,11 @@ def test_a_run_s_breakdown_splits_its_wer_by_word_rarity(tmp_path: Path):
     rarity = json.loads((tmp_path / "run" / "gold_metrics.json").read_text("utf-8"))["breakdown"][
         "rarity"
     ]
-    assert sum(b["points"] for b in rarity["buckets"]) == pytest.approx(row["gold_wer"])
+    errors = sum(b["errors"] for b in rarity["buckets"])
+    assert 100 * errors / rarity["ref_words"] == pytest.approx(row["gold_wer"])
     by = {b["bucket"]: b for b in rarity["buckets"]}
-    assert by["1-9"]["sub"] > 0  # "three", seen twice, was the word missed
+    assert by["1-9"]["wer"] == pytest.approx(100.0)  # "three", seen twice, was the word missed
+    assert by["100+"]["wer"] == 0.0
     assert rarity["corpus"]["sources"]["pseudo"]["labels"] == "distill/x"
 
 
@@ -736,9 +738,8 @@ def test_a_public_set_s_breakdown_splits_its_wer_by_word_rarity(tmp_path: Path, 
         work=tmp_path / "w", token="t", names=("indicvoices",), word_counts=_counts_file(tmp_path),
     )  # fmt: skip
     rarity = summaries["indicvoices"]["breakdown"]["rarity"]
-    assert sum(b["points"] for b in rarity["buckets"]) == pytest.approx(
-        summaries["indicvoices"]["wer"]
-    )
+    errors = sum(b["errors"] for b in rarity["buckets"])
+    assert 100 * errors / rarity["ref_words"] == pytest.approx(summaries["indicvoices"]["wer"])
 
 
 def test_a_finished_run_gets_its_rarity_added_from_its_error_files(tmp_path: Path, monkeypatch):

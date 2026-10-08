@@ -524,65 +524,36 @@ def _rarity_clips(path: Path, counts: Mapping[str, int]) -> dict[str, _RarityCli
     }
 
 
-def _in_bucket(bucket: str) -> tuple[Measure, Measure]:
-    """A bucket's points (its errors per 100 reference words of the whole clip) and its rate
-    (substitutions and deletions per 100 of its own reference words), as measures."""
+def rarity(path: Path, counts: Mapping[str, int]) -> dict[str, Any]:
+    """The file's WER within each word-rarity bucket (D123): how often each word occurs in
+    ``counts``, the training corpus's.
 
-    def points(clip: Any) -> tuple[int, int]:
-        sub, dele, ins, _ = clip.cells[bucket]
-        return sub + dele + ins, clip.words
-
-    def rate(clip: Any) -> tuple[int, int]:
-        sub, dele, _, words = clip.cells[bucket]
-        return sub + dele, words
-
-    return points, rate
-
-
-def rarity(path: Path, counts: Mapping[str, int], *, base: Path | None = None) -> dict[str, Any]:
-    """The file's WER split by how often each error's word occurs in ``counts`` (D123).
-
-    Each bucket of :data:`RARITY_BUCKETS` holds its share of the reference words, its
-    substitutions, deletions and insertions in points of WER (per 100 reference words of the
-    whole set, so every bucket's ``points`` add up to the WER), and its ``rate``: substitutions
-    and deletions per 100 of its own reference words, ``None`` when it has none, with an interval
-    from resampling ``group``. A substitution and a deletion are bucketed by the reference word,
-    an insertion by the word inserted.
-
-    With ``base``, each bucket's points and rate also carry this run minus the base on the clips
-    both scored, ``[difference, low, high]``.
+    Each bucket of :data:`RARITY_BUCKETS` holds its reference words and their share of the set's,
+    its errors, and its WER with S/D/I: its errors per 100 of its own reference words (``None``
+    when it has none). A substitution and a deletion are the reference word's, an insertion the
+    inserted word's.
     """
     clips = list(_rarity_clips(path, counts).values())
     words = sum(c.words for c in clips)
-    totals = {b: [sum(c.cells[b][k] for c in clips) for k in range(4)] for b in RARITY_BUCKETS}
-    errors = sum(sum(t[:3]) for t in totals.values())
-    theirs = _rarity_clips(base, counts) if base is not None else None
-    shared = [c for c in clips if theirs is not None and c.clip_id in theirs]
-    out: dict[str, Any] = {"ref_words": words, "wer": _rate(errors, words), "buckets": []}
-    if theirs is not None:
-        out["vs_base"] = {"clips": len(shared)}
-    for b in RARITY_BUCKETS:
-        sub, dele, ins, own = totals[b]
-        points, rate = _in_bucket(b)
-        entry = {
-            "bucket": b,
-            "ref_words": own,
-            "share_of_words": own / words if words else 0.0,
-            "sub": _rate(sub, words),
-            "del": _rate(dele, words),
-            "ins": _rate(ins, words),
-            "points": _rate(sub + dele + ins, words),
-            "share_of_errors": (sub + dele + ins) / errors if errors else 0.0,
-            "rate": _rate(sub + dele, own) if own else None,
-            "rate_ci": _interval(clips, rate) if own else None,
-        }
-        if theirs is not None:
-            paired = {
-                name: _paired(shared, theirs, measure)
-                for name, measure in (("points", points), ("rate", rate))
+    out: dict[str, Any] = {"ref_words": words, "buckets": []}
+    for bucket in RARITY_BUCKETS:
+        sub, dele, ins, own = (sum(c.cells[bucket][k] for c in clips) for k in range(4))
+
+        def per_word(n: int, own: int = own) -> float | None:
+            return _rate(n, own) if own else None
+
+        out["buckets"].append(
+            {
+                "bucket": bucket,
+                "ref_words": own,
+                "share_of_words": own / words if words else 0.0,
+                "errors": sub + dele + ins,
+                "wer": per_word(sub + dele + ins),
+                "sub": per_word(sub),
+                "del": per_word(dele),
+                "ins": per_word(ins),
             }
-            entry["vs_base"] = {k: v["wer"] if v else None for k, v in paired.items()}
-        out["buckets"].append(entry)
+        )
     return out
 
 
