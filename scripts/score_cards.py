@@ -96,6 +96,7 @@ MODELS: tuple[Model, ...] = (
     _student("whisper", "Whisper-large-v3-turbo", Stage("Before training")),
     _student("indicconformer", "IndicConformer", Stage("Before training")),
     _student("parakeet", "Parakeet", Stage("Before training")),
+    _student("omnilingual", "Omnilingual ASR CTC 1B", Stage("Before training")),
     _student(
         "gemma-e2b",
         "Gemma 4 E2B",
