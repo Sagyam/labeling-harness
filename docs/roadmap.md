@@ -62,7 +62,11 @@ labels closing 42% of the gap Nepali pretraining gave IndicConformer, still 5.9 
 *Parakeet's 100 h point*). 06f last: the Conformer from scratch fell from 43.70 to 27.08, its
 teacher labels closing half its gap to the teacher, still 11 points behind the pretrained
 students; its stage 3 was stopped after one epoch (score-card/conformer-score-card.md, *The Conformer from scratch*).
-**Next:** the remaining students (06b, 06e) when there is GPU time, each smoked first.
+06e on 2026-10-09: Omnilingual CTC 1B's gold fell from 19.65 to 17.52, behind Whisper, Gemma 4 E2B
+and IndicConformer, with the lowest gold CER of any student (score-card/omnilingual-score-card.md,
+*The CTC student's 100 h point*).
+**Next:** the remaining student (06b) when there is GPU time, smoked first; 07b, the CTC student's
+controlled pair.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
