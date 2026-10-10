@@ -607,7 +607,7 @@ gold and val recordings: `/content` was wiped, and the kernel log showed no out-
 A plain rerun downloaded them in 15 s. The 2026-10-03 03c session was lost the same way, during
 the MUSAN download.
 
-### Augmentation on Flex: six stages, nothing kept, and why (2026-10-03)
+### Augmentation on Flex: seven stages, nothing kept, and why (2026-10-03; noise 2026-10-11)
 
 `03c_Flex_Augment` on the 2026-09-30 export (14,835 train, 1,792 val, 965 gold clips), fold-v4.
 Each run is one stage on top of vanilla (SpecAugment included), on seed 0, from the same base
@@ -624,11 +624,21 @@ stage that fails here has failed at one strength. WER is shown with S/D/I per 10
 | aug-codec-s0 | MP3/Opus/AAC/mu-law, p 0.3 | 5 | 7.19 (4.75/1.35/1.10) | 11.14 (7.19/2.46/1.49) |
 | aug-gain-s0 | ±6 dB, p 0.5 | 4 | 7.19 (4.71/1.41/1.07) | 11.20 (7.13/2.52/1.55) |
 | aug-channel-s0 | microphone response, p 0.3 | 5 | 7.22 (4.71/1.41/1.10) | 11.24 (7.28/2.53/1.43) |
+| aug-noise-s0 | MUSAN noise and music at 5–25 dB SNR, p 0.5 | 4 | 7.16 (4.73/1.34/1.09) | 11.11 (7.23/2.32/1.57) |
 | aug-crosstalk-s0 | whole 2–6 s clip, both voices labelled, p 0.3 | 6 | 7.25 (4.80/1.29/1.15) | 11.31 (7.43/2.04/1.85) |
 
 **None was kept**, so no weights were uploaded. The combined run needs two kept stages and was
-skipped. The noise stage never ran: the Colab runtime stopped first. Every run's metrics, per-clip
-counts and gold and val transcripts are in `Sagyam/nepanglish-asr-flex-ft/flex-2026-09-30/aug-*-s0/`.
+skipped. Every run's metrics, per-clip counts and gold and val transcripts are in
+`Sagyam/nepanglish-asr-flex-ft/flex-2026-09-30/aug-*-s0/`.
+
+**Noise ran last, on 2026-10-11**, after the Colab runtime stopped on 2026-10-03 before reaching
+it. By then training was over, so it was run to observe the effect, not to keep anything, and no
+weights were uploaded. It ran from the same notebook commit's cells, the same base weights and
+the same 1,413 steps as the other runs. The kits had changed in between only in early stopping
+(06f's fixes), which does not reach a Flex run: Flex is below WER 100 from the start, and its
+warmup ends before its first evaluation. Its test was fixed before the run: noise counts as
+helping only if its paired difference on the noisy bucket below has a 95% interval wholly below
+zero, and as harmless if the clean bucket's interval is not wholly above zero.
 
 **Gold holds the conditions these stages target, and the stages did not help on them.** Gold is
 acoustically harder than train, by share of audio: SNR below 15 dB is 25% of gold against 9% of
@@ -639,7 +649,7 @@ help, paired against vanilla-s1, with 95% intervals from resampling episodes:
 |---|---|---|---|---|
 | clean: no crosstalk, SNR 25+ dB, C50 55+ dB, 6.5+ kHz | 115 (43) | 7.12 | 4.70 / 4.74 | speed −0.18 [−0.40, −0.02], the only interval clear of zero in its favour |
 | reverberant, C50 below 40 dB, no crosstalk | 118 (37) | 10.69 | 8.68 / 8.43 | reverb +0.25 [−0.13, +0.70] |
-| noisy, SNR below 15 dB, no crosstalk | 159 (48) | 9.64 | 8.82 / 8.60 | channel +0.56 [+0.24, +1.00], codec +0.49 [+0.13, +0.93], reverb +0.40 [+0.04, +0.76] |
+| noisy, SNR below 15 dB, no crosstalk | 159 (48) | 9.64 | 8.82 / 8.60 | noise +0.18 [−0.37, +0.71]; channel +0.56 [+0.24, +1.00], codec +0.49 [+0.13, +0.93], reverb +0.40 [+0.04, +0.76] |
 | narrowband, below 4.5 kHz, no crosstalk | 33 (13) | 6.48 | 5.00 / 5.33 | codec −0.25 [−0.81, +0.34], channel −0.08 [−0.62, +0.29] |
 | crosstalk above 15% | 128 (28) | 34.14 | 28.29 / 29.24 | crosstalk +0.37 [−1.33, +1.99] |
 
@@ -647,9 +657,16 @@ help, paired against vanilla-s1, with 95% intervals from resampling episodes:
   for reverberant clips, and channel, codec and reverb made the noisy clips slightly worse. The
   dose was one first-guess strength, but at that strength these stages are not a fix the corpus
   needs.
+- **Noise did nothing, on the clips it targets or anywhere else.** On the noisy bucket it scored
+  8.78, between vanilla's two seeds (8.82 and 8.60), so it fails the test set before the run. It
+  did no harm on clean clips (−0.02 [−0.27, +0.22]). Overall it ties vanilla-s1 on val (7.16,
+  −0.01 [−0.21, +0.18]) and gold (11.11, −0.01 [−0.28, +0.27]). Every gold SNR class, crosstalk
+  included, has an interval that spans zero, and so does the 251-clip SNR-below-15 dB class
+  (+0.35 [−0.24, +0.94]). The model trained on 15.8 h of MUSAN's noise and music, mixed into half
+  the clips of every epoch.
 - **Gold is blind in two places.** Narrowband has 33 clips. The crosstalk bucket's two vanilla
-  seeds differ by 0.95 points, and its intervals span 2–3 points: the five other stages all land
-  between −1.11 and −0.26 there, which is within seed noise.
+  seeds differ by 0.95 points, and its intervals span 2–3 points: the six other stages all land
+  between −1.11 and −0.26 there (noise −0.72), which is within seed noise.
 - **Speed is the only stage with a sign of life**, −0.07 on val and −0.18 on clean gold. That is
   about 1% relative, below D109's bar.
 
@@ -739,10 +756,9 @@ position: missing a few words in heavy crosstalk is acceptable.
   405x realtime against vanilla's 637x. In-process PyAV would fix that, if codec is ever run
   again.
 
-**Verdict.** On Flex, acoustic augmentation at these strengths is not a lever for this corpus, and
-noise is expected to be null for the same reasons. It is worth running only as insurance for audio
-the corpus does not have yet, such as reels over music, and judged on the noisy no-crosstalk
-bucket (159 clips) with its threshold set before the run. Crosstalk would need a target format and a
-realistic simulation, which is roadmap D work, not an augmentation stage; and since missing a few
-words in heavy crosstalk is acceptable for the product (D114), it is not a priority.
-The lever for WER is vocabulary.
+**Verdict.** On Flex, acoustic augmentation at these strengths is not a lever for this corpus.
+Noise, the last stage run, was null as expected, for the reasons above: canary-1b-v2 trained with
+36,000 h of non-speech audio and is reported robust to MUSAN noise, and train already holds 4.6 h
+below 15 dB SNR. Crosstalk would need a target format and a realistic simulation, which is roadmap
+D work, not an augmentation stage; and since missing a few words in heavy crosstalk is acceptable
+for the product (D114), it is not a priority. The lever for WER is vocabulary.

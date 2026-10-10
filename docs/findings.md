@@ -1646,7 +1646,8 @@ run down by the same buckets.
     (35–45 dB: 1.08 [0.74, 1.26]).
   - So by this measure the corpus's background noise is not a source of errors. Item 3's noise
     augmentation is insurance for audio the corpus does not have yet, not a fix for measured
-    errors.
+    errors. Trained into Flex on 2026-10-11, it tied vanilla everywhere, the noisy clips included
+    (score-card/flex-score-card.md, *Augmentation on Flex*).
 - **Reverb is ruled out.** C50 is 55+ dB (a dry room) for 591 of 706 gold clips, and no bucket's
   interval clears 1. The one reverberant episode, the six-speaker `ep_344` roundtable (median C50
   43 dB), has too few gold clips to say more.
