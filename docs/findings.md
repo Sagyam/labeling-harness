@@ -37,6 +37,27 @@ until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-1
 
 ---
 
+## No gold voice speaks in train: every linker match was a look-alike (2026-10-10)
+
+The voice linker (D87, one 0.6 cut-off) put 18 voices in both gold clips and train/val clips, so
+gold looked as if it shared speakers with train. The owner checked every one by ear, not blind:
+each gold–train pair was up to four 4 s stretches of the voice alone, with show and title shown.
+Pages and verdicts are in `data/pilots/gold-train-voices-2026-10-10/` (gitignored).
+
+- **All 35 pairs are different people**: 18 voices, 23 gold episodes against 23 train/val ones,
+  no can't-tell. Gold is speaker-held-out from train and val as far as the linker can see.
+- **Cosine did not save the high pairs.** The pairs ran from 0.51 to 0.85 (median 0.61). Five were at
+  0.72 or above, where the 2026-09-28 pilot found the same person 91% of the time. All were heard
+  as different, among them a chat-show clip against the creator's own channel at 0.81 and 0.85.
+  The owner's comment: many of these voices sound very similar. Across episodes, a link is a
+  candidate, not a speaker match. A voice count built on links undercounts distinct people, and an
+  overlap built on them overcounts shared ones.
+- **Not covered.** v002 has gold clips in 14 episodes and only the 3 with the most solo speech
+  were played. Gold voices the linker did *not* match to train were not checked, so a missed link
+  (3 of 44 in the 09-28 pilot) is still possible.
+
+---
+
 ## Speech-LLMs as students: the bake-off, zero-shot (2026-10-07)
 
 Can an open-weight LLM that hears audio be a student (roadmap B), and which ones are worth
