@@ -298,7 +298,7 @@ there for labelled clips of a pot with two or more diarized speakers (or one, wi
 puts a clip saved by mistake back, starting from its saved lanes.
 Its tasks open in the multitrack editor, and their decisions go to the `speakers-v1` label
 version without touching the clip's pot, pipeline status or single-stream label.
-The queue was closed on 2026-09-24 (D100): its open tasks were skipped. The editor is kept for roadmap F.
+The queue was closed on 2026-09-24 (D100): its open tasks were skipped. The editor's code is kept, though roadmap F, which it was kept for, is retired (D124).
 
 A labelled clip can be sent back to triage for a second listen (D114): `scripts/reopen_labels.py`
 takes a JSON list of clips, each with a priority and what to listen for. It opens a `review` task

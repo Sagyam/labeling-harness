@@ -22,9 +22,9 @@ notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
 
 ASR work: what is next is in [docs/roadmap.md](docs/roadmap.md), what has been measured in
-[docs/findings.md](docs/findings.md). Model-building designs parked until a tcpWER uplift are in
-[docs/custom-arch.md](docs/custom-arch.md). A model is trained and evaluated by running the
-notebooks in the order of their numbers (D105).
+[docs/findings.md](docs/findings.md). Model-building designs for overlapped speech, closed with
+roadmap D and F (D124), are kept as a record in [docs/custom-arch.md](docs/custom-arch.md). A model
+is trained and evaluated by running the notebooks in the order of their numbers (D105).
 
 Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
 formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they

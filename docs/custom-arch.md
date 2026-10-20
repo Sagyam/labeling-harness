@@ -4,9 +4,10 @@ Design notes for building models on top of the Flex fine-tune, written and parke
 2026-09-23. The active plan is [roadmap.md](roadmap.md); its sections B and D name two of the
 three ideas here as priorities. This file holds the working detail so the roadmap stays short.
 
-**Revisit trigger (owner).** Reopen this file only if roadmap F works, that is, only once the
-diarizer's turns can be trusted. These designs are conditioned on diarization. Roadmap order:
-distillation, augmentation, the diarizer experiment, then this file.
+**Closed 2026-10-20 (D124).** Its revisit trigger was roadmap F, a diarizer whose turns can be
+trusted, and the owner retired F and the overlap models of roadmap D together. These designs are
+conditioned on diarization, so the file is kept as the record only; reopening it needs a new
+decision entry.
 
 ## Why nothing here trains from scratch
 

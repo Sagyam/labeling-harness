@@ -1,38 +1,25 @@
-# Research roadmap: overlapped speech
+# Research roadmap: the last experiments
 
-What is next for the ASR work on the Nepanglish corpus, as replanned on 2026-09-22. What has been
-measured so far is in [findings.md](findings.md). The earlier roadmap is retired (list at the end).
+What is next for the ASR work on the Nepanglish corpus, replanned on 2026-09-22 and again on
+2026-10-20 for the final phase. What has been measured so far is in [findings.md](findings.md).
+Retired items are listed at the end.
 
-**Where this starts.** Single-speaker recognition is largely solved for this corpus. The Flex
-fine-tune scores 6.5% folded WER on clean gold clips. Crosstalk is what remains: 17% at 5–15%
-overlap and 29% above 15%, on 205 gold clips. The D96 sweep showed that mixing more synthetic
-crosstalk into a model that writes one stream of text for one speaker does not move those numbers
-(findings.md, *Synthetic crosstalk does not move real crosstalk*). The model is never told which
-voice the label wants, so it hedges: fewer insertions, more deletions.
+**Where this stands.** Single-speaker recognition is largely solved for this corpus: the teacher
+(blend-075) scores 10.85 folded WER on gold and 7.08 on val, and the students have run their 100 h
+points. Crosstalk is what remains (17% at 5–15% overlap and 29% above 15% on the 2026-09-22 gold),
+and it stays unsolved on purpose. The diarizer's turns cannot be trusted (D100), and on 2026-10-20
+the owner retired both the models for overlapped speech and the diarizer experiment (D124). Gold
+stays single-stream: everything said, in time order, with overlap spans marked.
 
-This chapter needs two things:
-- references that say, per speaker, what was said in overlap;
-- models that are told whom to follow (by diarization, enrolment, or an output that writes every
-  speaker).
+**Order, set by the owner (2026-10-20):**
+1. **H.** Data dosing on Flex: hours against voices, now that the corpus has grown.
+2. **B step 6.** The council, convened once every student is in.
+3. **I.** The commercial recognisers on the public sets.
+4. **J.** WER at code-switch points.
 
-Depending on how strong the results are, it may become its own paper.
-
-**Status, 2026-09-24 (D100).** A stopped. The diarizer's turns cannot be trusted, neither which
-speaker said a word nor where a turn changes, so gold stays single-stream: everything said, in time
-order, with overlap spans marked. The owner put overlap models on hold as out of scope for the
-code-switching paper.
-
-**Order, set by the owner (2026-09-24):**
-1. **B.** Distil the Flex fine-tune.
-2. **C.** The augmentation pipeline.
-3. **G.** A text-only language model at decode time, and the low-risk fold rules (added
-   2026-09-27, after C at the owner's request).
-4. **F.** Fiddle with the diarizer, once B and C are mastered.
-5. **Only if F works:** the custom architectures ([custom-arch.md](custom-arch.md)) and the overlap
-   models of D. Both are conditioned on diarization, so both need a diarizer that can be trusted.
-
-E is how all of it is measured. Sections are lettered so they do not collide with the retired
-numbered items that code comments still cite, which is why F and G come after E.
+Still open from before: 07b and 06b (B), and the low-risk fold rules (G2). E is how all of it is
+measured. Sections are lettered so they do not collide with the retired numbered items that code
+comments still cite, which is why G to J come after E.
 
 **How a model is trained and evaluated (D105, 2026-09-30).** B and C are no longer run ad hoc:
 the notebooks are numbered in the order they run, and that order is the protocol.
@@ -73,8 +60,8 @@ controlled pair.
 Built on 2026-09-23 (D98) with voiceprint suggestions (D99), and piloted on gold crosstalk. On
 2026-09-24 the owner listened to the diarizer's per-word attribution and ruled it unusable: turns
 are hit or miss, and in crosstalk the per-word join decides by rule, not by audio (findings.md,
-*Diarization cannot say who said a word*). The speakers queue is closed. The editor is kept on
-purpose (the owner's call): if F yields turns that can be trusted, it is the tool that uses them.
+*Diarization cannot say who said a word*). The speakers queue is closed. The editor was kept for F,
+which is retired (D124); its code stays until the owner decides otherwise, and nothing uses it.
 
 ## B. Distil the Flex fine-tune into other architectures (priority 1)
 
@@ -245,6 +232,21 @@ step 4's curve says how much audio closes the gap.
      (12.29 → 11.47). Judge a council per set, not on val alone.
    - Only worth tuning if its output is used: relabelling a student's training data with the
      council's pick would make it a recipe question; a reported number does not.
+   - **New seats since 2026-10-06** (added 2026-10-20): Gemma 4 E2B (07a, gold 15.41) and
+     Omnilingual CTC 1B (06e, 17.52), and 07b and 06b once they run. Expect little: V1–V3 sat
+     within 0.02 of each other on val, so a new voter may move the vote by a tenth of a point. It
+     is run anyway because it costs a CPU minute.
+   - **A word-level vote as a variant** (ROVER-style). The panel vote picks one whole candidate,
+     so oracle@8 bounds it; a word-level vote aligns the voters' transcripts into slots and keeps
+     each slot's majority, so it can join one candidate's fix to another's. Align and vote on
+     folded tokens (`fold.py`, as every comparison), and write the winning token as its voter
+     wrote it. The risk is a sentence no model wrote, with broken grammar at the joins: read a
+     sample before trusting the number. It is chosen against the panel vote on val by the same
+     rule, and reported per set.
+   - **No commercial recogniser sits on the council on val or gold.** Those clips were seeded
+     from the three recognisers' fusion (D74), so their votes would pull the pick towards the
+     reference by construction. On the public sets, once I has their transcripts, a council with
+     them is a fair variant; report it apart from the open-model council.
 
 **Success bar.** The student's gold and val WER falls within Flex's episode-bootstrap CI, per clip
 class, folded and raw, split into S/D/I. Only then are its extras (streaming, timestamps,
@@ -261,12 +263,12 @@ not worth it: the decode is already about 9 A100-hours per 1000 h, Flex's autore
 with varying clip lengths and the loop retry recompiles constantly under XLA, the CPU (audio
 decoding, VAD) is the likelier bottleneck, and NeMo students do not train on TPU.
 
-## C. Augmentation pipeline (priority 2)
+## C. Augmentation pipeline (done)
 
 What the sweep taught: augmentation pays only when the model has a way to use it, either
-conditioning that says whom to follow or an output format that writes both voices. The pipeline
-below is built to feed D, not single-stream Flex. Gold and val audio are never a source of mixed-in
-speech or noise (D76).
+conditioning that says whom to follow or an output format that writes both voices. Those models
+were D, retired with F on 2026-10-20 (D124), so what is left of C is the switchboard below and
+its run on Flex. Gold and val audio are never a source of mixed-in speech or noise (D76).
 
 **Built 2026-09-26: `notebooks/src/augment.py`**, one switch per stage, all off until a notebook
 raises its `p`: SpecAugment, speed, reverb (synthetic or a bank), channel (microphone response),
@@ -297,105 +299,26 @@ single-stream model trained that way is charged a deletion for every word it was
 kept, into `info["text"]`, which the collate function trains on. The spans are the training
 export's `label_words` (the seed's aligned words, or a realignment for an edited label), so it needs
 whole-clip donors and skips any clip without them. `label="target"` stays for target-speaker models
-(D), which are told whom to follow.
+(D, retired), which are told whom to follow.
 
-1. **Two-voice mixes from whole verified clips.** This lifts D95's blocker. The only text D95 had
-   for a donor burst was an unverified recogniser's. If the second voice is a whole verified train
-   clip, or a word-aligned stretch of one (`app/services/forced_align.py`), both transcripts are
-   verified. That gives labels for both voices, as serialized output and target-speaker models
-   need. The measured mixer already exists (`notebooks/src/xtalk.py`, D96).
+Items 1 and 2, two-voice mixes as a test bench and realistic conversation timing, existed to
+develop D and are retired with it (list at the end). The `donor="clip"` mixer and
+`label="everything"` stay in `augment.py`; 03c's crosstalk stage used them.
 
-   The same mixes are where D would be developed and selected, since who said what is known by
-   construction (D100). They prove nothing about real overlap -- D96 showed synthetic crosstalk
-   does not transfer -- so a real-crosstalk check comes last.
-2. **Realistic conversation timing, overlap boosted.** Build conversations with a turn-taking
-   model (hand-overs, interruptions, backchannels) instead of bursts. The candidate is
-   [FastMSS](https://github.com/popcornell/FastMSS), open source, which takes utterances with word
-   timestamps. What the literature measured for DiCoW
-   ([Mind the Gap, 2026](https://arxiv.org/abs/2605.15442)):
-   - Turn-taking realism and *boosted* overlap mattered most.
-   - A diverse mix of sources beat an exact domain match.
-   - Synthetic pre-training followed by real fine-tuning was best: 8.7% against 9.9% tcpWER for
-     real data alone.
-
-   [A timing study](https://arxiv.org/html/2607.08371) found that how often overlap happens
-   matters more than how long each overlap lasts. Match the sustained talk-over of the >15%
-   bucket, not the 0.3 s bursts of D95.
 3. **Noise augmentation (owner's decision: part of the pipeline).** Background noise at a chosen
    SNR, drawn from the distribution Brouhaha measured on the corpus (D87), from a non-speech noise
-   set such as MUSAN's music and noise subsets. Reverberation from room impulse responses is
-   optional. Expect a modest gain for recognition: Mind the Gap measured −0.3 points of tcpWER from
-   noise on Whisper-based DiCoW and none from reverberation, which matters for diarization instead.
-   Our own clip classes found noise splits WER only through crosstalk. Measure it anyway, on the
-   SNR buckets, with the clean-clip no-harm check.
+   set such as MUSAN's music and noise subsets. Ran on Flex on 2026-10-11 and tied vanilla
+   everywhere (status above).
 4. **LLM-written conversations spoken by TTS (watch, not build).** 67 h of real plus 636 h of
    synthetic Hungarian beat a model trained on 2,700 h
    ([Conversations that Never Happened](https://arxiv.org/abs/2606.03957)). This needs a
    code-mixed Nepali TTS with many voices, which does not exist yet.
 
-## D. Models for overlapped speech (on hold, D100; only if F works)
-
-There will be no per-speaker references for real crosstalk: separation was a dead end
-(2026-09-22/23), and so was attribution from diarization (2026-09-24). If D resumes, models are
-selected on C's synthetic mixes. They are then checked on real crosstalk in two ways: recognition
-against the single-stream gold, and attribution by grading the model's output by ear.
-
-1. **DiCoW v3.3 and SE-DiCoW** (Brno University of Technology;
-   [model](https://huggingface.co/BUT-FIT/DiCoW_v3_3),
-   [SE-DiCoW](https://arxiv.org/html/2601.19194v1),
-   [training code](https://github.com/BUTSpeechFIT/TS-ASR-Whisper)).
-   - **How it works.** Whisper-large-v3-turbo (0.9B) conditioned on diarization masks (silence,
-     target, other, overlap) at every encoder layer. SE-DiCoW also enrols the target's clearest
-     stretch. That halves tcpWER against the original DiCoW, but against DiCoW v3.3 it gains
-     little on real meetings (NOTSOFAR-1 26.6 to 26.1, AMI SDM 18.6 to 18.5 with a real
-     diarizer); its large gains are on 3-speaker synthetic mixes (Libri3Mix clean 38.6 to 35.6).
-   - **Why it fits.** The conditioning it needs already exists: the Modal pyannote turns
-     (D78/D79), joined by time. Its English-only fine-tuning keeps whatever languages Whisper
-     had, and for our Nepali that is almost nothing: Whisper-turbo scored 123% WER on gold
-     zero-shot, with 271 looping clips.
-   - **Licence.** Weights CC-BY-4.0, code Apache-2.0.
-   - **Risk.** Whisper is weaker on our Nepali than Flex (fine-tunes on the 2026-09-12 gold: 14.62
-     against 11.44). B is what would close that gap.
-   - **Enrolment.** Take it from a voice checked by the who pass in F. Never take it from a cluster
-     heard mixing two people; that was 10 of 128 in the 2026-09-28 pilot. A recurring voice can be
-     enrolled from another of its episodes.
-   - **Order (owner, 2026-09-28).** No zero-shot run: it would measure Whisper's missing
-     Nepali, not the conditioning. DiCoW waits for B's Nepali-strong Whisper student. Its
-     conditioning is then fine-tuned onto that student: single-speaker clips with all-target
-     masks first, as a check that Nepali survives, then C's mixes.
-2. **SOT-DiCoW** ([paper](https://arxiv.org/abs/2510.03723)). A DiCoW encoder with one shared
-   decoder that writes speaker-tagged text. On heavy synthetic overlap it beats DiCoW (17.2 against
-   32.1 cpWER on 3-speaker mixtures); on real meetings it loses. A follow-up to D1, not a first
-   step.
-3. **Target-voice extraction, then Flex** (the old item 2; dead end for now, like the separation
-   pilot). Separation in front of the existing Flex. The pilot stopped before its third
-   measurement, its tracks sometimes held two voices, and on 2026-09-23 three separators gave
-   either bleed or broken words (findings.md). Separation artifacts also hurt a recogniser trained
-   on clean speech ([2025](https://arxiv.org/abs/2503.17886)). Revisit with separation research
-   after the ASR paper.
-4. **The multitalker Parakeet method**
-   ([NVIDIA, 0.6B](https://huggingface.co/nvidia/multitalker-parakeet-streaming-0.6b-v1)).
-   - **How it works.** Speaker kernels are built from the diarizer's activity and injected into a
-     FastConformer encoder, one model instance per speaker. It streams, and it is built to be
-     fine-tuned from a strong single-speaker model.
-   - **Limits.** English only, under NVIDIA's open model licence.
-   - **What we would use.** The method, applied to Flex's conformer encoder or to a student
-     from B.
-5. **Commercial recognisers that diarize, as zero-shot baselines only.** No configured route
-   diarizes (D52), and none should be switched on for this. A one-off cpWER baseline would still
-   go through a named route and `llm_requests` (invariant 6).
-
 ## E. How any of this is measured
 
-- **Per-speaker WER.** cpWER, tcpWER and ORC-WER (e.g. [MeetEval](https://github.com/fgnt/meeteval)),
-  each speaker's stream folded by `app/services/fold.py`, split into S/D/I.
-- **Where per-speaker WER is valid.** Every per-speaker metric needs a reference that says which
-  words each speaker said, and ORC-WER still needs overlapping speech split into each speaker's
-  utterances. C's synthetic mixes have that exactly. Real gold does not (D100), and knowing who
-  each cluster is (F, 2026-09-28) does not supply it. On real gold:
-  - recognition is scored by merging a model's streams in time order against the single-stream
-    reference;
-  - attribution is scored by ear on a fixed sample.
+- **Single-stream WER only.** Per-speaker metrics (cpWER, tcpWER, ORC-WER) need references that
+  say which words each speaker said. Real gold has none (D100), and the models that would have
+  needed them are retired (D124).
 - **Buckets.** Every number by crosstalk bucket, with the clean bucket as the no-harm check.
 - **Pairing.** Paired against a baseline and resampled by episode (`sweep.paired_bootstrap`).
 - **A selection split that holds crosstalk.** Val has 4 clips over 15% overlap, so a winner chosen
@@ -417,58 +340,7 @@ against the single-stream gold, and attribution by grading the model's output by
   - `09_Report` prints the crosstalk and number blocks only; the confusion table and the
     attribution card are on the Models page.
 
-## F. Fiddling with the diarizer (priority 4, after B, C and G)
-
-The owner wants to understand the diarizer before giving up on it. This is not a fix to build; it is
-one bounded test, done as its own experiment.
-
-- **How pyannote decides.** A segmentation model finds up to three local speakers in each 10 s
-  window. Each local speaker gets a voice embedding, and all of them are clustered across the
-  episode. Words never enter it: the harness joins them to turns by time. Clustering can only fix
-  mistakes made at the clustering step. It cannot fix a turn boundary the segmentation model put
-  in the wrong place, or a word said while both people talk.
-- **Over-cluster, then merge by ear.** Force more clusters than people (6 for a two-person
-  interview). If the host's excited delivery ends up as its own cluster, listening to a few samples
-  per cluster and merging them fixes it in minutes per episode instead of word by word. At the
-  default setting, the interview's 8 extra clusters were not pieces of the host (cosine ≤ 0.26 to
-  both main voices), so this is unproven.
-- **The exclusive track.** Pyannote also returns one speaker per moment, chosen from its own frame
-  scores, for joining to ASR word timestamps. The harness never stored it. On the interview's 537
-  words decided by the join's tie rule, it moved 282 to the other voice. That is either evidence
-  from the audio or noise; only listening can tell.
-- **The rule, fixed in advance.** On episode 205: one run with 6 clusters, 5 samples per cluster,
-  and the exclusive track's picks on the tie words, all judged by ear. If every cluster is one
-  person, cluster merging is viable and the multitrack editor comes back. If clusters mix people,
-  word attribution from diarization is closed for good.
-- **Who is who: answered 2026-09-28, corpus-wide** (findings.md, *Same voice or not*). This
-  answers the clustering half of F differently from the plan above. Blind listening to 95 cluster
-  pairs showed that voiceprint similarity decides most same-person calls:
-  - at 0.72 or more, 91% were one person;
-  - below 0.55, 90% were two people;
-  - 52 of 456 corpus pairs fall between the two (132 if the band starts at 0.49), 12–30 minutes of
-    listening once, then a minute or two per new episode.
-
-  10 of 128 clusters mix two people; no merge fixes those. The episode 205 test above (over-cluster,
-  exclusive track) was not run.
-- **Parked idea: voice identity from similarity plus a short listening pass.** Nothing is built.
-  1. Link or merge automatically above the upper cut-off, and keep clusters apart below the lower
-     one.
-  2. Queue the pairs in between for the owner's ear, with the same page and 13 s per pair.
-  3. Mark clusters heard as mixing two people. They are never used as a voice's audio.
-  4. Replace the linker's single 0.6 cut-off (D87). It is wrong on 7 of 44 cross-episode pairs and
-     never merges within an episode.
-
-  **What it would fix:** voice counts (sociolinguistics), the gold/train voice overlap, reel voice
-  dedup, and two inputs of D1: SE-DiCoW's enrolment audio and the target/other masks. A speaker
-  split into two clusters marks the target's own voice as "other".
-
-  **What it would not fix:** which words each person said. Turn boundaries and crosstalk are the
-  *when* problem D100 closed. Sized 2026-09-28, it is about 20,000 events in the clips (12.5k
-  speaker switches, 7.8k overlap spans), so it is only viable as an algorithm checked by a fixed
-  exam of ~150–200 events, never by labelling. Per-speaker references for real gold, and with them
-  cpWER/tcpWER/ORC-WER on real gold, still do not exist (E).
-
-## G. Vocabulary at decode time, and the low-risk fold rules (priority 3, after C)
+## G. Vocabulary at decode time, and the low-risk fold rules (G1 closed, G2 open)
 
 Both come from the 2026-09-27 benchmark error anatomy (findings.md, *Public Nepali benchmarks, the
 error anatomy, and weight blending*). The owner parked them for later.
@@ -604,7 +476,131 @@ plain WER, for every system alike. Each new rule is a `RULEBOOK` entry with its 
 counterexamples (D112). The Nepali ordinals (`-औँ`, `प्रथम`) landed in fold-v4; the
 Devanagari spelling pairs are now tier-4 tags, still never folded.
 
+## H. Data dosing on Flex: hours against voices (added 2026-10-20)
+
+**Why.** The only learning curve (findings.md, *Learning curve: more of the same data does not
+help*, 2026-09-13) was one draw at 4.6, 9.3 and 18.3 h with 27 recurring voices. Val was flat and
+gold fell about 0.25 per doubling, but part of that was gold episodes joining training, and the
+hint that new speakers matter more than new hours (+0.62 [−0.16, +1.39]) had an interval
+including zero. Since then train has grown to 51.27 h and 173 linked voices, and gold has been
+heard to share no voice with train (findings.md, 2026-10-10), so the confound is gone. The
+2026-09-30 corpus analysis projected 0.2–0.6 points on clean gold from the growth; this measures
+it.
+
+**Design.** Two curves that cross at one shared point, so the question "more hours or more
+people?" is answered directly rather than read off one curve:
+- **Hours, voices held.** A fixed set of voices, the ones with the most hours, at 25%, 50% and 100%
+  of their hours.
+- **Voices, hours held.** A fixed number of hours (the hours curve's smallest point that every
+  voice point can reach), spread over 25%, 50% and 100% of train's voices.
+
+The draw unit is the whole episode, nested within a draw as in 2026-09-13 (25 ⊂ 50 ⊂ 100).
+Voices are the linker's (D87), which undercount distinct people (findings.md, 2026-10-10); the show
+is the coarser check, and a point is reported with its show count too. The exact hours and voice
+counts of every point come from the current export and are fixed, with the decision rule, before
+any run.
+
+**Recipe.** 03a's vanilla recipe, every point given the full run's optimizer steps as before, best
+epoch by val. Seeds differ by 0.02–0.03 on val, so one seed per point, with the crossing point run
+twice as the noise check.
+
+**Reading it.** Report folded and raw WER with S/D/I on gold, clean gold (no crosstalk), val and
+the five public sets, and the word-rarity block (D123): the 2026-09-30 analysis expects the gain
+to come from unseen words. Only gold is held out by speaker, so the voices curve is read on gold.
+That is a measurement, not a choice of model, so D105's rule (never choose on gold) is not broken;
+no point becomes a teacher.
+
+**Decision rule, fixed before the runs** (proposed; the owner fixes it): a gain of at least D109's
+0.15 floor per doubling, interval clear of zero, means that axis still pays; less means it is
+saturated. If voices pay and hours do not, the corpus advice is to hunt voices, not hours, and the
+2026-09-13 reading becomes a measured result.
+
+**Cost.** Five runs of 03a's length (two curves of three points, sharing one, plus the repeat).
+A new Flex notebook generated from a builder like 03a–03e (D105), with a smoke switch.
+
+## I. The commercial recognisers on the public sets (added 2026-10-20)
+
+**Why.** Gold cannot compare Flex with Scribe v2, MAI Transcribe 2 and Gemini 3.8 Flash: its
+reference is their fusion (D74), edited on 3 of 1,170 verified labels, so a recogniser's gold WER
+is partly its distance from its own consensus (findings.md, *The reference is a consensus of the
+systems it scores*). The five public sets are the only references none of them wrote. Any claim
+in the paper that Flex matches or beats them comes from here.
+
+**What runs.**
+- The three `asr_*` routes on FLEURS (726 clips), Common Voice (287), IndicVoices (2,829),
+  nepali_cs (1,763) and a sample of OpenSLR 54. Its 13,609 clips have a median of three words, so
+  a sample drawn by speaker is enough; the teacher is scored on the same sample, paired.
+- **Optionally the fusion** (`fuse_transcript`) over the three. That is the seed every gold label
+  started from, scored for the first time against references it did not write: how good the
+  starting point of the corpus was.
+
+**How.**
+- Through the named routes and their clients in `app/llm/`, each call an `llm_requests` row
+  (invariant 6), from a script over those clients, never through ingest: public clips are not
+  episodes (D86) and never become segments.
+- `dry_run: true` on a handful of clips first. Price the full run from that before spending.
+- **Coverage is reported, not hidden.** Gemini's safety blocks dropped about 16% of clips on the
+  2026-09-16 gold refill even with filtering off. A blocked or empty answer is scored as all
+  deletions in the headline row, with a covered-clips-only row beside it.
+- FLEURS, OpenSLR 54 and Common Voice references are the prompt the speaker read, not what was
+  said (E). Every system shares that bias, so the comparison stays fair, but the absolute numbers
+  are not.
+
+**Reported.** Folded and raw WER with `fold_version()`, S/D/I, the word-rarity block (D123), each
+paired against the teacher's greedy decode with 95% intervals over each set's unit (speakers,
+sentences or videos, as in 08). With them the cost term: dollars per audio hour from
+`llm_requests`, and latency, beside the teacher's RTF on a GPU and on the CPU playground.
+
+**Feeds.** B step 6's public-set council variant, and the paper's comparison table.
+
+## J. WER at code-switch points (added 2026-10-20)
+
+**The question.** Do recognisers err more at a language switch than away from one? It is the
+result most specific to code-switching that nothing here has measured yet, and it ties the ASR
+work to `docs/sociolinguistics.md` (a pause comes before 16% of switches into English against 7%
+of Nepali-to-Nepali boundaries, in the median voice).
+
+**Definitions.**
+- A word's language is its script, as CMI reads it (`app/services/analysis.py`): the labels write
+  English in Latin and Nepali in Devanagari. `fold.script` adds `mix` for a word that switches
+  inside itself (`queriesहरू`), which is its own class, not a switch.
+- A reference word is *at a switch* if its language differs from the reference word before or
+  after it.
+- Substitutions and deletions belong to their reference word. An insertion belongs to the gap it
+  falls in, and that gap is at a switch if either neighbour is.
+
+**What is compared.** S/D/I per 100 reference words, at a switch and away from one, for every
+model on gold, val and nepali_cs, the only public set with much switching. The two regions sum to
+the set's WER: a breakdown never changes a WER (D110).
+
+**Confounds, controlled before reading it.**
+- A switch word is often English and rare. Compare English words at a switch with English words
+  inside an English run, and Nepali with Nepali, so being English is not read as being at a
+  switch. Report it within the word-rarity buckets too (D123).
+- Crosstalk: report it on the clean bucket as well.
+
+**Cost.** No decoding: a block in `evalkit` beside the word-rarity one, backfilled from the stored
+transcripts and labels (the error rows alone lack the correct words for a denominator), and shown
+by `09_Report`.
+
 ## Retired items
+
+**Retired 2026-10-20 (D124).** The owner closed overlapped speech and the diarizer for this
+project. Code comments and other documents still cite these sections:
+
+- **D — models for overlapped speech.** D1 DiCoW v3.3 and SE-DiCoW conditioned on diarization,
+  D2 SOT-DiCoW, D3 target-voice extraction in front of Flex (the old item 2), D4 the multitalker
+  Parakeet method transplanted into Flex's encoder, D5 commercial recognisers that diarize as
+  zero-shot cpWER baselines. On hold since D100; all conditioned on diarization. Their design
+  notes stay in [custom-arch.md](custom-arch.md) as the record.
+- **F — fiddling with the diarizer.** The over-cluster-then-merge test and the exclusive-track
+  check on episode 205 were never run. Its "who is who" half was answered corpus-wide on
+  2026-09-28 (findings.md, *Same voice or not*); the parked idea of voice identity from similarity
+  plus a short listening pass was not built. Turn boundaries and crosstalk (the *when* problem)
+  stay closed by D100.
+- **C1 — two-voice mixes from whole verified clips** as the bench where D would be developed;
+  the mixer (`donor="clip"`, `label="everything"`) was built and used by 03c.
+- **C2 — realistic conversation timing** (FastMSS, boosted overlap). Never built.
 
 The roadmap before 2026-09-22 numbered its items 1–6. Code comments cite them by number.
 

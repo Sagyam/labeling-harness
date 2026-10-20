@@ -2274,15 +2274,10 @@ attribution is unusable and speaker turns are hit or miss. The measurements agre
   must say.
 - **The speakers queue is closed.** Its 257 open tasks were skipped on 2026-09-24 by
   `d100-close-speakers-queue`, each with its event and audit row. The five saved `speakers-v1`
-  labels stay (labels are append-only). The code of D98 and D99 is kept on purpose (the owner's
-  call): if roadmap F yields turns that can be trusted, the multitrack editor is what uses them.
-  Until then, do not run `scripts/queue_speakers.py`.
-- **Overlap models are on hold.** The owner judged roadmap D out of scope for the code-switching
-  paper, and put it, with the custom architectures, after an experiment with the diarizer itself
-  (roadmap F), since both are conditioned on diarization. If they resume, they are developed and selected on synthetic mixes, where attribution is
-  known by construction (roadmap C1). They are checked on real crosstalk last: recognition against
-  the single-stream gold, and attribution by grading a model's output by ear rather than labelling
-  references.
+  labels stay (labels are append-only). The code of D98 and D99 is kept (the owner's call); since
+  D124 retired roadmap F, nothing uses the multitrack editor. Do not run `scripts/queue_speakers.py`.
+- **Overlap models are out of scope** for the code-switching paper; D124 retired them and the
+  diarizer experiment.
 
 **Reversal:** cheap. Re-queue clips with `scripts/queue_speakers.py`; nothing was deleted.
 
@@ -3050,3 +3045,27 @@ weights of each model.
 
 **Reversal:** cheap. Remove the `rarity` block from `evalkit` and the report; the error files are
 untouched by it.
+
+## D124 — Overlapped speech and the diarizer are retired; the last experiments are dosing, the council, the commercial recognisers and switch points
+
+On 2026-10-20 the owner closed the project's crosstalk and diarization work: no model is
+fine-tuned for overlapped speech, and the diarizer is not fiddled with. D100 had put both on hold,
+with the overlap models waiting on a diarizer that could be trusted, and nothing since has made
+one more likely. Crosstalk stays what the gold measures it as: single-stream, everything said, the
+largest remaining error (17% at 5–15% overlap, 29% above).
+
+- **Retired from the roadmap:** D (DiCoW, SOT-DiCoW, target-voice extraction, the multitalker
+  Parakeet method, diarizing commercial baselines), F (the episode-205 diarizer test), and C1 and
+  C2 (the synthetic-mix bench and conversation timing that existed to develop D). Each keeps a line
+  in the roadmap's retired list, so citations resolve. `docs/custom-arch.md`, whose revisit trigger
+  was F, is closed with them and kept as the record.
+- **Kept as they are:** ingest's diarization (D79) and the speaker turns as automatic metadata
+  (D100); the D98/D99 code, which nothing uses now; `augment.py`'s crosstalk mixer.
+- **What is left, in the owner's order:** data dosing on Flex, hours against voices (roadmap H);
+  the council once every student is in, with a word-level vote as a variant and no commercial
+  voter on val or gold (B step 6); the three commercial recognisers on the public sets, the only
+  references they did not write (I); WER at code-switch points (J). Still open from before: 07b,
+  06b and the low-risk fold rules (G2).
+
+**Reversal:** cheap in code, nothing was deleted. Reopening D or F needs a new decision entry and
+the sections restored from git history.
