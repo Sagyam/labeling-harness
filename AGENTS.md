@@ -12,7 +12,7 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/            architecture, decisions, roadmap, findings, sociolinguistics, custom-arch
+docs/            architecture, decisions, roadmap, findings, sociolinguistics
 notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 03 Flex, 04-05 pseudo-labels,
                  06 ASR students, 07 speech-LLM students, 08 judge headroom, 09 report (always last);
                  03-09 are generated
@@ -22,9 +22,8 @@ notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 
 Speaker diarization runs on a Modal GPU (`scripts/modal_diarize.py`, D79), not in the backend.
 
 ASR work: what is next is in [docs/roadmap.md](docs/roadmap.md), what has been measured in
-[docs/findings.md](docs/findings.md). Model-building designs for overlapped speech, closed with
-roadmap D and F (D124), are kept as a record in [docs/custom-arch.md](docs/custom-arch.md). A model
-is trained and evaluated by running the notebooks in the order of their numbers (D105).
+[docs/findings.md](docs/findings.md). A model is trained and evaluated by running the notebooks in
+the order of their numbers (D105).
 
 Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
 formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they
@@ -270,7 +269,7 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Documentation
 
-Eight documents, and no others: this file, `README.md`, and the six under `docs/` -- plus one
+Seven documents, and no others: this file, `README.md`, and the five under `docs/` -- plus one
 score card per model in `docs/score-card/` (`<model>-score-card.md`). A card's scores are generated
 from the runs on the hub by `scripts/score_cards.py` (run it again after a run is scored or
 backfilled); only its notes, below the notes line, are written by hand: that model's training

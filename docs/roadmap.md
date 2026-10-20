@@ -16,10 +16,12 @@ stays single-stream: everything said, in time order, with overlap spans marked.
 2. **B step 6.** The council, convened once every student is in.
 3. **I.** The commercial recognisers on the public sets.
 4. **J.** WER at code-switch points.
+5. **K.** A smaller Flex: the same encoder and a cut-down decoder, distilled with the teacher's
+   per-token probabilities.
 
 Still open from before: 07b and 06b (B), and the low-risk fold rules (G2). E is how all of it is
 measured. Sections are lettered so they do not collide with the retired numbered items that code
-comments still cite, which is why G to J come after E.
+comments still cite, which is why G to K come after E.
 
 **How a model is trained and evaluated (D105, 2026-09-30).** B and C are no longer run ad hoc:
 the notebooks are numbered in the order they run, and that order is the protocol.
@@ -583,6 +585,39 @@ the set's WER: a breakdown never changes a WER (D110).
 transcripts and labels (the error rows alone lack the correct words for a denominator), and shown
 by `09_Report`.
 
+## K. A smaller Flex: the same encoder, a cut-down decoder (added 2026-10-20)
+
+From `custom-arch.md` §1 (the file was deleted on 2026-10-20; its text is in git history), the
+one idea in it that did not depend on diarization.
+
+**Why.** Flex's time goes to its decoder. On the CPU the encoder takes about 0.015 s per second of
+audio, out of an RTF of 0.11 (findings.md, *CPU inference*): each of the ~8 tokens per second of
+speech re-reads all 24 decoder layers. Every B student was a different architecture with its own
+tokenizer, so none could learn from the teacher's per-token probabilities (B, *Soft distillation
+is skipped*), and model size was never swept. A Flex with a smaller decoder does both: it shares
+the teacher's tokenizer by construction, and the number of decoder layers is the size axis.
+[Distil-Whisper](https://arxiv.org/abs/2311.00430) did this to Whisper (two decoder layers kept)
+and ran about 6x faster within about a point of WER.
+
+**How.**
+- Keep the teacher's 32-layer encoder as it is; give the student a decoder of 2 or 4 layers,
+  initialised from teacher layers spread across the 24 (Distil-Whisper kept the first and last).
+- Train on the teacher's 79.5 h of filtered labels plus the human labels, the human labels
+  taking half of each epoch's draws as in B (D106).
+- The loss: cross-entropy on the labels plus KL to the teacher's per-token distribution. The
+  KL needs the teacher's logits, either decoded again on the fly or stored per clip; a teacher
+  forward pass is cheap beside the student's, so on the fly is the default. Run the pair with
+  and without the KL term, since that is the comparison B could not make.
+- Encoder frozen first; unfreeze only if the frozen run falls short.
+- Built from the Flex notebooks' existing training pieces (teacher-forced cross-entropy, target
+  encoding, SpecAugment), as a generated notebook with a smoke switch (D105).
+
+**Reported.** Each decoder size against the teacher: gold and val, folded and raw, S/D/I, per clip
+class, the five public sets, the word-rarity block (D123); B's success bar applies. Beside it the
+cost term: ms per token and RTF on the GPU and on the CPU playground (int8, the owner's 7700X),
+and model size. The result is a curve of decoder layers against WER and speed, not a winner; a
+student that clears B's bar at a fraction of the decode time is the one worth importing.
+
 ## Retired items
 
 **Retired 2026-10-20 (D124).** The owner closed overlapped speech and the diarizer for this
@@ -592,7 +627,7 @@ project. Code comments and other documents still cite these sections:
   D2 SOT-DiCoW, D3 target-voice extraction in front of Flex (the old item 2), D4 the multitalker
   Parakeet method transplanted into Flex's encoder, D5 commercial recognisers that diarize as
   zero-shot cpWER baselines. On hold since D100; all conditioned on diarization. Their design
-  notes stay in [custom-arch.md](custom-arch.md) as the record.
+  notes were in `docs/custom-arch.md`, deleted on 2026-10-20; the text is in git history.
 - **F — fiddling with the diarizer.** The over-cluster-then-merge test and the exclusive-track
   check on episode 205 were never run. Its "who is who" half was answered corpus-wide on
   2026-09-28 (findings.md, *Same voice or not*); the parked idea of voice identity from similarity

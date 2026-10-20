@@ -3058,13 +3058,15 @@ largest remaining error (17% at 5–15% overlap, 29% above).
   Parakeet method, diarizing commercial baselines), F (the episode-205 diarizer test), and C1 and
   C2 (the synthetic-mix bench and conversation timing that existed to develop D). Each keeps a line
   in the roadmap's retired list, so citations resolve. `docs/custom-arch.md`, whose revisit trigger
-  was F, is closed with them and kept as the record.
+  was F, is deleted (its text is in git history); the one idea in it that needed no diarization,
+  a Flex with a cut-down decoder, became roadmap K.
 - **Kept as they are:** ingest's diarization (D79) and the speaker turns as automatic metadata
   (D100); the D98/D99 code, which nothing uses now; `augment.py`'s crosstalk mixer.
 - **What is left, in the owner's order:** data dosing on Flex, hours against voices (roadmap H);
   the council once every student is in, with a word-level vote as a variant and no commercial
   voter on val or gold (B step 6); the three commercial recognisers on the public sets, the only
-  references they did not write (I); WER at code-switch points (J). Still open from before: 07b,
+  references they did not write (I); WER at code-switch points (J); a smaller Flex distilled
+  with the teacher's per-token probabilities (K). Still open from before: 07b,
   06b and the low-risk fold rules (G2).
 
 **Reversal:** cheap in code, nothing was deleted. Reopening D or F needs a new decision entry and
