@@ -25,15 +25,49 @@ What survives:
   their only record.
 - **The students.** `Sagyam/nepanglish-asr-students` under `students-2026-09-30/`: 06a's two
   Whisper stages and 06c's two IndicConformer stages from 2026-10-04, 06d's two Parakeet
-  stages from 2026-10-05, 06f's two Conformer stages from 2026-10-05/06, and 07a's two Gemma 4
-  E2B stages from 2026-10-07/08 (weights, transcripts, metrics, error rows; 06f and 07a also
-  `fit_check.json`).
+  stages from 2026-10-05, 06f's two Conformer stages from 2026-10-05/06, 07a's two Gemma 4
+  E2B stages from 2026-10-07/08, 06e's two Omnilingual CTC stages from 2026-10-09, and 07b's
+  two Omnilingual LLM-ASR stages from 2026-10-20 (weights, transcripts, metrics, error rows;
+  06f and 07a also `fit_check.json`).
 - **The diarization run.** `exports/flex-eval/diarization.json` is the only copy of the file, and
   `exports/` is gitignored. Its turns are also imported into the database (D78).
 
 Folded WER is computed by `app/services/fold.py`. Every number names its fold version: `fold-v1`
 until 2026-09-15, `fold-v2` (D84) until 2026-09-17, `fold-v3` (D89) until 2026-10-02, `fold-v4`
 (D112) since.
+
+---
+
+## Teacher labels help a CTC head more than an LLM decoder (2026-10-26)
+
+Does the recipe's second stage (the teacher's 79.5 h of pseudo-labels, mixed half and half with
+the human labels) help every kind of student equally (roadmap B step 5)? 07b closes the
+controlled pair: Omnilingual LLM-ASR 1B (07b) and Omnilingual CTC 1B (06e) are the same Meta
+family, trained on the same clips, stages, mixture and teacher, and differ in the decoder. Stage
+2 minus stage 1, paired clip by clip with episodes resampled; folded WER, fold-v4. Each run's
+own numbers are in its score card.
+
+| student | decoder | gold, stage 1 → 2 | gold gain [95% CI] | val gain [95% CI] | teacher gap closed, gold |
+|---|---|---|---|---|---|
+| Omnilingual LLM-ASR 1B (07b) | LLM | 15.31 → **14.62** | −0.69 [−1.02, −0.38] | −0.77 [−1.14, −0.41] | 15% |
+| Gemma 4 E2B (07a) | LLM | 16.09 → 15.41 | −0.68 [−1.08, −0.26] | −0.55 [−1.13, −0.18] | 13% |
+| Whisper (06a) | attention | 17.32 → 15.02 | −2.30 [−2.87, −1.75] | −1.26 [−1.70, −0.90] | 36% |
+| IndicConformer (06c) | CTC | 18.42 → 15.64 | −2.77 [−3.11, −2.43] | −2.77 [−3.50, −2.14] | 37% |
+| Omnilingual CTC 1B (06e) | CTC | 19.65 → 17.52 | −2.13 [−2.63, −1.62] | −1.38 [−1.86, −1.03] | 24% |
+
+- **In the controlled pair, the LLM decoder gained 1.44 [+0.83, +2.04] points less on gold**
+  (0.61 [+0.34, +1.05] less on val). Its stage 1 started 4.34 [3.76, 4.85] ahead of the CTC head
+  on gold and ended 2.90 [2.40, 3.43] ahead.
+- **Both speech-LLM students gained about 0.7 on gold, and the three ASR students that started
+  near them gained 2.1–2.8.** Two LLM families from different makers behave alike. (Parakeet and
+  the Conformer from scratch gained more, 7.1 and 16.6, from 28.6 and 43.7.)
+- **The LLM students still end on top or level**: 07b is the best student on gold and val, tied
+  with Whisper (gold −0.40 [−0.97, +0.19]), and Gemma ties Whisper and IndicConformer. The teacher
+  labels narrow the gap between families. They do not reverse it.
+- **Not tested: why.** Three causes fit and none was isolated: the decoder's language model
+  already knows what the labels teach; the replayed human clips crowd the pseudo-labels out
+  (Gemma memorised them; 07b has no fit check); the learning-rate restart, which every student
+  shares. One seed each.
 
 ---
 

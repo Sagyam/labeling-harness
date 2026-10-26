@@ -19,7 +19,7 @@ stays single-stream: everything said, in time order, with overlap spans marked.
 5. **K.** A smaller Flex: the same encoder and a cut-down decoder, distilled with the teacher's
    per-token probabilities.
 
-Still open from before: 07b and 06b (B), and the low-risk fold rules (G2). E is how all of it is
+Still open from before: 06b (B), and the low-risk fold rules (G2). E is how all of it is
 measured. Sections are lettered so they do not collide with the retired numbered items that code
 comments still cite, which is why G to K come after E.
 
@@ -54,8 +54,11 @@ students; its stage 3 was stopped after one epoch (score-card/conformer-score-ca
 06e on 2026-10-09: Omnilingual CTC 1B's gold fell from 19.65 to 17.52, behind Whisper, Gemma 4 E2B
 and IndicConformer, with the lowest gold CER of any student (score-card/omnilingual-score-card.md,
 *The CTC student's 100 h point*).
-**Next:** the remaining student (06b) when there is GPU time, smoked first; 07b, the CTC student's
-controlled pair.
+07b on 2026-10-26 (trained 2026-10-20): Omnilingual LLM-ASR 1B's gold fell from 15.31 to 14.62,
+the best student, tied with Whisper; its LLM decoder gained 1.44 points less from the teacher's
+labels than 06e's CTC head (score-card/omni-llm-score-card.md, *Omnilingual LLM-ASR 1B's 100 h
+point*; findings.md, *Teacher labels help a CTC head more than an LLM decoder*).
+**Next:** the remaining student (06b) when there is GPU time, smoked first.
 
 ## A. Per-speaker labelling as a multitrack editor (stopped, D100)
 
@@ -213,7 +216,11 @@ step 4's curve says how much audio closes the gap.
    2 minus stage 1), with 06e against 07b as the controlled pair, not which family wins. Both
    passed their smoke runs on 2026-10-07. 07a ran on 2026-10-07/08 (score-card/gemma-e2b-score-card.md, *Gemma 4 E2B's
    100 h point*): the best stage 1 of any student (gold 16.09), but stage 2 gained only 0.68, and
-   it memorised the replayed human clips within two or three epochs. **Next:** 07b.
+   it memorised the replayed human clips within two or three epochs. 07b ran on 2026-10-20 and
+   was scored on 2026-10-26 (score-card/omni-llm-score-card.md): the best student (gold 14.62),
+   and the controlled pair's answer is that its LLM decoder gained 1.44 [0.83, 2.04] points less
+   on gold from the teacher's labels than 06e's CTC head (findings.md, *Teacher labels help a CTC
+   head more than an LLM decoder*).
 
 6. **At the very end, convene the council again** (owner, 2026-10-06). Once every student is
    trained, rerun the panel vote: the teacher's greedy decode and the students vote among the
@@ -235,9 +242,9 @@ step 4's curve says how much audio closes the gap.
    - Only worth tuning if its output is used: relabelling a student's training data with the
      council's pick would make it a recipe question; a reported number does not.
    - **New seats since 2026-10-06** (added 2026-10-20): Gemma 4 E2B (07a, gold 15.41) and
-     Omnilingual CTC 1B (06e, 17.52), and 07b and 06b once they run. Expect little: V1–V3 sat
-     within 0.02 of each other on val, so a new voter may move the vote by a tenth of a point. It
-     is run anyway because it costs a CPU minute.
+     Omnilingual CTC 1B (06e, 17.52), Omnilingual LLM-ASR 1B (07b, 14.62), and 06b once it
+     runs. Expect little: V1–V3 sat within 0.02 of each other on val, so a new voter may move the
+     vote by a tenth of a point. It is run anyway because it costs a CPU minute.
    - **A word-level vote as a variant** (ROVER-style). The panel vote picks one whole candidate,
      so oracle@8 bounds it; a word-level vote aligns the voters' transcripts into slots and keeps
      each slot's majority, so it can join one candidate's fix to another's. Align and vote on
