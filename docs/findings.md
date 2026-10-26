@@ -47,13 +47,13 @@ family, trained on the same clips, stages, mixture and teacher, and differ in th
 2 minus stage 1, paired clip by clip with episodes resampled; folded WER, fold-v4. Each run's
 own numbers are in its score card.
 
-| student | decoder | gold, stage 1 → 2 | gold gain [95% CI] | val gain [95% CI] | teacher gap closed, gold |
-|---|---|---|---|---|---|
-| Omnilingual LLM-ASR 1B (07b) | LLM | 15.31 → **14.62** | −0.69 [−1.02, −0.38] | −0.77 [−1.14, −0.41] | 15% |
-| Gemma 4 E2B (07a) | LLM | 16.09 → 15.41 | −0.68 [−1.08, −0.26] | −0.55 [−1.13, −0.18] | 13% |
-| Whisper (06a) | attention | 17.32 → 15.02 | −2.30 [−2.87, −1.75] | −1.26 [−1.70, −0.90] | 36% |
-| IndicConformer (06c) | CTC | 18.42 → 15.64 | −2.77 [−3.11, −2.43] | −2.77 [−3.50, −2.14] | 37% |
-| Omnilingual CTC 1B (06e) | CTC | 19.65 → 17.52 | −2.13 [−2.63, −1.62] | −1.38 [−1.86, −1.03] | 24% |
+| student | decoder | gold, stage 1 → 2 | gold gain [95% CI] | val gain [95% CI] |
+|---|---|---|---|---|
+| Omnilingual LLM-ASR 1B (07b) | LLM | 15.31 → **14.62** | −0.69 [−1.02, −0.38] | −0.77 [−1.14, −0.41] |
+| Gemma 4 E2B (07a) | LLM | 16.09 → 15.41 | −0.68 [−1.08, −0.26] | −0.55 [−1.13, −0.18] |
+| Whisper (06a) | attention | 17.32 → 15.02 | −2.30 [−2.87, −1.75] | −1.26 [−1.70, −0.90] |
+| IndicConformer (06c) | CTC | 18.42 → 15.64 | −2.77 [−3.11, −2.43] | −2.77 [−3.50, −2.14] |
+| Omnilingual CTC 1B (06e) | CTC | 19.65 → 17.52 | −2.13 [−2.63, −1.62] | −1.38 [−1.86, −1.03] |
 
 - **In the controlled pair, the LLM decoder gained 1.44 [+0.83, +2.04] points less on gold**
   (0.61 [+0.34, +1.05] less on val). Its stage 1 started 4.34 [3.76, 4.85] ahead of the CTC head

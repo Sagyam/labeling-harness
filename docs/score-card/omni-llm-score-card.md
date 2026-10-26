@@ -432,8 +432,7 @@ was still improving when stage 2's schedule ran out. Loops: 1 on gold, none on v
 - **The best student on gold and val**, and the best stage 1: gold 15.31 on human labels alone
   (Gemma's 16.09 was the best before it).
 - **A small gain from the teacher's labels, the same as Gemma's. Stage 2 minus stage 1: gold
-  −0.69 [−1.02, −0.38], val −0.77 [−1.14, −0.41].** It closed 15% of the gap to the teacher on gold
-  (+4.46 → +3.77 [+3.07, +4.51]) and 28% on val (+2.74 → +1.96).
+  −0.69 [−1.02, −0.38], val −0.77 [−1.14, −0.41].**
 - **The controlled pair (roadmap B step 5): the LLM decoder gained 1.44 [+0.83, +2.04] points less
   on gold than the CTC head did** (06e: −2.13 [−2.63, −1.62]), and 0.61 [+0.34, +1.05] less on
   val. Both models are Meta's Omnilingual family, trained on the same clips, stages, mixture and
