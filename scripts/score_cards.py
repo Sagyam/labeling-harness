@@ -103,6 +103,11 @@ MODELS: tuple[Model, ...] = (
         Stage("Before training: zero-shot", STUDENTS_REPO, f"{BAKEOFF}/gemma-4-e2b"),
     ),
     _student(
+        "omni-llm",
+        "Omnilingual LLM-ASR 1B",
+        Stage("Before training: zero-shot", STUDENTS_REPO, f"{BAKEOFF}/omni-llm-1b"),
+    ),
+    _student(
         "conformer",
         "Conformer from scratch",
         Stage("Before training", missing="random weights: nothing to score"),
