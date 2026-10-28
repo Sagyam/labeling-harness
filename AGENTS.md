@@ -12,7 +12,8 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/            architecture, decisions; docs/nepanglish/: roadmap, findings, sociolinguistics
+docs/harness/    the tool: architecture, decisions, diagrams
+docs/nepanglish/ the research that used it: findings, roadmap, sociolinguistics, decisions, score cards
 notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 03 Flex, 04-05 pseudo-labels,
                  06 ASR students, 07 speech-LLM students, 08 judge headroom, 09 report (always last);
                  03-09 are generated
@@ -25,8 +26,8 @@ ASR work: what is next is in [docs/nepanglish/roadmap.md](docs/nepanglish/roadma
 [docs/nepanglish/findings.md](docs/nepanglish/findings.md). A model is trained and evaluated by running the notebooks in
 the order of their numbers (D105).
 
-Deeper maps: [docs/architecture.md](docs/architecture.md) for the pipeline, schema, priority
-formula and endpoint list; [docs/decisions.md](docs/decisions.md) for why things are the way they
+Deeper maps: [docs/harness/architecture.md](docs/harness/architecture.md) for the pipeline, schema, priority
+formula and endpoint list; [docs/harness/decisions.md](docs/harness/decisions.md) for why things are the way they
 are — read the relevant entry before arguing with a design.
 
 ## Invariants
@@ -274,13 +275,13 @@ score card per model in `docs/nepanglish/score-cards/` (`<model>-score-card.md`)
 from the runs on the hub by `scripts/score_cards.py` (run it again after a run is scored or
 backfilled); only its notes, below the notes line, are written by hand: that model's training
 log, caveats and operational notes, which do not go in `findings.md`. When behaviour
-changes, update the document it contradicts in the same commit — a stale `docs/architecture.md` is
-worse than none. Record a real design choice in `docs/decisions.md` as a new numbered entry with
+changes, update the document it contradicts in the same commit — a stale `docs/harness/architecture.md` is
+worse than none. Record a real design choice in `docs/harness/decisions.md` as a new numbered entry with
 its reversal cost. When a later entry overrides an old one, delete the old entry and add one line
 for it to the file's "Retired entries" list, so code comments citing it still resolve; trim an
 entry that is only partly superseded down to what still holds.
 
-Figures live in `docs/diagrams/` as hand-written SVG and nothing else: no HTML source, no PDF,
+Figures live in `docs/harness/diagrams/` as hand-written SVG and nothing else: no HTML source, no PDF,
 no build step. Each is authored at `viewBox` width 560 in the `nepanglish-paper` style (white
 ground, one teal accent on at most two elements, no type below 12px), and draws what is particular
 to this harness, never how a generic model or tool works. A figure is part of the document that

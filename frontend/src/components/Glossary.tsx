@@ -1,7 +1,7 @@
 /**
  * The terms the harness uses, in plain words, for someone who did not build it: the help
  * dialog's Glossary tab, opened from every page's one-line intro. Each entry names the decision
- * behind it (docs/decisions.md) so a reader who wants the argument knows where to look.
+ * behind it (docs/harness/decisions.md) so a reader who wants the argument knows where to look.
  */
 
 type Entry = [term: string, meaning: string]

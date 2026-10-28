@@ -7,7 +7,7 @@ nothing: folded WER is whatever ``fold.py`` says, and every row here only descri
 
 The rows are written to Parquet, one file per run and set, and read through DuckDB: they are
 derived, written once and only ever grouped, so they are files beside the model rather than
-tables (docs/decisions.md). :func:`write` and :func:`read` are the format's only writer and
+tables (docs/harness/decisions.md). :func:`write` and :func:`read` are the format's only writer and
 reader, so the notebooks and the harness cannot drift apart.
 
 Pure, and importing only ``fold.py``, the standard library and DuckDB: the dataset's

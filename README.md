@@ -11,7 +11,7 @@ time. What you approve becomes a versioned, reproducible dataset.
 It does not train models, manage users, or serve more than one annotator. It is built for one fast
 human.
 
-![Ingest pipeline: an upload or a YouTube URL is normalized, cut into clips, transcribed by three blind recognisers, fused into the seed, analysed, and imported with its queue](docs/diagrams/ingest-pipeline.svg)
+![Ingest pipeline: an upload or a YouTube URL is normalized, cut into clips, transcribed by three blind recognisers, fused into the seed, analysed, and imported with its queue](docs/harness/diagrams/ingest-pipeline.svg)
 
 ## Quick start
 
@@ -253,7 +253,7 @@ a 76% accept rate.
 | Document | Contents |
 |---|---|
 | [AGENTS.md](AGENTS.md) | Working agreement for coding agents: rules, conventions, gotchas |
-| [docs/architecture.md](docs/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
-| [docs/decisions.md](docs/decisions.md) | Every design decision, why it was made, what reversing costs |
+| [docs/harness/architecture.md](docs/harness/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
+| [docs/harness/decisions.md](docs/harness/decisions.md) | Every design decision, why it was made, what reversing costs |
 | [docs/nepanglish/score-cards/](docs/nepanglish/score-cards/) | One score card per model: every stage on every set, by clip class and word rarity |
-| [docs/diagrams/](docs/diagrams/) | The figures, SVG only: ingest, priority score, decision path, pots, error mining, training protocol |
+| [docs/harness/diagrams/](docs/harness/diagrams/) | The figures, SVG only: ingest, priority score, decision path, pots, error mining, training protocol |

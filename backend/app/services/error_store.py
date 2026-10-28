@@ -8,7 +8,7 @@ folder the Models page already reads (D83)::
 one file per set, every file of a folder from one run. They arrive by upload, or are already
 there when the folder was copied from the hub, or are derived from the imported runs by
 ``scripts/mine_errors.py``. No table holds them: they are derived, written once and only ever
-grouped, so DuckDB reads them where they lie (docs/decisions.md).
+grouped, so DuckDB reads them where they lie (docs/harness/decisions.md).
 
 A stored file's name always comes from the set its metadata names, never from the name it was
 uploaded under, so nothing a client sends becomes part of a path.
