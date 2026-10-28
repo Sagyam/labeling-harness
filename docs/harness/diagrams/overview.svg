@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 560 744" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="overview-title overview-desc">
+  <title id="overview-title">How the harness works</title>
+  <desc id="overview-desc">A recording comes in as an audio file or a YouTube link and is cut into clips. Three speech recognisers transcribe every clip, each hearing only the audio. A reasoning model reconciles their three transcripts into one draft without hearing the audio, and the harness measures where the recognisers disagree and whether the draft invented or dropped words. Clips are ranked, most doubtful first, and one person listens and accepts, fixes or flags each one. What they decide becomes a versioned dataset with train, val and gold, and fine-tuned models are scored back in the harness, where their errors and the corpus gaps point to what to label next.</desc>
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,400&amp;display=swap');
+      text { font-family: 'Inter', sans-serif; }
+      .n { font-size: 16px; font-weight: 600; fill: #1b2430; }
+      .k { font-size: 12px; font-weight: 600; fill: #1b2430; }
+      .s { font-size: 12px; fill: #55606e; }
+      .m { font-family: 'IBM Plex Mono', monospace; font-size: 12px; fill: #55606e; }
+      .e { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; fill: #7d8794; letter-spacing: 0.14em; }
+      .ea { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; fill: #146b6b; letter-spacing: 0.14em; }
+      .c { font-family: 'Source Serif 4', serif; font-style: italic; font-size: 16px; fill: #1b2430; }
+      .box { fill: #ffffff; stroke: #1b2430; stroke-width: 1; }
+      .in { fill: rgba(85,96,110,0.10); stroke: #7d8794; stroke-width: 1; }
+      .ext { fill: rgba(27,36,48,0.03); stroke: rgba(27,36,48,0.30); stroke-width: 1; }
+      .store { fill: rgba(27,36,48,0.05); stroke: #55606e; stroke-width: 1; }
+      .focal { fill: rgba(20,107,107,0.09); stroke: #146b6b; stroke-width: 1.2; }
+      .flow { stroke: #55606e; stroke-width: 1; fill: none; }
+      .dash { stroke: #55606e; stroke-width: 1; fill: none; stroke-dasharray: 4 3; }
+    </style>
+    <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#55606e"/></marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#ffffff"/>
+
+  <text class="e" x="40" y="32">ONE RECORDING, END TO END</text>
+
+  <!-- 1. In -->
+  <rect class="in" x="130" y="48" width="300" height="52" rx="6"/>
+  <text class="k" x="146" y="70">Audio in</text>
+  <text class="s" x="146" y="88">an audio file, or a YouTube link</text>
+  <line class="flow" x1="280" y1="100" x2="280" y2="120" marker-end="url(#ar)"/>
+
+  <!-- 2. Clips -->
+  <rect class="box" x="130" y="120" width="300" height="52" rx="6"/>
+  <text class="k" x="146" y="142">Cut into clips</text>
+  <text class="s" x="146" y="160">cleaned up, split where the speech pauses</text>
+
+  <!-- 3. Three recognisers -->
+  <line class="flow" x1="280" y1="172" x2="116" y2="196" marker-end="url(#ar)"/>
+  <line class="flow" x1="280" y1="172" x2="280" y2="196" marker-end="url(#ar)"/>
+  <line class="flow" x1="280" y1="172" x2="444" y2="196" marker-end="url(#ar)"/>
+  <rect class="ext" x="40" y="196" width="152" height="60" rx="6"/>
+  <text class="k" x="52" y="218">Recogniser 1</text>
+  <text class="m" x="52" y="238">hears audio only</text>
+  <rect class="ext" x="204" y="196" width="152" height="60" rx="6"/>
+  <text class="k" x="216" y="218">Recogniser 2</text>
+  <text class="m" x="216" y="238">hears audio only</text>
+  <rect class="ext" x="368" y="196" width="152" height="60" rx="6"/>
+  <text class="k" x="380" y="218">Recogniser 3</text>
+  <text class="m" x="380" y="238">hears audio only</text>
+
+  <!-- bus into the draft and the checks -->
+  <path class="flow" d="M116 256 V268 H444 V256"/>
+  <line class="flow" x1="280" y1="256" x2="280" y2="268"/>
+  <line class="flow" x1="156" y1="268" x2="156" y2="284" marker-end="url(#ar)"/>
+  <line class="flow" x1="404" y1="268" x2="404" y2="284" marker-end="url(#ar)"/>
+
+  <!-- 4. Draft and checks -->
+  <rect class="box" x="40" y="284" width="232" height="68" rx="6"/>
+  <text class="k" x="52" y="306">One fused draft</text>
+  <text class="s" x="52" y="324">a reasoning model reconciles</text>
+  <text class="s" x="52" y="340">the three, without the audio</text>
+  <rect class="box" x="288" y="284" width="232" height="68" rx="6"/>
+  <text class="k" x="300" y="306">Checks</text>
+  <text class="s" x="300" y="324">where the recognisers disagree;</text>
+  <text class="s" x="300" y="340">words the draft made up or lost</text>
+  <line class="flow" x1="156" y1="352" x2="240" y2="376" marker-end="url(#ar)"/>
+  <line class="flow" x1="404" y1="352" x2="320" y2="376" marker-end="url(#ar)"/>
+
+  <!-- 5. Queue -->
+  <rect class="box" x="130" y="376" width="300" height="52" rx="6"/>
+  <text class="k" x="146" y="398">Ranked queue</text>
+  <text class="s" x="146" y="416">most doubtful clip first, with its reason</text>
+  <line class="flow" x1="280" y1="428" x2="280" y2="448" marker-end="url(#ar)"/>
+
+  <!-- 6. The human -->
+  <rect class="focal" x="130" y="448" width="300" height="72" rx="6"/>
+  <text class="ea" x="146" y="470">ONE PERSON</text>
+  <text class="n" x="146" y="492">Listen, then Enter, edit or flag</text>
+  <text class="s" x="146" y="510">median 1.7 s a clip, keyboard only</text>
+  <line class="flow" x1="280" y1="520" x2="280" y2="540" marker-end="url(#ar)"/>
+
+  <!-- 7. Dataset -->
+  <rect class="store" x="130" y="540" width="300" height="68" rx="6"/>
+  <text class="k" x="146" y="562">Versioned dataset</text>
+  <text class="s" x="146" y="580">train, val and a hand-picked gold test set;</text>
+  <text class="s" x="146" y="596">every label audited, every export repeatable</text>
+  <line class="flow" x1="280" y1="608" x2="280" y2="628" marker-end="url(#ar)"/>
+
+  <!-- 8. Models -->
+  <rect class="box" x="130" y="628" width="300" height="52" rx="6"/>
+  <text class="k" x="146" y="650">Models scored in the harness</text>
+  <text class="s" x="146" y="668">error rate split by cause, clip by clip</text>
+
+  <!-- the loop back -->
+  <path class="dash" d="M430 654 H492 V402 H438" marker-end="url(#ar)"/>
+  <text class="s" x="508" y="528" text-anchor="middle" transform="rotate(-90 508 528)">errors and gaps say what to label next</text>
+
+  <text class="c" x="40" y="720">Listen only where the machines disagree.</text>
+</svg>

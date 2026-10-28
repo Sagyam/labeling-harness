@@ -6,7 +6,8 @@ Running, configuring and testing the harness. For what it does, see the
 
 ## Development setup
 
-Running the backend on the host instead (what you want while developing):
+Everything in containers is `docker compose up --build`. Running the backend on the host instead
+(what you want while developing):
 
 ```bash
 cp .env.example .env
