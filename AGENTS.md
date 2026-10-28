@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Working agreement for coding agents in this repository. [README.md](README.md) explains what the
-harness is and how to run it; read that first if you have not.
+Working agreement for coding agents in this repository. [README.md](README.md) says what the
+harness is, and [docs/harness/operations.md](docs/harness/operations.md) how to run it; read both
+first if you have not.
 
 ## Orientation
 
@@ -12,7 +13,7 @@ backend/migrations/  Alembic revisions — the only way the schema changes
 frontend/src/    Vite + React 19 + TypeScript; components/ui/ is vendored shadcn/ui
 scripts/         thin CLI wrappers over services
 config/          settings.yaml (non-secret), llm_routes.yaml (ASR and LLM routes)
-docs/harness/    the tool: architecture, decisions, diagrams
+docs/harness/    the tool: guide, operations, architecture, decisions, diagrams, screenshots
 docs/nepanglish/ the research that used it: findings, roadmap, sociolinguistics, decisions, score cards
 notebooks/       numbered in running order (D105): 01 EDA, 02 sociolinguistics, 03 Flex, 04-05 pseudo-labels,
                  06 ASR students, 07 speech-LLM students, 08 judge headroom, 09 report (always last);
@@ -82,7 +83,7 @@ Breaking one of these is a design change, not a refactor. Say so out loud before
 
 ```bash
 cd backend
-.venv/bin/python -m pytest                     # full suite (1871 tests; needs Postgres)
+.venv/bin/python -m pytest                     # full suite (2,500+ tests; needs Postgres)
 .venv/bin/python -m pytest -m "not db"         # no Postgres
 .venv/bin/python -m pytest tests/test_api.py -k accept
 .venv/bin/python -m ruff check . && .venv/bin/python -m ruff format --check .
@@ -270,22 +271,48 @@ wanting a browser build that is not installed. Snapshots and console logs land i
 
 ## Documentation
 
-Seven documents, and no others: this file, `README.md`, and the five under `docs/` -- plus one
-score card per model in `docs/nepanglish/score-cards/` (`<model>-score-card.md`). A card's scores are generated
-from the runs on the hub by `scripts/score_cards.py` (run it again after a run is scored or
-backfilled); only its notes, below the notes line, are written by hand: that model's training
-log, caveats and operational notes, which do not go in `findings.md`. When behaviour
-changes, update the document it contradicts in the same commit — a stale `docs/harness/architecture.md` is
-worse than none. Record a real design choice in `docs/harness/decisions.md` as a new numbered entry with
-its reversal cost. When a later entry overrides an old one, delete the old entry and add one line
-for it to the file's "Retired entries" list, so code comments citing it still resolve; trim an
-entry that is only partly superseded down to what still holds.
+Two audiences, two styles, and two folders.
 
-Figures live in `docs/harness/diagrams/` as hand-written SVG and nothing else: no HTML source, no PDF,
-no build step. Each is authored at `viewBox` width 560 in the `nepanglish-paper` style (white
-ground, one teal accent on at most two elements, no type below 12px), and draws what is particular
-to this harness, never how a generic model or tool works. A figure is part of the document that
-embeds it: when the behaviour it draws changes, redraw it in the same commit, or delete it.
+**Readers in a hurry** -- an employer, a new user -- get three documents: `README.md`,
+`docs/harness/guide.md` and `docs/nepanglish/README.md`. They are short, in plain words, and lead
+with pictures: a screenshot per page, a figure per idea, numbers instead of paragraphs. No decision
+numbers, no internals, no caveat that does not change what the reader does. Every number in them
+must be one the agent-facing documents or the database already support. When a page's UI changes,
+retake its screenshot in the same commit.
+
+**Agents and developers** get the full detail, as long as it needs to be: this file,
+`docs/harness/architecture.md`, `docs/harness/decisions.md`, `docs/harness/operations.md`, and
+the research documents.
+
+**The harness and the research are kept apart.** `docs/harness/` describes the tool; its guide
+never cites a Nepanglish result, and a harness decision may point at `findings.md` only as the
+evidence behind it. `docs/nepanglish/` holds the research that used it: `findings.md`,
+`roadmap.md`, `sociolinguistics.md`, its own `decisions.md`, and one score card per model in
+`score-cards/` (`<model>-score-card.md`). No other documents. A card's scores are generated from the
+runs on the hub by `scripts/score_cards.py` (run it again after a run is scored or backfilled);
+only its notes, below the notes line, are written by hand: that model's training log, caveats and
+operational notes, which do not go in `findings.md`.
+
+When behaviour changes, update the document it contradicts in the same commit -- a stale
+`docs/harness/architecture.md` is worse than none. Record a real design choice as a new numbered
+entry with its reversal cost: in `docs/harness/decisions.md` for the tool, in
+`docs/nepanglish/decisions.md` for how models are trained and evaluated. D-numbers are shared by
+the two files, so a new entry takes the next number after the highest in either. When a later
+entry overrides an old one, delete the old entry and add one line for it to its file's "Retired
+entries" list, so code comments citing it still resolve; trim an entry that is only partly
+superseded down to what still holds.
+
+Figures live in `docs/harness/diagrams/` and `docs/nepanglish/diagrams/` as hand-written SVG and
+nothing else: no HTML source, no PDF, no build step. Each is authored at `viewBox` width 560 in the
+`nepanglish-paper` style (white ground, one teal accent on at most two elements, no type below
+12px), and draws what is particular to this harness or this research, never how a generic model or
+tool works. A figure is part of the document that embeds it: when the behaviour it draws changes,
+redraw it in the same commit, or delete it.
+
+Screenshots live in `docs/harness/screenshots/`, PNG at 1440x900 and one GIF, and are taken only
+from the demo corpus (`scripts/seed_demo.py`, a `*_demo` database), never from real recordings.
+Drive the app with the Playwright MCP against a backend started with the demo variables in
+`docs/harness/operations.md`.
 
 Do not reintroduce per-session progress, TODO or verification files. Git history is the session
 log, and the test suite is the verification record.
