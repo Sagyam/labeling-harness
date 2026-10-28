@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 560 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="results-title results-desc">
+  <title id="results-title">Gold word error rate, every model</title>
+  <desc id="results-desc">Folded word error rate on the gold test set, fold-v4, lower is better. Indic-Transcribe-Flex 1.2B: 13.79 as released, 10.85 fine-tuned and blended, the teacher. Each student, trained on the human labels and then also on the teacher's labels of 79.5 hours of unlabelled audio: Omnilingual LLM-ASR 1B 15.31 then 14.62; Whisper large-v3 turbo 17.32 then 15.02; Gemma 4 E2B 16.09 then 15.41; IndicConformer 18.42 then 15.64; Omnilingual CTC 1B 19.65 then 17.52; Parakeet 28.63 then 21.53; a Conformer trained from scratch 43.70 then 27.08.</desc>
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,600;1,8..60,400&amp;display=swap');
+      text { font-family: 'Inter', sans-serif; }
+      .k { font-size: 12px; font-weight: 600; fill: #1b2430; }
+      .s { font-size: 12px; fill: #55606e; }
+      .v { font-family: 'IBM Plex Mono', monospace; font-size: 12px; fill: #1b2430; }
+      .vs { font-family: 'IBM Plex Mono', monospace; font-size: 12px; fill: #7d8794; }
+      .e { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; fill: #7d8794; letter-spacing: 0.14em; }
+      .c { font-family: 'Source Serif 4', serif; font-style: italic; font-size: 16px; fill: #1b2430; }
+      .before { fill: rgba(85,96,110,0.22); }
+      .after { fill: #55606e; }
+      .teacher { fill: #146b6b; }
+      .grid { stroke: rgba(27,36,48,0.10); stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#ffffff"/>
+
+  <text class="e" x="40" y="32">GOLD WORD ERROR RATE, %  ·  LOWER IS BETTER</text>
+
+  <!-- legend -->
+  <rect class="before" x="40" y="48" width="14" height="10"/>
+  <text class="s" x="60" y="57">human labels only (Flex: as released)</text>
+  <rect class="after" x="300" y="48" width="14" height="10"/>
+  <text class="s" x="320" y="57">+ the teacher's labels on 79.5 h</text>
+
+  <!-- scale: x = 200 + 6.4 * WER; 0..45 -> 200..488 -->
+  <line class="grid" x1="200" y1="76" x2="200" y2="452"/>
+  <line class="grid" x1="264" y1="76" x2="264" y2="452"/>
+  <line class="grid" x1="328" y1="76" x2="328" y2="452"/>
+  <line class="grid" x1="392" y1="76" x2="392" y2="452"/>
+  <line class="grid" x1="456" y1="76" x2="456" y2="452"/>
+  <text class="vs" x="200" y="470" text-anchor="middle">0</text>
+  <text class="vs" x="264" y="470" text-anchor="middle">10</text>
+  <text class="vs" x="328" y="470" text-anchor="middle">20</text>
+  <text class="vs" x="392" y="470" text-anchor="middle">30</text>
+  <text class="vs" x="456" y="470" text-anchor="middle">40</text>
+
+  <!-- Flex, the teacher -->
+  <text class="k" x="40" y="96">Flex 1.2B, the teacher</text>
+  <text class="s" x="40" y="112">fine-tuned and blended</text>
+  <rect class="before" x="200" y="84" width="88.3" height="12"/>
+  <text class="vs" x="294" y="95">13.79</text>
+  <rect class="teacher" x="200" y="100" width="69.4" height="12"/>
+  <text class="v" x="276" y="111">10.85</text>
+
+  <!-- students, best first -->
+  <text class="k" x="40" y="142">Omnilingual LLM-ASR 1B</text>
+  <rect class="before" x="200" y="130" width="98.0" height="12"/>
+  <text class="vs" x="304" y="141">15.31</text>
+  <rect class="after" x="200" y="146" width="93.6" height="12"/>
+  <text class="v" x="300" y="157">14.62</text>
+
+  <text class="k" x="40" y="188">Whisper large-v3 turbo</text>
+  <rect class="before" x="200" y="176" width="110.8" height="12"/>
+  <text class="vs" x="317" y="187">17.32</text>
+  <rect class="after" x="200" y="192" width="96.1" height="12"/>
+  <text class="v" x="302" y="203">15.02</text>
+
+  <text class="k" x="40" y="234">Gemma 4 E2B</text>
+  <rect class="before" x="200" y="222" width="103.0" height="12"/>
+  <text class="vs" x="309" y="233">16.09</text>
+  <rect class="after" x="200" y="238" width="98.6" height="12"/>
+  <text class="v" x="305" y="249">15.41</text>
+
+  <text class="k" x="40" y="280">IndicConformer</text>
+  <rect class="before" x="200" y="268" width="117.9" height="12"/>
+  <text class="vs" x="324" y="279">18.42</text>
+  <rect class="after" x="200" y="284" width="100.1" height="12"/>
+  <text class="v" x="306" y="295">15.64</text>
+
+  <text class="k" x="40" y="326">Omnilingual CTC 1B</text>
+  <rect class="before" x="200" y="314" width="125.8" height="12"/>
+  <text class="vs" x="332" y="325">19.65</text>
+  <rect class="after" x="200" y="330" width="112.1" height="12"/>
+  <text class="v" x="318" y="341">17.52</text>
+
+  <text class="k" x="40" y="372">Parakeet</text>
+  <rect class="before" x="200" y="360" width="183.2" height="12"/>
+  <text class="vs" x="389" y="371">28.63</text>
+  <rect class="after" x="200" y="376" width="137.8" height="12"/>
+  <text class="v" x="344" y="387">21.53</text>
+
+  <text class="k" x="40" y="418">Conformer</text>
+  <text class="s" x="40" y="434">trained from scratch</text>
+  <rect class="before" x="200" y="406" width="279.7" height="12"/>
+  <text class="vs" x="485" y="417">43.70</text>
+  <rect class="after" x="200" y="422" width="173.3" height="12"/>
+  <text class="v" x="379" y="433">27.08</text>
+
+  <text class="c" x="40" y="500">Every student learned from the teacher's labels.</text>
+</svg>
