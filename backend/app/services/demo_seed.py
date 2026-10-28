@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.models import AnnotationTask, Episode, LlmRequest, Segment
+from app.services.audio import compute_peaks
 from app.services.corpus import perturb
 from app.services.diarization_import import import_diarization
 from app.services.error_backfill import derive_error_files
@@ -289,6 +290,9 @@ def _write_episode(
         segment_id = f"{episode_id}_{index:04d}"
         clip_path = root / "clips" / f"{segment_id}.flac"
         sf.write(clip_path, np.clip(data, -1, 1), SAMPLE_RATE, format="FLAC")
+        peaks_path = root / "peaks" / f"{segment_id}.json"
+        peaks_path.parent.mkdir(parents=True, exist_ok=True)
+        peaks_path.write_text(json.dumps(compute_peaks(clip_path, 200)), encoding="utf-8")
         gap = round(rng.uniform(0.2, 0.7), 2)
         audio += [np.clip(data, -1, 1), np.zeros(int(gap * SAMPLE_RATE), dtype=np.float32)]
         turns.append([round(cursor, 3), round(cursor + duration, 3), f"spk{speaker}"])
@@ -308,7 +312,16 @@ def _write_episode(
                     "words": _words(text, duration),
                 }
             )
-        fused = reference if difficulty < 0.75 else perturb(reference, rng, strength=0.6)
+        # Most seeds are right; a few fail the way a fuser does, so the hazard gates fire (D74):
+        # words no recogniser heard, or a run all of them heard that the seed dropped.
+        if difficulty > 0.93:
+            fused = f"{reference} अनि त्यो कुरा पनि हो"
+        elif difficulty > 0.87 and len(reference.split()) > 5:
+            fused = " ".join(reference.split()[:-3])
+        elif difficulty > 0.75:
+            fused = perturb(reference, rng, strength=0.6)
+        else:
+            fused = reference
         hypotheses.append(
             {
                 "system_id": FUSION_SYSTEM,
@@ -328,6 +341,7 @@ def _write_episode(
                 "end_time": round(cursor + duration, 3),
                 "clip_path": f"clips/{segment_id}.flac",
                 "clip_checksum": sha256_file(clip_path),
+                "peaks_path": f"peaks/{segment_id}.json",
                 "p_en": round(
                     sum(w.isascii() for w in reference.split()) / len(reference.split()), 3
                 ),
