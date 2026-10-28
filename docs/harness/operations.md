@@ -36,6 +36,7 @@ backend/.venv/bin/python scripts/backfill_overlap.py [--episode show-a_ep012] [-
 backend/.venv/bin/python scripts/diarize_episode.py  show-a_ep012 [--num-speakers 2]   # on the Modal GPU
 backend/.venv/bin/python scripts/import_models.py    [data/models/asr/flex-ft]   # fine-tuned models (D83)
 backend/.venv/bin/python scripts/seed_dev_data.py    # synthetic data for development
+backend/.venv/bin/python scripts/seed_demo.py        # invented corpus for demos (harness_demo only)
 ```
 
 `export_dataset.py` writes four kinds — `training`, `gold`, `analytics`, `error_mining` — each with
@@ -44,6 +45,22 @@ mix per split, per-file checksums, timestamp, git commit and the contributing im
 output. For `analytics`, `timestamp_verification_report.json` is generated automatically. A
 `training` row carries its label's timed words; edited labels are realigned on their clips, which
 loads the forced aligner (`--no-realign` skips it).
+
+### The demo corpus
+
+`scripts/seed_demo.py` fills a separate database with three invented shows: speech-shaped audio
+(it says nothing), fused seeds and recogniser hypotheses, voices, labels in both tiers, gold
+clips, a cost log and one scored model. It is what the screenshots are taken from. It refuses any
+database not named `*_demo`, so point every store elsewhere first:
+
+```bash
+export HARNESS_DATABASE__NAME=harness_demo
+export HARNESS_STORAGE__LOCAL_ROOT=./data/demo/objects
+export HARNESS_MODELS__ROOT=./data/demo/models
+backend/.venv/bin/python scripts/seed_demo.py    # creates and migrates the database itself
+```
+
+Start the backend with the same variables set.
 
 ## Configuration
 

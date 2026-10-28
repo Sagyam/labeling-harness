@@ -1,7 +1,7 @@
 """Synthetic development seed: rows straight into Postgres, no audio required.
 
 This exists so schema work, queue building and the API can be exercised without a manifest or
-clips. Realistic end-to-end data comes from :mod:`app.services.fixtures`, which writes an actual
+clips. Realistic end-to-end data comes from ``tests/fixtures.py``, which writes an actual
 manifest directory that the importer consumes.
 """
 
