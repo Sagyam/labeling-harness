@@ -104,7 +104,7 @@ export function Header({
         <div className="flex items-center gap-3 shrink-0">
           <img
             src="/favicon.svg"
-            alt="Nepanglish Logo"
+            alt="Labeling Harness logo"
             className="size-6 shrink-0 rounded-md select-none"
           />
 
@@ -129,7 +129,7 @@ export function Header({
 
           <div className="flex items-baseline gap-2">
             <span className="font-heading text-sm font-bold tracking-wider uppercase">
-              Nepanglish
+              Labeling
             </span>
             <Badge variant="outline" className="h-4 px-1.5 text-[9px] font-mono uppercase">
               Harness

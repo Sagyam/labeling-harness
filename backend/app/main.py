@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
     logger = get_logger(__name__)
 
     app = FastAPI(
-        title="Nepanglish Annotation Harness",
+        title="Labeling Harness",
         version="0.1.0",
         summary="Single-annotator annotation harness for a Nepali-English code-switching corpus",
         lifespan=_lifespan,
