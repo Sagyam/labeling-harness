@@ -309,7 +309,8 @@ nothing else: no HTML source, no PDF, no build step. Each is authored at `viewBo
 tool works. A figure is part of the document that embeds it: when the behaviour it draws changes,
 redraw it in the same commit, or delete it.
 
-Screenshots live in `docs/harness/screenshots/`, PNG at 1440x900 and one GIF, and are taken only
+Screenshots live in `docs/harness/screenshots/`, PNG at 1440x900 and the README's `hero.gif` (it opens
+on the editor), and are taken only
 from the demo corpus (`scripts/seed_demo.py`, a `*_demo` database), never from real recordings.
 Drive the app with the Playwright MCP against a backend started with the demo variables in
 `docs/harness/operations.md`.

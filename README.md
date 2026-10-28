@@ -1,9 +1,41 @@
-# Labeling Harness
+<p align="center">
+  <img src="frontend/public/favicon.svg" width="140" alt="Labeling Harness logo: a waveform ending in a check mark">
+</p>
 
-**Turn hours of recorded speech into a verified speech-recognition dataset, by listening only
-where the machines disagree.**
+<h1 align="center">Labeling Harness</h1>
 
-![Keyboard triage: play a clip, accept it, move on, open the editor](docs/harness/screenshots/triage.gif)
+<h3 align="center">Listen only where the machines disagree.</h3>
+
+<p align="center">
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#tour">Tour</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/harness/guide.md">Guide</a> ·
+  <a href="docs/nepanglish/README.md">Research</a>
+</p>
+
+<p align="center">
+  <b>A workbench that turns hours of recorded speech into a verified speech-recognition dataset.</b><br>
+  Three recognisers draft every clip, the doubtful ones rise to the top, and one person checks them at keyboard speed.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose">
+  <br>
+  <img src="https://img.shields.io/badge/tests-2%2C509%20passing-2ea44f?style=flat-square" alt="2,509 tests passing">
+  <img src="https://img.shields.io/badge/recognisers-3%20per%20clip%20%2B%20fusion-146b6b?style=flat-square" alt="3 recognisers per clip plus fusion">
+  <img src="https://img.shields.io/badge/labelled-61%20h%20of%20Nepali%E2%80%93English-146b6b?style=flat-square" alt="61 hours of Nepali–English labelled">
+  <img src="https://img.shields.io/badge/status-in%20use-f2b134?style=flat-square" alt="Status: in use">
+</p>
+
+<p align="center">
+  <img src="docs/harness/screenshots/hero.gif" width="960" alt="The editor plays a clip; missing Nepali words are typed in Latin and picked from a list of Devanagari spellings; then triage, ingest, corpus analytics, voices, models and export">
+</p>
 
 ## Why
 
