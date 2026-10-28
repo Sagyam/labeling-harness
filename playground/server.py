@@ -8,7 +8,7 @@ the Models page reads, ``data/models/asr/<slug>/``, mounted read-only at ``/mode
   it carries;
 * ``best/``: the bf16 fine-tune, used when the notebook rejected int8.
 
-Decoding is the standard decoder (docs/findings.md, decoder search):
+Decoding is the standard decoder (docs/nepanglish/findings.md, decoder search):
 * greedy, capped at 13 tokens per second of audio;
 * a clip whose output loops (a 3-word run repeated 5+ times) is decoded again with a repetition
   penalty of 1.2 and no repeated 6-gram.

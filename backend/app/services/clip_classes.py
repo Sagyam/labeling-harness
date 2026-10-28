@@ -11,7 +11,8 @@ bucket}``. :func:`load_clip_facts` is the only function that reads the database.
 speaker, as ``unmeasured`` overlap is not evidence of a clean clip (D77).
 
 CMI is an axis for description, not for errors: it did not split WER within an episode
-(docs/findings.md), and it is kept for its sociolinguistic value. ``descriptive`` marks it.
+(docs/nepanglish/findings.md), and it is kept for its sociolinguistic value. ``descriptive``
+marks it.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ Turn = tuple[float, float, str]
 
 #: Talk time, in the clip, that makes someone one of its speakers. A shorter backchannel ("हो",
 #: "hm") is crosstalk if it overlaps, but not a second speaker; the crosstalk study counted a
-#: two-speaker clip the same way (docs/findings.md).
+#: two-speaker clip the same way (docs/nepanglish/findings.md).
 MIN_TALK_SECONDS = 0.5
 
 
@@ -163,7 +164,7 @@ def overlap_share_sql() -> sa.ColumnElement[float]:
 
 
 def overlap_bucket(share: float | None) -> str:
-    """The overlap bucket for a clip's overlap share (docs/findings.md)."""
+    """The overlap bucket for a clip's overlap share (docs/nepanglish/findings.md)."""
     if share is None:
         return "unmeasured"
     if share <= 0:

@@ -15,9 +15,9 @@ fill it -- overlap lives in podcasts, and podcasts are harder anyway -- so each 
 **within-episode rate ratio** against its axis's baseline: the Mantel-Haenszel ratio of error
 rates pooled over episodes, each episode comparing its own clips in the bucket with its own
 clips in the baseline. It answers the question the crosstalk study asked with a fixed-effects
-Poisson fit (docs/findings.md), one axis at a time. Its interval resamples whole episodes. A
-ratio whose interval holds 1 is a condition ruled out, at this sample size, as a source of
-errors.
+Poisson fit (docs/nepanglish/findings.md), one axis at a time. Its interval resamples whole
+episodes. A ratio whose interval holds 1 is a condition ruled out, at this sample size, as a
+source of errors.
 
 **Word classes (D87).** A clip-level average dilutes where errors land, so a run is also split by
 the class of each reference word: its script (Devanagari, Latin, or both in one word), whether it

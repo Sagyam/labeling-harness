@@ -4,8 +4,8 @@ A clean training clip gets short bursts of another person's speech laid over it.
 unchanged: the model learns to transcribe the clip's own speaker and write nothing for the
 interjection, which is what the references do in real overlap.
 
-Every distribution here is a measured one (docs/findings.md, *Overlap windows: how long they are
-and who is louder*, 2026-09-15), not a LibriMix-style guess:
+Every distribution here is a measured one (docs/nepanglish/findings.md, *Overlap windows: how
+long they are and who is louder*, 2026-09-15), not a LibriMix-style guess:
   * windows are bursts: median 0.42 s, 83% under 1 s -- backchannels and interjections, not duets;
   * the two voices are within 3 dB of each other, median gap ~1.6 dB, and either can be louder.
     The model cannot learn "ignore the quieter voice"; it has to follow the clip's own speaker;

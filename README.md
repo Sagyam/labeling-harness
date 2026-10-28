@@ -159,7 +159,7 @@ Latin exactly as typed. `?` opens the full list in the app.
 
 ### Training notebooks
 
-![Training protocol: the pinned export feeds Flex, which freezes one teacher; the teacher pseudo-labels unlabelled audio for the students; evalkit scores every run and 09 reports them](docs/diagrams/training-protocol.svg)
+![Training protocol: the pinned export feeds Flex, which freezes one teacher; the teacher pseudo-labels unlabelled audio for the students; evalkit scores every run and 09 reports them](docs/nepanglish/diagrams/training-protocol.svg)
 
 `notebooks/` is numbered in the order it runs, and that order is how a model is trained and
 evaluated (D105): `01_EDA` and `02_Sociolinguistics` describe the corpus; `03a`–`03e` train
@@ -255,5 +255,5 @@ a 76% accept rate.
 | [AGENTS.md](AGENTS.md) | Working agreement for coding agents: rules, conventions, gotchas |
 | [docs/architecture.md](docs/architecture.md) | Ingestion pipeline, schema, priority formula, API, module map |
 | [docs/decisions.md](docs/decisions.md) | Every design decision, why it was made, what reversing costs |
-| [docs/score-card/](docs/score-card/) | One score card per model: every stage on every set, by clip class and word rarity |
+| [docs/nepanglish/score-cards/](docs/nepanglish/score-cards/) | One score card per model: every stage on every set, by clip class and word rarity |
 | [docs/diagrams/](docs/diagrams/) | The figures, SVG only: ingest, priority score, decision path, pots, error mining, training protocol |

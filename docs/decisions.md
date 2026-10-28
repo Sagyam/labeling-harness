@@ -1361,7 +1361,7 @@ gets the `speaker_overlap` flag. The flag is a chip in the editor and a field in
 nothing else: it is listed in `INFO_FLAGS`, outside `ALL_FLAGS`, so `rule_flag_score` never
 counts it, and no gate, pot rule or export filter reads it.
 
-**Why measure it.** Crosstalk is the largest error factor found in the corpus (docs/findings.md,
+**Why measure it.** Crosstalk is the largest error factor found in the corpus (docs/nepanglish/findings.md,
 2026-09-13). Within an episode, each 10 points of a clip's overlap share multiplies Flex's error
 rate by 1.49 [1.32, 1.69]. Podcast WER is 9.0% on clips without overlap and 24.3% above 15%,
 mostly dropped words. Speaking rate and code-mixing show no effect once the episode is held
@@ -1534,7 +1534,7 @@ ONNX export on the owner's machine. It was declined for scoring, for two reasons
   8-core CPU is an unmeasured estimate of 10–30 min per run.
 - **It is a different model.** Quantization shifts WER by an unmeasured amount, likely near the
   ~0.3-point run-to-run noise. CPU-scored runs would not compare like-for-like with the bf16
-  numbers in `docs/findings.md`.
+  numbers in `docs/nepanglish/findings.md`.
 
 So no inference happens here, nothing is routed through `llm_routes.yaml`, and invariant 6 is not
 touched. A future mic playground that does run a model locally needs its own decision.
@@ -1549,7 +1549,7 @@ On the 2026-09-12 Flex output this reproduces 11.53% folded / 14.52% raw / 8.07%
 7.57% on val.
 
 A run also carries a WER interval from resampling whole episodes, and breakdowns by genre and by
-the crosstalk buckets in docs/findings.md. Clicking a breakdown bar filters the clips. The clip's diff is
+the crosstalk buckets in docs/nepanglish/findings.md. Clicking a breakdown bar filters the clips. The clip's diff is
 drawn from the backend's alignment ops, so every mark is one counted error. The editor's raw
 `DiffViewer` would mark `टिम`/`team`.
 
@@ -1639,7 +1639,7 @@ includes it. It is the next place to look if the metric reads too kind.
 **Cost.** Alignment takes ~40% longer (1,109 clips: 12.3 → 17.5 s), almost all from the wider
 merges. The rules live in `fold.py`, not in `config/`, so the dataset's `harness/` copy the notebook
 scores with stays one file. Every stored score from before is a fold-v1 number:
-- the tables in docs/findings.md;
+- the tables in docs/nepanglish/findings.md;
 - the Models page's imported run, which warns, and which a rescan will not rescore, because the
   import dedupes on the file's sha256;
 - queue scores computed at ingest.
@@ -1669,7 +1669,7 @@ time, so an idle container is a Python process and nothing more.
 
 The card's `cpu.export` says which one. The page shows the playground only when one of them is
 there, and says how to add it when neither is. ONNX is not used: plain PyTorch bf16 is already
-realtime on the 7700X (docs/findings.md), and dynamic int8 broke Flex.
+realtime on the 7700X (docs/nepanglish/findings.md), and dynamic int8 broke Flex.
 
 **Invariant 6 is kept, not bent.** A local model is a provider like the others:
 - the route is `playground_transcribe` in `config/llm_routes.yaml`, with `provider: local`;
@@ -1687,7 +1687,7 @@ normalisation on it (two-pass EBU R128 loudness, mono, 16 kHz through soxr), so 
 microphone the way it heard its training audio. The page turns off the browser's own echo
 cancellation, noise suppression and gain control for the same reason.
 
-**Decoder: the standard one** (docs/findings.md). Greedy, capped at 13 tokens per second of audio, and a
+**Decoder: the standard one** (docs/nepanglish/findings.md). Greedy, capped at 13 tokens per second of audio, and a
 clip whose output loops is decoded again with a repetition penalty of 1.2 and no repeated 6-gram.
 The cap applies to the first pass too: on a CPU a loop run to 300 tokens costs seconds.
 
@@ -1762,7 +1762,7 @@ axis keeps it ruled out on every later model.
 lives in podcasts, and podcasts are harder anyway, so pooled WER per bucket measures genre as
 much as the bucket. The Mantel-Haenszel ratio compares each episode's clips in the bucket only
 with the same episode's clips in the baseline, then pools over episodes. It is the one-axis form
-of the crosstalk study's Poisson fit with episode fixed effects (docs/findings.md). It adjusts
+of the crosstalk study's Poisson fit with episode fixed effects (docs/nepanglish/findings.md). It adjusts
 for nothing but the episode: two axes that travel together within an episode, such as speakers
 and crosstalk, each carry some of the other.
 
@@ -2570,7 +2570,7 @@ ear. The by-ear values were simply never read.
   episodes it is heard in.
 - **The notebooks read it.** `01_EDA` and `02_Sociolinguistics` take gender, age and role off
   the turns, and their own resolvers are deleted. What that changed is in
-  `docs/sociolinguistics.md`.
+  `docs/nepanglish/sociolinguistics.md`.
 - **On the turn, not beside it.** A turn is read on its own, by the crosstalk mixer among others,
   and three short keys on 69,000 turns cost less than a second table every consumer must join.
 - **What did not change.** `classes.gender` and `classes.age_bracket` stay the episode's declared
@@ -2596,7 +2596,7 @@ Two things the analytics kind lacked, both needed to study the corpus rather tha
   between languages, how long the gap before it is) needs the label's words with their spans,
   not a recogniser's. The fused seed's words were already there among the hypotheses, but before
   normalization, so their script was not always the label's.
-- **Not `published_at`.** `docs/sociolinguistics.md` wanted the upload date. The column exists
+- **Not `published_at`.** `docs/nepanglish/sociolinguistics.md` wanted the upload date. The column exists
   and is filled for every episode, but ingest writes the day of ingest into it
   (`pipeline.py`), and 338 of 342 equal the row's creation date. Exporting it as a date of
   publication would be a wrong variable, not a missing one. The YouTube probe does read

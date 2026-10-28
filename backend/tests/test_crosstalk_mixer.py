@@ -1,8 +1,8 @@
 """Synthetic crosstalk for fine-tuning (roadmap item 3): notebooks/src/xtalk.py.
 
 The mixer runs in the Colab notebook, not in the app, but it decides what the model is trained on,
-so it is tested here. Its distributions are the measured ones in docs/findings.md, *Overlap
-windows: how long they are and who is louder* (2026-09-15)."""
+so it is tested here. Its distributions are the measured ones in docs/nepanglish/findings.md,
+*Overlap windows: how long they are and who is louder* (2026-09-15)."""
 
 from __future__ import annotations
 

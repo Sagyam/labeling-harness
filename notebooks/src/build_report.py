@@ -378,7 +378,7 @@ WRITE_NOTE = """
 ## Write the report
 
 `report.json` holds every number above, the breakdowns included; `report.md` is the main tables as Markdown, to paste
-into `docs/findings.md`.
+into `docs/nepanglish/findings.md`.
 """
 
 WRITE = r"""

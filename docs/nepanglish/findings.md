@@ -2,7 +2,7 @@
 
 What the ASR work on the Nepanglish corpus has measured so far. What is still to do lives in
 [roadmap.md](roadmap.md). Each current model's scores at every stage, and the notes of its own runs,
-are in its score card, [score-card/](score-card/); this file keeps what is learned across models.
+are in its score card, [score-cards/](score-cards/); this file keeps what is learned across models.
 
 Experiment code is discarded after each run, so these notes are the record. The raw artefacts
 behind them were on Google Drive under `MyDrive/nepanglish-asr/`:
@@ -1681,7 +1681,7 @@ run down by the same buckets.
   - So by this measure the corpus's background noise is not a source of errors. Item 3's noise
     augmentation is insurance for audio the corpus does not have yet, not a fix for measured
     errors. Trained into Flex on 2026-10-11, it tied vanilla everywhere, the noisy clips included
-    (score-card/flex-score-card.md, *Augmentation on Flex*).
+    (score-cards/flex-score-card.md, *Augmentation on Flex*).
 - **Reverb is ruled out.** C50 is 55+ dB (a dry room) for 591 of 706 gold clips, and no bucket's
   interval clears 1. The one reverberant episode, the six-speaker `ep_344` roundtable (median C50
   43 dB), has too few gold clips to say more.

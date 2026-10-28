@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Write every model's score card, docs/score-card/<model>-score-card.md, from the hub.
+"""Write every model's score card, docs/nepanglish/score-cards/<model>-score-card.md, from the hub.
 
   uv run --no-sync --project backend --with huggingface_hub python scripts/score_cards.py
   ... score_cards.py --model whisper
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CARD_DIR = REPO_ROOT / "docs" / "score-card"
+CARD_DIR = REPO_ROOT / "docs" / "nepanglish" / "score-cards"
 FLEX_REPO = "Sagyam/nepanglish-asr-flex-ft"
 STUDENTS_REPO = "Sagyam/nepanglish-asr-students"
 FLEX = "flex-2026-09-30"

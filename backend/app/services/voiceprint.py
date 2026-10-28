@@ -3,10 +3,10 @@
 WeSpeaker's ResNet34-LM, as ONNX, embeds audio into the same 256-d space pyannote's
 ``speaker-diarization-community-1`` uses for the per-speaker centroids stored with every run --
 the same weights, fed the same Kaldi fbank. Measured on 190 single-speaker clips of 12 episodes
-(docs/findings.md, *Voiceprints on clean speech and in crosstalk*): a window picks the speaker
-whose stored centroid is closest 95% of the time from 0.5 s, 99% from 1 s. So a voice's print is
-available for every diarized speaker without a GPU, and a voice the owner has confirmed clean
-clips of gets a print built from those instead.
+(docs/nepanglish/findings.md, *Voiceprints on clean speech and in crosstalk*): a window picks
+the speaker whose stored centroid is closest 95% of the time from 0.5 s, 99% from 1 s. So a
+voice's print is available for every diarized speaker without a GPU, and a voice the owner has
+confirmed clean clips of gets a print built from those instead.
 
 What it cannot do is say who said a word inside crosstalk: on two voices mixed at once it follows
 the louder one, a coin toss at equal level, and it is confident when it is wrong. Suggestions are

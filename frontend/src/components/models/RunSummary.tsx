@@ -1,7 +1,7 @@
 /**
  * One run's headline numbers and where its errors live (D83, D87).
  *
- * The ledger strip carries the numbers docs/findings.md reports -- folded WER with its episode
+ * The ledger strip carries the numbers docs/nepanglish/findings.md reports -- folded WER with its episode
  * interval, raw WER beside it, CER, loops. Below it, the run split two ways: by genre, and by
  * every class of roadmap item 1 (crosstalk, speakers, pauses, bandwidth, voices...). Each class
  * bucket shows its WER and share of errors, and -- against the axis's baseline -- its
